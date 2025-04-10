@@ -1,0 +1,1672 @@
+﻿
+const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeTheme } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { spawn, execSync } = require('child_process');
+const isDev = process.env.NODE_ENV === 'development';
+const yaml = require('js-yaml');
+const WebSocket = require('ws');
+const net = require('net');
+
+let mainWindow;
+let tray;
+let mihomoProcess;
+let configFilePath;
+let isQuitting = false;
+let autoStartEnabled = true; // 榛樿鍚敤鑷姩鍚姩
+let currentNode = null;
+
+// 杩炴帴绠＄悊鐩稿叧鍙橀噺
+let connectionsWebSocket = null;
+let connectionsRetry = 10;
+let lastConnectionsInfo = {
+  downloadTotal: 0,
+  uploadTotal: 0,
+  connections: [],
+  memory: 0,
+  currentNode: null,
+  activeConnections: 0
+};
+
+// 搴旂敤鏁版嵁瀛樺偍璺緞
+const userDataPath = app.getPath('userData');
+const configDir = path.join(userDataPath, 'config');
+
+// 纭繚閰嶇疆鐩綍瀛樺湪
+if (!fs.existsSync(configDir)) {
+  fs.mkdirSync(configDir, { recursive: true });
+}
+
+// 娴侀噺缁熻鐩稿叧鍙橀噺
+let lastTrafficStats = {
+  up: 0,
+  down: 0,
+  upSpeed: 0,
+  downSpeed: 0,
+  timestamp: Date.now()
+};
+
+// WebSocket杩炴帴
+let trafficWebSocket = null;
+let trafficRetry = 10;
+let lastValidStats = null;  // 鐢ㄤ簬瀛樺偍鏈€鍚庝竴娆℃湁鏁堢殑娴侀噺鏁版嵁
+
+// 鏍煎紡鍖栨祦閲忔暟鎹?function formatTraffic(bytes) {
+  if (bytes === 0) return '0 B';
+  
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let size = bytes;
+  
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  
+  return `${size.toFixed(2)} ${units[i]}`;
+}
+
+// 鏍煎紡鍖栭€熷害
+function formatSpeed(bytesPerSecond) {
+  if (bytesPerSecond === 0) return '0 B/s';
+  
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  let i = 0;
+  let speed = bytesPerSecond;
+  
+  while (speed >= 1024 && i < units.length - 1) {
+    speed /= 1024;
+    i++;
+  }
+  
+  return `${speed.toFixed(2)} ${units[i]}`;
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    minWidth: 800,
+    minHeight: 600,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+    show: false,
+    frame: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: nativeTheme.shouldUseDarkColors ? '#202020' : '#f0f0f0',
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#000000',
+      height: 48
+    },
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#111827' : '#ffffff'
+  });
+
+  // 鐩戝惉绯荤粺涓婚鍙樺寲
+  nativeTheme.on('updated', () => {
+    mainWindow.setTitleBarOverlay({
+      color: nativeTheme.shouldUseDarkColors ? '#202020' : '#f0f0f0',
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#000000',
+      height: 48
+    });
+  });
+
+  const startUrl = isDev
+    ? 'http://localhost:3000'
+    : `file://${path.join(__dirname, '../out/index.html')}`;
+
+  mainWindow.loadURL(startUrl);
+
+  if (isDev) {
+    mainWindow.webContents.openDevTools();
+  }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    
+    // 鑷姩鍚姩Mihomo
+    if (autoStartEnabled) {
+      setTimeout(autoStartMihomo, 1000);
+    }
+  });
+
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+}
+
+async function startMihomo(configPath) {
+  if (mihomoProcess) {
+    mihomoProcess.kill();
+  }
+
+  configFilePath = configPath;
+  const binPath = isDev 
+    ? path.join(process.cwd(), '../mihomo-windows-amd64.exe')
+    : path.join(process.resourcesPath, 'cores/mihomo-windows-amd64.exe');
+
+  if (!fs.existsSync(binPath)) {
+    dialog.showErrorBox('閿欒', '鏃犳硶鎵惧埌Mihomo鏍稿績鏂囦欢');
+    return;
+  }
+
+  try {
+    // 纭繚閰嶇疆鏂囦欢瀛樺湪
+    if (!fs.existsSync(configPath)) {
+      dialog.showErrorBox('閿欒', `閰嶇疆鏂囦欢涓嶅瓨鍦? ${configPath}`);
+      return false;
+    }
+
+    // 鍒涘缓mihomo宸ヤ綔鐩綍
+    const mihomoDir = path.join(userDataPath, 'mihomo');
+    if (!fs.existsSync(mihomoDir)) {
+      fs.mkdirSync(mihomoDir, { recursive: true });
+    }
+    
+    // 纭宸ヤ綔鐩綍鏈夊啓鏉冮檺
+    try {
+      const testFile = path.join(mihomoDir, 'test_write_permission.txt');
+      fs.writeFileSync(testFile, 'test');
+      fs.unlinkSync(testFile);
+      console.log('宸ヤ綔鐩綍鍐欐潈闄愭甯?);
+    } catch (error) {
+      console.error('宸ヤ綔鐩綍鍐欐潈闄愪笉瓒?', error);
+      dialog.showErrorBox('鏉冮檺閿欒', `Mihomo宸ヤ綔鐩綍娌℃湁鍐欐潈闄? ${error.message}`);
+      return false;
+    }
+
+    // 鎷疯礉閰嶇疆鏂囦欢鍒板伐浣滅洰褰曚互纭繚mihomo鑳藉姝ｇ‘璁块棶
+    const configFilename = path.basename(configPath);
+    const localConfigPath = path.join(mihomoDir, configFilename);
+    try {
+      const configContent = fs.readFileSync(configPath, 'utf8');
+      fs.writeFileSync(localConfigPath, configContent);
+      console.log(`宸插皢閰嶇疆鏂囦欢澶嶅埗鍒板伐浣滅洰褰? ${localConfigPath}`);
+    } catch (error) {
+      console.error('澶嶅埗閰嶇疆鏂囦欢澶辫触:', error);
+      // 缁х画浣跨敤鍘熷閰嶇疆璺緞
+    }
+
+    // 璁板綍鍚姩淇℃伅
+    console.log(`鍚姩Mihomo: ${binPath} -f ${configPath}`);
+    console.log(`宸ヤ綔鐩綍: ${mihomoDir}`);
+
+    // 楠岃瘉閰嶇疆鏂囦欢鍐呭
+    try {
+      // 灏濊瘯鍔犺浇js-yaml鍖?      let yaml;
+      try {
+        yaml = require('js-yaml');
+      } catch (e) {
+        console.log('鏈畨瑁卝s-yaml锛屼娇鐢ㄧ畝鍗曢獙璇佹柟娉?);
+        
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        if (!configContent.includes('proxies:') || !configContent.includes('proxy-groups:')) {
+          dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢缂哄皯蹇呰鐨刾roxies鎴杙roxy-groups瀛楁');
+          return false;
+        }
+        // 绠€鍗曢獙璇侀€氳繃
+        return true;
+      }
+      
+      // 濡傛灉yaml鍖呭姞杞芥垚鍔燂紝浣跨敤瀹屾暣楠岃瘉
+      const configContent = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(configContent);
+      
+      // 妫€鏌ラ厤缃枃浠朵腑蹇呰鐨勫瓧娈?      if (!config || !config.proxies || !config['proxy-groups']) {
+        dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢缂哄皯蹇呰鐨刾roxies鎴杙roxy-groups瀛楁');
+        return false;
+      }
+
+      // 妫€鏌ヤ唬鐞嗙粍鏄惁涓虹┖
+      if (config['proxy-groups'].length === 0) {
+        dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢涓殑浠ｇ悊缁勪负绌?);
+        return false;
+      }
+
+      // 妫€鏌ヤ唬鐞嗘槸鍚︿负绌?      if (config.proxies.length === 0) {
+        dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢涓病鏈変唬鐞嗚妭鐐?);
+        return false;
+      }
+    } catch (error) {
+      console.error('閰嶇疆鏂囦欢楠岃瘉澶辫触:', error);
+      dialog.showErrorBox('閰嶇疆鏂囦欢閿欒', `瑙ｆ瀽閰嶇疆鏂囦欢澶辫触: ${error.message}`);
+      return false;
+    }
+
+    // 鍚姩mihomo锛岃缃伐浣滅洰褰曚负mihomoDir
+    mihomoProcess = spawn(binPath, ['-f', localConfigPath || configPath], {
+      cwd: mihomoDir,
+      env: {
+        ...process.env,
+        MIHOMO_CORE_PATH: mihomoDir
+      },
+      windowsHide: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    
+    mihomoProcess.stdout.on('data', (data) => {
+      console.log(`mihomo stdout: ${data}`);
+      if (mainWindow) {
+        mainWindow.webContents.send('mihomo-log', data.toString());
+      }
+      
+      // 鐩存帴杈撳嚭鍒版帶鍒跺彴/缁堢
+      process.stdout.write(data);
+    });
+
+    mihomoProcess.stderr.on('data', (data) => {
+      console.error(`mihomo stderr: ${data}`);
+      if (mainWindow) {
+        mainWindow.webContents.send('mihomo-error', data.toString());
+      }
+      
+      // 鐩存帴杈撳嚭鍒版帶鍒跺彴/缁堢
+      process.stderr.write(data);
+    });
+
+    mihomoProcess.on('close', (code) => {
+      console.log(`mihomo process exited with code ${code}`);
+      if (mainWindow) {
+        mainWindow.webContents.send('mihomo-stopped', code);
+      }
+    });
+
+    // 妫€鏌ヨ繘绋嬫槸鍚︽垚鍔熷惎鍔?    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (mihomoProcess.exitCode !== null) {
+      console.error(`Mihomo绔嬪嵆閫€鍑猴紝閫€鍑轰唬鐮? ${mihomoProcess.exitCode}`);
+      dialog.showErrorBox('鍚姩澶辫触', `Mihomo鍚姩鍚庣珛鍗抽€€鍑猴紝閫€鍑轰唬鐮? ${mihomoProcess.exitCode}`);
+      return false;
+    }
+
+    if (mihomoProcess) {
+      startTrafficStatsUpdate();
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Failed to start mihomo:', error);
+    dialog.showErrorBox('鍚姩澶辫触', `鏃犳硶鍚姩Mihomo: ${error.message}`);
+    return false;
+  }
+}
+
+function setupTray() {
+  const iconPath = isDev 
+    ? path.join(__dirname, '../public/favicon.ico')
+    : path.join(process.resourcesPath, 'public/favicon.ico');
+  
+  try {
+    tray = new Tray(iconPath);
+    
+    // 妫€鏌ュ綋鍓嶇郴缁熶唬鐞嗙姸鎬?    let isProxyEnabled = false;
+    try {
+      const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Sett
+ings" /v ProxyEnable').toString();
+      isProxyEnabled = result.includes('0x1');
+      
+      // 濡傛灉鍚敤锛屾鏌ユ槸鍚︽槸鎴戜滑鐨勪唬鐞?      if (isProxyEnabled) {
+        const serverResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Inter
+net Settings" /v ProxyServer').toString();
+        if (!serverResult.includes('127.0.0.1:7890')) {
+          // 濡傛灉涓嶆槸鎴戜滑鐨勪唬鐞嗭紝涓嶈鎶婂畠褰撲綔鎴戜滑鐨勫簲鐢ㄥ惎鐢ㄧ殑
+          console.log('鍙戠幇鍏朵粬绯荤粺浠ｇ悊锛屼笉瑙嗕负鏈簲鐢ㄨ缃殑浠ｇ悊');
+          isProxyEnabled = false;
+        }
+      }
+    } catch (error) {
+      console.error('鍒濆鍖栨椂妫€鏌ョ郴缁熶唬鐞嗙姸鎬佸け璐?', error);
+    }
+    
+    const contextMenu = Menu.buildFromTemplate([
+      { label: '鏄剧ず涓荤獥鍙?, click: () => mainWindow.show() },
+      { type: 'separator' },
+      { label: '鍚敤绯荤粺浠ｇ悊', type: 'checkbox', checked: isProxyEnabled, click: toggleSystemProxy },
+      { type: 'separator' },
+      { label: '閫€鍑?, click: () => {
+        isQuitting = true;
+        app.quit();
+      }}
+    ]);
+    tray.setToolTip('FlyCast');
+    tray.setContextMenu(contextMenu);
+    tray.on('click', () => {
+      mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
+    });
+    
+    // 濡傛灉鎵樼洏鍒氬垵濮嬪寲涓旂郴缁熶唬鐞嗗凡鍚敤锛岄€氱煡鍓嶇
+    if (isProxyEnabled && mainWindow) {
+      mainWindow.webContents.send('proxy-status', true);
+    }
+  } catch (error) {
+    console.error('璁剧疆鎵樼洏鍥炬爣澶辫触:', error);
+  }
+}
+
+function toggleSystemProxy(menuItem) {
+  const enabled = menuItem.checked;
+  if (enabled) {
+    // 鍚敤绯荤粺浠ｇ悊锛岄粯璁ょ鍙?890
+    try {
+      // 璁剧疆浠ｇ悊鍚敤
+      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEna
+ble /t REG_DWORD /d 1 /f');
+      // 璁剧疆浠ｇ悊鏈嶅姟鍣?      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet S
+ettings" /v ProxyServer /t REG_SZ /d "127.0.0.1:7890" /f');
+      // 鎵嬪姩鍒锋柊Internet璁剧疆
+      execSync(''); // 杩欎細鍒锋柊IE/绯荤粺璁剧疆
+      mainWindow.webContents.send('proxy-status', true);
+    } catch (error) {
+      console.error('Failed to enable system proxy:', error);
+      dialog.showErrorBox('浠ｇ悊璁剧疆澶辫触', '鏃犳硶鍚敤绯荤粺浠ｇ悊');
+      menuItem.checked = false;
+    }
+  } else {
+    // 绂佺敤绯荤粺浠ｇ悊
+    try {
+      // 绂佺敤浠ｇ悊
+      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEna
+ble /t REG_DWORD /d 0 /f');
+      // 鎵嬪姩鍒锋柊Internet璁剧疆
+      execSync(''); // 杩欎細鍒锋柊IE/绯荤粺璁剧疆
+      mainWindow.webContents.send('proxy-status', false);
+    } catch (error) {
+      console.error('Failed to disable system proxy:', error);
+      dialog.showErrorBox('浠ｇ悊璁剧疆澶辫触', '鏃犳硶绂佺敤绯荤粺浠ｇ悊');
+      menuItem.checked = true;
+    }
+  }
+}
+
+// 鑷姩鍚姩Mihomo鍔熻兘
+async function autoStartMihomo() {
+  try {
+    // 鑾峰彇淇濆瓨鐨勮闃呭垪琛?    const subscriptions = await getSubscriptionList();
+    if (subscriptions.length === 0) {
+      console.log('娌℃湁鍙敤鐨勯厤缃枃浠讹紝鏃犳硶鑷姩鍚姩');
+      return;
+    }
+    
+    // 浣跨敤绗竴涓闃呴厤缃惎鍔?    const configPath = subscriptions[0].path;
+    const success = await startMihomo(configPath);
+    
+    if (success && mainWindow) {
+      // 閫氱煡鍓嶇鏇存柊鐘舵€?      mainWindow.webContents.send('mihomo-autostart', {
+        success: true,
+        configPath: configPath
+      });
+    }
+  } catch (error) {
+    console.error('鑷姩鍚姩Mihomo澶辫触:', error);
+    if (mainWindow) {
+      mainWindow.webContents.send('mihomo-autostart', {
+        success: false,
+        error: error.message
+      });
+    }
+  }
+}
+
+// 鑾峰彇璁㈤槄鍒楄〃
+function getSubscriptionList() {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(configDir)) {
+      resolve([]);
+      return;
+    }
+    
+    const subscriptions = fs.readdirSync(configDir)
+      .filter(file => file.endsWith('.yaml'))
+      .map(file => ({
+        name: file.replace('.yaml', ''),
+        path: path.join(configDir, file)
+      }));
+    
+    resolve(subscriptions);
+  });
+}
+
+// 瑙ｆ瀽YAML閰嶇疆鏂囦欢
+function parseConfigFile(filePath) {
+  try {
+    const fileContent = fs.readFileSync(filePath, 'utf8');
+    
+    // 浣跨敤js-yaml瑙ｆ瀽
+    let yaml;
+    try {
+      yaml = require('js-yaml');
+    } catch (e) {
+      console.error('js-yaml妯″潡鏈畨瑁咃紝鏃犳硶瑙ｆ瀽閰嶇疆');
+      return null;
+    }
+    
+    const config = yaml.load(fileContent);
+    if (!config) {
+      return null;
+    }
+    
+    // 鎻愬彇鎵€鏈変唬鐞嗙粍鍜岃妭鐐癸紝淇濇寔鍘熷椤哄簭
+    const proxyGroups = [];
+    
+    if (config["proxy-groups"] && Array.isArray(config["proxy-groups"])) {
+      for (const group of config["proxy-groups"]) {
+        if (group.name && (group.type === 'select' || group.type === 'url-test' || group.type === 'fallback
+')) {
+          proxyGroups.push({
+            name: group.name,
+            type: group.type,
+            proxies: group.proxies || []
+          });
+        }
+      }
+    }
+    
+    // 鎻愬彇鎵€鏈変唬鐞嗚妭鐐?    const proxies = [];
+    if (config.proxies && Array.isArray(config.proxies)) {
+      for (const proxy of config.proxies) {
+        if (proxy.name) {
+          proxies.push({
+            name: proxy.name,
+            type: proxy.type,
+            server: proxy.server || '',
+            port: proxy.port || 0
+          });
+        }
+      }
+    }
+    
+    return {
+      proxyGroups,
+      proxies
+    };
+  } catch (error) {
+    console.error('瑙ｆ瀽閰嶇疆鏂囦欢澶辫触:', error);
+    return null;
+  }
+}
+
+// 鏂板: 鑾峰彇閰嶇疆鏂囦欢涓殑鍘熷浠ｇ悊缁勯『搴?ipcMain.handle('get-config-order', async (event) => {
+  try {
+    // 濡傛灉Mihomo鏈繍琛岋紝娌℃湁娲昏穬鐨勯厤缃枃浠?    if (!configFilePath) {
+      return {
+        success: false,
+        error: 'Mihomo鏈繍琛岋紝娌℃湁娲昏穬鐨勯厤缃枃浠?
+      };
+    }
+    
+    // 瑙ｆ瀽閰嶇疆鏂囦欢
+    const configData = parseConfigFile(configFilePath);
+    if (!configData) {
+      return {
+        success: false,
+        error: '瑙ｆ瀽閰嶇疆鏂囦欢澶辫触'
+      };
+    }
+    
+    return {
+      success: true,
+      data: configData
+    };
+  } catch (error) {
+    console.error('鑾峰彇閰嶇疆椤哄簭澶辫触:', error);
+    return {
+      success: false,
+      error: `鑾峰彇閰嶇疆椤哄簭澶辫触: ${error.message}`
+    };
+  }
+});
+
+// 鏂板: 鑾峰彇褰撳墠閰嶇疆
+async function getConfig() {
+  try {
+    if (!configFilePath || !fs.existsSync(configFilePath)) {
+      console.log('褰撳墠娌℃湁娲昏穬鐨勯厤缃枃浠?);
+      return null;
+    }
+    
+    // 璇诲彇閰嶇疆鏂囦欢
+    const content = fs.readFileSync(configFilePath, 'utf8');
+    
+    if (!content || content.trim() === '') {
+      console.error('閰嶇疆鏂囦欢涓虹┖');
+      return null;
+    }
+    
+    // 瑙ｆ瀽YAML
+    const config = yaml.load(content);
+    
+    if (!config) {
+      console.error('瑙ｆ瀽閰嶇疆鏂囦欢澶辫触');
+      return null;
+    }
+    
+    return config;
+  } catch (error) {
+    console.error('鑾峰彇閰嶇疆澶辫触:', error);
+    return null;
+  }
+}
+
+// 鏇存柊娴侀噺缁熻
+function updateTrafficStats() {
+  // 濡傛灉WebSocket宸茬粡杩炴帴锛屼笉闇€瑕侀噸鏂拌繛鎺?  if (trafficWebSocket && trafficWebSocket.readyState === 1) { // 1 = O
+PEN
+    return;
+  }
+
+  // 浣跨敤鏍囧噯鐨刉ebSocket鍦板潃
+  const wsUrl = 'ws://127.0.0.1:9090/traffic';
+  
+  // 鍒涘缓娴侀噺缁熻WebSocket
+  trafficWebSocket = new WebSocket(wsUrl);
+
+  trafficWebSocket.on('open', () => {
+    console.log('娴侀噺缁熻WebSocket杩炴帴宸插缓绔?);
+    trafficRetry = 10; // 閲嶇疆閲嶈瘯璁℃暟
+  });
+
+  trafficWebSocket.on('message', (data) => {
+    try {
+      const json = JSON.parse(data);
+      
+      // 纭繚鏁版嵁鏍煎紡姝ｇ‘
+      if (!json || typeof json.up !== 'number' || typeof json.down !== 'number') {
+        console.error('鏃犳晥鐨勬祦閲忔暟鎹牸寮?);
+        return;
+      }
+
+      // 鏇存柊缁熻鏁版嵁
+      const stats = {
+        up: json.up,
+        down: json.down,
+        timestamp: Date.now(),
+        upSpeed: json.up,
+        downSpeed: json.down
+      };
+
+      lastTrafficStats = stats;
+      
+      // 鍙戦€佹洿鏂板埌涓荤獥鍙?      if (mainWindow) {
+        mainWindow.webContents.send('traffic-update', stats);
+      }
+      
+      // 姣忓綋鏀跺埌娴侀噺鏇存柊鏃讹紝鍚屾椂鑾峰彇鎬绘祦閲忔暟鎹?      fetchConnectionsInfo();
+      
+      // 鍙湪娴侀噺鍙樺寲杈冨ぇ鏃惰緭鍑烘棩蹇楋紙澶т簬10MB鐨勫彉鍖栵級
+      const significantChange = Math.abs(stats.up - lastTrafficStats.up) > 10 * 1024 * 1024 || 
+                               Math.abs(stats.down - lastTrafficStats.down) > 10 * 1024 * 1024;
+      if (significantChange) {
+        console.log(`娴侀噺鏇存柊: 涓婁紶 ${formatTraffic(stats.up)}, 涓嬭浇 ${formatTraffic(stats.down)}`);
+      }
+    } catch (error) {
+      console.error('澶勭悊娴侀噺鏁版嵁鏃跺嚭閿?', error);
+    }
+  });
+
+  trafficWebSocket.on('close', () => {
+    // 鍙湪绗竴娆″叧闂椂杈撳嚭鏃ュ織
+    if (trafficRetry === 10) {
+      console.log('娴侀噺缁熻WebSocket杩炴帴宸插叧闂?);
+    }
+    trafficWebSocket = null;
+
+    if (trafficRetry > 0) {
+      trafficRetry--;
+      // 鍙湪绗竴娆″拰鏈€鍚庝竴娆￠噸璇曟椂杈撳嚭鏃ュ織
+      if (trafficRetry === 9 || trafficRetry === 0) {
+        console.log(`灏濊瘯閲嶆柊杩炴帴WebSocket锛屽墿浣欓噸璇曟鏁? ${trafficRetry}`);
+      }
+      updateTrafficStats();
+    } else {
+      console.log('WebSocket閲嶈繛娆℃暟宸茶揪涓婇檺锛屽仠姝㈤噸璇?);
+    }
+  });
+
+  trafficWebSocket.on('error', (error) => {
+    console.error('娴侀噺缁熻WebSocket閿欒:', error);
+    if (trafficWebSocket) {
+      trafficWebSocket.close();
+      trafficWebSocket = null;
+    }
+  });
+}
+
+// 璁剧疆瀹氭椂鏇存柊娴侀噺缁熻
+let trafficStatsInterval;
+function startTrafficStatsUpdate() {
+  if (trafficStatsInterval) {
+    clearInterval(trafficStatsInterval);
+  }
+  
+  // 鍒濆鍖朩ebSocket杩炴帴
+  updateTrafficStats();
+  
+  // 璁剧疆瀹氭椂鍣紝姣?绉掓鏌ヤ竴娆ebSocket杩炴帴鐘舵€?  trafficStatsInterval = setInterval(() => {
+    if (!trafficWebSocket || trafficWebSocket.readyState !== 1) {
+      // 绉婚櫎閲嶈繛鏃ュ織锛岄伩鍏嶅埛灞?      updateTrafficStats();
+    }
+  }, 1000); // 姣?绉掓鏌ヤ竴娆?}
+
+function stopTrafficStatsUpdate() {
+  if (trafficStatsInterval) {
+    clearInterval(trafficStatsInterval);
+    trafficStatsInterval = null;
+  }
+  
+  if (trafficWebSocket) {
+    trafficWebSocket.close();
+    trafficWebSocket = null;
+  }
+}
+
+// 鍚姩杩炴帴绠＄悊WebSocket
+async function startConnectionsWebSocket() {
+  try {
+    if (!currentNode) {
+      throw new Error('鏈€夋嫨鑺傜偣');
+    }
+
+    // 鍒涘缓鏂扮殑WebSocket杩炴帴
+    connectionsWebSocket = new WebSocket(`ws://localhost:8080/connections/${currentNode}`);
+    
+    // 璁剧疆杩炴帴瓒呮椂
+    const connectionTimeout = setTimeout(() => {
+      if (connectionsWebSocket.readyState !== WebSocket.OPEN) {
+        connectionsWebSocket.close();
+        throw new Error('杩炴帴瓒呮椂');
+      }
+    }, 5000);
+
+    // 杩炴帴寤虹珛
+    connectionsWebSocket.on('open', () => {
+      clearTimeout(connectionTimeout);
+      console.log(`宸茶繛鎺ュ埌鑺傜偣 ${currentNode}`);
+    });
+
+    // 杩炴帴鍏抽棴
+    connectionsWebSocket.on('close', () => {
+      console.log(`涓庤妭鐐?${currentNode} 鐨勮繛鎺ュ凡鍏抽棴`);
+      // 灏濊瘯閲嶆柊杩炴帴
+      setTimeout(() => {
+        if (currentNode) {
+          startConnectionsWebSocket().catch(console.error);
+        }
+      }, 5000);
+    });
+
+    // 閿欒澶勭悊
+    connectionsWebSocket.on('error', (error) => {
+      console.error('WebSocket閿欒:', error);
+      clearTimeout(connectionTimeout);
+    });
+
+  } catch (error) {
+    console.error('鍚姩WebSocket杩炴帴澶辫触:', error);
+    throw error;
+  }
+}
+
+// 鏇存柊褰撳墠鑺傜偣淇℃伅
+async function updateCurrentNodeInfo() {
+  try {
+    // 浣跨敤姝ｇ‘鐨凙PI绔偣鑾峰彇PROXY缁勪俊鎭?    const response = await fetch('http://127.0.0.1:9090/proxies/PROXY');
+    if (response.ok) {
+      const data = await response.json();
+      console.log('鑾峰彇鍒癙ROXY缁勪俊鎭?', data);
+      
+      if (data && data.now) {
+        currentNode = data.now;
+        console.log('鏇存柊褰撳墠鑺傜偣涓?', currentNode);
+        
+        // 鏇存柊lastConnectionsInfo涓殑鑺傜偣淇℃伅
+        lastConnectionsInfo = {
+          ...lastConnectionsInfo,
+          currentNode: currentNode
+        };
+        
+        // 閫氱煡涓荤獥鍙ｈ妭鐐瑰凡鏇存柊
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          console.log('鍙戦€佽妭鐐瑰彉鏇翠簨浠?', currentNode);
+          
+          // 绔嬪嵆鍙戦€佽妭鐐规洿鏂?          mainWindow.webContents.send('node-changed', { nodeName: currentNode });
+          
+          // 娣诲姞寤惰繜锛岀‘淇濆墠绔湁瓒冲鏃堕棿澶勭悊鑺傜偣鏇存柊
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              console.log('寤惰繜鍙戦€佽繛鎺ヤ俊鎭洿鏂?', lastConnectionsInfo);
+              mainWindow.webContents.send('connections-update', lastConnectionsInfo);
+            }
+          }, 500);
+        } else {
+          console.warn('涓荤獥鍙ｆ湭鍑嗗濂斤紝鏃犳硶鍙戦€佽妭鐐瑰彉鏇翠簨浠?);
+        }
+      } else {
+        console.error('PROXY缁勪俊鎭腑娌℃湁now瀛楁:', data);
+      }
+    } else {
+      console.error('鑾峰彇PROXY缁勪俊鎭け璐?', response.status, response.statusText);
+    }
+  } catch (error) {
+    console.error('鑾峰彇褰撳墠鑺傜偣淇℃伅澶辫触:', error);
+  }
+}
+
+// 鍋滄杩炴帴绠＄悊WebSocket
+function stopConnectionsWebSocket() {
+  if (connectionsWebSocket) {
+    connectionsWebSocket.close();
+    connectionsWebSocket = null;
+  }
+  connectionsRetry = 10;
+}
+
+// 娣诲姞妫€鏌ihomo鏈嶅姟鐘舵€佺殑鍑芥暟
+async function checkMihomoService() {
+  try {
+    const response = await fetch('http://127.0.0.1:9090/proxies');
+    if (response.ok) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('[DEBUG] Mihomo鏈嶅姟妫€鏌ュけ璐?', error);
+    return false;
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  setupTray();
+  startConnectionsWebSocket(); // 鍚姩杩炴帴绠＄悊
+
+  app.on('activate', function () {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  // IPC浜嬩欢澶勭悊
+  ipcMain.handle('start-mihomo', (event, configPath) => {
+    return startMihomo(configPath);
+  });
+
+  ipcMain.handle('stop-mihomo', () => {
+    if (mihomoProcess) {
+      mihomoProcess.kill();
+      mihomoProcess = null;
+      stopTrafficStatsUpdate();
+      return true;
+    }
+    return false;
+  });
+
+  ipcMain.handle('save-subscription', (event, subUrl, configData, customName) => {
+    // 娣诲姞璋冭瘯杈撳嚭
+    console.log('淇濆瓨璁㈤槄 - URL:', subUrl);
+    console.log('淇濆瓨璁㈤槄 - 鑷畾涔夊悕绉?', customName);
+    
+    // 濡傛灉鎻愪緵浜嗚嚜瀹氫箟鍚嶇О锛屼娇鐢ㄥ畠浣滀负鏂囦欢鍚嶏紝鍚﹀垯浣跨敤鏃堕棿鎴?    const fileName = customName 
+      ? `${customName.replace(/[^\w\u4e00-\u9fa5\-\.]/g, '_')}.yaml` // 鏇挎崲闈炴硶瀛楃
+      : `sub_${Date.now()}.yaml`;
+    
+    console.log('淇濆瓨璁㈤槄 - 鏈€缁堟枃浠跺悕:', fileName);
+    
+    const filePath = path.join(configDir, fileName);
+    fs.writeFileSync(filePath, configData);
+    
+    // 淇濆瓨璁㈤槄URL鍒拌褰曟枃浠?    try {
+      // 璇诲彇璁㈤槄URL璁板綍鏂囦欢锛堝鏋滃瓨鍦級
+      const urlsPath = path.join(configDir, 'subscription_urls.json');
+      let urlsData = {};
+      if (fs.existsSync(urlsPath)) {
+        urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
+      }
+      
+      // 鏇存柊URL璁板綍
+      urlsData[fileName] = subUrl;
+      
+      // 淇濆瓨鏇存柊鍚庣殑璁板綍
+      fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
+      console.log(`璁㈤槄URL宸茶褰? ${fileName} -> ${subUrl}`);
+    } catch (error) {
+      console.warn('淇濆瓨璁㈤槄URL璁板綍澶辫触:', error);
+    }
+    
+    return filePath;
+  });
+
+  ipcMain.handle('get-subscriptions', () => {
+    if (!fs.existsSync(configDir)) return [];
+    
+    return fs.readdirSync(configDir)
+      .filter(file => file.endsWith('.yaml'))
+      .map(file => ({
+        name: file.replace('.yaml', ''),
+        path: path.join(configDir, file)
+      }));
+  });
+
+  ipcMain.handle('delete-subscription', (event, filePath) => {
+    try {
+      fs.unlinkSync(filePath);
+      return true;
+    } catch (error) {
+      console.error(`Failed to delete ${filePath}:`, error);
+      return false;
+    }
+  });
+
+  ipcMain.handle('get-traffic-stats', () => {
+    return lastTrafficStats;
+  });
+
+  // 鏂板锛氫粠涓昏繘绋嬭幏鍙栬闃呭唴瀹?  ipcMain.handle('fetch-subscription', async (event, subUrl) => {
+    try {
+      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+      
+      // 纭繚璁㈤槄URL鏈夋晥
+      if (!subUrl || !subUrl.startsWith('http')) {
+        throw new Error('鏃犳晥鐨勮闃匲RL');
+      }
+      
+      console.log('姝ｅ湪鑾峰彇璁㈤槄鍐呭...');
+      const response = await fetch(subUrl);
+      
+      if (!response.ok) {
+        throw new Error(`鑾峰彇璁㈤槄澶辫触: ${response.statusText}`);
+      }
+      
+      const content = await response.text();
+      
+      if (!content || content.trim() === '') {
+        throw new Error('璁㈤槄鍐呭涓虹┖');
+      }
+      
+      // 妫€鏌ヨ幏鍙栫殑鍐呭鏄惁鏄湁鏁堢殑YAML鎴朖SON
+      try {
+        yaml.load(content);
+      } catch (yamlError) {
+        try {
+          JSON.parse(content);
+        } catch (jsonError) {
+          throw new Error('璁㈤槄鍐呭鏍煎紡鏃犳晥锛屼笉鏄湁鏁堢殑YAML鎴朖SON');
+        }
+      }
+      
+      console.log('璁㈤槄鍐呭鑾峰彇鎴愬姛');
+      return content;
+    } catch (error) {
+      console.error('鑾峰彇璁㈤槄澶辫触:', error);
+      return null;
+    }
+  });
+
+  ipcMain.handle('open-external', (event, url) => {
+    shell.openExternal(url);
+    return { success: true };
+  });
+
+  // 鏂板锛氭墦寮€鏂囦欢
+  ipcMain.handle('open-file', (event, filePath) => {
+    try {
+      // 鍦╓indows涓婏紝浣跨敤shell.openPath鎵撳紑鏂囦欢
+      shell.openPath(filePath);
+      return { success: true };
+    } catch (error) {
+      console.error('鎵撳紑鏂囦欢澶辫触:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 鏂板锛氭墦寮€鏂囦欢鎵€鍦ㄧ洰褰?  ipcMain.handle('open-file-location', (event, filePath) => {
+    try {
+      // 鍦╓indows涓婏紝浣跨敤shell.showItemInFolder鎵撳紑鏂囦欢鎵€鍦ㄧ洰褰?      shell.showItemInFolder(filePath);
+      return { success: true };
+    } catch (error) {
+      console.error('鎵撳紑鏂囦欢鎵€鍦ㄧ洰褰曞け璐?', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 鏂板锛氭洿鏂版寚瀹氱殑璁㈤槄
+  ipcMain.handle('refresh-subscription', async (event, filePath) => {
+    try {
+      // 鑾峰彇璁㈤槄URL
+      // 鐩存帴璋冪敤get-subscription-url澶勭悊绋嬪簭鍑芥暟
+      const getSubscriptionUrlHandler = async (filePath) => {
+        try {
+          // 鑾峰彇鏂囦欢鍚?          const fileName = path.basename(filePath);
+          
+          // 璇诲彇璁㈤槄URL璁板綍
+          const urlsPath = path.join(configDir, 'subscription_urls.json');
+          if (!fs.existsSync(urlsPath)) {
+            console.log('璁㈤槄URL璁板綍鏂囦欢涓嶅瓨鍦紝灏濊瘯鍒涘缓鏂拌褰?);
+            
+            // 鍒涘缓涓€涓┖鐨勮褰曟枃浠?            fs.writeFileSync(urlsPath, JSON.stringify({}, null, 2), 'utf8');
+            
+            // 瀵逛簬鏃х増鏈坊鍔犵殑璁㈤槄锛屾垜浠彲浠ユ彁绀虹敤鎴烽噸鏂版坊鍔?            return { success: false, error: '鏈壘鍒拌闃匲RL璁板
+綍銆傝繖鍙兘鏄洜涓烘璁㈤槄鏄湪鏃х増鏈坊鍔犵殑锛岃灏濊瘯鍒犻櫎骞堕噸鏂版坊鍔犺闃呫€? };
+          }
+          
+          // 瑙ｆ瀽璁板綍鏂囦欢
+          const urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
+          
+          // 棣栧厛灏濊瘯浣跨敤瀹屾暣鏂囦欢鍚嶆煡鎵?          let url = urlsData[fileName];
+          
+          // 濡傛灉鎵句笉鍒帮紝灏濊瘯鍙娇鐢ㄦ枃浠跺悕閮ㄥ垎锛堜笉鍖呭惈璺緞锛?          if (!url) {
+            const fileNameOnly = fileName.replace(/\.yaml$/, '');
+            for (const [key, value] of Object.entries(urlsData)) {
+              const keyWithoutExt = key.replace(/\.yaml$/, '');
+              if (keyWithoutExt === fileNameOnly) {
+                url = value;
+                
+                // 鏇存柊璁板綍浠ヤ娇鐢ㄦ纭殑鏂囦欢鍚?                urlsData[fileName] = value;
+                fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
+                break;
+              }
+            }
+          }
+          
+          if (!url) {
+            console.log(`鏈壘鍒版枃浠?${fileName} 瀵瑰簲鐨勮闃匲RL`);
+            return { success: false, error: '鏈壘鍒板搴旂殑璁㈤槄URL銆傝灏濊瘯鍒犻櫎骞堕噸鏂版坊鍔犺闃呫€? };
+          }
+          
+          console.log(`鎵惧埌鏂囦欢 ${fileName} 瀵瑰簲鐨勮闃匲RL: ${url}`);
+          return { success: true, url };
+        } catch (error) {
+          console.error('鑾峰彇璁㈤槄URL澶辫触:', error);
+          return { success: false, error: error.message };
+        }
+      };
+      
+      const urlResult = await getSubscriptionUrlHandler(filePath);
+      
+      if (!urlResult.success || !urlResult.url) {
+        return { success: false, error: urlResult.error || '鏃犳硶鑾峰彇璁㈤槄URL' };
+      }
+      
+      const subUrl = urlResult.url;
+      console.log(`鍑嗗鍒锋柊璁㈤槄: ${filePath}, URL: ${subUrl}`);
+      
+      // 鑾峰彇璁㈤槄鍐呭
+      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+      
+      // 纭繚璁㈤槄URL鏈夋晥
+      if (!subUrl || !subUrl.startsWith('http')) {
+        throw new Error('鏃犳晥鐨勮闃匲RL');
+      }
+      
+      console.log('姝ｅ湪鑾峰彇璁㈤槄鍐呭...');
+      const response = await fetch(subUrl, {
+        headers: {
+          'User-Agent': 'FlyCast/0.1.0'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`鑾峰彇璁㈤槄澶辫触: ${response.statusText}`);
+      }
+      
+      const configData = await response.text();
+      
+      if (!configData || configData.trim() === '') {
+        throw new Error('璁㈤槄鍐呭涓虹┖');
+      }
+      
+      // 妫€鏌ヨ幏鍙栫殑鍐呭鏄惁鏄湁鏁堢殑YAML鎴朖SON
+      try {
+        yaml.load(configData);
+      } catch (yamlError) {
+        try {
+          JSON.parse(configData);
+        } catch (jsonError) {
+          throw new Error('璁㈤槄鍐呭鏍煎紡鏃犳晥锛屼笉鏄湁鏁堢殑YAML鎴朖SON');
+        }
+      }
+      
+      // 鐩存帴瀹炵幇鏇存柊璁㈤槄鏂囦欢鐨勫姛鑳斤紝鑰屼笉鏄皟鐢╱pdateSubscription
+      try {
+        // 纭繚鏂囦欢璺緞鍜岄厤缃暟鎹湁鏁?        if (!filePath || !configData) {
+          throw new Error('鏃犳晥鐨勬枃浠惰矾寰勬垨閰嶇疆鏁版嵁');
+        }
+        
+        console.log('姝ｅ湪鏇存柊璁㈤槄鏂囦欢:', filePath);
+        
+        // 澶囦唤鍘熷鏂囦欢
+        const backupPath = `${filePath}.bak`;
+        if (fs.existsSync(filePath)) {
+          fs.copyFileSync(filePath, backupPath);
+        }
+        
+        // 鍐欏叆鏂扮殑閰嶇疆鍐呭
+        fs.writeFileSync(filePath, configData, 'utf8');
+        
+        // 鏇存柊璁㈤槄URL鐨勮褰曪紙濡傛灉鏈夎褰曠郴缁燂級
+        if (subUrl) {
+          try {
+            // 璇诲彇璁㈤槄URL璁板綍鏂囦欢锛堝鏋滃瓨鍦級
+            const urlsPath = path.join(configDir, 'subscription_urls.json');
+            let urlsData = {};
+            if (fs.existsSync(urlsPath)) {
+              urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
+            }
+            
+            // 鏇存柊URL璁板綍
+            urlsData[path.basename(filePath)] = subUrl;
+            
+            // 淇濆瓨鏇存柊鍚庣殑璁板綍
+            fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
+          } catch (error) {
+            console.warn('鏇存柊璁㈤槄URL璁板綍澶辫触锛屼絾閰嶇疆鏂囦欢宸叉洿鏂?', error);
+          }
+        }
+        
+        console.log('璁㈤槄鏇存柊鎴愬姛');
+        return { success: true, filePath };
+      } catch (error) {
+        console.error('鏇存柊璁㈤槄澶辫触:', error);
+        // 濡傛灉鏈夊浠斤紝灏濊瘯鎭㈠
+        const backupPath = `${filePath}.bak`;
+        if (fs.existsSync(backupPath)) {
+          try {
+            fs.copyFileSync(backupPath, filePath);
+            console.log('宸蹭粠澶囦唤鎭㈠鍘熷鏂囦欢');
+          } catch (restoreError) {
+            console.error('浠庡浠芥仮澶嶅け璐?', restoreError);
+          }
+        }
+        return { success: false, error: error.message };
+      }
+    } catch (error) {
+      console.error('鍒锋柊璁㈤槄澶辫触:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 鍒囨崲鑺傜偣
+  ipcMain.handle('select-node', async (event, nodeName, groupName = 'PROXY', updateGlobal = false) => {
+    try {
+      console.log(`[DEBUG] 寮€濮嬪垏鎹㈣妭鐐规祦绋媊);
+      console.log(`[DEBUG] 鐩爣鑺傜偣: ${nodeName}, 缁? ${groupName}, 鏇存柊鍏ㄥ眬鐘舵€? ${updateGlobal}`);
+      
+      // 妫€鏌ihomo鏈嶅姟鐘舵€?      const isServiceRunning = await checkMihomoService();
+      if (!isServiceRunning) {
+        console.error('[DEBUG] Mihomo鏈嶅姟鏈繍琛?);
+        throw new Error('Mihomo鏈嶅姟鏈繍琛岋紝璇峰厛鍚姩Mihomo');
+      }
+      
+      // 浣跨敤fetch API杩涜鑺傜偣鍒囨崲
+      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+      
+      // 鍏抽棴鐜版湁杩炴帴浠ラ伩鍏嶆綔鍦ㄥ啿绐?      try {
+        await fetch('http://127.0.0.1:9090/connections', {
+          method: 'DELETE'
+        });
+        console.log(`[DEBUG] 宸插叧闂墍鏈夌幇鏈夎繛鎺);
+      } catch (error) {
+        console.warn(`[DEBUG] 鍏抽棴杩炴帴澶辫触锛岀户缁墽琛? ${error.message}`);
+      }
+      
+      // 鍙戦€佸垏鎹㈣妭鐐硅姹?      console.log(`[DEBUG] 鍙戦€佸垏鎹㈣妭鐐硅姹? ${nodeName}, 缁? ${groupName}`);
+      const response = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: nodeName })
+      });
+      
+      console.log(`[DEBUG] 鍒囨崲鑺傜偣鍝嶅簲鐘舵€? ${response.status} ${response.statusText}`);
+      
+      // 204鏄垚鍔熺殑鐘舵€佺爜
+      if (response.status === 204 || response.ok) {
+        console.log(`[DEBUG] 鑺傜偣鍒囨崲璇锋眰鎴愬姛`);
+        
+        // 绛夊緟涓€娈垫椂闂村悗楠岃瘉鑺傜偣鏄惁鍒囨崲鎴愬姛
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        try {
+          // 楠岃瘉鑺傜偣鍒囨崲鏄惁鎴愬姛
+          const verifyResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)
+}`);
+          const verifyData = await verifyResponse.json();
+          
+          console.log(`[DEBUG] 楠岃瘉缁撴灉:`, verifyData);
+          
+          if (verifyData.now !== nodeName) {
+            console.warn(`[DEBUG] 鑺傜偣鍒囨崲楠岃瘉涓嶅尮閰? 鏈熸湜 ${nodeName}, 瀹為檯 ${verifyData.now}, 浣嗕粛鐒剁户缁璥);
+          }
+          
+          // 鍙湁褰撳垏鎹富瑕佷唬鐞嗙粍(PROXY/GLOBAL)鎴栨槑纭姹傛洿鏂板叏灞€鐘舵€佹椂锛屾墠鏇存柊currentNode
+          if (updateGlobal || groupName === 'PROXY' || groupName === 'GLOBAL') {
+            // 鏇存柊褰撳墠鑺傜偣
+            currentNode = verifyData.now || nodeName;
+            
+            // 鏇存柊杩炴帴淇℃伅
+            if (lastConnectionsInfo) {
+              lastConnectionsInfo.currentNode = currentNode;
+            }
+            
+            // 閫氱煡鍓嶇鏇存柊鍏ㄥ眬鑺傜偣鐘舵€?            mainWindow.webContents.send('node-changed', { nodeName: curre
+ntNode });
+            console.log(`[DEBUG] 宸叉洿鏂板叏灞€鑺傜偣鐘舵€佷负: ${currentNode}`);
+          } else {
+            console.log(`[DEBUG] 浠呮洿鏂扮粍 ${groupName} 鐨勮妭鐐逛负 ${nodeName}锛屼笉褰卞搷鍏ㄥ眬鐘舵€乣);
+          }
+          
+          console.log(`[DEBUG] 鑺傜偣鍒囨崲鎴愬姛瀹屾垚锛岀粍: ${groupName}, 鑺傜偣: ${verifyData.now || nodeName}`);
+          return { success: true, nodeName: verifyData.now || nodeName, groupName };
+        } catch (verifyError) {
+          console.warn(`[DEBUG] 楠岃瘉鑺傜偣鍒囨崲鐘舵€佸け璐ワ紝缁х画浣跨敤鍘熼€夋嫨: ${verifyError.message}`);
+          
+          // 鍚屾牱锛屽彧鏈夊綋鍒囨崲涓昏浠ｇ悊缁勬椂鎵嶆洿鏂板叏灞€鐘舵€?          if (updateGlobal || groupName === 'PROXY' || groupN
+ame === 'GLOBAL') {
+            currentNode = nodeName;
+            if (lastConnectionsInfo) {
+              lastConnectionsInfo.currentNode = currentNode;
+            }
+            mainWindow.webContents.send('node-changed', { nodeName: currentNode });
+          }
+          
+          return { success: true, nodeName: nodeName, groupName };
+        }
+      } else {
+        const errorText = await response.text();
+        console.error(`[DEBUG] 鍒囨崲鑺傜偣澶辫触: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`鍒囨崲鑺傜偣澶辫触: ${response.statusText} - ${errorText}`);
+      }
+    } catch (error) {
+      console.error(`[DEBUG] 鑺傜偣鍒囨崲杩囩▼涓嚭閿?`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 娣诲姞鑺傜偣鍙樻洿閫氱煡
+  ipcMain.handle('notify-node-changed', (event, nodeName) => {
+    try {
+      // 鏇存柊褰撳墠閫変腑鐨勮妭鐐?      currentNode = nodeName;
+      // 閫氱煡鎵€鏈夌獥鍙ｈ妭鐐瑰凡鍙樻洿
+      mainWindow.webContents.send('node-changed', { nodeName });
+      return { success: true };
+    } catch (error) {
+      console.error('鍙戦€佽妭鐐瑰彉鏇撮€氱煡澶辫触:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 鏂板锛氳幏鍙栦唬鐞嗚妭鐐逛俊鎭?  ipcMain.handle('get-proxies', async (event) => {
+    try {
+      console.log(`[DEBUG] 寮€濮嬭幏鍙栦唬鐞嗚妭鐐逛俊鎭痐);
+      
+      // 妫€鏌ihomo鏈嶅姟鐘舵€?      const isServiceRunning = await checkMihomoService();
+      if (!isServiceRunning) {
+        console.error('[DEBUG] Mihomo鏈嶅姟鏈繍琛?);
+        throw new Error('Mihomo鏈嶅姟鏈繍琛岋紝璇峰厛鍚姩Mihomo');
+      }
+      
+      // 浣跨敤fetch API鑾峰彇浠ｇ悊鑺傜偣淇℃伅
+      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+      
+      // 鑾峰彇浠ｇ悊鑺傜偣淇℃伅
+      const response = await fetch('http://127.0.0.1:9090/proxies');
+      const data = await response.json();
+      
+      console.log(`[DEBUG] 鑾峰彇浠ｇ悊鑺傜偣淇℃伅鎴愬姛`);
+      
+      // 澶勭悊鏁版嵁锛屾彁鍙栬妭鐐圭粍鍜屽綋鍓嶉€変腑鐨勮妭鐐?      const groups = [];
+      let selected = null;
+      
+      // 棣栧厛鏌ユ壘PROXY缁?      if (data.proxies && data.proxies['PROXY']) {
+        const proxyGroup = data.proxies['PROXY'];
+        selected = proxyGroup.now;
+        
+        // 鎻愬彇鑺傜偣缁?        if (proxyGroup.all && proxyGroup.all.length > 0) {
+          const nodes = [];
+          for (const nodeName of proxyGroup.all) {
+            if (data.proxies[nodeName]) {
+              const node = data.proxies[nodeName];
+              nodes.push({
+                name: nodeName,
+                type: node.type,
+                server: node.server || '',
+                port: node.port || 0,
+                delay: node.delay || undefined
+              });
+            }
+          }
+          
+          groups.push({
+            name: 'PROXY',
+            type: proxyGroup.type,
+            nodes: nodes
+          });
+        }
+      }
+      // 濡傛灉PROXY缁勪笉瀛樺湪锛屽垯鏌ユ壘GLOBAL缁勪綔涓哄閫?      else if (data.proxies && data.proxies['GLOBAL']) {
+        const globalGroup = data.proxies['GLOBAL'];
+        selected = globalGroup.now;
+        
+        // 鎻愬彇鑺傜偣缁?        if (globalGroup.all && globalGroup.all.length > 0) {
+          const nodes = [];
+          for (const nodeName of globalGroup.all) {
+            if (data.proxies[nodeName]) {
+              const node = data.proxies[nodeName];
+              nodes.push({
+                name: nodeName,
+                type: node.type,
+                server: node.server || '',
+                port: node.port || 0,
+                delay: node.delay || undefined
+              });
+            }
+          }
+          
+          groups.push({
+            name: 'GLOBAL',
+            type: globalGroup.type,
+            nodes: nodes
+          });
+        }
+      }
+      
+      // 鎻愬彇鍏朵粬鑺傜偣缁?      for (const [name, proxy] of Object.entries(data.proxies)) {
+        if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback' || proxy.typ
+e === 'LoadBalance') {
+          if (name !== 'GLOBAL' && name !== 'PROXY' && proxy.all && proxy.all.length > 0) {
+            const nodes = [];
+            for (const nodeName of proxy.all) {
+              if (data.proxies[nodeName]) {
+                const node = data.proxies[nodeName];
+                nodes.push({
+                  name: nodeName,
+                  type: node.type,
+                  server: node.server || '',
+                  port: node.port || 0,
+                  delay: node.delay || undefined
+                });
+              }
+            }
+            
+            groups.push({
+              name: name,
+              type: proxy.type,
+              nodes: nodes
+            });
+          }
+        }
+      }
+      
+      return {
+        groups: groups,
+        selected: selected
+      };
+    } catch (error) {
+      console.error(`[DEBUG] 鑾峰彇浠ｇ悊鑺傜偣淇℃伅澶辫触:`, error);
+      return { groups: [], selected: null };
+    }
+  });
+
+  // 娴嬭瘯鑺傜偣寤惰繜
+  ipcMain.handle('test-node-delay', async (event, nodeName) => {
+    try {
+      console.log(`[DEBUG] 寮€濮嬫祴璇曡妭鐐瑰欢杩? ${nodeName}`);
+      
+      // 妫€鏌ihomo鏈嶅姟鐘舵€?      const isServiceRunning = await checkMihomoService();
+      if (!isServiceRunning) {
+        console.error('[DEBUG] Mihomo鏈嶅姟鏈繍琛岋紝鏃犳硶娴嬭瘯鑺傜偣寤惰繜');
+        throw new Error('Mihomo鏈嶅姟鏈繍琛岋紝鏃犳硶娴嬭瘯鑺傜偣寤惰繜');
+      }
+      
+      // 浣跨敤fetch API娴嬭瘯鑺傜偣寤惰繜
+      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+      
+      // 璁剧疆URL鍜屽弬鏁?      const url = new URL(`http://127.0.0.1:9090/proxies/${encodeURIComponent(nodeName)
+}/delay`);
+      url.searchParams.append('url', 'http://www.gstatic.com/generate_204');
+      url.searchParams.append('timeout', '5000');
+      
+      // 鍙戦€佽姹?      console.log(`[DEBUG] 鍙戦€佹祴璇曞欢杩熻姹? ${url.toString()}`);
+      const response = await fetch(url.toString());
+      
+      // 澶勭悊鍝嶅簲
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`[DEBUG] 鑺傜偣 ${nodeName} 寤惰繜娴嬭瘯缁撴灉: ${data.delay}ms`);
+        
+        // 杩斿洖寤惰繜缁撴灉
+        return data.delay;
+      } else {
+        const errorText = await response.text();
+        console.error(`[DEBUG] 娴嬭瘯鑺傜偣寤惰繜澶辫触: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`娴嬭瘯鑺傜偣寤惰繜澶辫触: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error(`[DEBUG] 娴嬭瘯鑺傜偣寤惰繜杩囩▼涓嚭閿?`, error);
+      
+      // 杩斿洖-1琛ㄧず娴嬭瘯澶辫触
+      return -1;
+    }
+  });
+
+  ipcMain.handle('get-active-config', () => {
+    return configFilePath || null;
+  });
+  
+  ipcMain.handle('get-proxy-nodes', (event, configPath) => {
+    try {
+      // 濡傛灉鎻愪緵浜嗛厤缃矾寰勶紝浣跨敤瀹冿紱鍚﹀垯浣跨敤褰撳墠娲昏穬鐨勯厤缃?      const targetPath = configPath || configFilePath;
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        console.log('閰嶇疆鏂囦欢涓嶅瓨鍦?', targetPath);
+        return null;
+      }
+      
+      // 鐩存帴浠庨厤缃枃浠朵腑瑙ｆ瀽鑺傜偣淇℃伅锛岃€屼笉鏄皟鐢≧ESTful API
+      // 杩欐牱鍗充娇mihomo鏈繍琛屾垨宕╂簝锛屼篃鑳芥樉绀鸿妭鐐逛俊鎭?      return parseConfigFile(targetPath);
+    } catch (error) {
+      console.error('鑾峰彇浠ｇ悊鑺傜偣澶辫触:', error);
+      return null;
+    }
+  });
+  
+  // 璁剧疆鏄惁鑷姩鍚姩
+  ipcMain.handle('set-auto-start', (event, enabled) => {
+    autoStartEnabled = !!enabled;
+    // 鍙互灏嗚缃繚瀛樺埌閰嶇疆鏂囦欢涓紝杩欓噷绠€鍖栧鐞?    return true;
+  });
+  
+  // 鑾峰彇鑷姩鍚姩璁剧疆
+  ipcMain.handle('get-auto-start', () => {
+    return autoStartEnabled;
+  });
+  
+  // 淇濆瓨鏃ュ織鍒版枃浠?  ipcMain.handle('save-logs', (event, logEntries) => {
+    try {
+      const logsDir = path.join(userDataPath, 'logs');
+      if (!fs.existsSync(logsDir)) {
+        fs.mkdirSync(logsDir, { recursive: true });
+      }
+      
+      const date = new Date();
+      const fileName = `mihomo-logs-${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-$
+{String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}-${String(date.getMinu
+tes()).padStart(2, '0')}.txt`;
+      const filePath = path.join(logsDir, fileName);
+      
+      // 鏍煎紡鍖栨棩蹇楀唴瀹?      const logContent = logEntries.map(entry => {
+        const timestamp = new Date(entry.timestamp).toLocaleString();
+        const type = entry.type === 'error' ? '[閿欒]' : '[淇℃伅]';
+        return `${timestamp} ${type} ${entry.content}`;
+      }).join('\n');
+      
+      fs.writeFileSync(filePath, logContent, 'utf8');
+      console.log(`鏃ュ織宸蹭繚瀛樺埌: ${filePath}`);
+      
+      return { success: true, filePath };
+    } catch (error) {
+      console.error('淇濆瓨鏃ュ織澶辫触:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 鏂板: 鍒囨崲绯荤粺浠ｇ悊
+  ipcMain.handle('toggleSystemProxy', async (event, enabled) => {
+    try {
+      if (enabled) {
+        // 鍚敤绯荤粺浠ｇ悊锛岄粯璁ょ鍙?890
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyE
+nable /t REG_DWORD /d 1 /f');
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyS
+erver /t REG_SZ /d "127.0.0.1:7890" /f');
+        // 鎵嬪姩鍒锋柊Internet璁剧疆
+        execSync('');
+        
+        // 鏇存柊鎵樼洏鑿滃崟鐨勫嬀閫夌姸鎬?        if (tray) {
+          const contextMenu = Menu.buildFromTemplate([
+            { label: '鏄剧ず涓荤獥鍙?, click: () => mainWindow.show() },
+            { type: 'separator' },
+            { label: '鍚敤绯荤粺浠ｇ悊', type: 'checkbox', checked: true, click: toggleSystemProxy },
+            { type: 'separator' },
+            { label: '閫€鍑?, click: () => {
+              isQuitting = true;
+              app.quit();
+            }}
+          ]);
+          tray.setContextMenu(contextMenu);
+        }
+        
+        mainWindow.webContents.send('proxy-status', true);
+        return true;
+      } else {
+        // 绂佺敤绯荤粺浠ｇ悊
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyE
+nable /t REG_DWORD /d 0 /f');
+        // 鎵嬪姩鍒锋柊Internet璁剧疆
+        execSync('');
+        
+        // 鏇存柊鎵樼洏鑿滃崟鐨勫嬀閫夌姸鎬?        if (tray) {
+          const contextMenu = Menu.buildFromTemplate([
+            { label: '鏄剧ず涓荤獥鍙?, click: () => mainWindow.show() },
+            { type: 'separator' },
+            { label: '鍚敤绯荤粺浠ｇ悊', type: 'checkbox', checked: false, click: toggleSystemProxy },
+            { type: 'separator' },
+            { label: '閫€鍑?, click: () => {
+              isQuitting = true;
+              app.quit();
+            }}
+          ]);
+          tray.setContextMenu(contextMenu);
+        }
+        
+        mainWindow.webContents.send('proxy-status', false);
+        return true;
+      }
+    } catch (error) {
+      console.error('鍒囨崲绯荤粺浠ｇ悊澶辫触:', error);
+      return false;
+    }
+  });
+
+  // 鏂板: 鑾峰彇绯荤粺浠ｇ悊鐘舵€?  ipcMain.handle('getProxyStatus', async () => {
+    try {
+      // 鑾峰彇浠ｇ悊鍚敤鐘舵€?      const enableResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\C
+urrentVersion\\Internet Settings" /v ProxyEnable').toString();
+      const enabled = enableResult.includes('0x1');
+      
+      // 濡傛灉鍚敤锛岃繕闇€纭浠ｇ悊鏈嶅姟鍣ㄨ缃槸鍚︽纭?      if (enabled) {
+        try {
+          const serverResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Int
+ernet Settings" /v ProxyServer').toString();
+          // 妫€鏌ユ槸鍚﹀寘鍚湰鍦颁唬鐞嗗湴鍧€
+          if (!serverResult.includes('127.0.0.1:7890')) {
+            console.log('浠ｇ悊宸插惎鐢ㄤ絾璁剧疆浜嗕笉鍚岀殑浠ｇ悊鏈嶅姟鍣?', serverResult);
+          } else {
+            console.log('绯荤粺浠ｇ悊宸叉纭缃负127.0.0.1:7890');
+          }
+        } catch (serverError) {
+          console.error('鑾峰彇浠ｇ悊鏈嶅姟鍣ㄨ缃け璐?', serverError);
+        }
+      } else {
+        console.log('绯荤粺浠ｇ悊褰撳墠宸茬鐢?);
+      }
+      
+      return enabled;
+    } catch (error) {
+      console.error('鑾峰彇绯荤粺浠ｇ悊鐘舵€佸け璐?', error);
+      return false;
+    }
+  });
+
+  // 娣诲姞鑾峰彇杩炴帴淇℃伅鐨勫嚱鏁?  ipcMain.handle('get-connections', async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:9090/connections');
+      if (response.ok) {
+        const data = await response.json();
+        console.log('鑾峰彇鍒拌繛鎺ヤ俊鎭?', data); // 娣诲姞鏃ュ織
+        return data;
+      } else {
+        console.error('鑾峰彇杩炴帴淇℃伅澶辫触:', response.status, response.statusText);
+        return null;
+      }
+    } catch (error) {
+      console.error('鑾峰彇杩炴帴淇℃伅澶辫触:', error);
+      return null;
+    }
+  });
+
+  // 娣诲姞鍏抽棴鐗瑰畾杩炴帴鐨勫嚱鏁?  ipcMain.handle('close-connection', async (event, connectionId) => {
+    try {
+      console.log(`灏濊瘯鍏抽棴杩炴帴: ${connectionId}`); // 娣诲姞鏃ュ織
+      const response = await fetch(`http://127.0.0.1:9090/connections/${connectionId}`, {
+        method: 'DELETE'
+      });
+      const success = response.ok;
+      console.log(`鍏抽棴杩炴帴缁撴灉: ${success ? '鎴愬姛' : '澶辫触'}`); // 娣诲姞鏃ュ織
+      return success;
+    } catch (error) {
+      console.error('鍏抽棴杩炴帴澶辫触:', error);
+      return false;
+    }
+  });
+
+  // 娣诲姞鍏抽棴鎵€鏈夎繛鎺ョ殑鍑芥暟
+  ipcMain.handle('close-all-connections', async () => {
+    try {
+      console.log('灏濊瘯鍏抽棴鎵€鏈夎繛鎺?); // 娣诲姞鏃ュ織
+      const response = await fetch('http://127.0.0.1:9090/connections', {
+        method: 'DELETE'
+      });
+      const success = response.ok;
+      console.log(`鍏抽棴鎵€鏈夎繛鎺ョ粨鏋? ${success ? '鎴愬姛' : '澶辫触'}`); // 娣诲姞鏃ュ織
+      return success;
+    } catch (error) {
+      console.error('鍏抽棴鎵€鏈夎繛鎺ュけ璐?', error);
+      return false;
+    }
+  });
+
+  // 澶勭悊杩炴帴淇℃伅鏇存柊
+  ipcMain.on('connections-update', (event, data) => {
+    if (mainWindow) {
+      console.log('涓昏繘绋嬪彂閫佽繛鎺ヤ俊鎭洿鏂?', data);
+      mainWindow.webContents.send('connections-update', {
+        connections: data.connections || [],
+        downloadTotal: data.downloadTotal || 0,
+        uploadTotal: data.uploadTotal || 0,
+        currentNode: currentNode,
+        activeConnections: data.connections ? data.connections.filter(conn => conn.isActive).length : 0
+      });
+    }
+  });
+
+  // 澶勭悊鑺傜偣鍙樻洿
+  ipcMain.on('node-changed', (event, data) => {
+    if (mainWindow) {
+      console.log('涓昏繘绋嬪彂閫佽妭鐐瑰彉鏇?', data);
+      // 鏇存柊褰撳墠鑺傜偣
+      if (data && data.nodeName) {
+        currentNode = data.nodeName;
+      }
+      
+      mainWindow.webContents.send('node-changed', {
+        nodeName: data && data.nodeName ? data.nodeName : (currentNode || '鏃?)
+      });
+      
+      // 鍚屾椂鏇存柊杩炴帴淇℃伅
+      const connectionInfo = {
+        ...lastConnectionsInfo,
+        currentNode: currentNode
+      };
+      mainWindow.webContents.send('connections-update', connectionInfo);
+    }
+  });
+
+  // 鏂板锛氳幏鍙栨€昏繛鎺ヤ俊鎭拰鎬绘祦閲?  ipcMain.handle('fetch-connections-info', async () => {
+    return fetchConnectionsInfo();
+  });
+});
+
+app.on('window-all-closed', () => {
+  stopConnectionsWebSocket(); // 鍋滄杩炴帴绠＄悊
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  if (mihomoProcess) {
+    mihomoProcess.kill();
+  }
+  // 纭繚閫€鍑烘椂鍏抽棴绯荤粺浠ｇ悊
+  try {
+    execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnabl
+e /t REG_DWORD /d 0 /f');
+  } catch (error) {
+    console.error('Failed to disable system proxy on exit:', error);
+  }
+});
+
+async function switchNode(nodeName) {
+  try {
+    // 鍏抽棴鐜版湁杩炴帴
+    if (connectionsWebSocket) {
+      connectionsWebSocket.close();
+      connectionsWebSocket = null;
+    }
+
+    // 鏇存柊褰撳墠鑺傜偣
+    currentNode = nodeName;
+    
+    // 閲嶆柊寤虹珛杩炴帴
+    await startConnectionsWebSocket();
+    
+    // 鏇存柊UI
+    if (mainWindow) {
+      mainWindow.webContents.send('node-switched', { node: nodeName });
+    }
+    
+    // 鏇存柊鎵樼洏鎻愮ず
+    if (tray) {
+      tray.setToolTip(`褰撳墠鑺傜偣: ${nodeName}`);
+    }
+    
+    console.log(`宸插垏鎹㈠埌鑺傜偣: ${nodeName}`);
+  } catch (error) {
+    console.error('鍒囨崲鑺傜偣澶辫触:', error);
+    // 閫氱煡鍓嶇鍒囨崲澶辫触
+    if (mainWindow) {
+      mainWindow.webContents.send('node-switch-error', { 
+        error: error.message,
+        node: nodeName 
+      });
+    }
+  }
+}
+
+// 鑾峰彇鎬昏繛鎺ヤ俊鎭拰鎬绘祦閲?async function fetchConnectionsInfo() {
+  try {
+    const response = await fetch('http://127.0.0.1:9090/connections');
+    if (response.ok) {
+      const data = await response.json();
+      
+      // 鏇存柊杩炴帴淇℃伅锛屽寘鎷€绘祦閲?      lastConnectionsInfo = {
+        ...lastConnectionsInfo,
+        downloadTotal: data.downloadTotal || 0,
+        uploadTotal: data.uploadTotal || 0,
+        connections: data.connections || [],
+        activeConnections: data.connections ? data.connections.length : 0
+      };
+      
+      // 鍙戦€佹洿鏂板埌涓荤獥鍙?      if (mainWindow) {
+        mainWindow.webContents.send('connections-update', lastConnectionsInfo);
+      }
+    }
+  } catch (error) {
+    console.error('鑾峰彇杩炴帴淇℃伅澶辫触:', error);
+  }
+} 
+
+
