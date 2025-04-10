@@ -2,7 +2,7 @@
   <img src="public/logo.png" alt="FlyClash Logo" width="200">
 </p>
 
-# FlyClash - 优雅的Mihomo客户端
+# FlyClash - 简洁优雅的代理工具
 
 FlyClash是一个基于Mihomo内核的现代化代理客户端，拥有美观的界面和强大的功能。
 
