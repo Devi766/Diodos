@@ -23,6 +23,7 @@ FlyClash是一个基于Mihomo内核的现代化代理客户端，拥有美观的
 ## 截图
 
 ![控制面板](screenshots/dashboard.png)
+![连接数据](screenshots/connect.png)
 ![订阅管理](screenshots/subscriptions.png)
 ![系统设置](screenshots/settings.png)
 ![深色模式](screenshots/darkmode.png)
