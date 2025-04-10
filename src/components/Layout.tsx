@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import classNames from 'classnames';
@@ -11,7 +11,8 @@ import {
   InfoCircledIcon,
   HamburgerMenuIcon,
   Cross1Icon,
-  BarChartIcon
+  BarChartIcon,
+  RocketIcon
 } from '@radix-ui/react-icons';
 
 interface LayoutProps {
@@ -22,6 +23,7 @@ export default function Layout({ children }: LayoutProps) {
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState('0.1.1');
   
   const menuItems = [
     { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
@@ -30,6 +32,21 @@ export default function Layout({ children }: LayoutProps) {
     { name: '订阅管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
     { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
   ];
+
+  useEffect(() => {
+    const fetchVersion = async () => {
+      try {
+        if (typeof window !== 'undefined' && window.electronAPI) {
+          const version = await window.electronAPI.getAppVersion();
+          setAppVersion(version);
+        }
+      } catch (error) {
+        console.error('获取应用版本号失败:', error);
+      }
+    };
+
+    fetchVersion();
+  }, []);
 
   return (
     <div className="flex h-screen bg-[#f9f9f9] dark:bg-[#1a1a1a] overflow-hidden">
@@ -98,7 +115,7 @@ export default function Layout({ children }: LayoutProps) {
             {!sidebarCollapsed && (
               <div>
                 <div className="text-sm font-medium text-gray-700 dark:text-gray-300">已连接</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">v0.1.0</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">v{appVersion}</div>
               </div>
             )}
           </div>

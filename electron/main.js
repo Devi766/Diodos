@@ -10,6 +10,9 @@ const http = require('http');
 const serveStatic = require('serve-static');
 const finalhandler = require('finalhandler');
 
+// 应用版本号 - 统一管理所有界面显示的版本
+const APP_VERSION = '0.1.1';
+
 let mainWindow;
 let tray;
 let mihomoProcess;
@@ -1452,7 +1455,7 @@ app.whenReady().then(() => {
       console.log('正在获取订阅内容...');
       const response = await fetch(subUrl, {
         headers: {
-          'User-Agent': 'FlyClash/0.1.0'
+          'User-Agent': `FlyClash/${APP_VERSION}`
         }
       });
       
@@ -1764,26 +1767,28 @@ app.whenReady().then(() => {
   
   ipcMain.handle('get-proxy-nodes', (event, configPath) => {
     try {
-      // 如果提供了配置路径，使用它；否则使用当前活跃的配置
-      const targetPath = configPath || configFilePath;
-      if (!targetPath || !fs.existsSync(targetPath)) {
-        console.log('配置文件不存在:', targetPath);
+      // 如果指定了配置路径，则使用指定的路径
+      // 否则使用当前激活的配置
+      const config = configPath || configFilePath;
+      if (!config) {
         return null;
       }
       
-      // 直接从配置文件中解析节点信息，而不是调用RESTful API
-      // 这样即使mihomo未运行或崩溃，也能显示节点信息
-      return parseConfigFile(targetPath);
+      return parseConfigFile(config);
     } catch (error) {
       console.error('获取代理节点失败:', error);
       return null;
     }
   });
   
-  // 设置是否自动启动
+  // 处理获取应用版本号
+  ipcMain.handle('get-app-version', () => {
+    return APP_VERSION;
+  });
+
+  // 处理自动启动设置
   ipcMain.handle('set-auto-start', (event, enabled) => {
-    autoStartEnabled = !!enabled;
-    // 可以将设置保存到配置文件中，这里简化处理
+    autoStartEnabled = enabled;
     return true;
   });
   

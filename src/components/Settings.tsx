@@ -7,23 +7,29 @@ export default function Settings() {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
+  const [appVersion, setAppVersion] = useState('');
 
-  // 在组件加载时获取保存的主题
+  // 在组件加载时获取保存的主题和应用版本号
   useEffect(() => {
-    const fetchTheme = async () => {
+    const fetchData = async () => {
       try {
         if (typeof window !== 'undefined' && window.electronAPI) {
-          const result = await window.electronAPI.getTheme();
-          if (result.success) {
-            setTheme(result.theme);
+          // 获取主题
+          const themeResult = await window.electronAPI.getTheme();
+          if (themeResult.success) {
+            setTheme(themeResult.theme);
           }
+          
+          // 获取应用版本号
+          const version = await window.electronAPI.getAppVersion();
+          setAppVersion(version);
         }
       } catch (error) {
-        console.error('获取主题设置失败:', error);
+        console.error('获取设置数据失败:', error);
       }
     };
 
-    fetchTheme();
+    fetchData();
 
     // 监听主题变更事件
     const handleThemeChanged = (_event: any, newTheme: string) => {
@@ -231,7 +237,7 @@ export default function Settings() {
           <Tabs.Content value="about" className="w-full">
             <div className="flex flex-col items-center text-center py-8">
               <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">FlyClash</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: v0.1.0</p>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: v{appVersion}</p>
               
               <div className="bg-gray-50 dark:bg-[#222222] p-4 rounded-md mb-6 text-left w-full max-w-lg">
                 <p className="text-sm text-gray-700 dark:text-gray-200 mb-2">

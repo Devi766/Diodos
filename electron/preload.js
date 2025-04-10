@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 导航相关 - 新的页面加载方法
   loadPage: (pageName) => ipcRenderer.invoke('loadPage', pageName),
   
+  // 版本号
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  
   // Mihomo 管理
   startMihomo: (configPath) => ipcRenderer.invoke('start-mihomo', configPath),
   stopMihomo: () => ipcRenderer.invoke('stop-mihomo'),

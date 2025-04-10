@@ -22,6 +22,9 @@ interface ElectronAPI {
   // 导航相关
   loadPage: (pageName: string) => Promise<{ success: boolean }>;
   
+  // 版本号
+  getAppVersion: () => Promise<string>;
+  
   // Mihomo 管理
   startMihomo: (configPath: string) => Promise<boolean>;
   stopMihomo: () => Promise<boolean>;
