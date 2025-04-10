@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Toast from '@radix-ui/react-toast';
-import { Cross2Icon, PlusIcon, TrashIcon, GlobeIcon, Pencil1Icon, ReloadIcon, ExternalLinkIcon } from '@radix-ui/react-icons';
+import { Cross2Icon, PlusIcon, TrashIcon, GlobeIcon, Pencil1Icon, ReloadIcon, ExternalLinkIcon, UploadIcon } from '@radix-ui/react-icons';
 import axios from 'axios';
 
 type Subscription = {
   name: string;
   path: string;
+  // 可能的其他字段，如最后更新时间等
+  lastUpdated?: string;
 };
 
 export default function SubscriptionManager() {
@@ -21,6 +23,8 @@ export default function SubscriptionManager() {
   const [toastDescription, setToastDescription] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
   const [updatingSubPath, setUpdatingSubPath] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadSubscriptions();
@@ -145,15 +149,170 @@ export default function SubscriptionManager() {
     setToastOpen(true);
   };
 
-  return (
-    <div className="p-6">
-      <Toast.Provider swipeDirection="right">
-        <h1 className="text-2xl font-bold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">订阅管理</h1>
+  // 拖放相关处理函数
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // 检查是否离开了主容器
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+    
+    // 如果鼠标位置在容器外部，则设置isDragging为false
+    if (
+      x < rect.left ||
+      x >= rect.right ||
+      y < rect.top ||
+      y >= rect.bottom
+    ) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (!window.electronAPI) return;
+
+    // 获取拖拽的文件
+    const files = Array.from(e.dataTransfer.files);
+    
+    if (files.length === 0) return;
+
+    // 检查是否为YAML文件
+    const validFiles = files.filter(file => 
+      file.name.endsWith('.yaml') || 
+      file.name.endsWith('.yml') || 
+      file.type === 'application/x-yaml' ||
+      file.type === 'text/yaml'
+    );
+
+    if (validFiles.length === 0) {
+      showToast('错误', '请上传有效的YAML配置文件', 'error');
+      return;
+    }
+
+    // 处理每个有效文件
+    for (const file of validFiles) {
+      try {
+        // 读取文件内容
+        const content = await readFileAsText(file);
         
-        <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-white">我的订阅</h2>
+        // 保存为订阅
+        const filePath = await window.electronAPI.saveSubscription(
+          `local:${file.name}`, // 使用本地标识符
+          content,
+          file.name.replace(/\.(ya?ml)$/, '') // 使用文件名作为默认名称
+        );
+        
+        showToast('成功', `配置文件 ${file.name} 导入成功`, 'success');
+      } catch (error) {
+        console.error('导入配置文件失败:', error);
+        showToast('错误', `导入配置文件 ${file.name} 失败: ${error}`, 'error');
+      }
+    }
+
+    // 重新加载订阅列表
+    await loadSubscriptions();
+  }, []);
+
+  // 将文件读取为文本
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target?.result as string);
+      reader.onerror = e => reject(e);
+      reader.readAsText(file);
+    });
+  };
+
+  // 处理文件选择
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    
+    if (files.length === 0) return;
+
+    if (!window.electronAPI) return;
+
+    for (const file of files) {
+      try {
+        // 读取文件内容
+        const content = await readFileAsText(file);
+        
+        // 保存为订阅
+        const filePath = await window.electronAPI.saveSubscription(
+          `local:${file.name}`,
+          content,
+          file.name.replace(/\.(ya?ml)$/, '')
+        );
+        
+        showToast('成功', `配置文件 ${file.name} 导入成功`, 'success');
+      } catch (error) {
+        console.error('导入配置文件失败:', error);
+        showToast('错误', `导入配置文件 ${file.name} 失败: ${error}`, 'error');
+      }
+    }
+
+    // 清空文件输入，允许再次选择相同的文件
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    // 重新加载订阅列表
+    await loadSubscriptions();
+  };
+
+  // 打开文件选择对话框
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
+  return (
+    <div 
+      className="p-6 relative"
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <Toast.Provider swipeDirection="right">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold mb-4 text-[#3b82f6] dark:text-[#3b82f6]">订阅管理</h1>
+          
+          <div className="flex space-x-3">
+            {/* 上传YAML文件按钮 */}
+            <button
+              className="flex items-center py-2 px-4 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors"
+              onClick={triggerFileInput}
+            >
+              <UploadIcon className="mr-2" />
+              上传配置
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              accept=".yaml,.yml,application/x-yaml,text/yaml"
+              onChange={handleFileSelect}
+              multiple
+            />
             
+            {/* 添加订阅按钮 */}
             <Dialog.Root open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <Dialog.Trigger asChild>
                 <button
@@ -249,6 +408,32 @@ export default function SubscriptionManager() {
               </Dialog.Portal>
             </Dialog.Root>
           </div>
+        </div>
+        
+        {/* 拖放区域 - 始终存在但只在拖动时可见 */}
+        <div 
+          className={`fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm transition-opacity duration-300 ${
+            isDragging ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
+        >
+          <div className={`bg-white dark:bg-[#2a2a2a] rounded-lg p-8 shadow-xl border-2 border-dashed border-blue-500 mx-4 max-w-lg w-full transition-transform duration-300 transform ${
+            isDragging ? 'scale-100' : 'scale-95'
+          }`}>
+            <div className="flex flex-col items-center justify-center">
+              <UploadIcon className="w-16 h-16 mb-4 text-blue-500" />
+              <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
+                释放以上传YAML配置文件
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                支持.yaml和.yml格式文件
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        {/* 卡片网格 */}
+        <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-6">我的订阅</h2>
           
           {subscriptions.length === 0 ? (
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
@@ -256,73 +441,60 @@ export default function SubscriptionManager() {
               <p className="mt-2 text-sm">点击"添加订阅"按钮开始使用</p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-md border border-gray-200 dark:border-gray-700">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-[#2a2a2a]">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      名称
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      路径
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                      操作
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white dark:bg-[#222222] divide-y divide-gray-200 dark:divide-gray-800">
-                  {subscriptions.map((sub) => (
-                    <tr key={sub.path}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                        {sub.name}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300 truncate max-w-[200px]">
-                        {sub.path}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex items-center justify-end space-x-2">
-                          <button
-                            onClick={() => refreshSubscription(sub.path)}
-                            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                            title="更新订阅"
-                            disabled={updatingSubPath === sub.path}
-                          >
-                            {updatingSubPath === sub.path ? (
-                              <ReloadIcon className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <ReloadIcon className="w-4 h-4" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => openConfigFile(sub.path)}
-                            className="text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300"
-                            title="打开配置文件"
-                          >
-                            <ExternalLinkIcon className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => openConfigFolder(sub.path)}
-                            className="text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300"
-                            title="打开所在目录"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => deleteSubscription(sub.path)}
-                            className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                            title="删除订阅"
-                          >
-                            <TrashIcon className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {subscriptions.map((sub) => (
+                <div 
+                  key={sub.path} 
+                  className="relative rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#222222] p-4 shadow-sm hover:shadow-md transition-shadow"
+                >
+                  <div className="absolute top-3 right-3 flex space-x-2">
+                    <button
+                      onClick={() => refreshSubscription(sub.path)}
+                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 p-1 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/30"
+                      title="更新订阅"
+                      disabled={updatingSubPath === sub.path}
+                    >
+                      {updatingSubPath === sub.path ? (
+                        <ReloadIcon className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <ReloadIcon className="w-4 h-4" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => deleteSubscription(sub.path)}
+                      className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-1 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30"
+                      title="删除订阅"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  <h3 className="font-medium text-gray-800 dark:text-white mb-2 pr-16 truncate">{sub.name}</h3>
+                  
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 break-all line-clamp-2" title={sub.path}>
+                    {sub.path}
+                  </p>
+                  
+                  <div className="flex space-x-2 mt-4">
+                    <button
+                      onClick={() => openConfigFile(sub.path)}
+                      className="text-xs px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/40 rounded flex items-center justify-center flex-1 transition-colors"
+                    >
+                      <ExternalLinkIcon className="w-3 h-3 mr-1" />
+                      打开文件
+                    </button>
+                    <button
+                      onClick={() => openConfigFolder(sub.path)}
+                      className="text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/40 rounded flex items-center justify-center flex-1 transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                      </svg>
+                      打开目录
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

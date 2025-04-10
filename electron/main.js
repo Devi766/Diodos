@@ -103,7 +103,7 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f0f0f0',
+      color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
       symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
       height: 48
     },
@@ -113,7 +113,7 @@ function createWindow() {
   // 监听系统主题变化
   nativeTheme.on('updated', () => {
     mainWindow.setTitleBarOverlay({
-      color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f0f0f0',
+      color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
       symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
       height: 48
     });
@@ -1212,7 +1212,7 @@ app.whenReady().then(() => {
 
       // 更新标题栏颜色
       mainWindow.setTitleBarOverlay({
-        color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f0f0f0',
+        color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
         symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
         height: 48
       });

@@ -630,14 +630,11 @@ export default function ProxyNodes() {
       } else {
         console.log(`组 ${groupName} 节点切换成功: ${nodeName}`);
         
-        // 通知其他组件节点已更改，但只在切换主要代理组时才更新全局状态
-        if (window.electronAPI && isMainGroup) {
-          try {
-            const api = window.electronAPI as any;
-            await api.notifyNodeChanged(nodeName);
-          } catch (error) {
-            console.error('无法通知节点变更:', error);
-          }
+        // 如果切换的是主要代理组，才更新全局选中节点状态
+        if (isMainGroup) {
+          setSelectedNode(verifyData.now || nodeName);
+          // 在这里不再调用notifyNodeChanged，避免界面闪烁
+          // 我们只在本地更新状态即可
         }
       }
       
@@ -647,16 +644,6 @@ export default function ProxyNodes() {
           ? {...group, now: verifyData.now || nodeName}
           : group
       ));
-      
-      // 如果切换的是主要代理组，才更新全局选中节点状态
-      if (isMainGroup) {
-        setSelectedNode(verifyData.now || nodeName);
-      }
-      
-      // 重新获取代理组信息，确保所有状态更新
-      setTimeout(() => {
-      fetchProxies();
-      }, 2000);
     } catch (error) {
       console.error('切换节点失败:', error);
       showError(`切换失败: ${String(error)}`);

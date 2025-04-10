@@ -1,6 +1,6 @@
 import React from 'react';
 import * as NavigationMenu from "@radix-ui/react-navigation-menu";
-import { GearIcon, HomeIcon, ReaderIcon } from '@radix-ui/react-icons';
+import { BarChartIcon, GearIcon, HomeIcon, ReaderIcon } from '@radix-ui/react-icons';
 import { usePathname } from 'next/navigation';
 import classNames from 'classnames';
 
@@ -15,6 +15,7 @@ export default function NavMenu() {
   const menuItems = [
     { name: '控制面板', href: '/', pageName: 'index', icon: <HomeIcon className="w-5 h-5" /> },
     { name: '节点列表', href: '/nodes', pageName: 'nodes', icon: <HomeIcon className="w-5 h-5" /> },
+    { name: '连接数据', href: '/connections', pageName: 'connections', icon: <BarChartIcon className="w-5 h-5" /> },
     { name: '订阅管理', href: '/subscriptions', pageName: 'subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
     { name: '系统设置', href: '/settings', pageName: 'settings', icon: <GearIcon className="w-5 h-5" /> },
   ];

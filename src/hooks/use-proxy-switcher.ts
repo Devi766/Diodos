@@ -66,12 +66,7 @@ export const useProxySwitcher = () => {
           throw new Error(`节点切换验证失败: 期望 ${nodeName}, 实际 ${verifyData.now || '未知'}`);
         }
         
-        // 通知主进程节点已变更，便于同步状态
-        if (window.electronAPI) {
-          console.log(`[DEBUG] 步骤4: 通知主进程节点已变更为: ${nodeName}`);
-          await window.electronAPI.notifyNodeChanged(nodeName);
-        }
-        
+        // 不再通知主进程节点已变更，避免引起界面闪烁
         console.log(`[DEBUG] ====== 节点切换成功 ======`);
         return true;
       } else {

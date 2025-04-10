@@ -1082,7 +1082,7 @@ export default function Dashboard() {
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-hidden">
         <div className="h-full">
-          <div className="px-4 pb-4 pt-0 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-[#1a1a1a] dark:to-[#1a1a1a] min-h-full">
+          <div className="px-4 pb-4 pt-0 bg-gradient-to-br from-[#f9f9f9] to-[#f9f9f9] dark:from-[#1a1a1a] dark:to-[#1a1a1a] min-h-full">
             <h1 className="text-2xl font-bold mb-4 text-gray-800 dark:text-white bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-600">控制面板</h1>
             
             <Tabs.Root value={activeTab} onValueChange={handleTabChange} className="w-full">

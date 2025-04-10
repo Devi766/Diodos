@@ -76,7 +76,7 @@ export default function RootLayout({
         <meta name="description" content="现代、美观的Clash客户端，基于Mihomo内核" />
         <link rel="icon" href="/favicon.ico" />
       </head>
-      <body className="antialiased bg-[#f5f5f5] dark:bg-[#1f2937]">
+      <body className="antialiased bg-[#f9f9f9] dark:bg-[#1f2937]">
         {children}
       </body>
     </html>

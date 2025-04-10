@@ -10,7 +10,8 @@ import {
   DashboardIcon,
   InfoCircledIcon,
   HamburgerMenuIcon,
-  Cross1Icon
+  Cross1Icon,
+  BarChartIcon
 } from '@radix-ui/react-icons';
 
 interface LayoutProps {
@@ -25,12 +26,13 @@ export default function Layout({ children }: LayoutProps) {
   const menuItems = [
     { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
     { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
+    { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
     { name: '订阅管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
     { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
   ];
 
   return (
-    <div className="flex h-screen bg-[#f5f5f5] dark:bg-[#1a1a1a] overflow-hidden">
+    <div className="flex h-screen bg-[#f9f9f9] dark:bg-[#1a1a1a] overflow-hidden">
       {/* Sidebar - Desktop */}
       <div 
         className={classNames(
