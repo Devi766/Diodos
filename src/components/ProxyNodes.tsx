@@ -8,7 +8,8 @@ import {
   ExclamationTriangleIcon,
   Cross1Icon,
   MixerHorizontalIcon,
-  PlusIcon
+  PlusIcon,
+  CheckCircledIcon
 } from '@radix-ui/react-icons';
 import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
@@ -131,6 +132,14 @@ export default function ProxyNodes() {
         console.error('获取当前模式失败:', error);
       }
       
+      // 如果是直连模式，可以提前结束加载过程，只需设置空的节点列表
+      if (currentProxyMode === 'direct') {
+        console.log('直连模式，不加载节点列表');
+        setGroups([]);
+        setIsLoading(false);
+        return;
+      }
+      
       // 获取配置文件中的原始顺序
       let configOrder: {
         proxyGroups: Array<{name: string, type: string, proxies: string[]}>,
@@ -164,9 +173,9 @@ export default function ProxyNodes() {
       const groupsData: ProxyGroup[] = [];
       
       // 根据当前模式决定如何显示节点
-      if (currentProxyMode === 'global' || currentProxyMode === 'direct') {
-        // 全局模式和直连模式下，只显示GLOBAL代理组
-        console.log(`当前为${currentProxyMode === 'global' ? '全局' : '直连'}模式，只显示GLOBAL代理组`);
+      if (currentProxyMode === 'global') {
+        // 全局模式下，只显示GLOBAL代理组
+        console.log(`当前为全局模式，只显示GLOBAL代理组`);
         
         try {
           // 获取GLOBAL代理组信息
@@ -891,6 +900,25 @@ export default function ProxyNodes() {
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
+  // 渲染直连模式提示
+  const DirectModeMessage = () => (
+    <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
+      <div className="flex flex-col items-center justify-center space-y-3">
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M8 12h8" />
+          <path d="M12 8v8" />
+        </svg>
+        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">直连模式已启用</h3>
+        <p className="text-gray-500 dark:text-gray-400 max-w-lg">
+          在直连模式下，所有流量将直接访问目标，不通过任何代理节点。
+          <br />
+          此模式下不需要选择代理节点。
+        </p>
+      </div>
+    </div>
+  );
+
   if (!mihomoRunning) {
     return (
       <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8">
@@ -962,293 +990,239 @@ export default function ProxyNodes() {
         </Tabs>
       </div>
       
-      {/* 成功提示 */}
-      {successMessage && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-900/50 rounded-md p-4 flex items-start">
-          <CheckIcon className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
-          <p className="ml-3 text-sm text-green-800 dark:text-green-200">{successMessage}</p>
-          <button 
-            onClick={() => setSuccessMessage(null)} 
-            className="ml-auto text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300"
-          >
-            <Cross1Icon className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-      
-      {/* 错误提示 */}
+      {/* 错误/成功消息 */}
       {errorMessage && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-md p-4 flex items-start">
-          <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-          <p className="ml-3 text-sm text-red-800 dark:text-red-200">{errorMessage}</p>
-          <button 
-            onClick={() => setErrorMessage(null)} 
-            className="ml-auto text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
-          >
-            <Cross1Icon className="w-4 h-4" />
-          </button>
+        <div className="bg-red-100 border border-red-200 text-red-800 dark:bg-red-900/30 dark:border-red-800/50 dark:text-red-200 px-3 py-2 rounded-lg text-sm">
+          <ExclamationTriangleIcon className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+          {errorMessage}
         </div>
       )}
       
-      {/* 顶部控制栏 */}
-      <div className="flex justify-between items-center bg-white dark:bg-[#2a2a2a] p-3 rounded-lg shadow-sm border border-gray-200 dark:border-gray-800">
-        <div className="flex items-center gap-4 w-full">
-          <div className="relative flex-1 max-w-md">
-            <input
-              type="text"
-              className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 dark:bg-[#222222] border border-gray-200 dark:border-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-600 focus:border-transparent transition-all"
-              placeholder="搜索节点..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-            {searchTerm && (
-            <button 
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                onClick={() => setSearchTerm('')}
-            >
-                <Cross1Icon className="w-3 h-3 text-gray-500 dark:text-gray-300" />
-            </button>
+      {successMessage && (
+        <div className="bg-green-100 border border-green-200 text-green-800 dark:bg-green-900/30 dark:border-green-800/50 dark:text-green-200 px-3 py-2 rounded-lg text-sm">
+          <CheckCircledIcon className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+          {successMessage}
+        </div>
+      )}
+      
+      {/* 搜索和操作栏 */}
+      {currentMode !== 'direct' && (
+        <div className="flex justify-between items-center bg-white dark:bg-[#2a2a2a] p-3 rounded-lg shadow-sm border border-gray-200 dark:border-gray-800">
+          <div className="flex items-center gap-4 w-full">
+            <div className="relative flex-1 max-w-md">
+              <input
+                type="text"
+                className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 dark:bg-[#222222] border border-gray-200 dark:border-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-600 focus:border-transparent transition-all"
+                placeholder="搜索节点..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              {searchTerm && (
+              <button 
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                  onClick={() => setSearchTerm('')}
+              >
+                  <Cross1Icon className="w-3 h-3 text-gray-500 dark:text-gray-300" />
+              </button>
+              )}
+            </div>
+
+            <div className="flex items-center">
+              <div className="border-r border-gray-200 dark:border-gray-700 pr-4 mr-4">
+                <button
+                  onClick={() => setActiveTab('all')}
+                  className={`px-3 py-1 text-sm rounded-md mr-2 ${
+                    activeTab === 'all'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-[#2a2a2a] dark:text-blue-400' 
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  }`}
+                >
+                  全部节点
+                </button>
+                <button
+                  onClick={() => setActiveTab('favorite')}
+                  className={`px-3 py-1 text-sm rounded-md ${
+                    activeTab === 'favorite'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-[#2a2a2a] dark:text-blue-400' 
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center">
+                    <StarFilledIcon className="w-3 h-3 text-yellow-500 mr-1" />
+                    收藏节点
+                  </span>
+                </button>
+              </div>
+              
+              <button
+                className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+                onClick={() => fetchProxies()}
+                title="刷新节点列表"
+              >
+                <ReloadIcon className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 节点列表内容 */}
+      <div className="flex-1 flex flex-col gap-3">
+        {isLoading ? (
+          <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
+            <div className="inline-block w-8 h-8 border-2 border-t-blue-500 border-blue-200 rounded-full animate-spin mb-2"></div>
+            <p className="text-gray-500 dark:text-gray-400">加载节点中...</p>
+          </div>
+        ) : !mihomoRunning ? (
+          <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8">
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <ExclamationTriangleIcon className="w-12 h-12 text-yellow-500" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">核心未运行</h3>
+              <p className="text-gray-500 dark:text-gray-400 max-w-md">
+                Mihomo核心未运行，请先在控制面板启动服务。
+              </p>
+            </div>
+          </div>
+        ) : currentMode === 'direct' ? (
+          // 直连模式下显示专门的提示信息
+          <DirectModeMessage />
+        ) : (
+          <div className="flex-1">
+            {activeTab === 'all' && (
+              <div className="space-y-3">
+                {filteredGroups.length === 0 ? (
+                  <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <MagnifyingGlassIcon className="w-12 h-12 text-gray-300 dark:text-gray-600" />
+                      <p className="text-gray-500 dark:text-gray-400">
+                        没有找到匹配的节点，请尝试其他搜索条件
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  filteredGroups.map((group) => (
+                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
+                      <div 
+                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none"
+                        onClick={() => toggleGroupCollapse(group.name)}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
+                            <span>{group.name}</span>
+                            {group.now && (
+                              <span className="ml-2 text-xs px-1.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full">
+                                {group.now}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <div>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {group.nodes.length} 个节点
+                            </span>
+                          </div>
+                          <div>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="24"
+                              height="24"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className={`arrow-icon ${collapsedGroups.has(group.name) ? 'up' : ''}`}
+                            >
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                      <div 
+                        ref={(el) => { getNodeRef.current[group.name] = el; }}
+                        className={`group-content ${collapsedGroups.has(group.name) ? 'collapsed' : 'expanded'}`}
+                      >
+                        <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
+                          {renderNodes(group)}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+            
+            {activeTab === 'favorite' && (
+              <div className="space-y-3">
+                {favoriteFilteredGroups.length === 0 ? (
+                  <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
+                    <div className="flex flex-col items-center justify-center space-y-3">
+                      <StarIcon className="w-12 h-12 text-gray-300 dark:text-gray-600" />
+                      <p className="text-gray-500 dark:text-gray-400">
+                        {searchTerm
+                          ? '没有匹配的收藏节点，请尝试其他搜索条件'
+                          : '暂无收藏节点，可以点击节点卡片上的星标添加收藏'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  favoriteFilteredGroups.map((group) => (
+                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
+                      <div className="py-2 px-3 flex items-center justify-between cursor-pointer select-none"
+                        onClick={() => toggleGroupCollapse(`fav-${group.name}`)}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
+                            <span>{group.name}</span>
+                            {group.now && (
+                              <span className="ml-2 text-xs px-1.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full">
+                                {group.now}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <div>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {group.nodes.length} 个收藏节点
+                            </span>
+                          </div>
+                          <div>
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="24"
+                              height="24"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className={`arrow-icon ${collapsedGroups.has(`fav-${group.name}`) ? 'up' : ''}`}
+                            >
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                      <div 
+                        ref={(el) => { getNodeRef.current[`fav-${group.name}`] = el; }}
+                        className={`group-content ${collapsedGroups.has(`fav-${group.name}`) ? 'collapsed' : 'expanded'}`}
+                      >
+                        <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
+                          {renderNodes(group)}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             )}
           </div>
-
-          <div className="flex items-center">
-            <div className="border-r border-gray-200 dark:border-gray-700 pr-4 mr-4">
-            <button
-                onClick={() => setActiveTab('all')}
-                className={`px-3 py-1 text-sm rounded-md mr-2 ${
-                activeTab === 'all' 
-                  ? 'bg-blue-100 text-blue-700 dark:bg-[#2a2a2a] dark:text-blue-400' 
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
-              }`}
-            >
-                全部节点
-            </button>
-            <button
-                onClick={() => setActiveTab('favorite')}
-                className={`px-3 py-1 text-sm rounded-md ${
-                activeTab === 'favorite' 
-                  ? 'bg-blue-100 text-blue-700 dark:bg-[#2a2a2a] dark:text-blue-400' 
-                  : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
-              }`}
-            >
-                <span className="flex items-center">
-                  <StarFilledIcon className="w-3 h-3 text-yellow-500 mr-1" />
-              收藏节点
-                </span>
-            </button>
-            </div>
-            
-            <button
-              className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
-              onClick={() => fetchProxies()}
-              title="刷新节点列表"
-            >
-              <ReloadIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      {/* 标签页 */}
-      <div className="overflow-hidden">
-        <div>
-          {activeTab === 'all' && (
-            <div className="max-h-[calc(100vh-320px)] overflow-auto pr-2 fancy-scrollbar">
-              {isLoading ? (
-                <div className="space-y-4">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden animate-pulse bg-white dark:bg-[#2a2a2a]">
-                      <div className="px-3 py-3 flex items-center">
-                        <div className="h-4 w-[100px] bg-gray-200 dark:bg-[#1a1a1a] rounded-md"></div>
-                        <div className="h-3 w-[30px] bg-gray-200 dark:bg-[#1a1a1a] rounded-full ml-2"></div>
-                        <div className="h-3 w-[60px] bg-gray-200 dark:bg-[#1a1a1a] rounded-md ml-2"></div>
-                        <div className="ml-auto h-3 w-[40px] bg-gray-200 dark:bg-[#1a1a1a] rounded"></div>
-                          </div>
-                      <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((j) => (
-                            <div key={j} className="h-[70px] bg-gray-200 dark:bg-[#1a1a1a] rounded-lg"></div>
-                        ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : filteredGroups.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-4">
-                  <div className="rounded-full p-4 bg-gray-50 dark:bg-[#222222] mb-5">
-                    <MagnifyingGlassIcon className="h-7 w-7 text-gray-400" />
-                  </div>
-                  <p className="text-gray-700 dark:text-gray-300 font-medium text-lg mb-2">未找到匹配的节点</p>
-                  <p className="text-gray-500 dark:text-gray-500 text-sm max-w-md">
-                    尝试使用其他关键词搜索，或清除搜索条件查看所有节点
-                  </p>
-                  {searchTerm && (
-                      <button
-                      onClick={() => setSearchTerm('')}
-                      className="mt-4 px-3 py-1.5 bg-gray-100 dark:bg-[#222222] text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-[#1a1a1a] transition-colors text-sm flex items-center"
-                      >
-                      <Cross1Icon className="w-3.5 h-3.5 mr-1.5" />
-                      清除搜索
-                      </button>
-                  )}
-                    </div>
-              ) : (
-                filteredGroups.map((group, groupIndex) => (
-                  <div key={group.name} className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-[#2a2a2a] mb-4">
-                    <div 
-                      className="px-3 py-3 flex items-center justify-between cursor-pointer"
-                      onClick={() => toggleGroupCollapse(group.name)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">{group.name}</h3>
-                        <Badge variant="outline" className="text-[10px] bg-blue-50 dark:bg-[#2a2a2a] text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 px-1 h-[18px]">
-                          {group.nodes.length}
-                        </Badge>
-                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase">{group.type}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                            <button
-                          onClick={(e) => { 
-                            e.stopPropagation();
-                            handleBatchTest(group.name);
-                          }}
-                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-[#222222] font-medium flex items-center"
-                        >
-                          <ReloadIcon className="h-2.5 w-2.5 mr-1" />
-                          测试
-                            </button>
-                        <div className="text-gray-400">
-                          <svg 
-                            xmlns="http://www.w3.org/2000/svg" 
-                            width="16" 
-                            height="16" 
-                            viewBox="0 0 24 24" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            strokeWidth="2" 
-                            strokeLinecap="round" 
-                            strokeLinejoin="round"
-                            className={`arrow-icon ${collapsedGroups.has(group.name) ? 'up' : ''}`}
-                          >
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                          </svg>
-                              </div>
-                            </div>
-                          </div>
-                    <div 
-                      ref={(el) => { getNodeRef.current[group.name] = el; }}
-                      className={`group-content ${collapsedGroups.has(group.name) ? 'collapsed' : 'expanded'}`}
-                    >
-                      <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                        {renderNodes(group)}
-                          </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-          
-          {activeTab === 'favorite' && (
-            <div className="max-h-[calc(100vh-320px)] overflow-auto pr-2 fancy-scrollbar">
-              {isLoading ? (
-                <div className="space-y-4">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden animate-pulse bg-white dark:bg-[#2a2a2a]">
-                      <div className="px-3 py-3 flex items-center">
-                        <div className="h-4 w-[100px] bg-gray-200 dark:bg-[#1a1a1a] rounded-md"></div>
-                        <div className="h-3 w-[30px] bg-gray-200 dark:bg-[#1a1a1a] rounded-full ml-2"></div>
-                        <div className="h-3 w-[60px] bg-gray-200 dark:bg-[#1a1a1a] rounded-md ml-2"></div>
-                        <div className="ml-auto h-3 w-[40px] bg-gray-200 dark:bg-[#1a1a1a] rounded"></div>
-                          </div>
-                      <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((j) => (
-                            <div key={j} className="h-[70px] bg-gray-200 dark:bg-[#1a1a1a] rounded-lg"></div>
-                        ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : favoriteFilteredGroups.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-4">
-                  <div className="rounded-full p-4 bg-gray-50 dark:bg-[#222222] mb-5 relative">
-                    <StarIcon className="h-7 w-7 text-yellow-500 opacity-70" />
-                    <div className="absolute -right-1 -bottom-1 rounded-full bg-gray-50 dark:bg-[#222222] p-1.5">
-                      <PlusIcon className="h-4 w-4 text-gray-500" />
-                  </div>
-                </div>
-                  <p className="text-gray-700 dark:text-gray-300 font-medium text-lg mb-2">未找到收藏的节点</p>
-                  <p className="text-gray-500 dark:text-gray-500 text-sm max-w-md">
-                    你可以通过点击节点卡片左上角的星标图标 ⭐ 将节点添加到收藏列表中，方便快速访问常用节点
-                  </p>
-                      <button
-                    onClick={() => setActiveTab('all')}
-                    className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors shadow-sm text-sm"
-                      >
-                    查看所有节点
-                      </button>
-                    </div>
-              ) : (
-                favoriteFilteredGroups.map(group => (
-                  <div key={group.name} className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden bg-white dark:bg-[#2a2a2a] mb-4">
-                    <div 
-                      className="px-3 py-3 flex items-center justify-between cursor-pointer"
-                      onClick={() => toggleGroupCollapse(group.name)}
-                    >
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">{group.name}</h3>
-                        <Badge variant="outline" className="text-[10px] bg-blue-50 dark:bg-[#2a2a2a] text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 px-1 h-[18px]">
-                          {group.nodes.length}
-                        </Badge>
-                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase">{group.type}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                            <button
-                          onClick={(e) => { 
-                            e.stopPropagation(); 
-                            handleBatchTest(group.name); 
-                          }}
-                          className="text-[10px] text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-[#222222] font-medium flex items-center"
-                        >
-                          <ReloadIcon className="h-2.5 w-2.5 mr-1" />
-                          测试
-                            </button>
-                        <div className="text-gray-400">
-                          <svg 
-                            xmlns="http://www.w3.org/2000/svg" 
-                            width="16" 
-                            height="16" 
-                            viewBox="0 0 24 24" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            strokeWidth="2" 
-                            strokeLinecap="round" 
-                            strokeLinejoin="round"
-                            className={`arrow-icon ${collapsedGroups.has(group.name) ? 'up' : ''}`}
-                          >
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                          </svg>
-                              </div>
-                            </div>
-                          </div>
-                    <div 
-                      ref={(el) => { getNodeRef.current[group.name] = el; }}
-                      className={`group-content ${collapsedGroups.has(group.name) ? 'collapsed' : 'expanded'}`}
-                    >
-                      <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                        {renderNodes(group)}
-                          </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
+        )}
       </div>
       
       {/* 底部状态栏 - 精简 */}
@@ -1265,15 +1239,21 @@ export default function ProxyNodes() {
             </span>
           </span>
           <span>|</span>
-          <span>{groups.reduce((acc, group) => acc + group.nodes.length, 0)} 个节点</span>
-          <span>{filteredGroups.reduce((acc, group) => acc + group.nodes.length, 0)} 个已过滤</span>
-          <span>{favoriteNodes.size} 个收藏</span>
+          {currentMode !== 'direct' ? (
+            <>
+              <span>{groups.reduce((acc, group) => acc + group.nodes.length, 0)} 个节点</span>
+              <span>{filteredGroups.reduce((acc, group) => acc + group.nodes.length, 0)} 个已过滤</span>
+              <span>{favoriteNodes.size} 个收藏</span>
+            </>
+          ) : (
+            <span>不使用代理节点</span>
+          )}
         </div>
-        {selectedNode && (
+        {selectedNode && currentMode !== 'direct' && (
           <div className="flex items-center">
             <div className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></div>
             <span className="font-medium text-gray-700 dark:text-gray-300">{selectedNode}</span>
-        </div>
+          </div>
         )}
       </div>
       
