@@ -11,6 +11,8 @@ import {
   PlusIcon
 } from '@radix-ui/react-icons';
 import { Badge } from "./ui/badge";
+import { useMihomoAPI } from '../services/mihomo-api';
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
 // 定义类型
 type ProxyNode = {
@@ -50,10 +52,14 @@ export default function ProxyNodes() {
   const [switchingNode, setSwitchingNode] = useState<string | null>(null);
   const [mihomoRunning, setMihomoRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [currentMode, setCurrentMode] = useState<string>('rule');
+  const mihomoAPI = useMihomoAPI();
 
   // 显示错误提示
   const showError = (message: string) => {
+    setSuccessMessage(null); // 清除成功信息
     setErrorMessage(message);
     setTimeout(() => setErrorMessage(null), 5000);
   };
@@ -115,6 +121,16 @@ export default function ProxyNodes() {
         return;
       }
       
+      // 获取当前模式
+      let currentProxyMode = 'rule';
+      try {
+        const config = await mihomoAPI.configs();
+        currentProxyMode = config.mode;
+        setCurrentMode(currentProxyMode);
+      } catch (error) {
+        console.error('获取当前模式失败:', error);
+      }
+      
       // 获取配置文件中的原始顺序
       let configOrder: {
         proxyGroups: Array<{name: string, type: string, proxies: string[]}>,
@@ -145,68 +161,112 @@ export default function ProxyNodes() {
       
       const data = await response.json();
       
-      // 使用配置文件顺序构建数据
-      const selectorGroups: {[key: string]: MihomoProxy} = {};
       const groupsData: ProxyGroup[] = [];
-      let groupsOrder: string[] = []; // 记录组的原始顺序
       
-      // 提取所有selector类型的组
-      for (const [name, proxy] of Object.entries<MihomoProxy>(data.proxies)) {
-        if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
-          selectorGroups[name] = proxy;
-        }
-      }
-      
-      // 如果有配置文件顺序，优先使用配置文件中的顺序
-      if (configOrder && configOrder.proxyGroups.length > 0) {
-        // 使用配置文件中的组顺序
-        groupsOrder = configOrder.proxyGroups.map(group => group.name);
-      } else {
-        // 如果没有配置文件顺序，则使用API返回的顺序
-        for (const name of Object.keys(selectorGroups)) {
-          groupsOrder.push(name);
-        }
-      }
-      
-      // 处理并构建所有代理组数据，按原始顺序
-      for (const groupName of groupsOrder) {
-        // 跳过API中不存在的组
-        if (!selectorGroups[groupName]) continue;
+      // 根据当前模式决定如何显示节点
+      if (currentProxyMode === 'global' || currentProxyMode === 'direct') {
+        // 全局模式和直连模式下，只显示GLOBAL代理组
+        console.log(`当前为${currentProxyMode === 'global' ? '全局' : '直连'}模式，只显示GLOBAL代理组`);
         
-        const proxy = selectorGroups[groupName];
-        if (proxy.all && Array.isArray(proxy.all)) {
-          let nodesOrder = proxy.all;
-          
-          // 如果有配置文件顺序，使用配置文件中的节点顺序
-          if (configOrder) {
-            const configGroup = configOrder.proxyGroups.find(g => g.name === groupName);
-            if (configGroup && configGroup.proxies.length > 0) {
-              console.log(`使用配置文件中 ${groupName} 组的节点顺序`);
-              nodesOrder = configGroup.proxies;
-            }
+        try {
+          // 获取GLOBAL代理组信息
+          const globalResponse = await fetch('http://127.0.0.1:9090/proxies/GLOBAL');
+          if (!globalResponse.ok) {
+            throw new Error(`获取GLOBAL代理组失败: ${globalResponse.statusText}`);
           }
           
-          // 映射节点数据，保持顺序
-          const nodes = nodesOrder.map((nodeName: string) => {
-            const node = data.proxies[nodeName];
-            const isGroup = selectorGroups[nodeName] !== undefined;
-            
-            return {
-              name: nodeName,
-              type: node?.type || 'Unknown',
-              server: isGroup ? '代理组' : (node?.server || 'Unknown'),
-              port: isGroup ? 0 : (node?.port || 0),
-              delay: node?.history?.length > 0 ? node.history[0].delay : undefined,
-              isGroup: isGroup,
-            };
-          });
+          const globalData = await globalResponse.json();
           
-          groupsData.push({
-            name: groupName,
-            type: proxy.type,
-            nodes,
-            now: proxy.now
-          });
+          if (globalData && globalData.all && Array.isArray(globalData.all)) {
+            const nodes = globalData.all.map((nodeName: string) => {
+              const node = data.proxies[nodeName];
+              const isGroup = node?.type === 'Selector' || node?.type === 'URLTest' || node?.type === 'Fallback';
+              
+              return {
+                name: nodeName,
+                type: node?.type || 'Unknown',
+                server: isGroup ? '代理组' : (node?.server || 'Unknown'),
+                port: isGroup ? 0 : (node?.port || 0),
+                delay: node?.history?.length > 0 ? node.history[0].delay : undefined,
+                isGroup: isGroup,
+              };
+            });
+            
+            groupsData.push({
+              name: 'GLOBAL',
+              type: 'Selector',
+              nodes,
+              now: globalData.now
+            });
+          }
+        } catch (error) {
+          console.error('获取GLOBAL代理组失败:', error);
+          showError(`获取GLOBAL代理组失败: ${String(error)}`);
+        }
+      } else {
+        // 规则模式下，显示所有代理组
+        // 使用配置文件顺序构建数据
+        const selectorGroups: {[key: string]: MihomoProxy} = {};
+        let groupsOrder: string[] = []; // 记录组的原始顺序
+        
+        // 提取所有selector类型的组
+        for (const [name, proxy] of Object.entries<MihomoProxy>(data.proxies)) {
+          if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
+            selectorGroups[name] = proxy;
+          }
+        }
+        
+        // 如果有配置文件顺序，优先使用配置文件中的顺序
+        if (configOrder && configOrder.proxyGroups.length > 0) {
+          // 使用配置文件中的组顺序
+          groupsOrder = configOrder.proxyGroups.map(group => group.name);
+        } else {
+          // 如果没有配置文件顺序，则使用API返回的顺序
+          for (const name of Object.keys(selectorGroups)) {
+            groupsOrder.push(name);
+          }
+        }
+        
+        // 处理并构建所有代理组数据，按原始顺序
+        for (const groupName of groupsOrder) {
+          // 跳过API中不存在的组
+          if (!selectorGroups[groupName]) continue;
+          
+          const proxy = selectorGroups[groupName];
+          if (proxy.all && Array.isArray(proxy.all)) {
+            let nodesOrder = proxy.all;
+            
+            // 如果有配置文件顺序，使用配置文件中的节点顺序
+            if (configOrder) {
+              const configGroup = configOrder.proxyGroups.find(g => g.name === groupName);
+              if (configGroup && configGroup.proxies.length > 0) {
+                console.log(`使用配置文件中 ${groupName} 组的节点顺序`);
+                nodesOrder = configGroup.proxies;
+              }
+            }
+            
+            // 映射节点数据，保持顺序
+            const nodes = nodesOrder.map((nodeName: string) => {
+              const node = data.proxies[nodeName];
+              const isGroup = selectorGroups[nodeName] !== undefined;
+              
+              return {
+                name: nodeName,
+                type: node?.type || 'Unknown',
+                server: isGroup ? '代理组' : (node?.server || 'Unknown'),
+                port: isGroup ? 0 : (node?.port || 0),
+                delay: node?.history?.length > 0 ? node.history[0].delay : undefined,
+                isGroup: isGroup,
+              };
+            });
+            
+            groupsData.push({
+              name: groupName,
+              type: proxy.type,
+              nodes,
+              now: proxy.now
+            });
+          }
         }
       }
       
@@ -795,6 +855,42 @@ export default function ProxyNodes() {
     );
   };
 
+  // 处理模式切换
+  const handleModeChange = async (mode: string) => {
+    try {
+      // 更新UI状态
+      setCurrentMode(mode);
+      
+      // 更新Mihomo配置
+      await mihomoAPI.patchConfigs({ mode });
+      
+      // 清除连接（可选，根据用户体验决定）
+      await mihomoAPI.deleteConnections();
+
+      // 在模式切换后立即刷新节点列表
+      await fetchProxies();
+      
+      // 显示成功提示
+      showSuccess(`已切换到${mode === 'rule' ? '规则' : mode === 'global' ? '全局' : '直连'}模式`);
+    } catch (error) {
+      console.error('切换模式失败:', error);
+      showError(`切换模式失败: ${String(error)}`);
+      
+      // 失败时恢复UI状态
+      try {
+        const config = await mihomoAPI.configs();
+        setCurrentMode(config.mode);
+      } catch {}
+    }
+  };
+  
+  // 显示成功提示
+  const showSuccess = (message: string) => {
+    setErrorMessage(null); // 清除错误信息
+    setSuccessMessage(message);
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
   if (!mihomoRunning) {
     return (
       <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8">
@@ -854,13 +950,39 @@ export default function ProxyNodes() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* 模式切换组件 */}
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-semibold text-[#3b82f6] dark:text-[#3b82f6]">节点管理</h2>
+        <Tabs value={currentMode} onValueChange={handleModeChange} className="w-auto">
+          <TabsList className="grid grid-cols-3 w-[300px]">
+            <TabsTrigger value="rule">规则模式</TabsTrigger>
+            <TabsTrigger value="global">全局模式</TabsTrigger>
+            <TabsTrigger value="direct">直连模式</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+      
+      {/* 成功提示 */}
+      {successMessage && (
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-900/50 rounded-md p-4 flex items-start">
+          <CheckIcon className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+          <p className="ml-3 text-sm text-green-800 dark:text-green-200">{successMessage}</p>
+          <button 
+            onClick={() => setSuccessMessage(null)} 
+            className="ml-auto text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300"
+          >
+            <Cross1Icon className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      
       {/* 错误提示 */}
       {errorMessage && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-md p-4 flex items-start">
           <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
           <p className="ml-3 text-sm text-red-800 dark:text-red-200">{errorMessage}</p>
-          <button
-            onClick={() => setErrorMessage(null)}
+          <button 
+            onClick={() => setErrorMessage(null)} 
             className="ml-auto text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
           >
             <Cross1Icon className="w-4 h-4" />
@@ -888,7 +1010,7 @@ export default function ProxyNodes() {
                 <Cross1Icon className="w-3 h-3 text-gray-500 dark:text-gray-300" />
             </button>
             )}
-      </div>
+          </div>
 
           <div className="flex items-center">
             <div className="border-r border-gray-200 dark:border-gray-700 pr-4 mr-4">
@@ -925,9 +1047,9 @@ export default function ProxyNodes() {
               <ReloadIcon className="w-4 h-4" />
             </button>
           </div>
-          </div>
         </div>
-        
+      </div>
+      
       {/* 标签页 */}
       <div className="overflow-hidden">
         <div>
@@ -1132,6 +1254,17 @@ export default function ProxyNodes() {
       {/* 底部状态栏 - 精简 */}
       <div className="flex items-center justify-between px-3 py-2 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
         <div className="flex items-center gap-3">
+          <span className="flex items-center">
+            <div className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+              currentMode === 'rule' ? 'bg-blue-500' : 
+              currentMode === 'global' ? 'bg-purple-500' : 'bg-green-500'
+            }`}></div>
+            <span className="font-medium">
+              {currentMode === 'rule' ? '规则模式' : 
+               currentMode === 'global' ? '全局模式' : '直连模式'}
+            </span>
+          </span>
+          <span>|</span>
           <span>{groups.reduce((acc, group) => acc + group.nodes.length, 0)} 个节点</span>
           <span>{filteredGroups.reduce((acc, group) => acc + group.nodes.length, 0)} 个已过滤</span>
           <span>{favoriteNodes.size} 个收藏</span>
