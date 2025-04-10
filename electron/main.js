@@ -11,7 +11,7 @@ const serveStatic = require('serve-static');
 const finalhandler = require('finalhandler');
 
 // 应用版本号 - 统一管理所有界面显示的版本
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 
 let mainWindow;
 let tray;
@@ -40,9 +40,149 @@ app.name = 'flyclash';
 const userDataPath = app.getPath('userData');
 const configDir = path.join(userDataPath, 'config');
 
+// 添加函数用于查找mihomo可执行文件
+function findMihomoExecutable() {
+  let binPath = null;
+  
+  if (isDev) {
+    // 开发环境下，尝试查找项目根目录下的所有可能的mihomo内核文件
+    const devDirPath = process.cwd();
+    const parentDir = path.join(devDirPath, '..');
+    
+    try {
+      // 搜索父目录中所有的exe文件
+      const files = fs.readdirSync(parentDir);
+      const mihomoExeFiles = files.filter(file => 
+        file.toLowerCase().includes('mihomo') && 
+        file.endsWith('.exe')
+      );
+      
+      if (mihomoExeFiles.length > 0) {
+        // 使用找到的第一个mihomo exe文件
+        binPath = path.join(parentDir, mihomoExeFiles[0]);
+        console.log('开发环境找到mihomo内核:', binPath);
+      }
+    } catch (error) {
+      console.error('搜索开发环境内核文件失败:', error);
+    }
+    
+    // 如果没找到，尝试使用默认路径
+    if (!binPath) {
+      binPath = path.join(parentDir, 'mihomo-windows-amd64.exe');
+    }
+  } else {
+    // 生产环境，搜索resources/cores目录
+    const coresDir = path.join(process.resourcesPath, 'cores');
+    
+    try {
+      if (fs.existsSync(coresDir)) {
+        // 搜索cores目录中所有的exe文件
+        const files = fs.readdirSync(coresDir);
+        const exeFiles = files.filter(file => file.endsWith('.exe'));
+        
+        if (exeFiles.length > 0) {
+          // 优先使用包含mihomo的文件名
+          const mihomoExe = exeFiles.find(file => file.toLowerCase().includes('mihomo'));
+          
+          if (mihomoExe) {
+            binPath = path.join(coresDir, mihomoExe);
+            console.log('发现mihomo内核:', binPath);
+          } else {
+            // 如果没有mihomo名称的exe，使用第一个exe文件
+            binPath = path.join(coresDir, exeFiles[0]);
+            console.log('使用默认内核文件:', binPath);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('搜索内核文件失败:', error);
+    }
+    
+    // 如果仍然没找到，尝试使用默认路径
+    if (!binPath) {
+      binPath = path.join(process.resourcesPath, 'cores/mihomo-windows-amd64.exe');
+    }
+  }
+  
+  return binPath;
+}
+
 // 确保配置目录存在
 if (!fs.existsSync(configDir)) {
   fs.mkdirSync(configDir, { recursive: true });
+}
+
+// 用户设置配置文件路径
+const userSettingsPath = path.join(userDataPath, 'user-settings.yaml');
+
+// 确保用户设置文件存在，如果不存在则创建
+function ensureUserSettingsFile() {
+  if (!fs.existsSync(userSettingsPath)) {
+    // 默认设置
+    const defaultSettings = {
+      'mixed-port': 7890,
+      'allow-lan': false,
+      'ipv6': false
+    };
+    
+    try {
+      fs.writeFileSync(userSettingsPath, yaml.dump(defaultSettings), 'utf8');
+      console.log('已创建用户设置文件:', userSettingsPath);
+    } catch (error) {
+      console.error('创建用户设置文件失败:', error);
+    }
+  }
+}
+
+// 读取用户设置
+function getUserSettings() {
+  try {
+    ensureUserSettingsFile();
+    const content = fs.readFileSync(userSettingsPath, 'utf8');
+    return yaml.load(content) || {};
+  } catch (error) {
+    console.error('读取用户设置失败:', error);
+    return {};
+  }
+}
+
+// 更新用户设置
+function updateUserSettings(settings) {
+  try {
+    ensureUserSettingsFile();
+    const currentSettings = getUserSettings();
+    
+    // 验证新设置
+    if ('mixed-port' in settings) {
+      if (typeof settings['mixed-port'] !== 'number' || 
+          settings['mixed-port'] < 1 || settings['mixed-port'] > 65535) {
+        console.warn('端口号无效，将使用默认值');
+        settings['mixed-port'] = 7890;
+      }
+    }
+    
+    // 转换布尔型字段
+    for (const key of ['allow-lan', 'ipv6']) {
+      if (key in settings) {
+        settings[key] = Boolean(settings[key]);
+      }
+    }
+    
+    const newSettings = { ...currentSettings, ...settings };
+    fs.writeFileSync(userSettingsPath, yaml.dump(newSettings), 'utf8');
+    console.log('已更新用户设置:', newSettings);
+    
+    // 如果mihomo正在运行，重新生成并重载配置
+    if (mihomoProcess && mihomoProcess.pid && configFilePath) {
+      // 重新生成合并配置并热重载
+      regenerateAndReloadConfig();
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('更新用户设置失败:', error);
+    return false;
+  }
 }
 
 // 流量统计相关变量
@@ -210,14 +350,17 @@ async function startMihomo(configPath) {
   }
 
   configFilePath = configPath;
-  const binPath = isDev 
-    ? path.join(process.cwd(), '../mihomo-windows-amd64.exe')
-    : path.join(process.resourcesPath, 'cores/mihomo-windows-amd64.exe');
+  
+  // 使用全局辅助函数查找mihomo内核
+  const binPath = findMihomoExecutable();
 
   if (!fs.existsSync(binPath)) {
-    dialog.showErrorBox('错误', '无法找到Mihomo核心文件');
-    return;
+    console.error('未找到有效的内核文件:', binPath);
+    dialog.showErrorBox('错误', '无法找到有效的内核文件，请确保应用安装正确');
+    return false;
   }
+  
+  console.log('使用内核文件:', binPath);
 
   try {
     // 确保配置文件存在
@@ -244,60 +387,76 @@ async function startMihomo(configPath) {
       return false;
     }
 
-    // 拷贝配置文件到工作目录以确保mihomo能够正确访问
+    // 读取用户设置
+    const userSettings = getUserSettings();
+    console.log('已读取用户设置:', userSettings);
+
+    // 读取原始配置
     const configFilename = path.basename(configPath);
-    const localConfigPath = path.join(mihomoDir, configFilename);
+    let configContent = fs.readFileSync(configPath, 'utf8');
+    const config = yaml.load(configContent);
+
+    // 创建高优先级配置文件（合并用户设置和原始配置）
+    const overrideConfigFilename = 'override-' + configFilename;
+    const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+    
+    // 使用深度合并替换原来的浅合并
+    let mergedConfig, mergedConfigContent;
+    
     try {
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      fs.writeFileSync(localConfigPath, configContent);
-      console.log(`已将配置文件复制到工作目录: ${localConfigPath}`);
+      // 智能合并配置（用户设置优先级更高）
+      mergedConfig = deepMergeConfig(config, userSettings);
+      // 验证合并后的配置
+      mergedConfig = validateMergedConfig(mergedConfig);
+      mergedConfigContent = yaml.dump(mergedConfig);
     } catch (error) {
-      console.error('复制配置文件失败:', error);
-      // 继续使用原始配置路径
+      console.error('配置合并失败:', error);
+      
+      // 使用安全的回退配置
+      const safeConfig = {
+        ...config,
+        'mixed-port': userSettings['mixed-port'] || 7890,
+        'allow-lan': !!userSettings['allow-lan'],
+        'ipv6': !!userSettings['ipv6'],
+        'log-level': userSettings['log-level'] || 'info'
+      };
+      
+      mergedConfig = safeConfig;
+      mergedConfigContent = yaml.dump(safeConfig);
+      console.log('使用安全的回退配置');
     }
+    
+    // 保存合并后的配置
+    fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
+    console.log(`已创建高优先级配置文件: ${overrideConfigPath}`);
 
     // 记录启动信息
-    console.log(`启动Mihomo: ${binPath} -f ${configPath}`);
+    console.log(`启动Mihomo: ${binPath} -f ${overrideConfigPath}`);
     console.log(`工作目录: ${mihomoDir}`);
 
     // 验证配置文件内容
     try {
-      // 尝试加载js-yaml包
-      let yaml;
-      try {
-        yaml = require('js-yaml');
-      } catch (e) {
-        console.log('未安装js-yaml，使用简单验证方法');
-        
-        const configContent = fs.readFileSync(configPath, 'utf8');
-        if (!configContent.includes('proxies:') || !configContent.includes('proxy-groups:')) {
-          dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies或proxy-groups字段');
-          return false;
-        }
-        // 简单验证通过
-        return true;
+      // 这些检查已经在validateMergedConfig中处理，这里是额外的安全检查
+      if (!mergedConfig.proxies || !Array.isArray(mergedConfig.proxies)) {
+        dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies字段');
+        return false;
       }
-      
-      // 如果yaml包加载成功，使用完整验证
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      const config = yaml.load(configContent);
-      
-      // 检查配置文件中必要的字段
-      if (!config || !config.proxies || !config['proxy-groups']) {
-        dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies或proxy-groups字段');
+
+      if (!mergedConfig['proxy-groups'] || !Array.isArray(mergedConfig['proxy-groups'])) {
+        dialog.showErrorBox('配置错误', '配置文件缺少必要的proxy-groups字段');
         return false;
       }
 
       // 检查代理组是否为空
-      if (config['proxy-groups'].length === 0) {
-        dialog.showErrorBox('配置错误', '配置文件中的代理组为空');
-        return false;
+      if (mergedConfig['proxy-groups'].length === 0) {
+        console.warn('警告: 配置文件中的代理组为空');
+        // 不返回false，允许继续尝试启动
       }
 
       // 检查代理是否为空
-      if (config.proxies.length === 0) {
-        dialog.showErrorBox('配置错误', '配置文件中没有代理节点');
-        return false;
+      if (mergedConfig.proxies.length === 0) {
+        console.warn('警告: 配置文件中没有代理节点');
+        // 不返回false，允许继续尝试启动
       }
     } catch (error) {
       console.error('配置文件验证失败:', error);
@@ -305,8 +464,8 @@ async function startMihomo(configPath) {
       return false;
     }
 
-    // 启动mihomo，设置工作目录为mihomoDir
-    mihomoProcess = spawn(binPath, ['-f', localConfigPath || configPath], {
+    // 启动mihomo，使用高优先级的配置文件
+    mihomoProcess = spawn(binPath, ['-f', overrideConfigPath], {
       cwd: mihomoDir,
       env: {
         ...process.env,
@@ -317,9 +476,16 @@ async function startMihomo(configPath) {
     });
     
     mihomoProcess.stdout.on('data', (data) => {
-      console.log(`mihomo stdout: ${data}`);
+      const logContent = data.toString();
+      console.log(`mihomo stdout: ${logContent}`);
+      
+      // 检查是否有配置相关日志
+      if (logContent.includes('Config') || logContent.includes('allow-lan')) {
+        console.log('发现配置相关日志:', logContent);
+      }
+      
       if (mainWindow) {
-        mainWindow.webContents.send('mihomo-log', data.toString());
+        mainWindow.webContents.send('mihomo-log', logContent);
       }
       
       // 直接输出到控制台/终端
@@ -338,14 +504,13 @@ async function startMihomo(configPath) {
 
     mihomoProcess.on('close', (code) => {
       console.log(`mihomo process exited with code ${code}`);
-      if (mainWindow) {
-        mainWindow.webContents.send('mihomo-stopped', code);
-      }
+      // 使用集中处理函数处理mihomo进程退出
+      handleMihomoProcessExit(code);
     });
 
     // 检查进程是否成功启动
     await new Promise(resolve => setTimeout(resolve, 1000));
-    if (mihomoProcess.exitCode !== null) {
+    if (mihomoProcess && mihomoProcess.exitCode !== null) {
       console.error(`Mihomo立即退出，退出代码: ${mihomoProcess.exitCode}`);
       dialog.showErrorBox('启动失败', `Mihomo启动后立即退出，退出代码: ${mihomoProcess.exitCode}`);
       return false;
@@ -429,13 +594,7 @@ async function updateTrayMenu() {
   
   try {
     // 获取当前代理状态
-    let proxyEnabled = false;
-    try {
-      const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable').toString();
-      proxyEnabled = result.includes('0x1');
-    } catch (error) {
-      console.error('获取代理状态失败:', error);
-    }
+    let proxyEnabled = systemProxyEnabled;
     
     // 基础菜单项
     const menuItems = [
@@ -674,29 +833,141 @@ async function updateTrayMenu() {
   }
 }
 
+// 系统代理状态
+let systemProxyEnabled = false;
+
+// 切换系统代理
 function toggleSystemProxy(menuItem) {
-  const enabled = menuItem.checked;
-  if (enabled) {
-    // 启用系统代理，默认端口7890
-    try {
+  // 检查mihomo是否运行中
+  if (!mihomoProcess) {
+    dialog.showErrorBox('错误', '请先启动代理服务');
+    return;
+  }
+  
+  try {
+    // 读取当前用户设置，获取最新的端口设置
+    const userSettings = getUserSettings();
+    const port = userSettings['mixed-port'] || 7890;
+    
+    if (menuItem.checked) {
+      // 启用系统代理
+      console.log('启用系统代理，端口:', port);
+      
+      // Windows平台
+      if (process.platform === 'win32') {
+        // Windows 使用 Internet 设置注册表
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
+        execSync(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:${port}" /f`);
+        
+        // 设置环境变量
+        process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+        process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+      } 
+      // macOS平台使用networksetup命令
+      else if (process.platform === 'darwin') {
+        // 获取所有活动网络服务
+        const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
+        // 跳过第一行(标题行)
+        for (let i = 1; i < services.length; i++) {
+          const service = services[i].trim();
+          if (service && !service.includes('*')) {
+            execSync(`networksetup -setwebproxy "${service}" 127.0.0.1 ${port}`);
+            execSync(`networksetup -setsecurewebproxy "${service}" 127.0.0.1 ${port}`);
+            execSync(`networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 ${port}`);
+          }
+        }
+      }
+      
+      systemProxyEnabled = true;
+      if (mainWindow) {
+        mainWindow.webContents.send('proxy-status', true);
+      }
+    } else {
+      // 禁用系统代理
+      console.log('禁用系统代理');
+      
+      // Windows平台
+      if (process.platform === 'win32') {
+        // Windows 使用 Internet 设置注册表
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
+        
+        // 清除环境变量
+        delete process.env.HTTP_PROXY;
+        delete process.env.HTTPS_PROXY;
+      } 
+      // macOS平台
+      else if (process.platform === 'darwin') {
+        const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
+        for (let i = 1; i < services.length; i++) {
+          const service = services[i].trim();
+          if (service && !service.includes('*')) {
+            execSync(`networksetup -setwebproxystate "${service}" off`);
+            execSync(`networksetup -setsecurewebproxystate "${service}" off`);
+            execSync(`networksetup -setsocksfirewallproxystate "${service}" off`);
+          }
+        }
+      }
+      
+      systemProxyEnabled = false;
+      if (mainWindow) {
+        mainWindow.webContents.send('proxy-status', false);
+      }
+    }
+  } catch (error) {
+    console.error('设置系统代理失败:', error);
+    dialog.showErrorBox('系统代理错误', `设置系统代理失败: ${error.message}`);
+    
+    // 恢复菜单项状态
+    menuItem.checked = !menuItem.checked;
+    systemProxyEnabled = !menuItem.checked;
+    
+    if (mainWindow) {
+      mainWindow.webContents.send('proxy-status', systemProxyEnabled);
+    }
+  }
+}
+
+// 更新系统代理设置（当端口变更时调用）
+function updateSystemProxyIfEnabled() {
+  // 如果系统代理未启用，则不需要更新
+  if (!systemProxyEnabled) {
+    return;
+  }
+  
+  try {
+    // 读取当前用户设置，获取最新的端口设置
+    const userSettings = getUserSettings();
+    const port = userSettings['mixed-port'] || 7890;
+    
+    console.log('更新系统代理设置，使用新端口:', port);
+    
+    // Windows平台
+    if (process.platform === 'win32') {
+      // Windows 使用 Internet 设置注册表
       execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
-      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:7890" /f');
-      mainWindow.webContents.send('proxy-status', true);
-    } catch (error) {
-      console.error('Failed to enable system proxy:', error);
-      dialog.showErrorBox('代理设置失败', '无法启用系统代理');
-      menuItem.checked = false;
+      execSync(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:${port}" /f`);
+      
+      // 更新环境变量
+      process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+      process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+    } 
+    // macOS平台
+    else if (process.platform === 'darwin') {
+      const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
+      for (let i = 1; i < services.length; i++) {
+        const service = services[i].trim();
+        if (service && !service.includes('*')) {
+          execSync(`networksetup -setwebproxy "${service}" 127.0.0.1 ${port}`);
+          execSync(`networksetup -setsecurewebproxy "${service}" 127.0.0.1 ${port}`);
+          execSync(`networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 ${port}`);
+        }
+      }
     }
-  } else {
-    // 禁用系统代理
-    try {
-      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
-      mainWindow.webContents.send('proxy-status', false);
-    } catch (error) {
-      console.error('Failed to disable system proxy:', error);
-      dialog.showErrorBox('代理设置失败', '无法禁用系统代理');
-      menuItem.checked = true;
-    }
+    
+    console.log('系统代理设置已更新');
+  } catch (error) {
+    console.error('更新系统代理设置失败:', error);
+    dialog.showErrorBox('系统代理错误', `更新系统代理设置失败: ${error.message}`);
   }
 }
 
@@ -1149,39 +1420,121 @@ async function checkMihomoService() {
   }
 }
 
+// Mihomo进程意外停止时的处理函数
+function handleMihomoProcessExit(code) {
+  console.log(`Mihomo进程退出，代码: ${code}`);
+  mihomoProcess = null;
+  stopTrafficStatsUpdate();
+  stopConnectionsWebSocket();
+  // 清除configFilePath确保状态正确更新
+  configFilePath = null;
+  
+  // 通知前端Mihomo已停止
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('mihomo-stopped', code);
+  }
+}
+
 app.whenReady().then(() => {
   // 加载主题设置
-  const themeSource = nativeTheme.themeSource;
-  console.log('应用启动时的主题设置:', themeSource);
+  try {
+    const themeConfigPath = path.join(userDataPath, 'theme-config.json');
+    if (fs.existsSync(themeConfigPath)) {
+      const themeConfig = JSON.parse(fs.readFileSync(themeConfigPath, 'utf8'));
+      nativeTheme.themeSource = themeConfig.theme || 'system';
+      console.log('已加载主题设置:', themeConfig.theme);
+    }
+  } catch (error) {
+    console.error('加载主题设置失败:', error);
+  }
 
-  // 创建主窗口
-  createWindow();
+  // 确保用户设置文件存在
+  ensureUserSettingsFile();
   
-  // 设置系统托盘
+  // 检查系统是否已经启用代理
+  try {
+    if (process.platform === 'win32') {
+      const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable').toString();
+      systemProxyEnabled = result.includes('0x1');
+      
+      if (systemProxyEnabled) {
+        // 检查是否是我们的代理设置
+        const serverResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer').toString();
+        if (serverResult.includes('127.0.0.1:')) {
+          console.log('系统代理已启用:', serverResult);
+        } else {
+          console.log('系统代理已启用，但使用的不是我们的设置:', serverResult);
+        }
+      } else {
+        console.log('系统代理未启用');
+      }
+    }
+  } catch (error) {
+    console.error('检查系统代理状态失败:', error);
+  }
+
+  createWindow();
   setupTray();
   
-  // 定期更新托盘菜单 (每60秒更新一次，保持节点延迟信息最新)
-  setInterval(updateTrayMenu, 60000);
-  
-  startConnectionsWebSocket(); // 启动连接管理
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-
-  // IPC事件处理
-  ipcMain.handle('start-mihomo', (event, configPath) => {
-    return startMihomo(configPath);
-  });
-
-  ipcMain.handle('stop-mihomo', () => {
-    if (mihomoProcess) {
-      mihomoProcess.kill();
-      mihomoProcess = null;
-      stopTrafficStatsUpdate();
-      return true;
+  // 注册API: 保存代理设置
+  ipcMain.handle('save-proxy-settings', async (event, settings) => {
+    try {
+      console.log('保存代理设置:', settings);
+      
+      // 验证设置
+      if (settings['mixed-port']) {
+        const port = parseInt(settings['mixed-port'], 10);
+        if (isNaN(port) || port < 1024 || port > 65535) {
+          return { success: false, error: '端口号必须是1024-65535之间的有效数字' };
+        }
+        settings['mixed-port'] = port;
+      }
+      
+      if ('allow-lan' in settings) {
+        settings['allow-lan'] = Boolean(settings['allow-lan']);
+      }
+      
+      if ('ipv6' in settings) {
+        settings['ipv6'] = Boolean(settings['ipv6']);
+      }
+      
+      // 更新用户设置文件
+      if (updateUserSettings(settings)) {
+        // 如果系统代理已启用，则更新系统代理设置
+        updateSystemProxyIfEnabled();
+        
+        // 如果服务正在运行，则需要重启服务
+        if (mihomoProcess) {
+          // 存储当前配置路径
+          const currentConfig = configFilePath;
+          // 停止服务
+          mihomoProcess.kill();
+          mihomoProcess = null;
+          // 重启服务
+          await startMihomo(currentConfig);
+          
+          return { success: true, message: '设置已保存，服务已重启' };
+        }
+        
+        return { success: true, message: '设置已保存' };
+      } else {
+        return { success: false, error: '保存设置失败' };
+      }
+    } catch (error) {
+      console.error('保存代理设置失败:', error);
+      return { success: false, error: error.message };
     }
-    return false;
+  });
+
+  // 注册API: 获取当前代理设置
+  ipcMain.handle('get-proxy-settings', async () => {
+    try {
+      const settings = getUserSettings();
+      return { success: true, settings };
+    } catch (error) {
+      console.error('获取代理设置失败:', error);
+      return { success: false, error: error.message };
+    }
   });
 
   // 添加: 主题设置
@@ -1746,22 +2099,26 @@ app.whenReady().then(() => {
             const data = await response.json();
         console.log(`[DEBUG] 节点 ${nodeName} 延迟测试结果: ${data.delay}ms`);
         
-        // 返回延迟结果
+        // 返回延迟结果 - 0ms表示超时或不可用，所以直接返回0
         return data.delay;
           } else {
         const errorText = await response.text();
         console.error(`[DEBUG] 测试节点延迟失败: ${response.status} ${response.statusText} - ${errorText}`);
-        throw new Error(`测试节点延迟失败: ${response.statusText}`);
+        
+        // API调用失败也表示不可用，返回0
+        return 0;
           }
         } catch (error) {
       console.error(`[DEBUG] 测试节点延迟过程中出错:`, error);
       
-      // 返回-1表示测试失败
-          return -1;
+      // 返回0表示测试失败/超时
+      return 0;
     }
   });
 
   ipcMain.handle('get-active-config', () => {
+    // 通过configFilePath判断mihomo是否在运行
+    // 如果mihomo已停止，这里应该返回null
     return configFilePath || null;
   });
   
@@ -1897,38 +2254,14 @@ app.whenReady().then(() => {
   // 新增: 切换系统代理
   ipcMain.handle('toggleSystemProxy', async (event, enabled) => {
     try {
-      if (enabled) {
-        // 启用系统代理，默认端口7890
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:7890" /f');
-        mainWindow.webContents.send('proxy-status', true);
-        
-        // 保存代理状态到配置文件
-        try {
-          const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-          fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: true }, null, 2), 'utf8');
-          console.log('已保存代理状态: 启用');
-        } catch (err) {
-          console.error('保存代理状态失败:', err);
-        }
-        
-        return true;
-      } else {
-        // 禁用系统代理
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
-        mainWindow.webContents.send('proxy-status', false);
-        
-        // 保存代理状态到配置文件
-        try {
-          const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-          fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: false }, null, 2), 'utf8');
-          console.log('已保存代理状态: 禁用');
-        } catch (err) {
-          console.error('保存代理状态失败:', err);
-        }
-        
-        return true;
-      }
+      // 创建一个模拟的菜单项对象
+      const menuItem = { checked: enabled };
+      
+      // 调用现有的toggleSystemProxy函数
+      toggleSystemProxy(menuItem);
+      
+      // 返回当前的系统代理状态
+      return systemProxyEnabled;
     } catch (error) {
       console.error('切换系统代理失败:', error);
       return false;
@@ -1937,52 +2270,7 @@ app.whenReady().then(() => {
 
   // 新增: 获取系统代理状态
   ipcMain.handle('getProxyStatus', async () => {
-    try {
-      // 首先尝试从配置文件中读取
-      const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-      
-      if (fs.existsSync(proxyConfigPath)) {
-        try {
-          const proxyConfig = JSON.parse(fs.readFileSync(proxyConfigPath, 'utf8'));
-          console.log('从配置文件读取代理状态:', proxyConfig.enabled);
-          
-          // 如果配置文件中的状态与系统不一致，则同步系统代理状态
-          const systemResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable').toString();
-          const systemEnabled = systemResult.includes('0x1');
-          
-          if (proxyConfig.enabled !== systemEnabled) {
-            console.log('代理配置与系统状态不一致，同步系统状态');
-            if (proxyConfig.enabled) {
-              execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
-              execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:7890" /f');
-            } else {
-              execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
-            }
-          }
-          
-          return proxyConfig.enabled;
-        } catch (parseError) {
-          console.error('解析代理配置文件失败:', parseError);
-        }
-      }
-      
-      // 如果无法从配置文件中读取，则从系统中读取当前状态
-      const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable').toString();
-      const enabled = result.includes('0x1');
-      
-      // 将当前系统状态保存到配置文件
-      try {
-        fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled }, null, 2), 'utf8');
-        console.log('已保存系统当前代理状态:', enabled);
-      } catch (saveError) {
-        console.error('保存代理状态失败:', saveError);
-      }
-      
-      return enabled;
-    } catch (error) {
-      console.error('获取系统代理状态失败:', error);
-      return false;
-    }
+    return systemProxyEnabled;
   });
 
   // 添加获取连接信息的函数
@@ -2094,6 +2382,199 @@ app.whenReady().then(() => {
       console.error('保存最后使用的配置文件失败:', error);
       return { success: false, error: error.message };
     }
+  });
+
+  // 添加重启Mihomo服务的函数（用于配置修改后）
+  ipcMain.handle('restart-service', async () => {
+    try {
+      // 保存当前的配置路径
+      const currentConfig = configFilePath;
+      
+      // 先停止服务
+      if (mihomoProcess) {
+        mihomoProcess.kill();
+        mihomoProcess = null;
+        stopTrafficStatsUpdate();
+        stopConnectionsWebSocket();
+        
+        // 等待进程完全关闭
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // 然后使用相同的配置重启
+      if (currentConfig) {
+        const success = await startMihomo(currentConfig);
+        return { success, message: success ? '服务已重启' : '重启失败' };
+      } else {
+        return { success: false, message: '没有活动的配置文件' };
+      }
+    } catch (error) {
+      console.error('重启服务失败:', error);
+      return { success: false, message: `重启失败: ${error.message}` };
+    }
+  });
+
+  // 添加: 启动Mihomo
+  ipcMain.handle('start-mihomo', async (event, configPath) => {
+    try {
+      if (!configPath) {
+        console.error('启动Mihomo失败: 未提供配置路径');
+        return false;
+      }
+      return await startMihomo(configPath);
+    } catch (error) {
+      console.error('启动Mihomo处理程序出错:', error);
+      return false;
+    }
+  });
+
+  // 添加: 停止Mihomo
+  ipcMain.handle('stop-mihomo', async () => {
+    try {
+      if (mihomoProcess) {
+        mihomoProcess.kill();
+        mihomoProcess = null;
+        stopTrafficStatsUpdate();
+        stopConnectionsWebSocket();
+        // 清除configFilePath，这样get-active-config将返回null
+        configFilePath = null;
+        console.log('Mihomo已停止');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('停止Mihomo失败:', error);
+      return false;
+    }
+  });
+
+  // 设置开机启动
+  ipcMain.handle('set-auto-launch', (event, enabled) => {
+    setAutoLaunch(enabled);
+    return true;
+  });
+
+  // 获取开机启动状态
+  ipcMain.handle('get-auto-launch-state', () => {
+    return getAutoLaunchState();
+  });
+
+  // 获取代理设置
+  ipcMain.handle('get-proxy-settings', () => {
+    try {
+      const settings = getUserSettings();
+      return { success: true, settings };
+    } catch (error) {
+      console.error('获取代理设置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 保存代理设置
+  ipcMain.handle('save-proxy-settings', (event, settings) => {
+    try {
+      console.log('正在保存代理设置:', settings);
+      
+      // 验证设置对象
+      if (!settings || typeof settings !== 'object') {
+        console.error('接收到无效的设置对象');
+        return { 
+          success: false, 
+          error: '无效的设置对象' 
+        };
+      }
+      
+      // 验证设置字段
+      if ('mixed-port' in settings) {
+        if (typeof settings['mixed-port'] !== 'number') {
+          console.error('端口字段不是数字:', settings['mixed-port']);
+          return { 
+            success: false, 
+            error: '端口号必须是数字' 
+          };
+        }
+        
+        if (settings['mixed-port'] < 1 || settings['mixed-port'] > 65535) {
+          console.error('端口号超出范围:', settings['mixed-port']);
+          return { 
+            success: false, 
+            error: '端口号无效，必须是1-65535之间的数字' 
+          };
+        }
+      }
+      
+      // 更新设置
+      console.log('验证通过，正在更新用户设置');
+      const success = updateUserSettings(settings);
+      
+      // 获取当前配置路径
+      const currentConfig = configFilePath;
+      
+      // 如果Mihomo正在运行，进行完全重启
+      if (success && mihomoProcess && mihomoProcess.pid && currentConfig) {
+        console.log('Mihomo正在运行，将重启服务应用新设置');
+        try {
+          // 停止现有进程
+          if (mihomoProcess) {
+            mihomoProcess.kill();
+            stopTrafficStatsUpdate();
+            stopConnectionsWebSocket();
+            // 等待进程完全终止
+            setTimeout(async () => {
+              mihomoProcess = null;
+              // 重启Mihomo
+              const restarted = await startMihomo(currentConfig);
+              console.log('重启结果:', restarted);
+              
+              if (restarted) {
+                // 通知前端重启成功
+                if (mainWindow) {
+                  mainWindow.webContents.send('service-restarted', { success: true });
+                }
+                console.log('服务已重启并应用新设置');
+              } else {
+                // 通知前端重启失败
+                if (mainWindow) {
+                  mainWindow.webContents.send('service-restarted', { 
+                    success: false, 
+                    error: '重启服务失败' 
+                  });
+                }
+                console.error('重启服务失败');
+              }
+            }, 1000);
+          }
+          
+          return { 
+            success: true, 
+            message: '设置已保存，正在重启服务应用新设置...' 
+          };
+        } catch (restartError) {
+          console.error('重启服务过程中出错:', restartError);
+          return { 
+            success: true, 
+            message: '设置已保存，但重启失败: ' + restartError.message
+          };
+        }
+      }
+      
+      return { 
+        success, 
+        message: success ? '设置已保存' : '保存设置失败' 
+      };
+    } catch (error) {
+      console.error('保存代理设置失败:', error);
+      return { 
+        success: false, 
+        error: `保存设置时发生错误: ${error.message}` 
+      };
+    }
+  });
+
+  // 设置开机启动
+  ipcMain.handle('set-auto-launch', (event, enabled) => {
+    setAutoLaunch(enabled);
+    return true;
   });
 });
 
@@ -2258,4 +2739,313 @@ async function loadPageWithServer(pageName) {
     console.error('加载页面失败:', error);
     throw error;
   }
-} 
+}
+
+// 设置开机启动
+function setAutoLaunch(enabled) {
+  try {
+    if (process.platform === 'win32') {
+      // 使用Electron的内置方法设置开机启动
+      app.setLoginItemSettings({
+        openAtLogin: enabled,
+        // 在Windows中，path参数是可选的，但如果指定，
+        // 它将覆盖Windows注册表项中注册的可执行文件路径
+        path: process.execPath,
+        args: []
+      });
+      
+      console.log(`开机启动状态已${enabled ? '启用' : '禁用'}`);
+      return true;
+    } else if (process.platform === 'darwin') {
+      // macOS系统
+      app.setLoginItemSettings({
+        openAtLogin: enabled,
+        openAsHidden: false // 是否在启动时隐藏窗口
+      });
+      
+      console.log(`macOS开机启动状态已${enabled ? '启用' : '禁用'}`);
+      return true;
+    } else {
+      console.warn('当前平台不支持设置开机启动');
+      return false;
+    }
+  } catch (error) {
+    console.error('设置开机启动失败:', error);
+    return false;
+  }
+}
+
+// 获取开机启动状态
+function getAutoLaunchState() {
+  try {
+    // 对于Windows和macOS，使用Electron API获取当前设置
+    const settings = app.getLoginItemSettings();
+    return settings.openAtLogin;
+  } catch (error) {
+    console.error('获取开机启动状态失败:', error);
+    return false;
+  }
+}
+
+// 辅助函数：判断是否为对象
+function isObject(item) {
+  return item && typeof item === 'object' && !Array.isArray(item);
+}
+
+// 深度合并配置
+function deepMergeConfig(target, source) {
+  // 处理非对象类型的直接覆盖
+  if (!isObject(target) || !isObject(source)) {
+    return source;
+  }
+  
+  const result = { ...target };
+  
+  for (const key in source) {
+    // 用户配置的这些关键字段必须覆盖原始配置
+    const mustOverrideFields = ['mixed-port', 'allow-lan', 'ipv6', 'log-level', 'external-controller', 'secret'];
+    
+    if (mustOverrideFields.includes(key)) {
+      // 直接覆盖关键字段
+      result[key] = source[key];
+    } else if (isObject(source[key])) {
+      // 递归合并对象
+      if (key in result) {
+        result[key] = deepMergeConfig(result[key], source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    } else if (Array.isArray(source[key])) {
+      // 处理数组
+      // 对于这些特定字段，保留原有配置的数组
+      const preserveArrayFields = ['proxies', 'proxy-groups', 'rules'];
+      if (preserveArrayFields.includes(key) && Array.isArray(result[key])) {
+        // 保留原有数组内容，不覆盖
+        // 这些字段不应被用户配置覆盖
+      } else {
+        // 其他数组直接覆盖
+        result[key] = source[key];
+      }
+    } else {
+      // 其他类型直接覆盖
+      result[key] = source[key];
+    }
+  }
+  
+  return result;
+}
+
+// 确保关键配置字段存在且有效
+function validateMergedConfig(config) {
+  const validatedConfig = { ...config };
+  
+  // 确保端口是有效的
+  if (!validatedConfig['mixed-port'] || typeof validatedConfig['mixed-port'] !== 'number' || 
+      validatedConfig['mixed-port'] < 1 || validatedConfig['mixed-port'] > 65535) {
+    validatedConfig['mixed-port'] = 7890; // 使用默认端口
+    console.log('端口号无效，使用默认端口7890');
+  }
+  
+  // 确保布尔类型的字段是布尔值
+  const booleanFields = ['allow-lan', 'ipv6', 'tun'];
+  for (const field of booleanFields) {
+    if (field in validatedConfig && typeof validatedConfig[field] !== 'boolean') {
+      validatedConfig[field] = Boolean(validatedConfig[field]);
+      console.log(`将字段 ${field} 转换为布尔值: ${validatedConfig[field]}`);
+    }
+  }
+  
+  // 确保必要的数组字段存在
+  const requiredArrayFields = ['proxies', 'proxy-groups'];
+  for (const field of requiredArrayFields) {
+    if (!validatedConfig[field] || !Array.isArray(validatedConfig[field])) {
+      if (field === 'proxies' && (!validatedConfig.proxies || !Array.isArray(validatedConfig.proxies))) {
+        throw new Error(`无效的配置：缺少 ${field} 数组`);
+      }
+      // 如果字段完全不存在，我们可以创建一个空数组作为默认值
+      if (!validatedConfig[field]) {
+        validatedConfig[field] = [];
+        console.log(`创建空的 ${field} 数组作为默认值`);
+      }
+    }
+  }
+  
+  return validatedConfig;
+}
+
+// 配置热重载功能
+function reloadMihomoConfig(configPath) {
+  try {
+    // 确保配置文件路径存在
+    if (!configPath || !fs.existsSync(configPath)) {
+      console.error('配置文件路径无效，无法重新加载配置');
+      return false;
+    }
+
+    // 确保mihomo进程正在运行
+    if (!mihomoProcess || !mihomoProcess.pid) {
+      console.error('Mihomo进程不在运行状态，无法重新加载配置');
+      return false;
+    }
+
+    // 确保端口在监听中
+    const port = 9090; // Mihomo API 端口
+    try {
+      // 先测试与API的连接
+      const testReq = http.request({
+        hostname: '127.0.0.1',
+        port: port,
+        path: '/version',
+        method: 'GET',
+        timeout: 1000 // 1秒超时
+      }, (res) => {
+        if (res.statusCode !== 200) {
+          console.warn(`版本API返回非200状态码: ${res.statusCode}`);
+        }
+        // 连接成功，继续重载配置
+        sendReloadRequest(configPath, port);
+      });
+      
+      testReq.on('error', (err) => {
+        console.error('测试Mihomo API连接失败:', err);
+        return false;
+      });
+      
+      testReq.on('timeout', () => {
+        testReq.destroy();
+        console.error('测试Mihomo API连接超时');
+        return false;
+      });
+      
+      testReq.end();
+      return true; // 返回true表示请求已发送
+    } catch (error) {
+      console.error('尝试连接Mihomo API时出错:', error);
+      return false;
+    }
+  } catch (error) {
+    console.error('配置热重载失败:', error);
+    return false;
+  }
+}
+
+// 发送重载配置请求
+function sendReloadRequest(configPath, port) {
+  try {
+    const http = require('http');
+    const configData = JSON.stringify({ path: configPath });
+    
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: port,
+      path: '/configs',
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(configData)
+      },
+      timeout: 5000 // 5秒超时
+    });
+    
+    req.on('error', (err) => {
+      console.error('配置重载请求失败:', err);
+    });
+    
+    req.on('timeout', () => {
+      req.destroy();
+      console.error('配置重载请求超时');
+    });
+    
+    req.on('response', (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        if (res.statusCode === 200 || res.statusCode === 204) {
+          console.log('配置重载成功:', data);
+        } else {
+          console.error(`配置重载失败，状态码: ${res.statusCode}，响应: ${data}`);
+        }
+      });
+    });
+    
+    req.write(configData);
+    req.end();
+    
+    console.log('已请求Mihomo重新加载配置:', configPath);
+  } catch (error) {
+    console.error('发送配置重载请求失败:', error);
+  }
+}
+
+// 重新生成合并配置并热重载
+function regenerateAndReloadConfig() {
+  try {
+    if (!configFilePath || !fs.existsSync(configFilePath)) {
+      console.error('原始配置文件不可用，无法重新生成配置');
+      return false;
+    }
+
+    // 读取原始配置与用户设置
+    const configContent = fs.readFileSync(configFilePath, 'utf8');
+    let config;
+    try {
+      config = yaml.load(configContent);
+      if (!config || typeof config !== 'object') {
+        throw new Error('原始配置格式无效');
+      }
+    } catch (parseError) {
+      console.error('解析原始配置文件失败:', parseError);
+      return false;
+    }
+    const userSettings = getUserSettings();
+
+    // 创建工作目录
+    const mihomoDir = path.join(userDataPath, 'mihomo');
+    if (!fs.existsSync(mihomoDir)) {
+      try {
+        fs.mkdirSync(mihomoDir, { recursive: true });
+      } catch (dirError) {
+        console.error('创建工作目录失败:', dirError);
+        return false;
+      }
+    }
+
+    // 生成新的合并配置
+    const configFilename = path.basename(configFilePath);
+    const overrideConfigFilename = 'override-' + configFilename;
+    const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+
+    try {
+      // 使用深度合并生成配置
+      const mergedConfig = deepMergeConfig(config, userSettings);
+      const validatedConfig = validateMergedConfig(mergedConfig);
+      const mergedConfigContent = yaml.dump(validatedConfig);
+      
+      try {
+        fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
+        console.log(`已重新生成配置文件: ${overrideConfigPath}`);
+      } catch (writeError) {
+        console.error('保存生成的配置文件失败:', writeError);
+        return false;
+      }
+      
+      // 检查Mihomo是否在运行
+      if (!mihomoProcess || !mihomoProcess.pid) {
+        console.warn('Mihomo进程不在运行状态，无法热重载');
+        return false;
+      }
+      
+      // 热重载配置
+      return reloadMihomoConfig(overrideConfigPath);
+    } catch (error) {
+      console.error('合并配置失败:', error);
+      return false;
+    }
+  } catch (error) {
+    console.error('重新生成配置失败:', error);
+    return false;
+  }
+}

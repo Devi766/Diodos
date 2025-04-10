@@ -50,6 +50,7 @@ export default function Dashboard() {
   const [totalDownload, setTotalDownload] = useState(0);
   const logEndRef = useRef<HTMLDivElement>(null);
   const logIdCounterRef = useRef(0);
+  const [isProxyUpdating, setIsProxyUpdating] = useState(false);
   
   // 获取所有配置文件
   useEffect(() => {
@@ -217,8 +218,26 @@ export default function Dashboard() {
     const checkMihomoStatus = async () => {
       try {
         if (window.electronAPI) {
+          // 获取配置文件路径以检查mihomo是否启动
           const config = await window.electronAPI.getActiveConfig();
-          const running = !!config;
+          const configExists = !!config;
+          
+          // 额外检查mihomo API是否可访问
+          let serviceRunning = false;
+          try {
+            // 尝试访问mihomo API
+            const response = await fetch('http://127.0.0.1:9090/version', { 
+              method: 'GET', 
+              signal: AbortSignal.timeout(1000) // 1秒超时
+            });
+            serviceRunning = response.ok;
+          } catch (apiError) {
+            console.log('mihomo API不可访问，服务可能未运行');
+            serviceRunning = false;
+          }
+          
+          // 运行状态取决于配置文件存在且服务确实在运行
+          const running = configExists && serviceRunning;
           
           // 检测到从运行状态变为非运行状态，可能是意外崩溃
           if (previousRunningState && !running && activeConfig) {
@@ -242,11 +261,11 @@ export default function Dashboard() {
           
           previousRunningState = running;
           setIsRunning(running);
+          
           if (running) {
             setActiveConfig(config);
-            // 修改：不再硬编码为"自动选择"，而是尝试获取实际节点
+            // 尝试获取实际节点
             if (!currentNode) {
-              // 立即尝试获取实际节点
               fetchCurrentNode();
             }
           } else {
@@ -264,8 +283,8 @@ export default function Dashboard() {
     // 立即检查一次
     checkMihomoStatus();
     
-    // 降低检查频率，从5秒改为15秒，减少界面刷新
-    const intervalId = setInterval(checkMihomoStatus, 15000);
+    // 降低检查频率到10秒
+    const intervalId = setInterval(checkMihomoStatus, 10000);
     
     return () => {
       clearInterval(intervalId);
@@ -329,11 +348,15 @@ export default function Dashboard() {
     };
     
     const handleMihomoStopped = (code: number) => {
+      console.log(`接收到mihomo停止事件，退出代码: ${code}`);
       setIsRunning(false);
+      setActiveConfig(null);
+      setCurrentNode(null);
       addLogEntry('info', `Mihomo已停止，退出代码: ${code}`);
     };
     
     const handleProxyStatus = (enabled: boolean) => {
+      console.log('接收到代理状态变更:', enabled);
       setProxyEnabled(enabled);
       addLogEntry('info', `系统代理已${enabled ? '启用' : '禁用'}`);
     };
@@ -424,11 +447,12 @@ export default function Dashboard() {
         });
       }
     }
-    
+
+    // 移除事件监听
     return () => {
-      console.log('移除所有事件监听器...');
-      if (window.electronAPI) {
-        window.electronAPI.removeAllListeners('dashboard');
+      console.log('清理事件监听器...');
+      if (window.electronAPI && window.electronAPI.removeAllListeners) {
+        window.electronAPI.removeAllListeners();
       }
     };
   }, [isRunning, currentNode]);  // 仅保留isRunning和currentNode作为依赖项
@@ -447,31 +471,38 @@ export default function Dashboard() {
     }
   }, []);
   
-  // 初始化系统代理状态
+  // 监听系统代理状态变更事件
   useEffect(() => {
-    const initProxyStatus = async () => {
-      if (!window.electronAPI) return;
-      
+    // 安全检查
+    const api = window.electronAPI;
+    if (!api) return;
+
+    // 首次加载时获取当前代理状态
+    const checkProxyStatus = async () => {
       try {
-        const status = await window.electronAPI.getProxyStatus();
+        const status = await api.getProxyStatus();
         setProxyEnabled(status);
       } catch (error) {
-        console.error('获取系统代理状态失败:', error);
+        console.error('获取代理状态失败:', error);
       }
     };
     
-    initProxyStatus();
-    
+    checkProxyStatus();
+
     // 监听代理状态变化
-    if (window.electronAPI) {
-      window.electronAPI.onProxyStatus((_event, enabled) => {
-        setProxyEnabled(enabled);
-      });
-    }
-    
+    const handleProxyStatus = (enabled: boolean) => {
+      console.log('接收到代理状态变更:', enabled);
+      setProxyEnabled(enabled);
+      addLogEntry('info', `系统代理已${enabled ? '启用' : '禁用'}`);
+    };
+
+    // 添加事件监听
+    const removeListener = api.onProxyStatus(handleProxyStatus);
+
+    // 清理函数
     return () => {
-      if (window.electronAPI) {
-        window.electronAPI.removeAllListeners('proxy-status');
+      if (removeListener) {
+        removeListener();
       }
     };
   }, []);
@@ -504,8 +535,13 @@ export default function Dashboard() {
       
       // 保存最后使用的配置文件
       try {
-        await window.electronAPI.saveLastConfig(selectedConfig);
-        console.log('已保存最后使用的配置文件');
+        // 如果API存在则调用，否则忽略
+        if (window.electronAPI.saveLastConfig) {
+          await window.electronAPI.saveLastConfig(selectedConfig);
+          console.log('已保存最后使用的配置文件');
+        } else {
+          console.log('saveLastConfig API不可用，跳过保存');
+        }
       } catch (saveError) {
         console.error('保存最后使用的配置文件失败:', saveError);
         // 继续执行，这不是致命错误
@@ -564,8 +600,13 @@ export default function Dashboard() {
       
       // 保存最后使用的配置文件
       try {
-        await window.electronAPI.saveLastConfig(newConfigPath);
-        console.log('已保存最后使用的配置文件');
+        // 如果API存在则调用，否则忽略
+        if (window.electronAPI.saveLastConfig) {
+          await window.electronAPI.saveLastConfig(newConfigPath);
+          console.log('已保存最后使用的配置文件');
+        } else {
+          console.log('saveLastConfig API不可用，跳过保存');
+        }
       } catch (saveError) {
         console.error('保存最后使用的配置文件失败:', saveError);
         // 继续执行，这不是致命错误
@@ -784,7 +825,7 @@ export default function Dashboard() {
                   <div className="flex items-center space-x-2">
                     <Switch.Root
                       checked={proxyEnabled}
-                      onCheckedChange={handleToggleProxy}
+                      onCheckedChange={handleProxyToggle}
                       disabled={!isRunning}
                       className={`w-11 h-6 rounded-full transition-colors duration-200 ${
                         proxyEnabled 
@@ -1060,21 +1101,22 @@ export default function Dashboard() {
   };
   
   // 处理系统代理开关
-  const handleToggleProxy = async (enabled: boolean) => {
-    if (!window.electronAPI) return;
-    
+  const handleProxyToggle = async (enabled: boolean) => {
     try {
-      // 调用主进程切换系统代理
+      if (!window.electronAPI) return;
+
+      setIsProxyUpdating(true);
+      console.log('切换系统代理:', enabled);
+      
       const result = await window.electronAPI.toggleSystemProxy(enabled);
-      if (result) {
-        setProxyEnabled(enabled);
-        addLogEntry('info', `系统代理已${enabled ? '启用' : '禁用'}`);
-      } else {
-        addLogEntry('error', `切换系统代理失败`);
-      }
+      console.log('系统代理切换结果:', result);
+      
+      // 状态由后端通过事件通知更新
     } catch (error) {
       console.error('切换系统代理失败:', error);
-      addLogEntry('error', `切换系统代理失败: ${error}`);
+      alert(`切换系统代理失败: ${error}`);
+    } finally {
+      setIsProxyUpdating(false);
     }
   };
   

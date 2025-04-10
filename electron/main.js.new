@@ -1,5 +1,4 @@
-﻿
-const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execSync } = require('child_process');
@@ -7,16 +6,22 @@ const isDev = process.env.NODE_ENV === 'development';
 const yaml = require('js-yaml');
 const WebSocket = require('ws');
 const net = require('net');
+const http = require('http');
+const serveStatic = require('serve-static');
+const finalhandler = require('finalhandler');
+
+// 应用版本号 - 统一管理所有界面显示的版本
+const APP_VERSION = '0.1.1';
 
 let mainWindow;
 let tray;
 let mihomoProcess;
 let configFilePath;
 let isQuitting = false;
-let autoStartEnabled = true; // 榛樿鍚敤鑷姩鍚姩
+let autoStartEnabled = true; // 默认启用自动启动
 let currentNode = null;
 
-// 杩炴帴绠＄悊鐩稿叧鍙橀噺
+// 连接管理相关变量
 let connectionsWebSocket = null;
 let connectionsRetry = 10;
 let lastConnectionsInfo = {
@@ -28,16 +33,67 @@ let lastConnectionsInfo = {
   activeConnections: 0
 };
 
-// 搴旂敤鏁版嵁瀛樺偍璺緞
+// 修改应用的appName，确保保存在Roaming目录下的文件夹名为flyclash
+app.name = 'flyclash';
+
+// 应用数据存储路径
 const userDataPath = app.getPath('userData');
 const configDir = path.join(userDataPath, 'config');
 
-// 纭繚閰嶇疆鐩綍瀛樺湪
+// 确保配置目录存在
 if (!fs.existsSync(configDir)) {
   fs.mkdirSync(configDir, { recursive: true });
 }
 
-// 娴侀噺缁熻鐩稿叧鍙橀噺
+// 用户设置配置文件路径
+const userSettingsPath = path.join(userDataPath, 'user-settings.yaml');
+
+// 确保用户设置文件存在，如果不存在则创建
+function ensureUserSettingsFile() {
+  if (!fs.existsSync(userSettingsPath)) {
+    // 默认设置
+    const defaultSettings = {
+      'mixed-port': 7890,
+      'allow-lan': false
+    };
+    
+    try {
+      fs.writeFileSync(userSettingsPath, yaml.dump(defaultSettings), 'utf8');
+      console.log('已创建用户设置文件:', userSettingsPath);
+    } catch (error) {
+      console.error('创建用户设置文件失败:', error);
+    }
+  }
+}
+
+// 读取用户设置
+function getUserSettings() {
+  try {
+    ensureUserSettingsFile();
+    const content = fs.readFileSync(userSettingsPath, 'utf8');
+    return yaml.load(content) || {};
+  } catch (error) {
+    console.error('读取用户设置失败:', error);
+    return {};
+  }
+}
+
+// 更新用户设置
+function updateUserSettings(settings) {
+  try {
+    ensureUserSettingsFile();
+    const currentSettings = getUserSettings();
+    const newSettings = { ...currentSettings, ...settings };
+    fs.writeFileSync(userSettingsPath, yaml.dump(newSettings), 'utf8');
+    console.log('已更新用户设置:', newSettings);
+    return true;
+  } catch (error) {
+    console.error('更新用户设置失败:', error);
+    return false;
+  }
+}
+
+// 流量统计相关变量
 let lastTrafficStats = {
   up: 0,
   down: 0,
@@ -46,12 +102,13 @@ let lastTrafficStats = {
   timestamp: Date.now()
 };
 
-// WebSocket杩炴帴
+// WebSocket连接
 let trafficWebSocket = null;
 let trafficRetry = 10;
-let lastValidStats = null;  // 鐢ㄤ簬瀛樺偍鏈€鍚庝竴娆℃湁鏁堢殑娴侀噺鏁版嵁
+let lastValidStats = null;  // 用于存储最后一次有效的流量数据
 
-// 鏍煎紡鍖栨祦閲忔暟鎹?function formatTraffic(bytes) {
+// 格式化流量数据
+function formatTraffic(bytes) {
   if (bytes === 0) return '0 B';
   
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -66,7 +123,7 @@ let lastValidStats = null;  // 鐢ㄤ簬瀛樺偍鏈€鍚庝竴娆℃湁鏁堢�
   return `${size.toFixed(2)} ${units[i]}`;
 }
 
-// 鏍煎紡鍖栭€熷害
+// 格式化速度
 function formatSpeed(bytesPerSecond) {
   if (bytesPerSecond === 0) return '0 B/s';
   
@@ -97,27 +154,71 @@ function createWindow() {
     frame: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: nativeTheme.shouldUseDarkColors ? '#202020' : '#f0f0f0',
-      symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#000000',
+      color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
       height: 48
     },
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#111827' : '#ffffff'
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f2937' : '#ffffff'
   });
 
-  // 鐩戝惉绯荤粺涓婚鍙樺寲
+  // 监听系统主题变化
   nativeTheme.on('updated', () => {
     mainWindow.setTitleBarOverlay({
-      color: nativeTheme.shouldUseDarkColors ? '#202020' : '#f0f0f0',
-      symbolColor: nativeTheme.shouldUseDarkColors ? '#ffffff' : '#000000',
+      color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
       height: 48
     });
   });
 
-  const startUrl = isDev
-    ? 'http://localhost:3000'
-    : `file://${path.join(__dirname, '../out/index.html')}`;
-
+  // 开发环境使用localhost:3000
+  if (isDev) {
+    const startUrl = 'http://localhost:3000';
   mainWindow.loadURL(startUrl);
+  } else {
+    // 生产环境使用内部HTTP服务器提供页面
+    loadPageWithServer('');
+  }
+
+  // 确保CSS加载正确
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!isDev) {
+      try {
+        // 尝试注入正确的CSS路径
+        const cssDir = path.join(__dirname, '../out/_next/static/css');
+        const cssFiles = fs.readdirSync(cssDir);
+        if (cssFiles.length > 0) {
+          const cssContent = fs.readFileSync(path.join(cssDir, cssFiles[0]), 'utf8');
+          mainWindow.webContents.insertCSS(cssContent)
+            .catch(err => console.error('注入CSS内容失败:', err));
+        } else {
+          console.error('没有找到CSS文件');
+        }
+      } catch (error) {
+        console.error('CSS注入过程中出错:', error);
+      }
+    }
+  });
+
+  // 处理导航请求
+  ipcMain.handle('loadPage', async (event, pageName) => {
+    try {
+      console.log(`切换到页面: ${pageName}`);
+      
+      // 在开发模式下使用localhost:3000
+      if (isDev) {
+        await mainWindow.loadURL(`http://localhost:3000/${pageName}`);
+        return { success: true };
+      }
+
+      // 生产模式 - 使用共享的HTTP服务器函数
+      await loadPageWithServer(pageName);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('加载页面失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
 
   if (isDev) {
     mainWindow.webContents.openDevTools();
@@ -126,7 +227,18 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     
-    // 鑷姩鍚姩Mihomo
+    // 通知渲染进程当前主题状态
+    try {
+      const currentTheme = nativeTheme.themeSource === 'system' 
+        ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+        : nativeTheme.themeSource;
+      mainWindow.webContents.send('theme-changed', currentTheme);
+      console.log('已通知渲染进程当前主题:', currentTheme);
+    } catch (error) {
+      console.error('通知主题状态失败:', error);
+    }
+    
+    // 自动启动Mihomo
     if (autoStartEnabled) {
       setTimeout(autoStartMihomo, 1000);
     }
@@ -151,95 +263,87 @@ async function startMihomo(configPath) {
     : path.join(process.resourcesPath, 'cores/mihomo-windows-amd64.exe');
 
   if (!fs.existsSync(binPath)) {
-    dialog.showErrorBox('閿欒', '鏃犳硶鎵惧埌Mihomo鏍稿績鏂囦欢');
+    dialog.showErrorBox('错误', '无法找到Mihomo核心文件');
     return;
   }
 
   try {
-    // 纭繚閰嶇疆鏂囦欢瀛樺湪
+    // 确保配置文件存在
     if (!fs.existsSync(configPath)) {
-      dialog.showErrorBox('閿欒', `閰嶇疆鏂囦欢涓嶅瓨鍦? ${configPath}`);
+      dialog.showErrorBox('错误', `配置文件不存在: ${configPath}`);
       return false;
     }
 
-    // 鍒涘缓mihomo宸ヤ綔鐩綍
+    // 创建mihomo工作目录
     const mihomoDir = path.join(userDataPath, 'mihomo');
     if (!fs.existsSync(mihomoDir)) {
       fs.mkdirSync(mihomoDir, { recursive: true });
     }
     
-    // 纭宸ヤ綔鐩綍鏈夊啓鏉冮檺
+    // 确认工作目录有写权限
     try {
       const testFile = path.join(mihomoDir, 'test_write_permission.txt');
       fs.writeFileSync(testFile, 'test');
       fs.unlinkSync(testFile);
-      console.log('宸ヤ綔鐩綍鍐欐潈闄愭甯?);
+      console.log('工作目录写权限正常');
     } catch (error) {
-      console.error('宸ヤ綔鐩綍鍐欐潈闄愪笉瓒?', error);
-      dialog.showErrorBox('鏉冮檺閿欒', `Mihomo宸ヤ綔鐩綍娌℃湁鍐欐潈闄? ${error.message}`);
+      console.error('工作目录写权限不足:', error);
+      dialog.showErrorBox('权限错误', `Mihomo工作目录没有写权限: ${error.message}`);
       return false;
     }
 
-    // 鎷疯礉閰嶇疆鏂囦欢鍒板伐浣滅洰褰曚互纭繚mihomo鑳藉姝ｇ‘璁块棶
+    // 读取用户设置
+    const userSettings = getUserSettings();
+    console.log('已读取用户设置:', userSettings);
+
+    // 读取原始配置
     const configFilename = path.basename(configPath);
-    const localConfigPath = path.join(mihomoDir, configFilename);
-    try {
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      fs.writeFileSync(localConfigPath, configContent);
-      console.log(`宸插皢閰嶇疆鏂囦欢澶嶅埗鍒板伐浣滅洰褰? ${localConfigPath}`);
-    } catch (error) {
-      console.error('澶嶅埗閰嶇疆鏂囦欢澶辫触:', error);
-      // 缁х画浣跨敤鍘熷閰嶇疆璺緞
-    }
+    let configContent = fs.readFileSync(configPath, 'utf8');
+    const config = yaml.load(configContent);
 
-    // 璁板綍鍚姩淇℃伅
-    console.log(`鍚姩Mihomo: ${binPath} -f ${configPath}`);
-    console.log(`宸ヤ綔鐩綍: ${mihomoDir}`);
+    // 创建高优先级配置文件（合并用户设置和原始配置）
+    const overrideConfigFilename = 'override-' + configFilename;
+    const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+    
+    // 合并配置（用户设置优先级更高）
+    const mergedConfig = { ...config, ...userSettings };
+    const mergedConfigContent = yaml.dump(mergedConfig);
+    
+    // 保存合并后的配置
+    fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
+    console.log(`已创建高优先级配置文件: ${overrideConfigPath}`);
 
-    // 楠岃瘉閰嶇疆鏂囦欢鍐呭
+    // 记录启动信息
+    console.log(`启动Mihomo: ${binPath} -f ${overrideConfigPath}`);
+    console.log(`工作目录: ${mihomoDir}`);
+
+    // 验证配置文件内容
     try {
-      // 灏濊瘯鍔犺浇js-yaml鍖?      let yaml;
-      try {
-        yaml = require('js-yaml');
-      } catch (e) {
-        console.log('鏈畨瑁卝s-yaml锛屼娇鐢ㄧ畝鍗曢獙璇佹柟娉?);
-        
-        const configContent = fs.readFileSync(configPath, 'utf8');
-        if (!configContent.includes('proxies:') || !configContent.includes('proxy-groups:')) {
-          dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢缂哄皯蹇呰鐨刾roxies鎴杙roxy-groups瀛楁');
-          return false;
-        }
-        // 绠€鍗曢獙璇侀€氳繃
-        return true;
-      }
-      
-      // 濡傛灉yaml鍖呭姞杞芥垚鍔燂紝浣跨敤瀹屾暣楠岃瘉
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      const config = yaml.load(configContent);
-      
-      // 妫€鏌ラ厤缃枃浠朵腑蹇呰鐨勫瓧娈?      if (!config || !config.proxies || !config['proxy-groups']) {
-        dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢缂哄皯蹇呰鐨刾roxies鎴杙roxy-groups瀛楁');
+      // 检查配置文件中必要的字段
+      if (!mergedConfig || !mergedConfig.proxies || !mergedConfig['proxy-groups']) {
+        dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies或proxy-groups字段');
         return false;
       }
 
-      // 妫€鏌ヤ唬鐞嗙粍鏄惁涓虹┖
-      if (config['proxy-groups'].length === 0) {
-        dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢涓殑浠ｇ悊缁勪负绌?);
+      // 检查代理组是否为空
+      if (mergedConfig['proxy-groups'].length === 0) {
+        dialog.showErrorBox('配置错误', '配置文件中的代理组为空');
         return false;
       }
 
-      // 妫€鏌ヤ唬鐞嗘槸鍚︿负绌?      if (config.proxies.length === 0) {
-        dialog.showErrorBox('閰嶇疆閿欒', '閰嶇疆鏂囦欢涓病鏈変唬鐞嗚妭鐐?);
+      // 检查代理是否为空
+      if (mergedConfig.proxies.length === 0) {
+        dialog.showErrorBox('配置错误', '配置文件中没有代理节点');
         return false;
       }
     } catch (error) {
-      console.error('閰嶇疆鏂囦欢楠岃瘉澶辫触:', error);
-      dialog.showErrorBox('閰嶇疆鏂囦欢閿欒', `瑙ｆ瀽閰嶇疆鏂囦欢澶辫触: ${error.message}`);
+      console.error('配置文件验证失败:', error);
+      dialog.showErrorBox('配置文件错误', `解析配置文件失败: ${error.message}`);
       return false;
     }
 
-    // 鍚姩mihomo锛岃缃伐浣滅洰褰曚负mihomoDir
-    mihomoProcess = spawn(binPath, ['-f', localConfigPath || configPath], {
+    // 启动mihomo，使用高优先级的配置文件
+    mihomoProcess = spawn(binPath, ['-f', overrideConfigPath], {
       cwd: mihomoDir,
       env: {
         ...process.env,
@@ -250,12 +354,19 @@ async function startMihomo(configPath) {
     });
     
     mihomoProcess.stdout.on('data', (data) => {
-      console.log(`mihomo stdout: ${data}`);
-      if (mainWindow) {
-        mainWindow.webContents.send('mihomo-log', data.toString());
+      const logContent = data.toString();
+      console.log(`mihomo stdout: ${logContent}`);
+      
+      // 检查是否有配置相关日志
+      if (logContent.includes('Config') || logContent.includes('allow-lan')) {
+        console.log('发现配置相关日志:', logContent);
       }
       
-      // 鐩存帴杈撳嚭鍒版帶鍒跺彴/缁堢
+      if (mainWindow) {
+        mainWindow.webContents.send('mihomo-log', logContent);
+      }
+      
+      // 直接输出到控制台/终端
       process.stdout.write(data);
     });
 
@@ -265,7 +376,7 @@ async function startMihomo(configPath) {
         mainWindow.webContents.send('mihomo-error', data.toString());
       }
       
-      // 鐩存帴杈撳嚭鍒版帶鍒跺彴/缁堢
+      // 直接输出到控制台/终端
       process.stderr.write(data);
     });
 
@@ -276,13 +387,24 @@ async function startMihomo(configPath) {
       }
     });
 
-    // 妫€鏌ヨ繘绋嬫槸鍚︽垚鍔熷惎鍔?    await new Promise(resolve => setTimeout(resolve, 1000));
+    // 检查进程是否成功启动
+    await new Promise(resolve => setTimeout(resolve, 1000));
     if (mihomoProcess.exitCode !== null) {
-      console.error(`Mihomo绔嬪嵆閫€鍑猴紝閫€鍑轰唬鐮? ${mihomoProcess.exitCode}`);
-      dialog.showErrorBox('鍚姩澶辫触', `Mihomo鍚姩鍚庣珛鍗抽€€鍑猴紝閫€鍑轰唬鐮? ${mihomoProcess.exitCode}`);
+      console.error(`Mihomo立即退出，退出代码: ${mihomoProcess.exitCode}`);
+      dialog.showErrorBox('启动失败', `Mihomo启动后立即退出，退出代码: ${mihomoProcess.exitCode}`);
       return false;
     }
 
+    // 启动成功后保存这个配置文件作为最后使用的配置
+    try {
+      const lastConfigPath = path.join(userDataPath, 'last-config.json');
+      fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
+      console.log('已将此配置设为最后使用的配置:', configPath);
+    } catch (saveError) {
+      console.error('保存最后使用的配置失败:', saveError);
+      // 继续执行，这不是致命错误
+    }
+    
     if (mihomoProcess) {
       startTrafficStatsUpdate();
     }
@@ -290,118 +412,508 @@ async function startMihomo(configPath) {
     return true;
   } catch (error) {
     console.error('Failed to start mihomo:', error);
-    dialog.showErrorBox('鍚姩澶辫触', `鏃犳硶鍚姩Mihomo: ${error.message}`);
+    dialog.showErrorBox('启动失败', `无法启动Mihomo: ${error.message}`);
     return false;
   }
 }
 
 function setupTray() {
-  const iconPath = isDev 
-    ? path.join(__dirname, '../public/favicon.ico')
-    : path.join(process.resourcesPath, 'public/favicon.ico');
+  // 尝试多个可能的图标路径
+  let iconPath = null;
+  const possiblePaths = [
+    // 开发环境路径
+    isDev ? path.join(__dirname, '../public/favicon.ico') : null,
+    // 生产环境首选路径
+    !isDev ? path.join(process.resourcesPath, 'public/favicon.ico') : null,
+    // 备选路径 - 直接在 resources 下
+    !isDev ? path.join(process.resourcesPath, 'favicon.ico') : null,
+    // 应用程序目录下
+    !isDev ? path.join(app.getAppPath(), 'public/favicon.ico') : null,
+    // out 目录下
+    !isDev ? path.join(app.getAppPath(), 'out/favicon.ico') : null
+  ].filter(Boolean); // 过滤掉 null 值
+  
+  // 尝试每个路径，直到找到存在的图标文件
+  for (const tryPath of possiblePaths) {
+    if (fs.existsSync(tryPath)) {
+      iconPath = tryPath;
+      console.log(`找到托盘图标: ${iconPath}`);
+      break;
+    }
+  }
+  
+  // 如果所有路径都不存在，使用第一个路径作为默认值
+  if (!iconPath) {
+    iconPath = possiblePaths[0];
+    console.warn(`警告: 未找到托盘图标文件，使用默认路径: ${iconPath}`);
+  }
   
   try {
     tray = new Tray(iconPath);
-    
-    // 妫€鏌ュ綋鍓嶇郴缁熶唬鐞嗙姸鎬?    let isProxyEnabled = false;
+    updateTrayMenu();
+    tray.on('click', () => {
+      mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
+    });
+  } catch (error) {
+    console.error('设置托盘图标失败:', error);
+    // 尝试在没有图标的情况下创建托盘
     try {
-      const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Sett
-ings" /v ProxyEnable').toString();
-      isProxyEnabled = result.includes('0x1');
-      
-      // 濡傛灉鍚敤锛屾鏌ユ槸鍚︽槸鎴戜滑鐨勪唬鐞?      if (isProxyEnabled) {
-        const serverResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Inter
-net Settings" /v ProxyServer').toString();
-        if (!serverResult.includes('127.0.0.1:7890')) {
-          // 濡傛灉涓嶆槸鎴戜滑鐨勪唬鐞嗭紝涓嶈鎶婂畠褰撲綔鎴戜滑鐨勫簲鐢ㄥ惎鐢ㄧ殑
-          console.log('鍙戠幇鍏朵粬绯荤粺浠ｇ悊锛屼笉瑙嗕负鏈簲鐢ㄨ缃殑浠ｇ悊');
-          isProxyEnabled = false;
+      console.log('尝试在没有图标的情况下创建托盘...');
+      tray = new Tray(nativeImage.createEmpty());
+      updateTrayMenu();
+    } catch (fallbackError) {
+      console.error('无法创建托盘:', fallbackError);
+    }
+  }
+}
+
+// 更新托盘菜单，包括节点列表
+async function updateTrayMenu() {
+  if (!tray) return;
+  
+  try {
+    // 获取当前代理状态
+    let proxyEnabled = systemProxyEnabled;
+    
+    // 基础菜单项
+    const menuItems = [
+      { label: '显示主窗口', click: () => mainWindow.show() },
+      { type: 'separator' },
+      { label: '启用系统代理', type: 'checkbox', checked: proxyEnabled, click: toggleSystemProxy },
+      { 
+        label: '断开所有连接', 
+        click: async () => {
+          try {
+            // 使用Mihomo API断开所有连接
+            const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+            const response = await fetch('http://127.0.0.1:9090/connections', {
+              method: 'DELETE'
+            });
+            
+            if (response.ok) {
+              console.log('成功断开所有连接');
+              // 可选：显示通知
+              if (mainWindow) {
+                mainWindow.webContents.send('connections-closed');
+              }
+            } else {
+              console.error(`断开所有连接失败: ${response.statusText}`);
+            }
+          } catch (error) {
+            console.error('断开所有连接时出错:', error);
+          }
+        }
+      }
+    ];
+    
+    // 尝试获取节点列表
+    let nodeMenuItems = [];
+    
+    try {
+      // 检查Mihomo是否运行
+      const isServiceRunning = await checkMihomoService();
+      if (isServiceRunning) {
+        // 使用fetch API获取代理节点信息
+        const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+        
+        // 获取代理节点信息
+        const response = await fetch('http://127.0.0.1:9090/proxies');
+        if (response.ok) {
+          const data = await response.json();
+          
+          // 获取所有代理组
+          const proxyGroups = [];
+          
+          // 查找所有类型为Selector, URLTest, Fallback的代理组
+          for (const [name, proxy] of Object.entries(data.proxies)) {
+            if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
+              if (proxy.all && proxy.all.length > 0) {
+                // 将PROXY或GLOBAL组放在最前面
+                if (name === 'PROXY' || name === 'GLOBAL') {
+                  proxyGroups.unshift({
+                    name: name,
+                    type: proxy.type,
+                    all: proxy.all,
+                    now: proxy.now
+                  });
+                } else {
+                  proxyGroups.push({
+                    name: name,
+                    type: proxy.type,
+                    all: proxy.all,
+                    now: proxy.now
+                  });
+                }
+              }
+            }
+          }
+          
+          // 创建所有代理组的子菜单
+          if (proxyGroups.length > 0) {
+            const groupSubmenuItems = [];
+            
+            // 为每个代理组创建子菜单
+            for (const group of proxyGroups) {
+              const nodesSubmenu = [];
+              
+              // 先对节点进行排序 - 将当前选中节点和有延迟信息的节点排在前面
+              const sortedNodeNames = [...group.all].sort((a, b) => {
+                // 当前选中的节点排在最前面
+                if (a === group.now) return -1;
+                if (b === group.now) return 1;
+                
+                const nodeA = data.proxies[a];
+                const nodeB = data.proxies[b];
+                
+                // 有延迟信息的节点优先
+                const delayA = nodeA?.history?.[0]?.delay ?? -1;
+                const delayB = nodeB?.history?.[0]?.delay ?? -1;
+                
+                // 都有延迟信息，按延迟从小到大排序
+                if (delayA > 0 && delayB > 0) return delayA - delayB;
+                
+                // 有延迟信息的排在前面
+                if (delayA > 0) return -1;
+                if (delayB > 0) return 1;
+                
+                // 都没有延迟信息，按字母顺序排序
+                return a.localeCompare(b);
+              });
+              
+              // 为每个节点创建菜单项
+              for (const nodeName of sortedNodeNames) {
+                const node = data.proxies[nodeName];
+                if (node) {
+                  // 跳过其他代理组类型（不跳过，部分配置允许代理组嵌套）
+                  // if (node.type === 'Selector' || node.type === 'URLTest' || node.type === 'Fallback') {
+                  //   continue;
+                  // }
+                  
+                  let label = nodeName;
+                  // 添加延迟显示（如果有）
+                  if (node.history && node.history.length > 0) {
+                    const delay = node.history[0].delay;
+                    if (delay > 0) {
+                      label = `${nodeName} (${delay}ms)`;
+                    } else if (delay === 0) {
+                      label = `${nodeName} (超时)`;
+                    }
+                  }
+                  
+                  // 如果是代理组，添加标记
+                  if (node.type === 'Selector' || node.type === 'URLTest' || node.type === 'Fallback') {
+                    label = `${label} [组]`;
+                  }
+                  
+                  nodesSubmenu.push({
+                    label: label,
+                    type: 'radio',
+                    checked: nodeName === group.now,
+                    click: async () => {
+                      // 调用API切换节点
+                      try {
+                        // 切换节点
+                        const switchResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(group.name)}`, {
+                          method: 'PUT',
+                          headers: {
+                            'Content-Type': 'application/json'
+                          },
+                          body: JSON.stringify({ name: nodeName })
+                        });
+                        
+                        if (switchResponse.ok) {
+                          console.log(`成功切换组 ${group.name} 到节点: ${nodeName}`);
+                          
+                          // 如果是主要组（PROXY或GLOBAL），同时更新当前节点
+                          if (group.name === 'PROXY' || group.name === 'GLOBAL') {
+                            // 切换成功后更新UI
+                            if (mainWindow) {
+                              mainWindow.webContents.send('node-changed', { nodeName });
+                            }
+                            // 更新当前节点
+                            currentNode = nodeName;
+                            // 更新托盘提示
+                            tray.setToolTip(`FlyClash - ${nodeName}`);
+                          }
+                          
+                          // 更新托盘菜单
+                          setTimeout(() => updateTrayMenu(), 1000);
+                        } else {
+                          console.error(`切换节点失败: ${switchResponse.statusText}`);
+                        }
+                      } catch (error) {
+                        console.error('切换节点失败:', error);
+                      }
+                    }
+                  });
+                }
+              }
+              
+              // 如果有节点，添加到代理组菜单
+              if (nodesSubmenu.length > 0) {
+                // 标记当前选中的节点
+                const groupLabel = group.name === 'PROXY' || group.name === 'GLOBAL' 
+                  ? `${group.name} ★` 
+                  : group.name;
+                
+                groupSubmenuItems.push({
+                  label: groupLabel,
+                  submenu: nodesSubmenu
+                });
+              }
+            }
+            
+            // 添加所有代理组菜单
+            nodeMenuItems = [
+              { type: 'separator' },
+              { 
+                label: '节点选择', 
+                submenu: groupSubmenuItems
+              }
+            ];
+          }
         }
       }
     } catch (error) {
-      console.error('鍒濆鍖栨椂妫€鏌ョ郴缁熶唬鐞嗙姸鎬佸け璐?', error);
+      console.error('获取节点列表失败:', error);
     }
     
+    // 组合完整菜单
     const contextMenu = Menu.buildFromTemplate([
-      { label: '鏄剧ず涓荤獥鍙?, click: () => mainWindow.show() },
+      ...menuItems,
+      ...nodeMenuItems,
       { type: 'separator' },
-      { label: '鍚敤绯荤粺浠ｇ悊', type: 'checkbox', checked: isProxyEnabled, click: toggleSystemProxy },
-      { type: 'separator' },
-      { label: '閫€鍑?, click: () => {
+      { label: '退出', click: () => {
         isQuitting = true;
         app.quit();
       }}
     ]);
-    tray.setToolTip('FlyCast');
-    tray.setContextMenu(contextMenu);
-    tray.on('click', () => {
-      mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
-    });
     
-    // 濡傛灉鎵樼洏鍒氬垵濮嬪寲涓旂郴缁熶唬鐞嗗凡鍚敤锛岄€氱煡鍓嶇
-    if (isProxyEnabled && mainWindow) {
-      mainWindow.webContents.send('proxy-status', true);
+    tray.setContextMenu(contextMenu);
+    
+    // 更新托盘提示，显示当前节点
+    if (currentNode) {
+      tray.setToolTip(`FlyClash - ${currentNode}`);
+    } else {
+      tray.setToolTip('FlyClash');
     }
   } catch (error) {
-    console.error('璁剧疆鎵樼洏鍥炬爣澶辫触:', error);
+    console.error('更新托盘菜单失败:', error);
+    // 创建基本菜单作为后备
+    const basicMenu = Menu.buildFromTemplate([
+      { label: '显示主窗口', click: () => mainWindow.show() },
+      { type: 'separator' },
+      { label: '退出', click: () => {
+        isQuitting = true;
+        app.quit();
+      }}
+    ]);
+    tray.setContextMenu(basicMenu);
   }
 }
 
+// 系统代理状态
+let systemProxyEnabled = false;
+
+// 切换系统代理
 function toggleSystemProxy(menuItem) {
-  const enabled = menuItem.checked;
-  if (enabled) {
-    // 鍚敤绯荤粺浠ｇ悊锛岄粯璁ょ鍙?890
-    try {
-      // 璁剧疆浠ｇ悊鍚敤
-      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEna
-ble /t REG_DWORD /d 1 /f');
-      // 璁剧疆浠ｇ悊鏈嶅姟鍣?      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet S
-ettings" /v ProxyServer /t REG_SZ /d "127.0.0.1:7890" /f');
-      // 鎵嬪姩鍒锋柊Internet璁剧疆
-      execSync(''); // 杩欎細鍒锋柊IE/绯荤粺璁剧疆
-      mainWindow.webContents.send('proxy-status', true);
-    } catch (error) {
-      console.error('Failed to enable system proxy:', error);
-      dialog.showErrorBox('浠ｇ悊璁剧疆澶辫触', '鏃犳硶鍚敤绯荤粺浠ｇ悊');
-      menuItem.checked = false;
+  // 检查mihomo是否运行中
+  if (!mihomoProcess) {
+    dialog.showErrorBox('错误', '请先启动代理服务');
+    return;
+  }
+  
+  try {
+    // 读取当前用户设置，获取最新的端口设置
+    const userSettings = getUserSettings();
+    const port = userSettings['mixed-port'] || 7890;
+    
+    if (menuItem.checked) {
+      // 启用系统代理
+      console.log('启用系统代理，端口:', port);
+      
+      // Windows平台
+      if (process.platform === 'win32') {
+        // Windows 使用 Internet 设置注册表
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
+        execSync(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:${port}" /f`);
+        
+        // 设置环境变量
+        process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+        process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+      } 
+      // macOS平台使用networksetup命令
+      else if (process.platform === 'darwin') {
+        // 获取所有活动网络服务
+        const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
+        // 跳过第一行(标题行)
+        for (let i = 1; i < services.length; i++) {
+          const service = services[i].trim();
+          if (service && !service.includes('*')) {
+            execSync(`networksetup -setwebproxy "${service}" 127.0.0.1 ${port}`);
+            execSync(`networksetup -setsecurewebproxy "${service}" 127.0.0.1 ${port}`);
+            execSync(`networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 ${port}`);
+          }
+        }
+      }
+      
+      systemProxyEnabled = true;
+      if (mainWindow) {
+        mainWindow.webContents.send('proxy-status', true);
+      }
+    } else {
+      // 禁用系统代理
+      console.log('禁用系统代理');
+      
+      // Windows平台
+      if (process.platform === 'win32') {
+        // Windows 使用 Internet 设置注册表
+        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
+        
+        // 清除环境变量
+        delete process.env.HTTP_PROXY;
+        delete process.env.HTTPS_PROXY;
+      } 
+      // macOS平台
+      else if (process.platform === 'darwin') {
+        const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
+        for (let i = 1; i < services.length; i++) {
+          const service = services[i].trim();
+          if (service && !service.includes('*')) {
+            execSync(`networksetup -setwebproxystate "${service}" off`);
+            execSync(`networksetup -setsecurewebproxystate "${service}" off`);
+            execSync(`networksetup -setsocksfirewallproxystate "${service}" off`);
+          }
+        }
+      }
+      
+      systemProxyEnabled = false;
+      if (mainWindow) {
+        mainWindow.webContents.send('proxy-status', false);
+      }
     }
-  } else {
-    // 绂佺敤绯荤粺浠ｇ悊
-    try {
-      // 绂佺敤浠ｇ悊
-      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEna
-ble /t REG_DWORD /d 0 /f');
-      // 鎵嬪姩鍒锋柊Internet璁剧疆
-      execSync(''); // 杩欎細鍒锋柊IE/绯荤粺璁剧疆
-      mainWindow.webContents.send('proxy-status', false);
-    } catch (error) {
-      console.error('Failed to disable system proxy:', error);
-      dialog.showErrorBox('浠ｇ悊璁剧疆澶辫触', '鏃犳硶绂佺敤绯荤粺浠ｇ悊');
-      menuItem.checked = true;
+  } catch (error) {
+    console.error('设置系统代理失败:', error);
+    dialog.showErrorBox('系统代理错误', `设置系统代理失败: ${error.message}`);
+    
+    // 恢复菜单项状态
+    menuItem.checked = !menuItem.checked;
+    systemProxyEnabled = !menuItem.checked;
+    
+    if (mainWindow) {
+      mainWindow.webContents.send('proxy-status', systemProxyEnabled);
     }
   }
 }
 
-// 鑷姩鍚姩Mihomo鍔熻兘
+// 更新系统代理设置（当端口变更时调用）
+function updateSystemProxyIfEnabled() {
+  // 如果系统代理未启用，则不需要更新
+  if (!systemProxyEnabled) {
+    return;
+  }
+  
+  try {
+    // 读取当前用户设置，获取最新的端口设置
+    const userSettings = getUserSettings();
+    const port = userSettings['mixed-port'] || 7890;
+    
+    console.log('更新系统代理设置，使用新端口:', port);
+    
+    // Windows平台
+    if (process.platform === 'win32') {
+      // Windows 使用 Internet 设置注册表
+      execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
+      execSync(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:${port}" /f`);
+      
+      // 更新环境变量
+      process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
+      process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+    } 
+    // macOS平台
+    else if (process.platform === 'darwin') {
+      const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
+      for (let i = 1; i < services.length; i++) {
+        const service = services[i].trim();
+        if (service && !service.includes('*')) {
+          execSync(`networksetup -setwebproxy "${service}" 127.0.0.1 ${port}`);
+          execSync(`networksetup -setsecurewebproxy "${service}" 127.0.0.1 ${port}`);
+          execSync(`networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 ${port}`);
+        }
+      }
+    }
+    
+    console.log('系统代理设置已更新');
+  } catch (error) {
+    console.error('更新系统代理设置失败:', error);
+    dialog.showErrorBox('系统代理错误', `更新系统代理设置失败: ${error.message}`);
+  }
+}
+
+// 自动启动Mihomo功能
 async function autoStartMihomo() {
   try {
-    // 鑾峰彇淇濆瓨鐨勮闃呭垪琛?    const subscriptions = await getSubscriptionList();
+    // 获取保存的订阅列表
+    const subscriptions = await getSubscriptionList();
     if (subscriptions.length === 0) {
-      console.log('娌℃湁鍙敤鐨勯厤缃枃浠讹紝鏃犳硶鑷姩鍚姩');
+      console.log('没有可用的配置文件，无法自动启动');
       return;
     }
     
-    // 浣跨敤绗竴涓闃呴厤缃惎鍔?    const configPath = subscriptions[0].path;
+    // 尝试从存储中读取上次使用的配置文件路径
+    let configPath;
+    try {
+      const lastConfigPath = path.join(userDataPath, 'last-config.json');
+      if (fs.existsSync(lastConfigPath)) {
+        const lastConfig = JSON.parse(fs.readFileSync(lastConfigPath, 'utf8'));
+        if (lastConfig.path && fs.existsSync(lastConfig.path)) {
+          console.log('找到上次使用的配置文件:', lastConfig.path);
+          configPath = lastConfig.path;
+        }
+      }
+    } catch (error) {
+      console.error('读取上次配置文件失败:', error);
+    }
+    
+    // 如果没有找到上次的配置或文件不存在，使用第一个可用的配置
+    if (!configPath) {
+      configPath = subscriptions[0].path;
+      console.log('没有找到上次的配置，使用第一个配置文件:', configPath);
+    }
+    
     const success = await startMihomo(configPath);
     
     if (success && mainWindow) {
-      // 閫氱煡鍓嶇鏇存柊鐘舵€?      mainWindow.webContents.send('mihomo-autostart', {
+      // 通知前端更新状态
+      mainWindow.webContents.send('mihomo-autostart', {
         success: true,
         configPath: configPath
       });
+      
+      // 自动应用上次的代理状态
+      try {
+        const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
+        if (fs.existsSync(proxyConfigPath)) {
+          const proxyConfig = JSON.parse(fs.readFileSync(proxyConfigPath, 'utf8'));
+          console.log('应用上次保存的代理状态:', proxyConfig.enabled);
+          
+          if (proxyConfig.enabled) {
+            // 启用系统代理
+            execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
+            execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:7890" /f');
+            mainWindow.webContents.send('proxy-status', true);
+          } else {
+            // 禁用系统代理
+            execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
+            mainWindow.webContents.send('proxy-status', false);
+          }
+        }
+      } catch (error) {
+        console.error('应用上次代理状态失败:', error);
+      }
     }
   } catch (error) {
-    console.error('鑷姩鍚姩Mihomo澶辫触:', error);
+    console.error('自动启动Mihomo失败:', error);
     if (mainWindow) {
       mainWindow.webContents.send('mihomo-autostart', {
         success: false,
@@ -411,7 +923,7 @@ async function autoStartMihomo() {
   }
 }
 
-// 鑾峰彇璁㈤槄鍒楄〃
+// 获取订阅列表
 function getSubscriptionList() {
   return new Promise((resolve) => {
     if (!fs.existsSync(configDir)) {
@@ -430,17 +942,17 @@ function getSubscriptionList() {
   });
 }
 
-// 瑙ｆ瀽YAML閰嶇疆鏂囦欢
+// 解析YAML配置文件
 function parseConfigFile(filePath) {
   try {
     const fileContent = fs.readFileSync(filePath, 'utf8');
     
-    // 浣跨敤js-yaml瑙ｆ瀽
+    // 使用js-yaml解析
     let yaml;
     try {
       yaml = require('js-yaml');
     } catch (e) {
-      console.error('js-yaml妯″潡鏈畨瑁咃紝鏃犳硶瑙ｆ瀽閰嶇疆');
+      console.error('js-yaml模块未安装，无法解析配置');
       return null;
     }
     
@@ -449,13 +961,12 @@ function parseConfigFile(filePath) {
       return null;
     }
     
-    // 鎻愬彇鎵€鏈変唬鐞嗙粍鍜岃妭鐐癸紝淇濇寔鍘熷椤哄簭
+    // 提取所有代理组和节点，保持原始顺序
     const proxyGroups = [];
     
     if (config["proxy-groups"] && Array.isArray(config["proxy-groups"])) {
       for (const group of config["proxy-groups"]) {
-        if (group.name && (group.type === 'select' || group.type === 'url-test' || group.type === 'fallback
-')) {
+        if (group.name && (group.type === 'select' || group.type === 'url-test' || group.type === 'fallback')) {
           proxyGroups.push({
             name: group.name,
             type: group.type,
@@ -465,7 +976,8 @@ function parseConfigFile(filePath) {
       }
     }
     
-    // 鎻愬彇鎵€鏈変唬鐞嗚妭鐐?    const proxies = [];
+    // 提取所有代理节点
+    const proxies = [];
     if (config.proxies && Array.isArray(config.proxies)) {
       for (const proxy of config.proxies) {
         if (proxy.name) {
@@ -479,31 +991,33 @@ function parseConfigFile(filePath) {
       }
     }
     
-    return {
+      return {
       proxyGroups,
       proxies
     };
   } catch (error) {
-    console.error('瑙ｆ瀽閰嶇疆鏂囦欢澶辫触:', error);
+    console.error('解析配置文件失败:', error);
     return null;
   }
 }
 
-// 鏂板: 鑾峰彇閰嶇疆鏂囦欢涓殑鍘熷浠ｇ悊缁勯『搴?ipcMain.handle('get-config-order', async (event) => {
+// 新增: 获取配置文件中的原始代理组顺序
+ipcMain.handle('get-config-order', async (event) => {
   try {
-    // 濡傛灉Mihomo鏈繍琛岋紝娌℃湁娲昏穬鐨勯厤缃枃浠?    if (!configFilePath) {
-      return {
+    // 如果Mihomo未运行，没有活跃的配置文件
+    if (!configFilePath) {
+            return {
         success: false,
-        error: 'Mihomo鏈繍琛岋紝娌℃湁娲昏穬鐨勯厤缃枃浠?
+        error: 'Mihomo未运行，没有活跃的配置文件'
       };
     }
     
-    // 瑙ｆ瀽閰嶇疆鏂囦欢
+    // 解析配置文件
     const configData = parseConfigFile(configFilePath);
     if (!configData) {
       return {
         success: false,
-        error: '瑙ｆ瀽閰嶇疆鏂囦欢澶辫触'
+        error: '解析配置文件失败'
       };
     }
     
@@ -512,74 +1026,74 @@ function parseConfigFile(filePath) {
       data: configData
     };
   } catch (error) {
-    console.error('鑾峰彇閰嶇疆椤哄簭澶辫触:', error);
+    console.error('获取配置顺序失败:', error);
     return {
       success: false,
-      error: `鑾峰彇閰嶇疆椤哄簭澶辫触: ${error.message}`
+      error: `获取配置顺序失败: ${error.message}`
     };
   }
 });
 
-// 鏂板: 鑾峰彇褰撳墠閰嶇疆
+// 新增: 获取当前配置
 async function getConfig() {
   try {
     if (!configFilePath || !fs.existsSync(configFilePath)) {
-      console.log('褰撳墠娌℃湁娲昏穬鐨勯厤缃枃浠?);
+      console.log('当前没有活跃的配置文件');
       return null;
     }
     
-    // 璇诲彇閰嶇疆鏂囦欢
+    // 读取配置文件
     const content = fs.readFileSync(configFilePath, 'utf8');
     
     if (!content || content.trim() === '') {
-      console.error('閰嶇疆鏂囦欢涓虹┖');
+      console.error('配置文件为空');
       return null;
     }
     
-    // 瑙ｆ瀽YAML
+    // 解析YAML
     const config = yaml.load(content);
     
     if (!config) {
-      console.error('瑙ｆ瀽閰嶇疆鏂囦欢澶辫触');
+      console.error('解析配置文件失败');
       return null;
     }
     
     return config;
   } catch (error) {
-    console.error('鑾峰彇閰嶇疆澶辫触:', error);
+    console.error('获取配置失败:', error);
     return null;
   }
 }
 
-// 鏇存柊娴侀噺缁熻
+// 更新流量统计
 function updateTrafficStats() {
-  // 濡傛灉WebSocket宸茬粡杩炴帴锛屼笉闇€瑕侀噸鏂拌繛鎺?  if (trafficWebSocket && trafficWebSocket.readyState === 1) { // 1 = O
-PEN
+  // 如果WebSocket已经连接，不需要重新连接
+  if (trafficWebSocket && trafficWebSocket.readyState === 1) { // 1 = OPEN
     return;
   }
 
-  // 浣跨敤鏍囧噯鐨刉ebSocket鍦板潃
+  // 使用标准的WebSocket地址
   const wsUrl = 'ws://127.0.0.1:9090/traffic';
   
-  // 鍒涘缓娴侀噺缁熻WebSocket
+  // 创建流量统计WebSocket
   trafficWebSocket = new WebSocket(wsUrl);
 
   trafficWebSocket.on('open', () => {
-    console.log('娴侀噺缁熻WebSocket杩炴帴宸插缓绔?);
-    trafficRetry = 10; // 閲嶇疆閲嶈瘯璁℃暟
+    console.log('流量统计WebSocket连接已建立');
+    trafficRetry = 10; // 重置重试计数
   });
 
   trafficWebSocket.on('message', (data) => {
     try {
       const json = JSON.parse(data);
       
-      // 纭繚鏁版嵁鏍煎紡姝ｇ‘
+      // 确保数据格式正确
       if (!json || typeof json.up !== 'number' || typeof json.down !== 'number') {
-        console.error('鏃犳晥鐨勬祦閲忔暟鎹牸寮?);
+        console.error('无效的流量数据格式');
         return;
       }
 
-      // 鏇存柊缁熻鏁版嵁
+      // 更新统计数据
       const stats = {
         up: json.up,
         down: json.down,
@@ -590,44 +1104,46 @@ PEN
 
       lastTrafficStats = stats;
       
-      // 鍙戦€佹洿鏂板埌涓荤獥鍙?      if (mainWindow) {
+      // 发送更新到主窗口
+      if (mainWindow) {
         mainWindow.webContents.send('traffic-update', stats);
       }
       
-      // 姣忓綋鏀跺埌娴侀噺鏇存柊鏃讹紝鍚屾椂鑾峰彇鎬绘祦閲忔暟鎹?      fetchConnectionsInfo();
+      // 每当收到流量更新时，同时获取总流量数据
+      fetchConnectionsInfo();
       
-      // 鍙湪娴侀噺鍙樺寲杈冨ぇ鏃惰緭鍑烘棩蹇楋紙澶т簬10MB鐨勫彉鍖栵級
+      // 只在流量变化较大时输出日志（大于10MB的变化）
       const significantChange = Math.abs(stats.up - lastTrafficStats.up) > 10 * 1024 * 1024 || 
                                Math.abs(stats.down - lastTrafficStats.down) > 10 * 1024 * 1024;
       if (significantChange) {
-        console.log(`娴侀噺鏇存柊: 涓婁紶 ${formatTraffic(stats.up)}, 涓嬭浇 ${formatTraffic(stats.down)}`);
+        console.log(`流量更新: 上传 ${formatTraffic(stats.up)}, 下载 ${formatTraffic(stats.down)}`);
       }
     } catch (error) {
-      console.error('澶勭悊娴侀噺鏁版嵁鏃跺嚭閿?', error);
+      console.error('处理流量数据时出错:', error);
     }
   });
 
   trafficWebSocket.on('close', () => {
-    // 鍙湪绗竴娆″叧闂椂杈撳嚭鏃ュ織
+    // 只在第一次关闭时输出日志
     if (trafficRetry === 10) {
-      console.log('娴侀噺缁熻WebSocket杩炴帴宸插叧闂?);
+      console.log('流量统计WebSocket连接已关闭');
     }
     trafficWebSocket = null;
 
     if (trafficRetry > 0) {
       trafficRetry--;
-      // 鍙湪绗竴娆″拰鏈€鍚庝竴娆￠噸璇曟椂杈撳嚭鏃ュ織
+      // 只在第一次和最后一次重试时输出日志
       if (trafficRetry === 9 || trafficRetry === 0) {
-        console.log(`灏濊瘯閲嶆柊杩炴帴WebSocket锛屽墿浣欓噸璇曟鏁? ${trafficRetry}`);
+        console.log(`尝试重新连接WebSocket，剩余重试次数: ${trafficRetry}`);
       }
       updateTrafficStats();
     } else {
-      console.log('WebSocket閲嶈繛娆℃暟宸茶揪涓婇檺锛屽仠姝㈤噸璇?);
+      console.log('WebSocket重连次数已达上限，停止重试');
     }
   });
 
   trafficWebSocket.on('error', (error) => {
-    console.error('娴侀噺缁熻WebSocket閿欒:', error);
+    console.error('流量统计WebSocket错误:', error);
     if (trafficWebSocket) {
       trafficWebSocket.close();
       trafficWebSocket = null;
@@ -635,21 +1151,24 @@ PEN
   });
 }
 
-// 璁剧疆瀹氭椂鏇存柊娴侀噺缁熻
+// 设置定时更新流量统计
 let trafficStatsInterval;
 function startTrafficStatsUpdate() {
   if (trafficStatsInterval) {
     clearInterval(trafficStatsInterval);
   }
   
-  // 鍒濆鍖朩ebSocket杩炴帴
+  // 初始化WebSocket连接
   updateTrafficStats();
   
-  // 璁剧疆瀹氭椂鍣紝姣?绉掓鏌ヤ竴娆ebSocket杩炴帴鐘舵€?  trafficStatsInterval = setInterval(() => {
+  // 设置定时器，每1秒检查一次WebSocket连接状态
+  trafficStatsInterval = setInterval(() => {
     if (!trafficWebSocket || trafficWebSocket.readyState !== 1) {
-      // 绉婚櫎閲嶈繛鏃ュ織锛岄伩鍏嶅埛灞?      updateTrafficStats();
+      // 移除重连日志，避免刷屏
+      updateTrafficStats();
     }
-  }, 1000); // 姣?绉掓鏌ヤ竴娆?}
+  }, 1000); // 每1秒检查一次
+}
 
 function stopTrafficStatsUpdate() {
   if (trafficStatsInterval) {
@@ -663,34 +1182,34 @@ function stopTrafficStatsUpdate() {
   }
 }
 
-// 鍚姩杩炴帴绠＄悊WebSocket
+// 启动连接管理WebSocket
 async function startConnectionsWebSocket() {
   try {
     if (!currentNode) {
-      throw new Error('鏈€夋嫨鑺傜偣');
+      throw new Error('未选择节点');
     }
 
-    // 鍒涘缓鏂扮殑WebSocket杩炴帴
+    // 创建新的WebSocket连接
     connectionsWebSocket = new WebSocket(`ws://localhost:8080/connections/${currentNode}`);
     
-    // 璁剧疆杩炴帴瓒呮椂
+    // 设置连接超时
     const connectionTimeout = setTimeout(() => {
       if (connectionsWebSocket.readyState !== WebSocket.OPEN) {
         connectionsWebSocket.close();
-        throw new Error('杩炴帴瓒呮椂');
+        throw new Error('连接超时');
       }
     }, 5000);
 
-    // 杩炴帴寤虹珛
+    // 连接建立
     connectionsWebSocket.on('open', () => {
       clearTimeout(connectionTimeout);
-      console.log(`宸茶繛鎺ュ埌鑺傜偣 ${currentNode}`);
+      console.log(`已连接到节点 ${currentNode}`);
     });
 
-    // 杩炴帴鍏抽棴
+    // 连接关闭
     connectionsWebSocket.on('close', () => {
-      console.log(`涓庤妭鐐?${currentNode} 鐨勮繛鎺ュ凡鍏抽棴`);
-      // 灏濊瘯閲嶆柊杩炴帴
+      console.log(`与节点 ${currentNode} 的连接已关闭`);
+      // 尝试重新连接
       setTimeout(() => {
         if (currentNode) {
           startConnectionsWebSocket().catch(console.error);
@@ -698,64 +1217,66 @@ async function startConnectionsWebSocket() {
       }, 5000);
     });
 
-    // 閿欒澶勭悊
+    // 错误处理
     connectionsWebSocket.on('error', (error) => {
-      console.error('WebSocket閿欒:', error);
+      console.error('WebSocket错误:', error);
       clearTimeout(connectionTimeout);
     });
 
   } catch (error) {
-    console.error('鍚姩WebSocket杩炴帴澶辫触:', error);
+    console.error('启动WebSocket连接失败:', error);
     throw error;
   }
 }
 
-// 鏇存柊褰撳墠鑺傜偣淇℃伅
+// 更新当前节点信息
 async function updateCurrentNodeInfo() {
   try {
-    // 浣跨敤姝ｇ‘鐨凙PI绔偣鑾峰彇PROXY缁勪俊鎭?    const response = await fetch('http://127.0.0.1:9090/proxies/PROXY');
+    // 使用正确的API端点获取PROXY组信息
+    const response = await fetch('http://127.0.0.1:9090/proxies/PROXY');
     if (response.ok) {
       const data = await response.json();
-      console.log('鑾峰彇鍒癙ROXY缁勪俊鎭?', data);
+      console.log('获取到PROXY组信息:', data);
       
       if (data && data.now) {
         currentNode = data.now;
-        console.log('鏇存柊褰撳墠鑺傜偣涓?', currentNode);
+        console.log('更新当前节点为:', currentNode);
         
-        // 鏇存柊lastConnectionsInfo涓殑鑺傜偣淇℃伅
+        // 更新lastConnectionsInfo中的节点信息
         lastConnectionsInfo = {
           ...lastConnectionsInfo,
           currentNode: currentNode
         };
         
-        // 閫氱煡涓荤獥鍙ｈ妭鐐瑰凡鏇存柊
+        // 通知主窗口节点已更新
         if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-          console.log('鍙戦€佽妭鐐瑰彉鏇翠簨浠?', currentNode);
+          console.log('发送节点变更事件:', currentNode);
           
-          // 绔嬪嵆鍙戦€佽妭鐐规洿鏂?          mainWindow.webContents.send('node-changed', { nodeName: currentNode });
+          // 立即发送节点更新
+          mainWindow.webContents.send('node-changed', { nodeName: currentNode });
           
-          // 娣诲姞寤惰繜锛岀‘淇濆墠绔湁瓒冲鏃堕棿澶勭悊鑺傜偣鏇存柊
+          // 添加延迟，确保前端有足够时间处理节点更新
           setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              console.log('寤惰繜鍙戦€佽繛鎺ヤ俊鎭洿鏂?', lastConnectionsInfo);
+              console.log('延迟发送连接信息更新:', lastConnectionsInfo);
               mainWindow.webContents.send('connections-update', lastConnectionsInfo);
             }
           }, 500);
         } else {
-          console.warn('涓荤獥鍙ｆ湭鍑嗗濂斤紝鏃犳硶鍙戦€佽妭鐐瑰彉鏇翠簨浠?);
+          console.warn('主窗口未准备好，无法发送节点变更事件');
         }
       } else {
-        console.error('PROXY缁勪俊鎭腑娌℃湁now瀛楁:', data);
+        console.error('PROXY组信息中没有now字段:', data);
       }
     } else {
-      console.error('鑾峰彇PROXY缁勪俊鎭け璐?', response.status, response.statusText);
+      console.error('获取PROXY组信息失败:', response.status, response.statusText);
     }
   } catch (error) {
-    console.error('鑾峰彇褰撳墠鑺傜偣淇℃伅澶辫触:', error);
+    console.error('获取当前节点信息失败:', error);
   }
 }
 
-// 鍋滄杩炴帴绠＄悊WebSocket
+// 停止连接管理WebSocket
 function stopConnectionsWebSocket() {
   if (connectionsWebSocket) {
     connectionsWebSocket.close();
@@ -764,7 +1285,7 @@ function stopConnectionsWebSocket() {
   connectionsRetry = 10;
 }
 
-// 娣诲姞妫€鏌ihomo鏈嶅姟鐘舵€佺殑鍑芥暟
+// 添加检查Mihomo服务状态的函数
 async function checkMihomoService() {
   try {
     const response = await fetch('http://127.0.0.1:9090/proxies');
@@ -773,65 +1294,202 @@ async function checkMihomoService() {
     }
     return false;
   } catch (error) {
-    console.error('[DEBUG] Mihomo鏈嶅姟妫€鏌ュけ璐?', error);
+    console.error('[DEBUG] Mihomo服务检查失败:', error);
     return false;
   }
 }
 
 app.whenReady().then(() => {
+  // 加载主题设置
+  try {
+    const themeConfigPath = path.join(userDataPath, 'theme-config.json');
+    if (fs.existsSync(themeConfigPath)) {
+      const themeConfig = JSON.parse(fs.readFileSync(themeConfigPath, 'utf8'));
+      nativeTheme.themeSource = themeConfig.theme || 'system';
+      console.log('已加载主题设置:', themeConfig.theme);
+    }
+  } catch (error) {
+    console.error('加载主题设置失败:', error);
+  }
+
+  // 确保用户设置文件存在
+  ensureUserSettingsFile();
+  
+  // 检查系统是否已经启用代理
+  try {
+    if (process.platform === 'win32') {
+      const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable').toString();
+      systemProxyEnabled = result.includes('0x1');
+      
+      if (systemProxyEnabled) {
+        // 检查是否是我们的代理设置
+        const serverResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer').toString();
+        if (serverResult.includes('127.0.0.1:')) {
+          console.log('系统代理已启用:', serverResult);
+        } else {
+          console.log('系统代理已启用，但使用的不是我们的设置:', serverResult);
+        }
+      } else {
+        console.log('系统代理未启用');
+      }
+    }
+  } catch (error) {
+    console.error('检查系统代理状态失败:', error);
+  }
+
   createWindow();
   setupTray();
-  startConnectionsWebSocket(); // 鍚姩杩炴帴绠＄悊
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-
-  // IPC浜嬩欢澶勭悊
-  ipcMain.handle('start-mihomo', (event, configPath) => {
-    return startMihomo(configPath);
-  });
-
-  ipcMain.handle('stop-mihomo', () => {
-    if (mihomoProcess) {
-      mihomoProcess.kill();
-      mihomoProcess = null;
-      stopTrafficStatsUpdate();
-      return true;
+  
+  // 注册API: 保存代理设置
+  ipcMain.handle('save-proxy-settings', async (event, settings) => {
+    try {
+      console.log('保存代理设置:', settings);
+      
+      // 验证设置
+      if (settings['mixed-port']) {
+        const port = parseInt(settings['mixed-port'], 10);
+        if (isNaN(port) || port < 1024 || port > 65535) {
+          return { success: false, error: '端口号必须是1024-65535之间的有效数字' };
+        }
+        settings['mixed-port'] = port;
+      }
+      
+      if ('allow-lan' in settings) {
+        settings['allow-lan'] = Boolean(settings['allow-lan']);
+      }
+      
+      // 更新用户设置文件
+      if (updateUserSettings(settings)) {
+        // 如果系统代理已启用，则更新系统代理设置
+        updateSystemProxyIfEnabled();
+        
+        // 如果服务正在运行，则需要重启服务
+        if (mihomoProcess) {
+          // 存储当前配置路径
+          const currentConfig = configFilePath;
+          // 停止服务
+          mihomoProcess.kill();
+          mihomoProcess = null;
+          // 重启服务
+          await startMihomo(currentConfig);
+          
+          return { success: true, message: '设置已保存，服务已重启' };
+        }
+        
+        return { success: true, message: '设置已保存' };
+      } else {
+        return { success: false, error: '保存设置失败' };
+      }
+    } catch (error) {
+      console.error('保存代理设置失败:', error);
+      return { success: false, error: error.message };
     }
-    return false;
+  });
+
+  // 注册API: 获取当前代理设置
+  ipcMain.handle('get-proxy-settings', async () => {
+    try {
+      const settings = getUserSettings();
+      return { success: true, settings };
+    } catch (error) {
+      console.error('获取代理设置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 添加: 主题设置
+  ipcMain.handle('set-theme', (event, theme) => {
+    try {
+      console.log('设置主题:', theme);
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return { success: false, error: '窗口不存在' };
+      }
+
+      // 保存主题设置到配置文件
+      const themeConfigPath = path.join(userDataPath, 'theme-config.json');
+      fs.writeFileSync(themeConfigPath, JSON.stringify({ theme }), 'utf8');
+      
+      // 根据主题更新窗口
+      switch (theme) {
+        case 'light':
+          nativeTheme.themeSource = 'light';
+          mainWindow.webContents.send('theme-changed', 'light');
+          break;
+        case 'dark':
+          nativeTheme.themeSource = 'dark';
+          mainWindow.webContents.send('theme-changed', 'dark');
+          break;
+        case 'system':
+        default:
+          nativeTheme.themeSource = 'system';
+          mainWindow.webContents.send('theme-changed', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+          break;
+      }
+
+      // 更新标题栏颜色
+      mainWindow.setTitleBarOverlay({
+        color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
+        symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
+        height: 48
+      });
+
+      return { success: true, theme };
+    } catch (error) {
+      console.error('设置主题失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+  
+  // 添加: 获取当前主题设置
+  ipcMain.handle('get-theme', () => {
+    try {
+      // 从配置文件读取主题设置
+      const themeConfigPath = path.join(userDataPath, 'theme-config.json');
+      if (fs.existsSync(themeConfigPath)) {
+        const themeConfig = JSON.parse(fs.readFileSync(themeConfigPath, 'utf8'));
+        return { success: true, theme: themeConfig.theme || 'system' };
+      }
+      
+      // 默认返回系统设置
+      return { success: true, theme: 'system' };
+    } catch (error) {
+      console.error('获取主题设置失败:', error);
+      return { success: false, theme: 'system', error: error.message };
+    }
   });
 
   ipcMain.handle('save-subscription', (event, subUrl, configData, customName) => {
-    // 娣诲姞璋冭瘯杈撳嚭
-    console.log('淇濆瓨璁㈤槄 - URL:', subUrl);
-    console.log('淇濆瓨璁㈤槄 - 鑷畾涔夊悕绉?', customName);
+    // 添加调试输出
+    console.log('保存订阅 - URL:', subUrl);
+    console.log('保存订阅 - 自定义名称:', customName);
     
-    // 濡傛灉鎻愪緵浜嗚嚜瀹氫箟鍚嶇О锛屼娇鐢ㄥ畠浣滀负鏂囦欢鍚嶏紝鍚﹀垯浣跨敤鏃堕棿鎴?    const fileName = customName 
-      ? `${customName.replace(/[^\w\u4e00-\u9fa5\-\.]/g, '_')}.yaml` // 鏇挎崲闈炴硶瀛楃
+    // 如果提供了自定义名称，使用它作为文件名，否则使用时间戳
+    const fileName = customName 
+      ? `${customName.replace(/[^\w\u4e00-\u9fa5\-\.]/g, '_')}.yaml` // 替换非法字符
       : `sub_${Date.now()}.yaml`;
     
-    console.log('淇濆瓨璁㈤槄 - 鏈€缁堟枃浠跺悕:', fileName);
+    console.log('保存订阅 - 最终文件名:', fileName);
     
     const filePath = path.join(configDir, fileName);
     fs.writeFileSync(filePath, configData);
     
-    // 淇濆瓨璁㈤槄URL鍒拌褰曟枃浠?    try {
-      // 璇诲彇璁㈤槄URL璁板綍鏂囦欢锛堝鏋滃瓨鍦級
+    // 保存订阅URL到记录文件
+    try {
+      // 读取订阅URL记录文件（如果存在）
       const urlsPath = path.join(configDir, 'subscription_urls.json');
       let urlsData = {};
       if (fs.existsSync(urlsPath)) {
         urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
       }
       
-      // 鏇存柊URL璁板綍
+      // 更新URL记录
       urlsData[fileName] = subUrl;
       
-      // 淇濆瓨鏇存柊鍚庣殑璁板綍
+      // 保存更新后的记录
       fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
-      console.log(`璁㈤槄URL宸茶褰? ${fileName} -> ${subUrl}`);
+      console.log(`订阅URL已记录: ${fileName} -> ${subUrl}`);
     } catch (error) {
-      console.warn('淇濆瓨璁㈤槄URL璁板綍澶辫触:', error);
+      console.warn('保存订阅URL记录失败:', error);
     }
     
     return filePath;
@@ -862,43 +1520,44 @@ app.whenReady().then(() => {
     return lastTrafficStats;
   });
 
-  // 鏂板锛氫粠涓昏繘绋嬭幏鍙栬闃呭唴瀹?  ipcMain.handle('fetch-subscription', async (event, subUrl) => {
+  // 新增：从主进程获取订阅内容
+  ipcMain.handle('fetch-subscription', async (event, subUrl) => {
     try {
       const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
       
-      // 纭繚璁㈤槄URL鏈夋晥
+      // 确保订阅URL有效
       if (!subUrl || !subUrl.startsWith('http')) {
-        throw new Error('鏃犳晥鐨勮闃匲RL');
+        throw new Error('无效的订阅URL');
       }
       
-      console.log('姝ｅ湪鑾峰彇璁㈤槄鍐呭...');
+      console.log('正在获取订阅内容...');
       const response = await fetch(subUrl);
       
       if (!response.ok) {
-        throw new Error(`鑾峰彇璁㈤槄澶辫触: ${response.statusText}`);
+        throw new Error(`获取订阅失败: ${response.statusText}`);
       }
       
       const content = await response.text();
       
       if (!content || content.trim() === '') {
-        throw new Error('璁㈤槄鍐呭涓虹┖');
+        throw new Error('订阅内容为空');
       }
       
-      // 妫€鏌ヨ幏鍙栫殑鍐呭鏄惁鏄湁鏁堢殑YAML鎴朖SON
+      // 检查获取的内容是否是有效的YAML或JSON
       try {
         yaml.load(content);
       } catch (yamlError) {
         try {
           JSON.parse(content);
         } catch (jsonError) {
-          throw new Error('璁㈤槄鍐呭鏍煎紡鏃犳晥锛屼笉鏄湁鏁堢殑YAML鎴朖SON');
+          throw new Error('订阅内容格式无效，不是有效的YAML或JSON');
         }
       }
       
-      console.log('璁㈤槄鍐呭鑾峰彇鎴愬姛');
+      console.log('订阅内容获取成功');
       return content;
     } catch (error) {
-      console.error('鑾峰彇璁㈤槄澶辫触:', error);
+      console.error('获取订阅失败:', error);
       return null;
     }
   });
@@ -908,61 +1567,68 @@ app.whenReady().then(() => {
     return { success: true };
   });
 
-  // 鏂板锛氭墦寮€鏂囦欢
+  // 新增：打开文件
   ipcMain.handle('open-file', (event, filePath) => {
     try {
-      // 鍦╓indows涓婏紝浣跨敤shell.openPath鎵撳紑鏂囦欢
+      // 在Windows上，使用shell.openPath打开文件
       shell.openPath(filePath);
       return { success: true };
     } catch (error) {
-      console.error('鎵撳紑鏂囦欢澶辫触:', error);
+      console.error('打开文件失败:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // 鏂板锛氭墦寮€鏂囦欢鎵€鍦ㄧ洰褰?  ipcMain.handle('open-file-location', (event, filePath) => {
+  // 新增：打开文件所在目录
+  ipcMain.handle('open-file-location', (event, filePath) => {
     try {
-      // 鍦╓indows涓婏紝浣跨敤shell.showItemInFolder鎵撳紑鏂囦欢鎵€鍦ㄧ洰褰?      shell.showItemInFolder(filePath);
+      // 在Windows上，使用shell.showItemInFolder打开文件所在目录
+      shell.showItemInFolder(filePath);
       return { success: true };
     } catch (error) {
-      console.error('鎵撳紑鏂囦欢鎵€鍦ㄧ洰褰曞け璐?', error);
+      console.error('打开文件所在目录失败:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // 鏂板锛氭洿鏂版寚瀹氱殑璁㈤槄
+  // 新增：更新指定的订阅
   ipcMain.handle('refresh-subscription', async (event, filePath) => {
     try {
-      // 鑾峰彇璁㈤槄URL
-      // 鐩存帴璋冪敤get-subscription-url澶勭悊绋嬪簭鍑芥暟
+      // 获取订阅URL
+      // 直接调用get-subscription-url处理程序函数
       const getSubscriptionUrlHandler = async (filePath) => {
         try {
-          // 鑾峰彇鏂囦欢鍚?          const fileName = path.basename(filePath);
+          // 获取文件名
+          const fileName = path.basename(filePath);
           
-          // 璇诲彇璁㈤槄URL璁板綍
+          // 读取订阅URL记录
           const urlsPath = path.join(configDir, 'subscription_urls.json');
           if (!fs.existsSync(urlsPath)) {
-            console.log('璁㈤槄URL璁板綍鏂囦欢涓嶅瓨鍦紝灏濊瘯鍒涘缓鏂拌褰?);
+            console.log('订阅URL记录文件不存在，尝试创建新记录');
             
-            // 鍒涘缓涓€涓┖鐨勮褰曟枃浠?            fs.writeFileSync(urlsPath, JSON.stringify({}, null, 2), 'utf8');
+            // 创建一个空的记录文件
+            fs.writeFileSync(urlsPath, JSON.stringify({}, null, 2), 'utf8');
             
-            // 瀵逛簬鏃х増鏈坊鍔犵殑璁㈤槄锛屾垜浠彲浠ユ彁绀虹敤鎴烽噸鏂版坊鍔?            return { success: false, error: '鏈壘鍒拌闃匲RL璁板
-綍銆傝繖鍙兘鏄洜涓烘璁㈤槄鏄湪鏃х増鏈坊鍔犵殑锛岃灏濊瘯鍒犻櫎骞堕噸鏂版坊鍔犺闃呫€? };
+            // 对于旧版本添加的订阅，我们可以提示用户重新添加
+            return { success: false, error: '未找到订阅URL记录。这可能是因为此订阅是在旧版本添加的，请尝试删除并重新添加订阅。' };
           }
           
-          // 瑙ｆ瀽璁板綍鏂囦欢
+          // 解析记录文件
           const urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
           
-          // 棣栧厛灏濊瘯浣跨敤瀹屾暣鏂囦欢鍚嶆煡鎵?          let url = urlsData[fileName];
+          // 首先尝试使用完整文件名查找
+          let url = urlsData[fileName];
           
-          // 濡傛灉鎵句笉鍒帮紝灏濊瘯鍙娇鐢ㄦ枃浠跺悕閮ㄥ垎锛堜笉鍖呭惈璺緞锛?          if (!url) {
+          // 如果找不到，尝试只使用文件名部分（不包含路径）
+          if (!url) {
             const fileNameOnly = fileName.replace(/\.yaml$/, '');
             for (const [key, value] of Object.entries(urlsData)) {
               const keyWithoutExt = key.replace(/\.yaml$/, '');
               if (keyWithoutExt === fileNameOnly) {
                 url = value;
                 
-                // 鏇存柊璁板綍浠ヤ娇鐢ㄦ纭殑鏂囦欢鍚?                urlsData[fileName] = value;
+                // 更新记录以使用正确的文件名
+                urlsData[fileName] = value;
                 fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
                 break;
               }
@@ -970,14 +1636,14 @@ app.whenReady().then(() => {
           }
           
           if (!url) {
-            console.log(`鏈壘鍒版枃浠?${fileName} 瀵瑰簲鐨勮闃匲RL`);
-            return { success: false, error: '鏈壘鍒板搴旂殑璁㈤槄URL銆傝灏濊瘯鍒犻櫎骞堕噸鏂版坊鍔犺闃呫€? };
+            console.log(`未找到文件 ${fileName} 对应的订阅URL`);
+            return { success: false, error: '未找到对应的订阅URL。请尝试删除并重新添加订阅。' };
           }
           
-          console.log(`鎵惧埌鏂囦欢 ${fileName} 瀵瑰簲鐨勮闃匲RL: ${url}`);
+          console.log(`找到文件 ${fileName} 对应的订阅URL: ${url}`);
           return { success: true, url };
         } catch (error) {
-          console.error('鑾峰彇璁㈤槄URL澶辫触:', error);
+          console.error('获取订阅URL失败:', error);
           return { success: false, error: error.message };
         }
       };
@@ -985,132 +1651,118 @@ app.whenReady().then(() => {
       const urlResult = await getSubscriptionUrlHandler(filePath);
       
       if (!urlResult.success || !urlResult.url) {
-        return { success: false, error: urlResult.error || '鏃犳硶鑾峰彇璁㈤槄URL' };
+        return { success: false, error: urlResult.error || '无法获取订阅URL' };
       }
       
       const subUrl = urlResult.url;
-      console.log(`鍑嗗鍒锋柊璁㈤槄: ${filePath}, URL: ${subUrl}`);
+      console.log(`准备刷新订阅: ${filePath}, URL: ${subUrl}`);
       
-      // 鑾峰彇璁㈤槄鍐呭
+      // 获取订阅内容
       const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
       
-      // 纭繚璁㈤槄URL鏈夋晥
+      // 确保订阅URL有效
       if (!subUrl || !subUrl.startsWith('http')) {
-        throw new Error('鏃犳晥鐨勮闃匲RL');
+        throw new Error('无效的订阅URL');
       }
       
-      console.log('姝ｅ湪鑾峰彇璁㈤槄鍐呭...');
+      console.log('正在获取订阅内容...');
       const response = await fetch(subUrl, {
         headers: {
-          'User-Agent': 'FlyCast/0.1.0'
+          'User-Agent': `FlyClash/${APP_VERSION}`
         }
       });
       
       if (!response.ok) {
-        throw new Error(`鑾峰彇璁㈤槄澶辫触: ${response.statusText}`);
+        throw new Error(`获取订阅失败: ${response.statusText}`);
       }
       
       const configData = await response.text();
       
       if (!configData || configData.trim() === '') {
-        throw new Error('璁㈤槄鍐呭涓虹┖');
+        throw new Error('订阅内容为空');
       }
       
-      // 妫€鏌ヨ幏鍙栫殑鍐呭鏄惁鏄湁鏁堢殑YAML鎴朖SON
+      // 检查获取的内容是否是有效的YAML或JSON
       try {
         yaml.load(configData);
       } catch (yamlError) {
         try {
           JSON.parse(configData);
         } catch (jsonError) {
-          throw new Error('璁㈤槄鍐呭鏍煎紡鏃犳晥锛屼笉鏄湁鏁堢殑YAML鎴朖SON');
+          throw new Error('订阅内容格式无效，不是有效的YAML或JSON');
         }
       }
       
-      // 鐩存帴瀹炵幇鏇存柊璁㈤槄鏂囦欢鐨勫姛鑳斤紝鑰屼笉鏄皟鐢╱pdateSubscription
+      // 直接实现更新订阅文件的功能，而不是调用updateSubscription
       try {
-        // 纭繚鏂囦欢璺緞鍜岄厤缃暟鎹湁鏁?        if (!filePath || !configData) {
-          throw new Error('鏃犳晥鐨勬枃浠惰矾寰勬垨閰嶇疆鏁版嵁');
+        // 确保文件路径和配置数据有效
+        if (!filePath || !configData) {
+          throw new Error('无效的文件路径或配置数据');
         }
         
-        console.log('姝ｅ湪鏇存柊璁㈤槄鏂囦欢:', filePath);
+        console.log('正在更新订阅文件:', filePath);
         
-        // 澶囦唤鍘熷鏂囦欢
+        // 备份原始文件
         const backupPath = `${filePath}.bak`;
         if (fs.existsSync(filePath)) {
           fs.copyFileSync(filePath, backupPath);
         }
         
-        // 鍐欏叆鏂扮殑閰嶇疆鍐呭
+        // 写入新的配置内容
         fs.writeFileSync(filePath, configData, 'utf8');
         
-        // 鏇存柊璁㈤槄URL鐨勮褰曪紙濡傛灉鏈夎褰曠郴缁燂級
+        // 更新订阅URL的记录（如果有记录系统）
         if (subUrl) {
           try {
-            // 璇诲彇璁㈤槄URL璁板綍鏂囦欢锛堝鏋滃瓨鍦級
+            // 读取订阅URL记录文件（如果存在）
             const urlsPath = path.join(configDir, 'subscription_urls.json');
             let urlsData = {};
             if (fs.existsSync(urlsPath)) {
               urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
             }
             
-            // 鏇存柊URL璁板綍
+            // 更新URL记录
             urlsData[path.basename(filePath)] = subUrl;
             
-            // 淇濆瓨鏇存柊鍚庣殑璁板綍
+            // 保存更新后的记录
             fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
           } catch (error) {
-            console.warn('鏇存柊璁㈤槄URL璁板綍澶辫触锛屼絾閰嶇疆鏂囦欢宸叉洿鏂?', error);
+            console.warn('更新订阅URL记录失败，但配置文件已更新:', error);
           }
         }
         
-        console.log('璁㈤槄鏇存柊鎴愬姛');
+        console.log('订阅更新成功');
         return { success: true, filePath };
       } catch (error) {
-        console.error('鏇存柊璁㈤槄澶辫触:', error);
-        // 濡傛灉鏈夊浠斤紝灏濊瘯鎭㈠
+        console.error('更新订阅失败:', error);
+        // 如果有备份，尝试恢复
         const backupPath = `${filePath}.bak`;
         if (fs.existsSync(backupPath)) {
           try {
             fs.copyFileSync(backupPath, filePath);
-            console.log('宸蹭粠澶囦唤鎭㈠鍘熷鏂囦欢');
+            console.log('已从备份恢复原始文件');
           } catch (restoreError) {
-            console.error('浠庡浠芥仮澶嶅け璐?', restoreError);
+            console.error('从备份恢复失败:', restoreError);
           }
         }
         return { success: false, error: error.message };
       }
     } catch (error) {
-      console.error('鍒锋柊璁㈤槄澶辫触:', error);
+      console.error('刷新订阅失败:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // 鍒囨崲鑺傜偣
-  ipcMain.handle('select-node', async (event, nodeName, groupName = 'PROXY', updateGlobal = false) => {
+  // 切换节点
+  ipcMain.handle('select-node', async (event, nodeName, groupName, updateGlobal = false) => {
     try {
-      console.log(`[DEBUG] 寮€濮嬪垏鎹㈣妭鐐规祦绋媊);
-      console.log(`[DEBUG] 鐩爣鑺傜偣: ${nodeName}, 缁? ${groupName}, 鏇存柊鍏ㄥ眬鐘舵€? ${updateGlobal}`);
+      console.log(`切换节点: ${nodeName} 在组 ${groupName}`);
       
-      // 妫€鏌ihomo鏈嶅姟鐘舵€?      const isServiceRunning = await checkMihomoService();
-      if (!isServiceRunning) {
-        console.error('[DEBUG] Mihomo鏈嶅姟鏈繍琛?);
-        throw new Error('Mihomo鏈嶅姟鏈繍琛岋紝璇峰厛鍚姩Mihomo');
+      if (!groupName) {
+        groupName = 'PROXY'; // 默认使用PROXY组
       }
       
-      // 浣跨敤fetch API杩涜鑺傜偣鍒囨崲
-      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-      
-      // 鍏抽棴鐜版湁杩炴帴浠ラ伩鍏嶆綔鍦ㄥ啿绐?      try {
-        await fetch('http://127.0.0.1:9090/connections', {
-          method: 'DELETE'
-        });
-        console.log(`[DEBUG] 宸插叧闂墍鏈夌幇鏈夎繛鎺);
-      } catch (error) {
-        console.warn(`[DEBUG] 鍏抽棴杩炴帴澶辫触锛岀户缁墽琛? ${error.message}`);
-      }
-      
-      // 鍙戦€佸垏鎹㈣妭鐐硅姹?      console.log(`[DEBUG] 鍙戦€佸垏鎹㈣妭鐐硅姹? ${nodeName}, 缁? ${groupName}`);
+      // 切换指定组的节点
       const response = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`, {
         method: 'PUT',
         headers: {
@@ -1118,112 +1770,79 @@ app.whenReady().then(() => {
         },
         body: JSON.stringify({ name: nodeName })
       });
-      
-      console.log(`[DEBUG] 鍒囨崲鑺傜偣鍝嶅簲鐘舵€? ${response.status} ${response.statusText}`);
-      
-      // 204鏄垚鍔熺殑鐘舵€佺爜
-      if (response.status === 204 || response.ok) {
-        console.log(`[DEBUG] 鑺傜偣鍒囨崲璇锋眰鎴愬姛`);
-        
-        // 绛夊緟涓€娈垫椂闂村悗楠岃瘉鑺傜偣鏄惁鍒囨崲鎴愬姛
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        try {
-          // 楠岃瘉鑺傜偣鍒囨崲鏄惁鎴愬姛
-          const verifyResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)
-}`);
-          const verifyData = await verifyResponse.json();
-          
-          console.log(`[DEBUG] 楠岃瘉缁撴灉:`, verifyData);
-          
-          if (verifyData.now !== nodeName) {
-            console.warn(`[DEBUG] 鑺傜偣鍒囨崲楠岃瘉涓嶅尮閰? 鏈熸湜 ${nodeName}, 瀹為檯 ${verifyData.now}, 浣嗕粛鐒剁户缁璥);
-          }
-          
-          // 鍙湁褰撳垏鎹富瑕佷唬鐞嗙粍(PROXY/GLOBAL)鎴栨槑纭姹傛洿鏂板叏灞€鐘舵€佹椂锛屾墠鏇存柊currentNode
-          if (updateGlobal || groupName === 'PROXY' || groupName === 'GLOBAL') {
-            // 鏇存柊褰撳墠鑺傜偣
-            currentNode = verifyData.now || nodeName;
-            
-            // 鏇存柊杩炴帴淇℃伅
-            if (lastConnectionsInfo) {
-              lastConnectionsInfo.currentNode = currentNode;
-            }
-            
-            // 閫氱煡鍓嶇鏇存柊鍏ㄥ眬鑺傜偣鐘舵€?            mainWindow.webContents.send('node-changed', { nodeName: curre
-ntNode });
-            console.log(`[DEBUG] 宸叉洿鏂板叏灞€鑺傜偣鐘舵€佷负: ${currentNode}`);
-          } else {
-            console.log(`[DEBUG] 浠呮洿鏂扮粍 ${groupName} 鐨勮妭鐐逛负 ${nodeName}锛屼笉褰卞搷鍏ㄥ眬鐘舵€乣);
-          }
-          
-          console.log(`[DEBUG] 鑺傜偣鍒囨崲鎴愬姛瀹屾垚锛岀粍: ${groupName}, 鑺傜偣: ${verifyData.now || nodeName}`);
-          return { success: true, nodeName: verifyData.now || nodeName, groupName };
-        } catch (verifyError) {
-          console.warn(`[DEBUG] 楠岃瘉鑺傜偣鍒囨崲鐘舵€佸け璐ワ紝缁х画浣跨敤鍘熼€夋嫨: ${verifyError.message}`);
-          
-          // 鍚屾牱锛屽彧鏈夊綋鍒囨崲涓昏浠ｇ悊缁勬椂鎵嶆洿鏂板叏灞€鐘舵€?          if (updateGlobal || groupName === 'PROXY' || groupN
-ame === 'GLOBAL') {
-            currentNode = nodeName;
-            if (lastConnectionsInfo) {
-              lastConnectionsInfo.currentNode = currentNode;
-            }
-            mainWindow.webContents.send('node-changed', { nodeName: currentNode });
-          }
-          
-          return { success: true, nodeName: nodeName, groupName };
-        }
-      } else {
-        const errorText = await response.text();
-        console.error(`[DEBUG] 鍒囨崲鑺傜偣澶辫触: ${response.status} ${response.statusText} - ${errorText}`);
-        throw new Error(`鍒囨崲鑺傜偣澶辫触: ${response.statusText} - ${errorText}`);
-      }
-    } catch (error) {
-      console.error(`[DEBUG] 鑺傜偣鍒囨崲杩囩▼涓嚭閿?`, error);
-      return { success: false, error: error.message };
-    }
-  });
 
-  // 娣诲姞鑺傜偣鍙樻洿閫氱煡
-  ipcMain.handle('notify-node-changed', (event, nodeName) => {
-    try {
-      // 鏇存柊褰撳墠閫変腑鐨勮妭鐐?      currentNode = nodeName;
-      // 閫氱煡鎵€鏈夌獥鍙ｈ妭鐐瑰凡鍙樻洿
-      mainWindow.webContents.send('node-changed', { nodeName });
+      if (!response.ok) {
+        throw new Error(`切换节点失败: ${response.statusText}`);
+      }
+      
+      console.log(`成功切换到节点: ${nodeName} 在组 ${groupName}`);
+      
+      // 如果是PROXY或GLOBAL组，或者要求更新全局节点，更新当前节点变量
+      if (groupName === 'PROXY' || groupName === 'GLOBAL' || updateGlobal) {
+        currentNode = nodeName;
+        console.log('更新当前节点:', currentNode);
+        
+        // 更新托盘菜单
+        updateTrayMenu();
+      }
+      
       return { success: true };
     } catch (error) {
-      console.error('鍙戦€佽妭鐐瑰彉鏇撮€氱煡澶辫触:', error);
+      console.error('选择节点失败:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // 鏂板锛氳幏鍙栦唬鐞嗚妭鐐逛俊鎭?  ipcMain.handle('get-proxies', async (event) => {
+  // 新增：接收节点变更通知
+  ipcMain.handle('notify-node-changed', async (event, nodeName) => {
     try {
-      console.log(`[DEBUG] 寮€濮嬭幏鍙栦唬鐞嗚妭鐐逛俊鎭痐);
+      console.log(`接收到节点变更通知: ${nodeName}`);
       
-      // 妫€鏌ihomo鏈嶅姟鐘舵€?      const isServiceRunning = await checkMihomoService();
+      // 更新当前节点
+      currentNode = nodeName;
+      
+      // 更新托盘菜单以反映新节点
+      updateTrayMenu();
+      
+      return { success: true };
+    } catch (error) {
+      console.error('处理节点变更通知失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 新增：获取代理节点信息
+  ipcMain.handle('get-proxies', async (event) => {
+    try {
+      console.log(`[DEBUG] 开始获取代理节点信息`);
+      
+      // 检查Mihomo服务状态
+      const isServiceRunning = await checkMihomoService();
       if (!isServiceRunning) {
-        console.error('[DEBUG] Mihomo鏈嶅姟鏈繍琛?);
-        throw new Error('Mihomo鏈嶅姟鏈繍琛岋紝璇峰厛鍚姩Mihomo');
+        console.error('[DEBUG] Mihomo服务未运行');
+        throw new Error('Mihomo服务未运行，请先启动Mihomo');
       }
       
-      // 浣跨敤fetch API鑾峰彇浠ｇ悊鑺傜偣淇℃伅
+      // 使用fetch API获取代理节点信息
       const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
       
-      // 鑾峰彇浠ｇ悊鑺傜偣淇℃伅
+      // 获取代理节点信息
       const response = await fetch('http://127.0.0.1:9090/proxies');
       const data = await response.json();
       
-      console.log(`[DEBUG] 鑾峰彇浠ｇ悊鑺傜偣淇℃伅鎴愬姛`);
+      console.log(`[DEBUG] 获取代理节点信息成功`);
       
-      // 澶勭悊鏁版嵁锛屾彁鍙栬妭鐐圭粍鍜屽綋鍓嶉€変腑鐨勮妭鐐?      const groups = [];
+      // 处理数据，提取节点组和当前选中的节点
+      const groups = [];
       let selected = null;
       
-      // 棣栧厛鏌ユ壘PROXY缁?      if (data.proxies && data.proxies['PROXY']) {
+      // 首先查找PROXY组
+      if (data.proxies && data.proxies['PROXY']) {
         const proxyGroup = data.proxies['PROXY'];
         selected = proxyGroup.now;
         
-        // 鎻愬彇鑺傜偣缁?        if (proxyGroup.all && proxyGroup.all.length > 0) {
+        // 提取节点组
+        if (proxyGroup.all && proxyGroup.all.length > 0) {
           const nodes = [];
           for (const nodeName of proxyGroup.all) {
             if (data.proxies[nodeName]) {
@@ -1245,11 +1864,13 @@ ame === 'GLOBAL') {
           });
         }
       }
-      // 濡傛灉PROXY缁勪笉瀛樺湪锛屽垯鏌ユ壘GLOBAL缁勪綔涓哄閫?      else if (data.proxies && data.proxies['GLOBAL']) {
+      // 如果PROXY组不存在，则查找GLOBAL组作为备选
+      else if (data.proxies && data.proxies['GLOBAL']) {
         const globalGroup = data.proxies['GLOBAL'];
         selected = globalGroup.now;
         
-        // 鎻愬彇鑺傜偣缁?        if (globalGroup.all && globalGroup.all.length > 0) {
+        // 提取节点组
+        if (globalGroup.all && globalGroup.all.length > 0) {
           const nodes = [];
           for (const nodeName of globalGroup.all) {
             if (data.proxies[nodeName]) {
@@ -1272,9 +1893,9 @@ ame === 'GLOBAL') {
         }
       }
       
-      // 鎻愬彇鍏朵粬鑺傜偣缁?      for (const [name, proxy] of Object.entries(data.proxies)) {
-        if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback' || proxy.typ
-e === 'LoadBalance') {
+      // 提取其他节点组
+      for (const [name, proxy] of Object.entries(data.proxies)) {
+        if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback' || proxy.type === 'LoadBalance') {
           if (name !== 'GLOBAL' && name !== 'PROXY' && proxy.all && proxy.all.length > 0) {
             const nodes = [];
             for (const nodeName of proxy.all) {
@@ -1304,50 +1925,52 @@ e === 'LoadBalance') {
         selected: selected
       };
     } catch (error) {
-      console.error(`[DEBUG] 鑾峰彇浠ｇ悊鑺傜偣淇℃伅澶辫触:`, error);
+      console.error(`[DEBUG] 获取代理节点信息失败:`, error);
       return { groups: [], selected: null };
     }
   });
 
-  // 娴嬭瘯鑺傜偣寤惰繜
+  // 测试节点延迟
   ipcMain.handle('test-node-delay', async (event, nodeName) => {
     try {
-      console.log(`[DEBUG] 寮€濮嬫祴璇曡妭鐐瑰欢杩? ${nodeName}`);
+      console.log(`[DEBUG] 开始测试节点延迟: ${nodeName}`);
       
-      // 妫€鏌ihomo鏈嶅姟鐘舵€?      const isServiceRunning = await checkMihomoService();
+      // 检查Mihomo服务状态
+      const isServiceRunning = await checkMihomoService();
       if (!isServiceRunning) {
-        console.error('[DEBUG] Mihomo鏈嶅姟鏈繍琛岋紝鏃犳硶娴嬭瘯鑺傜偣寤惰繜');
-        throw new Error('Mihomo鏈嶅姟鏈繍琛岋紝鏃犳硶娴嬭瘯鑺傜偣寤惰繜');
+        console.error('[DEBUG] Mihomo服务未运行，无法测试节点延迟');
+        throw new Error('Mihomo服务未运行，无法测试节点延迟');
       }
       
-      // 浣跨敤fetch API娴嬭瘯鑺傜偣寤惰繜
-      const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+      // 使用fetch API测试节点延迟
+          const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
       
-      // 璁剧疆URL鍜屽弬鏁?      const url = new URL(`http://127.0.0.1:9090/proxies/${encodeURIComponent(nodeName)
-}/delay`);
+      // 设置URL和参数
+      const url = new URL(`http://127.0.0.1:9090/proxies/${encodeURIComponent(nodeName)}/delay`);
       url.searchParams.append('url', 'http://www.gstatic.com/generate_204');
       url.searchParams.append('timeout', '5000');
       
-      // 鍙戦€佽姹?      console.log(`[DEBUG] 鍙戦€佹祴璇曞欢杩熻姹? ${url.toString()}`);
+      // 发送请求
+      console.log(`[DEBUG] 发送测试延迟请求: ${url.toString()}`);
       const response = await fetch(url.toString());
       
-      // 澶勭悊鍝嶅簲
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`[DEBUG] 鑺傜偣 ${nodeName} 寤惰繜娴嬭瘯缁撴灉: ${data.delay}ms`);
+      // 处理响应
+          if (response.ok) {
+            const data = await response.json();
+        console.log(`[DEBUG] 节点 ${nodeName} 延迟测试结果: ${data.delay}ms`);
         
-        // 杩斿洖寤惰繜缁撴灉
+        // 返回延迟结果
         return data.delay;
-      } else {
+          } else {
         const errorText = await response.text();
-        console.error(`[DEBUG] 娴嬭瘯鑺傜偣寤惰繜澶辫触: ${response.status} ${response.statusText} - ${errorText}`);
-        throw new Error(`娴嬭瘯鑺傜偣寤惰繜澶辫触: ${response.statusText}`);
-      }
-    } catch (error) {
-      console.error(`[DEBUG] 娴嬭瘯鑺傜偣寤惰繜杩囩▼涓嚭閿?`, error);
+        console.error(`[DEBUG] 测试节点延迟失败: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`测试节点延迟失败: ${response.statusText}`);
+          }
+        } catch (error) {
+      console.error(`[DEBUG] 测试节点延迟过程中出错:`, error);
       
-      // 杩斿洖-1琛ㄧず娴嬭瘯澶辫触
-      return -1;
+      // 返回-1表示测试失败
+          return -1;
     }
   });
 
@@ -1357,32 +1980,106 @@ e === 'LoadBalance') {
   
   ipcMain.handle('get-proxy-nodes', (event, configPath) => {
     try {
-      // 濡傛灉鎻愪緵浜嗛厤缃矾寰勶紝浣跨敤瀹冿紱鍚﹀垯浣跨敤褰撳墠娲昏穬鐨勯厤缃?      const targetPath = configPath || configFilePath;
-      if (!targetPath || !fs.existsSync(targetPath)) {
-        console.log('閰嶇疆鏂囦欢涓嶅瓨鍦?', targetPath);
+      // 如果指定了配置路径，则使用指定的路径
+      // 否则使用当前激活的配置
+      const config = configPath || configFilePath;
+      if (!config) {
         return null;
       }
       
-      // 鐩存帴浠庨厤缃枃浠朵腑瑙ｆ瀽鑺傜偣淇℃伅锛岃€屼笉鏄皟鐢≧ESTful API
-      // 杩欐牱鍗充娇mihomo鏈繍琛屾垨宕╂簝锛屼篃鑳芥樉绀鸿妭鐐逛俊鎭?      return parseConfigFile(targetPath);
+      return parseConfigFile(config);
     } catch (error) {
-      console.error('鑾峰彇浠ｇ悊鑺傜偣澶辫触:', error);
+      console.error('获取代理节点失败:', error);
       return null;
     }
   });
   
-  // 璁剧疆鏄惁鑷姩鍚姩
+  // 处理获取应用版本号
+  ipcMain.handle('get-app-version', () => {
+    return APP_VERSION;
+  });
+
+  // 处理自动启动设置
   ipcMain.handle('set-auto-start', (event, enabled) => {
-    autoStartEnabled = !!enabled;
-    // 鍙互灏嗚缃繚瀛樺埌閰嶇疆鏂囦欢涓紝杩欓噷绠€鍖栧鐞?    return true;
+    autoStartEnabled = enabled;
+    return true;
   });
   
-  // 鑾峰彇鑷姩鍚姩璁剧疆
+  // 获取自动启动设置
   ipcMain.handle('get-auto-start', () => {
     return autoStartEnabled;
   });
   
-  // 淇濆瓨鏃ュ織鍒版枃浠?  ipcMain.handle('save-logs', (event, logEntries) => {
+  // 节点收藏管理
+  ipcMain.handle('get-favorite-nodes', () => {
+    try {
+      const favoritesPath = path.join(userDataPath, 'favorites.json');
+      if (!fs.existsSync(favoritesPath)) {
+        console.log('收藏节点文件不存在');
+        return { success: true, nodes: [] };
+      }
+      
+      const favoritesData = JSON.parse(fs.readFileSync(favoritesPath, 'utf8'));
+      console.log('成功加载收藏节点:', favoritesData);
+      return { success: true, nodes: favoritesData };
+    } catch (error) {
+      console.error('获取收藏节点失败:', error);
+      return { success: false, nodes: [], error: error.message };
+    }
+  });
+  
+  ipcMain.handle('save-favorite-nodes', (event, nodes) => {
+    try {
+      if (!Array.isArray(nodes)) {
+        throw new Error('无效的节点数据格式');
+      }
+      
+      const favoritesPath = path.join(userDataPath, 'favorites.json');
+      fs.writeFileSync(favoritesPath, JSON.stringify(nodes), 'utf8');
+      console.log('收藏节点保存成功:', nodes);
+      return { success: true };
+    } catch (error) {
+      console.error('保存收藏节点失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+  
+  // 节点组折叠管理
+  ipcMain.handle('get-collapsed-groups', () => {
+    try {
+      const collapsedPath = path.join(userDataPath, 'collapsed-groups.json');
+      if (!fs.existsSync(collapsedPath)) {
+        console.log('折叠组文件不存在');
+        return { success: true, groups: [] };
+      }
+      
+      const collapsedData = JSON.parse(fs.readFileSync(collapsedPath, 'utf8'));
+      console.log('成功加载折叠组:', collapsedData);
+      return { success: true, groups: collapsedData };
+    } catch (error) {
+      console.error('获取折叠组失败:', error);
+      return { success: false, groups: [], error: error.message };
+    }
+  });
+  
+  ipcMain.handle('save-collapsed-groups', (event, groups) => {
+    try {
+      if (!Array.isArray(groups)) {
+        throw new Error('无效的组数据格式');
+      }
+      
+      const collapsedPath = path.join(userDataPath, 'collapsed-groups.json');
+      fs.writeFileSync(collapsedPath, JSON.stringify(groups), 'utf8');
+      console.log('折叠组保存成功:', groups);
+      return { success: true };
+    } catch (error) {
+      console.error('保存折叠组失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+  
+  // 保存日志到文件
+  ipcMain.handle('save-logs', (event, logEntries) => {
     try {
       const logsDir = path.join(userDataPath, 'logs');
       if (!fs.existsSync(logsDir)) {
@@ -1390,167 +2087,102 @@ e === 'LoadBalance') {
       }
       
       const date = new Date();
-      const fileName = `mihomo-logs-${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-$
-{String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}-${String(date.getMinu
-tes()).padStart(2, '0')}.txt`;
+      const fileName = `mihomo-logs-${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}-${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}.txt`;
       const filePath = path.join(logsDir, fileName);
       
-      // 鏍煎紡鍖栨棩蹇楀唴瀹?      const logContent = logEntries.map(entry => {
+      // 格式化日志内容
+      const logContent = logEntries.map(entry => {
         const timestamp = new Date(entry.timestamp).toLocaleString();
-        const type = entry.type === 'error' ? '[閿欒]' : '[淇℃伅]';
+        const type = entry.type === 'error' ? '[错误]' : '[信息]';
         return `${timestamp} ${type} ${entry.content}`;
       }).join('\n');
       
       fs.writeFileSync(filePath, logContent, 'utf8');
-      console.log(`鏃ュ織宸蹭繚瀛樺埌: ${filePath}`);
+      console.log(`日志已保存到: ${filePath}`);
       
       return { success: true, filePath };
     } catch (error) {
-      console.error('淇濆瓨鏃ュ織澶辫触:', error);
+      console.error('保存日志失败:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // 鏂板: 鍒囨崲绯荤粺浠ｇ悊
+  // 新增: 切换系统代理
   ipcMain.handle('toggleSystemProxy', async (event, enabled) => {
     try {
-      if (enabled) {
-        // 鍚敤绯荤粺浠ｇ悊锛岄粯璁ょ鍙?890
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyE
-nable /t REG_DWORD /d 1 /f');
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyS
-erver /t REG_SZ /d "127.0.0.1:7890" /f');
-        // 鎵嬪姩鍒锋柊Internet璁剧疆
-        execSync('');
-        
-        // 鏇存柊鎵樼洏鑿滃崟鐨勫嬀閫夌姸鎬?        if (tray) {
-          const contextMenu = Menu.buildFromTemplate([
-            { label: '鏄剧ず涓荤獥鍙?, click: () => mainWindow.show() },
-            { type: 'separator' },
-            { label: '鍚敤绯荤粺浠ｇ悊', type: 'checkbox', checked: true, click: toggleSystemProxy },
-            { type: 'separator' },
-            { label: '閫€鍑?, click: () => {
-              isQuitting = true;
-              app.quit();
-            }}
-          ]);
-          tray.setContextMenu(contextMenu);
-        }
-        
-        mainWindow.webContents.send('proxy-status', true);
-        return true;
-      } else {
-        // 绂佺敤绯荤粺浠ｇ悊
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyE
-nable /t REG_DWORD /d 0 /f');
-        // 鎵嬪姩鍒锋柊Internet璁剧疆
-        execSync('');
-        
-        // 鏇存柊鎵樼洏鑿滃崟鐨勫嬀閫夌姸鎬?        if (tray) {
-          const contextMenu = Menu.buildFromTemplate([
-            { label: '鏄剧ず涓荤獥鍙?, click: () => mainWindow.show() },
-            { type: 'separator' },
-            { label: '鍚敤绯荤粺浠ｇ悊', type: 'checkbox', checked: false, click: toggleSystemProxy },
-            { type: 'separator' },
-            { label: '閫€鍑?, click: () => {
-              isQuitting = true;
-              app.quit();
-            }}
-          ]);
-          tray.setContextMenu(contextMenu);
-        }
-        
-        mainWindow.webContents.send('proxy-status', false);
-        return true;
-      }
+      // 创建一个模拟的菜单项对象
+      const menuItem = { checked: enabled };
+      
+      // 调用现有的toggleSystemProxy函数
+      toggleSystemProxy(menuItem);
+      
+      // 返回当前的系统代理状态
+      return systemProxyEnabled;
     } catch (error) {
-      console.error('鍒囨崲绯荤粺浠ｇ悊澶辫触:', error);
+      console.error('切换系统代理失败:', error);
       return false;
     }
   });
 
-  // 鏂板: 鑾峰彇绯荤粺浠ｇ悊鐘舵€?  ipcMain.handle('getProxyStatus', async () => {
-    try {
-      // 鑾峰彇浠ｇ悊鍚敤鐘舵€?      const enableResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\C
-urrentVersion\\Internet Settings" /v ProxyEnable').toString();
-      const enabled = enableResult.includes('0x1');
-      
-      // 濡傛灉鍚敤锛岃繕闇€纭浠ｇ悊鏈嶅姟鍣ㄨ缃槸鍚︽纭?      if (enabled) {
-        try {
-          const serverResult = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Int
-ernet Settings" /v ProxyServer').toString();
-          // 妫€鏌ユ槸鍚﹀寘鍚湰鍦颁唬鐞嗗湴鍧€
-          if (!serverResult.includes('127.0.0.1:7890')) {
-            console.log('浠ｇ悊宸插惎鐢ㄤ絾璁剧疆浜嗕笉鍚岀殑浠ｇ悊鏈嶅姟鍣?', serverResult);
-          } else {
-            console.log('绯荤粺浠ｇ悊宸叉纭缃负127.0.0.1:7890');
-          }
-        } catch (serverError) {
-          console.error('鑾峰彇浠ｇ悊鏈嶅姟鍣ㄨ缃け璐?', serverError);
-        }
-      } else {
-        console.log('绯荤粺浠ｇ悊褰撳墠宸茬鐢?);
-      }
-      
-      return enabled;
-    } catch (error) {
-      console.error('鑾峰彇绯荤粺浠ｇ悊鐘舵€佸け璐?', error);
-      return false;
-    }
+  // 新增: 获取系统代理状态
+  ipcMain.handle('getProxyStatus', async () => {
+    return systemProxyEnabled;
   });
 
-  // 娣诲姞鑾峰彇杩炴帴淇℃伅鐨勫嚱鏁?  ipcMain.handle('get-connections', async () => {
+  // 添加获取连接信息的函数
+  ipcMain.handle('get-connections', async () => {
     try {
       const response = await fetch('http://127.0.0.1:9090/connections');
       if (response.ok) {
         const data = await response.json();
-        console.log('鑾峰彇鍒拌繛鎺ヤ俊鎭?', data); // 娣诲姞鏃ュ織
+        console.log('获取到连接信息:', data); // 添加日志
         return data;
       } else {
-        console.error('鑾峰彇杩炴帴淇℃伅澶辫触:', response.status, response.statusText);
+        console.error('获取连接信息失败:', response.status, response.statusText);
         return null;
       }
     } catch (error) {
-      console.error('鑾峰彇杩炴帴淇℃伅澶辫触:', error);
+      console.error('获取连接信息失败:', error);
       return null;
     }
   });
 
-  // 娣诲姞鍏抽棴鐗瑰畾杩炴帴鐨勫嚱鏁?  ipcMain.handle('close-connection', async (event, connectionId) => {
+  // 添加关闭特定连接的函数
+  ipcMain.handle('close-connection', async (event, connectionId) => {
     try {
-      console.log(`灏濊瘯鍏抽棴杩炴帴: ${connectionId}`); // 娣诲姞鏃ュ織
+      console.log(`尝试关闭连接: ${connectionId}`); // 添加日志
       const response = await fetch(`http://127.0.0.1:9090/connections/${connectionId}`, {
         method: 'DELETE'
       });
       const success = response.ok;
-      console.log(`鍏抽棴杩炴帴缁撴灉: ${success ? '鎴愬姛' : '澶辫触'}`); // 娣诲姞鏃ュ織
+      console.log(`关闭连接结果: ${success ? '成功' : '失败'}`); // 添加日志
       return success;
     } catch (error) {
-      console.error('鍏抽棴杩炴帴澶辫触:', error);
+      console.error('关闭连接失败:', error);
       return false;
     }
   });
 
-  // 娣诲姞鍏抽棴鎵€鏈夎繛鎺ョ殑鍑芥暟
+  // 添加关闭所有连接的函数
   ipcMain.handle('close-all-connections', async () => {
     try {
-      console.log('灏濊瘯鍏抽棴鎵€鏈夎繛鎺?); // 娣诲姞鏃ュ織
+      console.log('尝试关闭所有连接'); // 添加日志
       const response = await fetch('http://127.0.0.1:9090/connections', {
         method: 'DELETE'
       });
       const success = response.ok;
-      console.log(`鍏抽棴鎵€鏈夎繛鎺ョ粨鏋? ${success ? '鎴愬姛' : '澶辫触'}`); // 娣诲姞鏃ュ織
+      console.log(`关闭所有连接结果: ${success ? '成功' : '失败'}`); // 添加日志
       return success;
     } catch (error) {
-      console.error('鍏抽棴鎵€鏈夎繛鎺ュけ璐?', error);
+      console.error('关闭所有连接失败:', error);
       return false;
     }
   });
 
-  // 澶勭悊杩炴帴淇℃伅鏇存柊
+  // 处理连接信息更新
   ipcMain.on('connections-update', (event, data) => {
     if (mainWindow) {
-      console.log('涓昏繘绋嬪彂閫佽繛鎺ヤ俊鎭洿鏂?', data);
+      console.log('主进程发送连接信息更新:', data);
       mainWindow.webContents.send('connections-update', {
         connections: data.connections || [],
         downloadTotal: data.downloadTotal || 0,
@@ -1561,20 +2193,20 @@ ernet Settings" /v ProxyServer').toString();
     }
   });
 
-  // 澶勭悊鑺傜偣鍙樻洿
+  // 处理节点变更
   ipcMain.on('node-changed', (event, data) => {
     if (mainWindow) {
-      console.log('涓昏繘绋嬪彂閫佽妭鐐瑰彉鏇?', data);
-      // 鏇存柊褰撳墠鑺傜偣
+      console.log('主进程发送节点变更:', data);
+      // 更新当前节点
       if (data && data.nodeName) {
         currentNode = data.nodeName;
       }
       
       mainWindow.webContents.send('node-changed', {
-        nodeName: data && data.nodeName ? data.nodeName : (currentNode || '鏃?)
+        nodeName: data && data.nodeName ? data.nodeName : (currentNode || '无')
       });
       
-      // 鍚屾椂鏇存柊杩炴帴淇℃伅
+      // 同时更新连接信息
       const connectionInfo = {
         ...lastConnectionsInfo,
         currentNode: currentNode
@@ -1583,13 +2215,115 @@ ernet Settings" /v ProxyServer').toString();
     }
   });
 
-  // 鏂板锛氳幏鍙栨€昏繛鎺ヤ俊鎭拰鎬绘祦閲?  ipcMain.handle('fetch-connections-info', async () => {
+  // 新增：获取总连接信息和总流量
+  ipcMain.handle('fetch-connections-info', async () => {
     return fetchConnectionsInfo();
+  });
+
+  // 添加API保存最后一次使用的配置文件
+  ipcMain.handle('save-last-config', (event, configPath) => {
+    try {
+      if (!configPath) {
+        console.log('无效的配置路径，无法保存');
+        return { success: false, error: '无效的配置路径' };
+      }
+      
+      // 保存配置路径到用户数据目录
+      const lastConfigPath = path.join(userDataPath, 'last-config.json');
+      fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
+      console.log('已保存最后使用的配置文件:', configPath);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('保存最后使用的配置文件失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 添加重启Mihomo服务的函数（用于配置修改后）
+  ipcMain.handle('restart-service', async () => {
+    try {
+      // 如果有配置文件路径，首先从API读取当前配置并保存到配置文件
+      if (configFilePath && mihomoProcess) {
+        console.log('正在获取当前Mihomo配置并保存到文件...');
+        
+        try {
+          // 从Mihomo API获取最新配置
+          const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+          const response = await fetch('http://127.0.0.1:9090/configs');
+          
+          if (response.ok) {
+            const currentConfig = await response.json();
+            console.log('从API获取的当前配置:', currentConfig);
+            
+            // 读取现有配置文件
+            const yaml = require('js-yaml');
+            const fs = require('fs');
+            let configData = fs.readFileSync(configFilePath, 'utf8');
+            let config = yaml.load(configData);
+            
+            // 更新关键配置项
+            config['mixed-port'] = parseInt(currentConfig['mixed-port'] || 7890);
+            
+            // 删除单独的port配置，使用mixed-port代替
+            if ('port' in config) {
+              delete config['port'];
+            }
+            
+            // 更新allow-lan设置 - 显式转换为布尔值
+            const allowLan = currentConfig['allow-lan'];
+            console.log('API返回的allow-lan值:', allowLan, '类型:', typeof allowLan);
+            
+            // 确保allow-lan是布尔值
+            config['allow-lan'] = allowLan === true || allowLan === 'true';
+            
+            console.log('更新后的配置:', {
+              'mixed-port': config['mixed-port'],
+              'allow-lan': config['allow-lan'],
+              'allow-lan类型': typeof config['allow-lan']
+            });
+            
+            // 将更新后的配置写回文件，使用noCompatMode确保YAML格式正确
+            const updatedConfig = yaml.dump(config, { 
+              lineWidth: -1,
+              noCompatMode: true 
+            });
+            fs.writeFileSync(configFilePath, updatedConfig, 'utf8');
+            console.log('已更新配置文件:', configFilePath);
+          }
+        } catch (configError) {
+          console.error('保存配置到文件失败:', configError);
+          // 继续执行，使用现有文件重启
+        }
+      }
+      
+      // 如果Mihomo正在运行，先停止它
+      if (mihomoProcess) {
+        console.log('正在停止Mihomo服务以应用新配置...');
+        mihomoProcess.kill();
+        mihomoProcess = null;
+        
+        // 等待进程完全停止
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // 如果有配置文件路径，重新启动Mihomo
+      if (configFilePath) {
+        console.log('正在使用新配置重启Mihomo服务...');
+        const success = await startMihomo(configFilePath);
+        return { success, message: success ? '服务已重启' : '重启服务失败' };
+      } else {
+        return { success: false, message: '没有可用的配置文件' };
+      }
+    } catch (error) {
+      console.error('重启服务失败:', error);
+      return { success: false, message: `重启失败: ${error.message}` };
+    }
   });
 });
 
 app.on('window-all-closed', () => {
-  stopConnectionsWebSocket(); // 鍋滄杩炴帴绠＄悊
+  stopConnectionsWebSocket(); // 停止连接管理
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -1600,43 +2334,51 @@ app.on('before-quit', () => {
   if (mihomoProcess) {
     mihomoProcess.kill();
   }
-  // 纭繚閫€鍑烘椂鍏抽棴绯荤粺浠ｇ悊
+  
+  // 关闭静态文件服务器
+  if (global.staticServer && global.staticServer.listening) {
+    console.log('关闭静态文件服务器');
+    global.staticServer.close();
+  }
+  
+  // 确保退出时关闭系统代理
   try {
-    execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnabl
-e /t REG_DWORD /d 0 /f');
+    execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
   } catch (error) {
     console.error('Failed to disable system proxy on exit:', error);
   }
-});
+}); 
 
 async function switchNode(nodeName) {
   try {
-    // 鍏抽棴鐜版湁杩炴帴
+    // 关闭现有连接
     if (connectionsWebSocket) {
       connectionsWebSocket.close();
       connectionsWebSocket = null;
     }
 
-    // 鏇存柊褰撳墠鑺傜偣
+    // 更新当前节点
     currentNode = nodeName;
     
-    // 閲嶆柊寤虹珛杩炴帴
+    // 重新建立连接
     await startConnectionsWebSocket();
     
-    // 鏇存柊UI
+    // 更新UI
     if (mainWindow) {
       mainWindow.webContents.send('node-switched', { node: nodeName });
     }
     
-    // 鏇存柊鎵樼洏鎻愮ず
+    // 更新托盘提示和菜单
     if (tray) {
-      tray.setToolTip(`褰撳墠鑺傜偣: ${nodeName}`);
+      tray.setToolTip(`FlyClash - ${nodeName}`);
+      // 更新托盘菜单以反映当前节点
+      updateTrayMenu();
     }
     
-    console.log(`宸插垏鎹㈠埌鑺傜偣: ${nodeName}`);
+    console.log(`已切换到节点: ${nodeName}`);
   } catch (error) {
-    console.error('鍒囨崲鑺傜偣澶辫触:', error);
-    // 閫氱煡鍓嶇鍒囨崲澶辫触
+    console.error('切换节点失败:', error);
+    // 通知前端切换失败
     if (mainWindow) {
       mainWindow.webContents.send('node-switch-error', { 
         error: error.message,
@@ -1646,13 +2388,15 @@ async function switchNode(nodeName) {
   }
 }
 
-// 鑾峰彇鎬昏繛鎺ヤ俊鎭拰鎬绘祦閲?async function fetchConnectionsInfo() {
+// 获取总连接信息和总流量
+async function fetchConnectionsInfo() {
   try {
     const response = await fetch('http://127.0.0.1:9090/connections');
     if (response.ok) {
       const data = await response.json();
       
-      // 鏇存柊杩炴帴淇℃伅锛屽寘鎷€绘祦閲?      lastConnectionsInfo = {
+      // 更新连接信息，包括总流量
+      lastConnectionsInfo = {
         ...lastConnectionsInfo,
         downloadTotal: data.downloadTotal || 0,
         uploadTotal: data.uploadTotal || 0,
@@ -1660,13 +2404,83 @@ async function switchNode(nodeName) {
         activeConnections: data.connections ? data.connections.length : 0
       };
       
-      // 鍙戦€佹洿鏂板埌涓荤獥鍙?      if (mainWindow) {
+      // 发送更新到主窗口
+      if (mainWindow) {
         mainWindow.webContents.send('connections-update', lastConnectionsInfo);
       }
     }
   } catch (error) {
-    console.error('鑾峰彇杩炴帴淇℃伅澶辫触:', error);
+    console.error('获取连接信息失败:', error);
+  }
+}
+
+// 共享函数：使用HTTP服务器加载页面
+async function loadPageWithServer(pageName) {
+  try {
+    // 如果已经有一个服务器在运行，关闭它
+    if (global.staticServer && global.staticServer.listening) {
+      global.staticServer.close();
+    }
+    
+    // 创建静态文件服务
+    const serve = serveStatic(path.join(__dirname, '../out'), { 
+      index: ['index.html'], 
+      extensions: ['html'],
+      fallthrough: false // 添加此选项以返回404错误
+    });
+    
+    // 创建服务器
+    const server = http.createServer((req, res) => {
+      // 记录请求
+      console.log(`[静态服务器] ${req.method} ${req.url}`);
+      
+      // 处理静态文件请求
+      serve(req, res, (err) => {
+        if (err) {
+          console.error('[静态服务器] 错误:', err);
+          res.statusCode = err.status || 500;
+          res.end(err.message);
+          return;
+        }
+        finalhandler(req, res)(err);
+      });
+    });
+    
+    // 在随机端口上启动服务器
+    const port = await new Promise((resolve) => {
+      server.listen(0, () => {
+        const address = server.address();
+        console.log(`静态文件服务器运行在 http://localhost:${address.port}`);
+        resolve(address.port);
+      });
+    });
+    
+    // 保存服务器引用，以便以后可以关闭它
+    global.staticServer = server;
+    
+    // 确定要加载的URL路径
+    let urlPath;
+    switch (pageName) {
+      case 'nodes':
+        urlPath = '/nodes/';
+        break;
+      case 'settings':
+        urlPath = '/settings/';
+        break;
+      case 'subscriptions':
+        urlPath = '/subscriptions/';
+        break;
+      default:
+        urlPath = '/';
+        break;
+    }
+    
+    // 加载URL
+    const pageUrl = `http://localhost:${port}${urlPath}`;
+    console.log(`加载页面URL: ${pageUrl}`);
+    return mainWindow.loadURL(pageUrl);
+  } catch (error) {
+    console.error('加载页面失败:', error);
+    throw error;
   }
 } 
-
-

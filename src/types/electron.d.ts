@@ -20,7 +20,7 @@ type LogEntry = {
 
 interface ElectronAPI {
   // 导航相关
-  loadPage: (pageName: string) => Promise<{ success: boolean }>;
+  loadPage: (pageName: string) => Promise<{ success: boolean, error?: string }>;
   
   // 版本号
   getAppVersion: () => Promise<string>;
@@ -28,8 +28,13 @@ interface ElectronAPI {
   // Mihomo 管理
   startMihomo: (configPath: string) => Promise<boolean>;
   stopMihomo: () => Promise<boolean>;
-  getTrafficStats: () => Promise<any>;
+  getTrafficStats: () => Promise<TrafficStats>;
   fetchConnectionsInfo: () => Promise<any>;
+  restartService: () => Promise<{ success: boolean, message: string }>;
+  
+  // 用户代理设置
+  getProxySettings: () => Promise<{ success: boolean, settings?: any, error?: string }>;
+  saveProxySettings: (settings: any) => Promise<{ success: boolean, message?: string, error?: string }>;
   
   // 主题设置
   setTheme: (theme: string) => Promise<{ success: boolean, theme: string, error?: string }>;
@@ -55,6 +60,9 @@ interface ElectronAPI {
   getConfigOrder: () => Promise<{ success: boolean, data?: any, error?: string }>;
   notifyNodeChanged: (nodeName: string) => Promise<{ success: boolean, error?: string }>;
   
+  // 配置管理
+  saveLastConfig?: (configPath: string) => Promise<{ success: boolean, error?: string }>;
+  
   // 系统代理管理
   toggleSystemProxy: (enabled: boolean) => Promise<boolean>;
   getProxyStatus: () => Promise<boolean>;
@@ -62,6 +70,10 @@ interface ElectronAPI {
   // 自动启动设置
   setAutoStart: (enabled: boolean) => Promise<boolean>;
   getAutoStart: () => Promise<boolean>;
+  
+  // 开机启动设置
+  setAutoLaunch: (enabled: boolean) => Promise<boolean>;
+  getAutoLaunchState: () => Promise<boolean>;
   
   // 系统操作
   openExternal: (url: string) => Promise<{ success: boolean }>;
@@ -82,11 +94,14 @@ interface ElectronAPI {
   onMihomoLog: (callback: (log: string) => void) => void;
   onMihomoError: (callback: (error: string) => void) => void;
   onMihomoStopped: (callback: (code: number) => void) => void;
-  onProxyStatus: (callback: (enabled: boolean) => void) => void;
+  onProxyStatus: (callback: (enabled: boolean) => void) => (() => void);
   onMihomoAutostart: (callback: (data: any) => void) => void;
   onNodeChanged: (callback: (data: { nodeName: string }) => void) => void;
   onConnectionsUpdate: (callback: (data: any) => void) => void;
   onTrafficUpdate: (callback: (stats: any) => void) => void;
+  onServiceRestarted: (callback: (result: {success: boolean, error?: string}) => void) => () => void;
+  onTestAllNodes: (callback: () => void) => () => void;
+  onConnectionsClosed: (callback: () => void) => () => void;
   
   // 移除监听器
   removeAllListeners: (prefix?: string) => void;

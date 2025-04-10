@@ -1,3 +1,5 @@
+export {};
+
 interface ElectronAPI {
   // 节点相关
   getSubscriptions: () => Promise<any[]>;
@@ -47,28 +49,52 @@ interface ElectronAPI {
   
   // 新增: 保存最后使用的配置文件
   saveLastConfig: (configPath: string) => Promise<any>;
-} 
-
-// 在window对象上定义electronAPI属性
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI;
-  }
 }
 
 // 使用contextBridge暴露API给渲染进程
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electronAPI', {
+// 定义electronAPI对象
+const electronAPI = {
   // 节点相关
   getSubscriptions: () => ipcRenderer.invoke('get-subscriptions'),
-  startMihomo: (configPath: string) => ipcRenderer.invoke('start-mihomo', configPath),
-  stopMihomo: () => ipcRenderer.invoke('stop-mihomo'),
+  startMihomo: (configPath: string) => {
+    return new Promise<boolean>((resolve, reject) => {
+      ipcRenderer.invoke('start-mihomo', configPath)
+        .then((result: boolean) => {
+          if (result) {
+            resolve(true);
+          } else {
+            reject(new Error('启动Mihomo失败'));
+          }
+        })
+        .catch((error: Error) => {
+          console.error('启动Mihomo时发生错误:', error);
+          reject(error);
+        });
+    });
+  },
+  stopMihomo: () => {
+    return new Promise<boolean>((resolve, reject) => {
+      ipcRenderer.invoke('stop-mihomo')
+        .then((result: boolean) => {
+          if (result) {
+            resolve(true);
+          } else {
+            reject(new Error('停止Mihomo失败'));
+          }
+        })
+        .catch((error: Error) => {
+          console.error('停止Mihomo时发生错误:', error);
+          reject(error);
+        });
+    });
+  },
   getProxyNodes: (configPath?: string) => ipcRenderer.invoke('get-proxy-nodes', configPath),
   getConfigOrder: () => ipcRenderer.invoke('get-config-order'),
-  onNodeChanged: (callback: (data: any) => void) => ipcRenderer.on('node-changed', (_event, data) => callback(data)),
+  onNodeChanged: (callback: (data: any) => void) => ipcRenderer.on('node-changed', (_event: any, data: any) => callback(data)),
   notifyNodeChanged: (nodeName: string) => ipcRenderer.invoke('notify-node-changed', nodeName),
-  onConnectionsUpdate: (callback: (data: any) => void) => ipcRenderer.on('connections-update', (_event, data) => callback(data)),
+  onConnectionsUpdate: (callback: (data: any) => void) => ipcRenderer.on('connections-update', (_event: any, data: any) => callback(data)),
   closeConnection: (id: string) => ipcRenderer.invoke('close-connection', id),
   closeAllConnections: () => ipcRenderer.invoke('close-all-connections'),
   testAllNodes: () => ipcRenderer.invoke('test-all-nodes'),
@@ -86,8 +112,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 订阅相关
   fetchSubscription: (subUrl: string) => ipcRenderer.invoke('fetch-subscription', subUrl),
-  saveSubscription: (subUrl: string, configData: string, customName?: string) => 
-    ipcRenderer.invoke('save-subscription', subUrl, configData, customName),
+  saveSubscription: (subUrl: string, configData: string, customName?: string) => ipcRenderer.invoke('save-subscription', subUrl, configData, customName),
   deleteSubscription: (filePath: string) => ipcRenderer.invoke('delete-subscription', filePath),
   refreshSubscription: (filePath: string) => ipcRenderer.invoke('refresh-subscription', filePath),
   getSubscriptionUrl: (filePath: string) => ipcRenderer.invoke('get-subscription-url', filePath),
@@ -108,5 +133,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
   
   // 新增: 保存最后使用的配置文件
-  saveLastConfig: (configPath: string) => ipcRenderer.invoke('save-last-config', configPath),
-}); 
+  saveLastConfig: (configPath: string) => ipcRenderer.invoke('save-last-config', configPath)
+};
+
+// 使用contextBridge暴露API给渲染进程
+contextBridge.exposeInMainWorld('electronAPI', electronAPI); 

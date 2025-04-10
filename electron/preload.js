@@ -15,6 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopMihomo: () => ipcRenderer.invoke('stop-mihomo'),
   getTrafficStats: () => ipcRenderer.invoke('get-traffic-stats'),
   fetchConnectionsInfo: () => ipcRenderer.invoke('fetch-connections-info'),
+  // 重启Mihomo服务（用于端口更改后）
+  restartService: () => ipcRenderer.invoke('restart-service'),
+  
+  // 用户代理设置相关API
+  getProxySettings: () => ipcRenderer.invoke('get-proxy-settings'),
+  saveProxySettings: (settings) => ipcRenderer.invoke('save-proxy-settings', settings),
   
   // 添加主题设置相关方法
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
@@ -49,6 +55,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 自动启动设置
   setAutoStart: (enabled) => ipcRenderer.invoke('set-auto-start', enabled),
   getAutoStart: () => ipcRenderer.invoke('get-auto-start'),
+  
+  // 添加新的开机启动API接口
+  setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
+  getAutoLaunchState: () => ipcRenderer.invoke('get-auto-launch-state'),
   
   // 系统操作
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
@@ -88,7 +98,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
   },
   onProxyStatus: (callback) => {
-    const subscription = (event, ...args) => callback(...args);
+    const subscription = (event, enabled) => callback(enabled);
     ipcRenderer.on('proxy-status', subscription);
     return () => {
       ipcRenderer.removeListener('proxy-status', subscription);
@@ -125,6 +135,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (event, theme) => callback(event, theme);
     ipcRenderer.on('theme-changed', handler);
     return () => ipcRenderer.removeListener('theme-changed', handler);
+  },
+  
+  // 添加服务重启事件监听器
+  onServiceRestarted: (callback) => {
+    const handler = (_, result) => callback(result);
+    ipcRenderer.on('service-restarted', handler);
+    return () => ipcRenderer.removeListener('service-restarted', handler);
   },
   
   // 添加测试所有节点事件监听器

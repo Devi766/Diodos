@@ -386,7 +386,7 @@ export default function ProxyNodes() {
           return prevGroups.map(group => {
             const updatedNodes = group.nodes.map(node => {
               if (node.name === nodeName) {
-                return { ...node, delay: -1 }; // 使用-1表示超时
+                return { ...node, delay: 0 }; // 使用0表示超时
               }
               return node;
             });
@@ -418,7 +418,7 @@ export default function ProxyNodes() {
         return prevGroups.map(group => {
           const updatedNodes = group.nodes.map(node => {
             if (node.name === nodeName) {
-              return { ...node, delay: -1 }; // 使用-1表示超时
+              return { ...node, delay: 0 }; // 使用0表示超时
             }
             return node;
           });
@@ -842,13 +842,15 @@ export default function ProxyNodes() {
             </div>
             {node.delay !== undefined && (
               <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                node.delay < 100 
+                node.delay === 0
+                  ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                  : node.delay < 100 
                   ? 'bg-green-100 text-green-800 dark:bg-[#2a2a2a] dark:text-green-400' 
                   : node.delay < 300
                   ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
                   : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
               }`}>
-                {node.delay}ms
+                {node.delay === 0 ? '超时' : `${node.delay}ms`}
               </span>
             )}
           </div>
@@ -1118,6 +1120,17 @@ export default function ProxyNodes() {
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
+                          {/* 批量测速按钮 - 简洁图标 */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation(); // 阻止事件冒泡
+                              handleBatchTest(group.name);
+                            }}
+                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-full transition-colors"
+                            title="批量测速"
+                          >
+                            <ReloadIcon className="h-4 w-4" />
+                          </button>
                           <div>
                             <span className="text-xs text-gray-500 dark:text-gray-400">
                               {group.nodes.length} 个节点
@@ -1171,7 +1184,8 @@ export default function ProxyNodes() {
                 ) : (
                   favoriteFilteredGroups.map((group) => (
                     <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
-                      <div className="py-2 px-3 flex items-center justify-between cursor-pointer select-none"
+                      <div 
+                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none"
                         onClick={() => toggleGroupCollapse(`fav-${group.name}`)}
                       >
                         <div className="flex items-center space-x-2">
@@ -1185,6 +1199,17 @@ export default function ProxyNodes() {
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
+                          {/* 批量测速按钮 - 简洁图标 */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation(); // 阻止事件冒泡
+                              handleBatchTest(group.name);
+                            }}
+                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-full transition-colors"
+                            title="批量测速"
+                          >
+                            <ReloadIcon className="h-4 w-4" />
+                          </button>
                           <div>
                             <span className="text-xs text-gray-500 dark:text-gray-400">
                               {group.nodes.length} 个收藏节点
