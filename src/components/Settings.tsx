@@ -253,7 +253,7 @@ export default function Settings() {
                 </a>
                 <a
                   className="py-2 px-4 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors"
-                  href="https://github.com/yourusername/flyclash"
+                  href="https://github.com/GtxFury/FlyClash"
                   target="_blank"
                   rel="noopener noreferrer"
                 >

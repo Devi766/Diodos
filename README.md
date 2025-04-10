@@ -31,13 +31,13 @@ FlyClash是一个基于Mihomo内核的现代化代理客户端，拥有美观的
 
 ### 从发布版下载
 
-访问[发布页面](https://github.com/yourusername/flyclash/releases)下载最新版本的安装包。
+访问[发布页面](https://github.com/GtxFury/FlyClash/releases)下载最新版本的安装包。
 
 ### 从源码构建
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/flyclash.git
+git clone https://github.com/GtxFury/FlyClash.git
 cd flyclash
 
 # 安装依赖
