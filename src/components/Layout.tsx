@@ -12,7 +12,8 @@ import {
   HamburgerMenuIcon,
   Cross1Icon,
   BarChartIcon,
-  RocketIcon
+  RocketIcon,
+  MixerHorizontalIcon
 } from '@radix-ui/react-icons';
 
 interface LayoutProps {
@@ -30,6 +31,7 @@ export default function Layout({ children }: LayoutProps) {
     { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
     { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
     { name: '订阅管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
+    { name: '实用工具', href: '/tools', icon: <MixerHorizontalIcon className="w-5 h-5" /> },
     { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
   ];
 

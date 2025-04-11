@@ -11,6 +11,18 @@ interface TrafficStats {
   timestamp: number;
 }
 
+interface SpeedtestResult {
+  download: number;
+  upload: number;
+  ping: number;
+  jitter?: number;
+  server: {
+    host: string;
+    name: string;
+    country: string;
+  };
+}
+
 type LogEntry = {
   id: number;
   type: 'info' | 'error';
@@ -80,6 +92,24 @@ interface ElectronAPI {
   openFile: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   openFileLocation: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   
+  // 工具应用
+  openToolsApp: (toolName: string) => Promise<{ success: boolean, error?: string }>;
+  
+  // 媒体服务检测
+  testMediaStreaming: (serviceName: string, checkUrl?: string) => Promise<{ 
+    available: boolean; 
+    fullSupport?: boolean; 
+    message?: string; 
+    region?: string; 
+    checkTime?: number;
+  }>;
+  
+  // 测速工具
+  runSpeedtest: () => Promise<{ success: boolean, data?: SpeedtestResult, error?: string }>;
+  runSpeedtestDirect: () => Promise<{ success: boolean, data?: SpeedtestResult, error?: string }>;
+  onSpeedtestProgress: (callback: (progressData: SpeedtestProgress) => void) => (() => void);
+  onSpeedtestOutput: (callback: (outputData: SpeedtestOutput) => void) => (() => void);
+  
   // 日志管理
   saveLogs: (logEntries: any[]) => Promise<{ success: boolean, filePath?: string, error?: string }>;
   getLogs: () => Promise<any[]>;
@@ -115,6 +145,31 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
   }
+}
+
+// 添加speedtest进度接口
+interface SpeedtestProgress {
+  phase?: 'preparing' | 'ping' | 'download' | 'upload' | 'error';
+  percent?: number;
+  downloadSpeed?: number;
+  uploadSpeed?: number;
+  ping?: number;
+  jitter?: number;
+  error?: string;
+}
+
+// 添加speedtest实时输出接口
+interface SpeedtestOutput {
+  type: 'stdout' | 'stderr' | 'status' | 'progress';
+  message?: string;
+  phase?: 'start' | 'ping' | 'download' | 'upload' | 'complete' | 'error';
+  progress?: number;
+  downloadSpeed?: number;
+  uploadSpeed?: number;
+  ping?: number;
+  jitter?: number;
+  exitCode?: number;
+  error?: string;
 }
 
 export {}; 

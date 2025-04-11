@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, exec } = require('child_process');
 const isDev = process.env.NODE_ENV === 'development';
 const yaml = require('js-yaml');
 const WebSocket = require('ws');
@@ -10,8 +10,11 @@ const http = require('http');
 const serveStatic = require('serve-static');
 const finalhandler = require('finalhandler');
 
+// 导入媒体检测模块
+const { testMediaStreaming } = require('./mediatest');
+
 // 应用版本号 - 统一管理所有界面显示的版本
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 
 let mainWindow;
 let tray;
@@ -1473,8 +1476,12 @@ app.whenReady().then(() => {
     console.error('检查系统代理状态失败:', error);
   }
 
+  // 创建窗口和其他初始化操作
   createWindow();
   setupTray();
+  
+  // 注册工具应用处理程序
+  ipcMain.handle('open-tools-app', (_, toolName) => openToolsApp(toolName));
   
   // 注册API: 保存代理设置
   ipcMain.handle('save-proxy-settings', async (event, settings) => {
@@ -2576,6 +2583,75 @@ app.whenReady().then(() => {
     setAutoLaunch(enabled);
     return true;
   });
+
+  // 添加工具相关的功能
+  async function openToolsApp(toolName) {
+    try {
+      let toolsPath;
+      
+      if (isDev) {
+        // 开发环境下，tools目录在项目根目录下
+        toolsPath = path.join(process.cwd(), 'tools', toolName);
+      } else {
+        // 生产环境，tools目录在resources下
+        toolsPath = path.join(process.resourcesPath, 'tools', toolName);
+      }
+      
+      // 检查工具是否存在
+      if (!fs.existsSync(toolsPath)) {
+        console.error(`工具文件不存在: ${toolsPath}`);
+        return { success: false, error: '工具文件不存在' };
+      }
+      
+      // 在Windows上使用shell.openPath启动工具
+      await shell.openPath(toolsPath);
+      console.log(`工具已启动: ${toolsPath}`);
+      return { success: true };
+    } catch (error) {
+      console.error('启动工具出错:', error);
+      return { success: false, error: error.message || '未知错误' };
+    }
+  }
+
+  // 设置IPC通信处理器
+  ipcMain.handle('get-app-version', () => appVersion);
+  ipcMain.handle('start-mihomo', (_, configPath) => startMihomo(configPath));
+  ipcMain.handle('stop-mihomo', stopMihomo);
+  ipcMain.handle('get-traffic-stats', () => lastTrafficStats);
+  ipcMain.handle('restart-service', restartMihomoService);
+  ipcMain.handle('open-tools-app', (_, toolName) => openToolsApp(toolName));
+});
+
+// 媒体服务检测 - 将其移到闭包外以确保正常注册
+ipcMain.handle('test-media-streaming', async (event, serviceName, checkUrl) => {
+  try {
+    console.log(`收到媒体检测请求: ${serviceName}, URL: ${checkUrl}`);
+    console.log(`请确认mediatest.js模块已正确加载，testMediaStreaming函数是否存在:`, testMediaStreaming ? '存在' : '不存在');
+    
+    // 记录所有可能的服务名变体，方便调试
+    const nameVariants = {
+      'AbemaTV': ['Abema TV', 'AbemaTV', 'Abema'],
+      'myTVSuper': ['MyTVSuper', 'myTVSuper', 'mytvsuper', 'My TV Super']
+    };
+    
+    // 检查是否是已知服务的变体名称，如果是则显示相关信息
+    for (const [standardName, variants] of Object.entries(nameVariants)) {
+      if (variants.includes(serviceName)) {
+        console.log(`服务名称"${serviceName}"是"${standardName}"的变体，将使用标准名称处理`);
+      }
+    }
+    
+    const result = await testMediaStreaming(serviceName, checkUrl);
+    console.log(`媒体检测完成，返回结果:`, result);
+    return result;
+  } catch (error) {
+    console.error('处理媒体检测请求出错:', error);
+    return {
+      available: false,
+      message: '内部错误: ' + error.message,
+      checkTime: 0
+    };
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -3049,3 +3125,430 @@ function regenerateAndReloadConfig() {
     return false;
   }
 }
+
+// =============================
+// SpeedTest相关功能
+// =============================
+
+// 执行网络测速
+async function runSpeedtest() {
+  try {
+    console.log('执行网络测速...');
+    
+    // 更精确地确定tools目录位置
+    let toolsDir;
+    
+    if (isDev) {
+      // 开发环境 - 查找项目根目录
+      toolsDir = path.join(process.cwd(), 'tools');
+      
+      // 如果找不到，尝试查找上一级目录
+      if (!fs.existsSync(path.join(toolsDir, 'speedtest.exe'))) {
+        toolsDir = path.join(process.cwd(), '..', 'tools');
+      }
+      
+      console.log('开发环境测试工具目录:', toolsDir);
+    } else {
+      // 生产环境
+      toolsDir = path.join(process.resourcesPath, 'tools');
+      console.log('生产环境测试工具目录:', toolsDir);
+    }
+    
+    // 直接尝试查找tools目录下的speedtest.exe
+    let speedtestPath = path.join(toolsDir, 'speedtest.exe');
+    
+    // 如果找不到，尝试在speedtest-cli子目录查找
+    if (!fs.existsSync(speedtestPath)) {
+      speedtestPath = path.join(toolsDir, 'speedtest-cli', 'speedtest.exe');
+      console.log('尝试在speedtest-cli子目录查找:', speedtestPath);
+    }
+    
+    // 确认文件存在
+    if (!fs.existsSync(speedtestPath)) {
+      console.error('未找到speedtest.exe，请确保文件已放置在正确位置');
+      return {
+        success: false, 
+        error: `未找到speedtest.exe。已检查目录: ${toolsDir}`
+      };
+    }
+    
+    console.log('找到speedtest.exe路径:', speedtestPath);
+    
+    return new Promise((resolve) => {
+      console.log('开始执行测速命令...');
+      
+      // 创建执行进程，使用--format=json获取结构化输出
+      const speedtestProcess = spawn(speedtestPath, ['--format=json', '--accept-license', '--accept-gdpr']);
+      
+      let output = '';
+      let errorOutput = '';
+      
+      speedtestProcess.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        output += chunk;
+        console.log('Speedtest输出:', chunk);
+      });
+      
+      speedtestProcess.stderr.on('data', (data) => {
+        const chunk = data.toString();
+        errorOutput += chunk;
+        console.error('Speedtest错误:', chunk);
+      });
+      
+      speedtestProcess.on('close', (code) => {
+        console.log(`Speedtest进程退出，退出码 ${code}`);
+        
+        // 发送完成消息
+        if (event?.sender) {
+          // 退出码为0或2都视为成功
+          const isSuccess = code === 0 || code === 2;
+          event.sender.send('speedtest-output', {
+            type: 'status',
+            message: isSuccess ? '测速完成' : '测速失败',
+            phase: isSuccess ? 'complete' : 'error',
+            progress: 100,
+            exitCode: code
+          });
+        }
+        
+        // 当speedtest.exe退出时，如果退出码为0或2，视为成功
+        if (code === 0 || code === 2) {
+          resolve({ 
+            success: true, 
+            data: finalResult
+          });
+        } else {
+          resolve({ 
+            success: false, 
+            error: `测速失败，退出码: ${code}`
+          });
+        }
+      });
+      
+      speedtestProcess.on('error', (error) => {
+        console.error('启动Speedtest失败:', error);
+        resolve({ 
+          success: false, 
+          error: `启动测速工具失败: ${error.message}`
+        });
+      });
+    });
+  } catch (error) {
+    console.error('执行Speedtest时出错:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 在IPC处理程序注册部分添加
+ipcMain.handle('run-speedtest', async (event) => {
+  return await runSpeedtest(event);
+});
+
+// 直接执行speedtest并将输出实时发送到前端
+ipcMain.handle('run-speedtest-direct', async (event) => {
+  try {
+    console.log('开始执行直接测速...');
+    
+    // 更精确地确定tools目录位置
+    let toolsDir;
+    
+    if (isDev) {
+      // 开发环境 - 查找项目根目录
+      toolsDir = path.join(process.cwd(), 'tools');
+      
+      // 如果找不到，尝试查找上一级目录
+      if (!fs.existsSync(path.join(toolsDir, 'speedtest.exe'))) {
+        toolsDir = path.join(process.cwd(), '..', 'tools');
+      }
+      
+      console.log('开发环境测试工具目录:', toolsDir);
+    } else {
+      // 生产环境
+      toolsDir = path.join(process.resourcesPath, 'tools');
+      console.log('生产环境测试工具目录:', toolsDir);
+    }
+    
+    // 查找speedtest.exe
+    let speedtestPath = path.join(toolsDir, 'speedtest.exe');
+    
+    // 如果找不到，尝试在speedtest-cli子目录查找
+    if (!fs.existsSync(speedtestPath)) {
+      speedtestPath = path.join(toolsDir, 'ookla-speedtest-1.2.0-win64', 'speedtest.exe');
+      console.log('尝试在ookla子目录查找:', speedtestPath);
+    }
+    
+    // 确认文件存在
+    if (!fs.existsSync(speedtestPath)) {
+      console.error('未找到speedtest.exe，请确保文件已放置在正确位置');
+      return {
+        success: false, 
+        error: `未找到speedtest.exe。已检查目录: ${toolsDir}`
+      };
+    }
+    
+    console.log('找到speedtest.exe路径:', speedtestPath);
+    
+    return new Promise((resolve) => {
+      // 设置解析结果的变量
+      let finalResult = {
+        download: 0,
+        upload: 0,
+        ping: 0,
+        jitter: 0,
+        server: {
+          host: "",
+          name: "",
+          country: ""
+        }
+      };
+      
+      // 告诉前端测速开始
+      if (event?.sender) {
+        event.sender.send('speedtest-output', {
+          type: 'status',
+          message: '测速开始',
+          phase: 'start',
+          progress: 0
+        });
+      }
+      
+      // 执行命令 - 这里使用简单的文本输出方式而不是JSON格式
+      const speedtestProcess = spawn(speedtestPath, [
+        '--accept-license', 
+        '--accept-gdpr', 
+        '--progress=yes',
+        '--format=human-readable', // 使用人类可读格式，便于解析
+        '--unit=Mbps',  // 强制使用Mbps单位
+        '--precision=2'  // 设置精度为2位小数
+      ]);
+      
+      speedtestProcess.stdout.on('data', (data) => {
+        const output = data.toString().trim();
+        console.log('Speedtest输出:', output);
+        
+        // 发送原始输出到前端
+        if (event?.sender) {
+          event.sender.send('speedtest-output', {
+            type: 'stdout',
+            message: output
+          });
+        }
+        
+        // 尝试解析常见的输出格式
+        // 解析下载速度
+        if (output.includes('Download:')) {
+          const match = output.match(/Download:\s+([\d\.]+)\s*Mbps/i);
+          if (match) {
+            const speed = parseFloat(match[1]);
+            finalResult.download = speed;
+            
+            if (event?.sender) {
+              event.sender.send('speedtest-output', {
+                type: 'progress',
+                phase: 'download',
+                downloadSpeed: speed,
+                progress: 60
+              });
+            }
+          }
+        }
+        
+        // 解析上传速度
+        if (output.includes('Upload:')) {
+          const match = output.match(/Upload:\s+([\d\.]+)\s*Mbps/i);
+          if (match) {
+            const speed = parseFloat(match[1]);
+            finalResult.upload = speed;
+            
+            if (event?.sender) {
+              event.sender.send('speedtest-output', {
+                type: 'progress',
+                phase: 'upload',
+                uploadSpeed: speed,
+                progress: 90
+              });
+            }
+          }
+        }
+        
+        // 解析延迟和抖动
+        if (output.includes('Latency')) {
+          // 处理 "Idle Latency: 38.37 ms (jitter: 6.42ms, low: 34.72ms, high: 48.31ms)" 这种格式
+          const latencyMatch = output.match(/(?:Idle\s+)?Latency:\s+([\d\.]+)\s+ms/i);
+          const jitterMatch = output.match(/jitter:\s+([\d\.]+)ms/i);
+          
+          if (latencyMatch) {
+            const ping = parseFloat(latencyMatch[1]);
+            finalResult.ping = ping;
+            
+            if (event?.sender) {
+              event.sender.send('speedtest-output', {
+                type: 'progress',
+                phase: 'ping',
+                ping: ping,
+                progress: 30
+              });
+            }
+          }
+          
+          // 单独提取并更新抖动值
+          if (jitterMatch) {
+            const jitter = parseFloat(jitterMatch[1]);
+            finalResult.jitter = jitter;
+            
+            if (event?.sender) {
+              event.sender.send('speedtest-output', {
+                type: 'progress',
+                phase: 'ping',
+                jitter: jitter,
+                progress: 35
+              });
+            }
+            
+            console.log('解析到的抖动值:', jitter);
+          }
+        }
+        
+        // 尝试更灵活的抖动解析方式
+        if (!finalResult.jitter && output.toLowerCase().includes('jitter')) {
+          // 查找包含jitter的行
+          const jitterLine = output.split('\n')
+            .find(line => line.toLowerCase().includes('jitter'));
+          
+          if (jitterLine) {
+            // 通用的jitter模式匹配尝试 - 查找jitter后面的数字
+            const jitterMatch = jitterLine.match(/jitter:\s*([\d\.]+)\s*ms/i) || 
+                           jitterLine.match(/jitter[^:]*:\s*([\d\.]+)\s*ms/i) ||
+                           jitterLine.match(/jitter[^\d]+([\d\.]+)\s*ms/i);
+            if (jitterMatch) {
+              const jitter = parseFloat(jitterMatch[1]);
+              finalResult.jitter = jitter;
+              
+              if (event?.sender) {
+                event.sender.send('speedtest-output', {
+                  type: 'progress',
+                  phase: 'ping',
+                  jitter: jitter,
+                  progress: 35
+                });
+              }
+              
+              console.log('备用方式解析到的抖动值:', jitter);
+            }
+          }
+        }
+        
+        // 如果前面的方法都没找到jitter值，尝试从整个输出中查找
+        if (!finalResult.jitter) {
+          // 尝试各种可能的jitter格式
+          const jitterPatterns = [
+            /jitter:\s*([\d\.]+)\s*ms/i,
+            /jitter[^:]*:\s*([\d\.]+)\s*ms/i,
+            /jitter[^\d]+([\d\.]+)\s*ms/i,
+            /jitter\s*[=:]\s*([\d\.]+)/i
+          ];
+          
+          for (const pattern of jitterPatterns) {
+            const match = output.match(pattern);
+            if (match) {
+              const jitter = parseFloat(match[1]);
+              finalResult.jitter = jitter;
+              
+              if (event?.sender) {
+                event.sender.send('speedtest-output', {
+                  type: 'progress',
+                  phase: 'ping',
+                  jitter: jitter,
+                  progress: 35
+                });
+              }
+              
+              console.log('全文匹配解析到的抖动值:', jitter);
+              break;
+            }
+          }
+        }
+        
+        // 解析服务器信息
+        if (output.includes('Server:')) {
+          const serverMatch = output.match(/Server:\s+(.+?)(?:\s+Location|\(|$)/i);
+          const locationMatch = output.match(/Location:\s+(.+?)(?:\s+|$)/i);
+          
+          if (serverMatch) {
+            finalResult.server.name = serverMatch[1].trim();
+            finalResult.server.host = serverMatch[1].trim();
+          }
+          
+          if (locationMatch) {
+            finalResult.server.country = locationMatch[1].trim();
+          }
+        }
+      });
+      
+      speedtestProcess.stderr.on('data', (data) => {
+        const output = data.toString().trim();
+        console.error('Speedtest错误:', output);
+        
+        // 发送错误输出到前端
+        if (event?.sender) {
+          event.sender.send('speedtest-output', {
+            type: 'stderr',
+            message: output
+          });
+        }
+      });
+      
+      speedtestProcess.on('close', (code) => {
+        console.log(`Speedtest进程退出，退出码 ${code}`);
+        
+        // 发送完成消息
+        if (event?.sender) {
+          // 退出码为0或2都视为成功
+          const isSuccess = code === 0 || code === 2;
+          event.sender.send('speedtest-output', {
+            type: 'status',
+            message: isSuccess ? '测速完成' : '测速失败',
+            phase: isSuccess ? 'complete' : 'error',
+            progress: 100,
+            exitCode: code
+          });
+        }
+        
+        // 当speedtest.exe退出时，如果退出码为0或2，视为成功
+        if (code === 0 || code === 2) {
+          resolve({ 
+            success: true, 
+            data: finalResult
+          });
+        } else {
+          resolve({ 
+            success: false, 
+            error: `测速失败，退出码: ${code}`
+          });
+        }
+      });
+      
+      speedtestProcess.on('error', (error) => {
+        console.error('启动Speedtest失败:', error);
+        
+        // 发送错误消息
+        if (event?.sender) {
+          event.sender.send('speedtest-output', {
+            type: 'status',
+            message: `启动测速失败: ${error.message}`,
+            phase: 'error',
+            error: error.message
+          });
+        }
+        
+        resolve({ 
+          success: false, 
+          error: `启动测速工具失败: ${error.message}`
+        });
+      });
+    });
+  } catch (error) {
+    console.error('执行直接测速时出错:', error);
+    return { success: false, error: error.message };
+  }
+});

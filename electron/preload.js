@@ -26,6 +26,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
   getTheme: () => ipcRenderer.invoke('get-theme'),
   
+  // 工具应用
+  openToolsApp: (toolName) => ipcRenderer.invoke('open-tools-app', toolName),
+  
+  // 媒体服务检测
+  testMediaStreaming: (serviceName, checkUrl) => ipcRenderer.invoke('test-media-streaming', serviceName, checkUrl),
+  
+  // 测速工具
+  runSpeedtest: () => ipcRenderer.invoke('run-speedtest'),
+  // 直接运行speedtest并接收实时输出
+  runSpeedtestDirect: () => ipcRenderer.invoke('run-speedtest-direct'),
+  // 接收speedtest实时输出
+  onSpeedtestOutput: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('speedtest-output', handler);
+    return () => ipcRenderer.removeListener('speedtest-output', handler);
+  },
+  
   // 订阅管理
   saveSubscription: (subUrl, configData, customName) => {
     console.log('preload.js - 传递订阅参数 - URL:', subUrl); 
