@@ -354,6 +354,13 @@ async function startMihomo(configPath) {
 
   configFilePath = configPath;
   
+  // 确保mihomo数据文件准备好
+  try {
+    await ensureMihomoDataFiles();
+  } catch (error) {
+    console.error('准备mihomo数据文件失败，但将继续尝试启动:', error);
+  }
+  
   // 使用全局辅助函数查找mihomo内核
   const binPath = findMihomoExecutable();
 
@@ -977,6 +984,9 @@ function updateSystemProxyIfEnabled() {
 // 自动启动Mihomo功能
 async function autoStartMihomo() {
   try {
+    // 首先确保必要的mihomo数据文件已准备好
+    await ensureMihomoDataFiles();
+    
     // 获取保存的订阅列表
     const subscriptions = await getSubscriptionList();
     if (subscriptions.length === 0) {
@@ -1044,6 +1054,88 @@ async function autoStartMihomo() {
         error: error.message
       });
     }
+  }
+}
+
+// 新增函数：确保mihomo所需的数据文件存在
+async function ensureMihomoDataFiles() {
+  try {
+    // mihomo默认配置目录
+    const homeDir = process.env.USERPROFILE || process.env.HOME;
+    const mihomoConfigDir = path.join(homeDir, '.config', 'mihomo');
+    
+    console.log(`检查mihomo配置目录: ${mihomoConfigDir}`);
+    
+    // 确保mihomo配置目录存在
+    if (!fs.existsSync(mihomoConfigDir)) {
+      console.log(`创建mihomo配置目录: ${mihomoConfigDir}`);
+      fs.mkdirSync(mihomoConfigDir, { recursive: true });
+    }
+    
+    // 数据文件源目录
+    let dataSourceDir;
+    if (isDev) {
+      // 开发环境
+      dataSourceDir = path.join(process.cwd(), 'tools', 'data');
+      console.log(`开发环境数据源目录: ${dataSourceDir}`);
+    } else {
+      // 生产环境
+      dataSourceDir = path.join(process.resourcesPath, 'tools', 'data');
+      console.log(`生产环境数据源目录: ${dataSourceDir}`);
+    }
+    
+    // 检查源目录是否存在
+    if (!fs.existsSync(dataSourceDir)) {
+      console.warn(`数据源目录不存在: ${dataSourceDir}`);
+      // 尝试备用路径
+      if (isDev) {
+        dataSourceDir = path.join(process.cwd(), 'flycast-ui', 'tools', 'data');
+      } else {
+        dataSourceDir = path.join(app.getAppPath(), 'tools', 'data');
+      }
+      console.log(`尝试备用数据源目录: ${dataSourceDir}`);
+      
+      if (!fs.existsSync(dataSourceDir)) {
+        console.error(`备用数据源目录也不存在: ${dataSourceDir}`);
+        return;
+      }
+    }
+    
+    console.log(`从 ${dataSourceDir} 复制数据文件到 ${mihomoConfigDir}`);
+    
+    // 数据文件列表
+    const dataFiles = [
+      'geoip.metadb',
+      'geosite.dat',
+      'country.mmdb',
+      'geoip.dat',
+      'ASN.mmdb'
+    ];
+    
+    // 复制每个数据文件（如果目标文件不存在）
+    for (const fileName of dataFiles) {
+      const sourceFile = path.join(dataSourceDir, fileName);
+      const targetFile = path.join(mihomoConfigDir, fileName);
+      
+      if (!fs.existsSync(sourceFile)) {
+        console.warn(`源文件不存在: ${sourceFile}`);
+        continue;
+      }
+      
+      // 如果源文件存在且目标文件不存在，则复制
+      if (!fs.existsSync(targetFile)) {
+        console.log(`复制文件: ${fileName} (${fs.statSync(sourceFile).size / 1024 / 1024} MB)`);
+        fs.copyFileSync(sourceFile, targetFile);
+        console.log(`文件复制成功: ${targetFile}`);
+      } else {
+        console.log(`目标文件已存在，跳过: ${targetFile}`);
+      }
+    }
+    
+    console.log('mihomo数据文件检查和复制完成');
+  } catch (error) {
+    console.error('准备mihomo数据文件时出错:', error);
+    throw error;  // 重新抛出错误以便调用者处理
   }
 }
 
@@ -1453,6 +1545,13 @@ app.whenReady().then(() => {
 
   // 确保用户设置文件存在
   ensureUserSettingsFile();
+  
+  // 确保mihomo所需的数据文件存在
+  ensureMihomoDataFiles().then(() => {
+    console.log('mihomo数据文件初始化完成');
+  }).catch(error => {
+    console.error('mihomo数据文件初始化失败:', error);
+  });
   
   // 检查系统是否已经启用代理
   try {
