@@ -10,6 +10,8 @@ FlyClash是一个基于Mihomo(Clash)内核的现代化代理客户端，拥有�
 
 - 🚀 集成最新的Mihomo内核
 - 📊 简洁直观的控制面板
+- 🎬 支持媒体服务检测
+- ⚡ 支持测速分享功能
 - 🔧 方便的订阅管理
 - 🌐 支持系统代理切换
 - 💡 明暗主题适配
@@ -22,11 +24,40 @@ FlyClash是一个基于Mihomo(Clash)内核的现代化代理客户端，拥有�
 
 ## 截图
 
-![控制面板](screenshots/dashboard.png)
-![连接数据](screenshots/connect.png)
-![订阅管理](screenshots/subscriptions.png)
-![系统设置](screenshots/settings.png)
-![深色模式](screenshots/darkmode.png)
+<div style="display: flex; flex-wrap: wrap; gap: 10px;">
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/dashboard.png" alt="控制面板" style="width: 100%;">
+    <p align="center">控制面板</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/connect.png" alt="连接数据" style="width: 100%;">
+    <p align="center">连接数据</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/subscriptions.png" alt="订阅管理" style="width: 100%;">
+    <p align="center">订阅管理</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/settings.png" alt="系统设置" style="width: 100%;">
+    <p align="center">系统设置</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/mediacheck.png" alt="媒体检测" style="width: 100%;">
+    <p align="center">媒体检测</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/tools.png" alt="工具箱" style="width: 100%;">
+    <p align="center">工具箱</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/speedtest.png" alt="测速功能" style="width: 100%;">
+    <p align="center">测速功能</p>
+  </div>
+  <div style="flex: 1; min-width: 45%;">
+    <img src="screenshots/darkmode.png" alt="深色模式" style="width: 100%;">
+    <p align="center">深色模式</p>
+  </div>
+</div>
 
 ## 安装
 
