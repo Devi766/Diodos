@@ -49,6 +49,8 @@ interface ElectronAPI {
   
   // 新增: 保存最后使用的配置文件
   saveLastConfig: (configPath: string) => Promise<any>;
+
+  fetchConnectionsInfo: () => Promise<any>;
 }
 
 // 使用contextBridge暴露API给渲染进程
@@ -133,7 +135,9 @@ const electronAPI = {
   setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
   
   // 新增: 保存最后使用的配置文件
-  saveLastConfig: (configPath: string) => ipcRenderer.invoke('save-last-config', configPath)
+  saveLastConfig: (configPath: string) => ipcRenderer.invoke('save-last-config', configPath),
+
+  fetchConnectionsInfo: () => ipcRenderer.invoke('fetch-connections-info'),
 };
 
 // 使用contextBridge暴露API给渲染进程

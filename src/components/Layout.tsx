@@ -24,7 +24,7 @@ export default function Layout({ children }: LayoutProps) {
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('0.1.1');
+  const [appVersion, setAppVersion] = useState('0.1.6');
   
   const menuItems = [
     { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
@@ -90,7 +90,7 @@ export default function Layout({ children }: LayoutProps) {
                 href={item.href}
                 className={classNames(
                   "flex items-center px-4 py-3 rounded-lg transition-colors",
-                  pathname === item.href 
+                  (pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href)))
                     ? "bg-blue-50 text-blue-600 dark:bg-[#2a2a2a] dark:text-blue-400"
                     : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
                 )}
@@ -165,7 +165,7 @@ export default function Layout({ children }: LayoutProps) {
                     onClick={() => setMobileMenuOpen(false)}
                     className={classNames(
                       "flex items-center px-4 py-3 rounded-lg transition-colors",
-                      pathname === item.href 
+                      (pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href)))
                         ? "bg-blue-50 text-blue-600 dark:bg-[#2a2a2a] dark:text-blue-400"
                         : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
                     )}

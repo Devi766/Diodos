@@ -18,6 +18,8 @@ import { Card } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { formatBytes, formatDuration } from '../utils/formatters';
+import { useMihomoAPI } from '../services/mihomo-api';
+import { Network } from 'lucide-react';
 
 // 定义连接类型
 type Connection = {
@@ -44,13 +46,21 @@ type Connection = {
 // 排序键类型
 type SortKey = keyof Connection | 'duration';
 
+// 统计信息
+type Stats = {
+  totalConnections: number;
+  activeConnections: number;
+  totalUpload: number;
+  totalDownload: number;
+};
+
 export default function ConnectionTable() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('all');
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<Stats>({
     totalConnections: 0,
     activeConnections: 0,
     totalUpload: 0,
@@ -63,6 +73,7 @@ export default function ConnectionTable() {
     key: 'start', 
     direction: 'desc'
   });
+  let mihomoAPI = useMihomoAPI();
 
   // 格式化连接时间（计算持续时间）
   const formatConnectionDuration = (startTimeISO: string) => {
@@ -152,8 +163,9 @@ export default function ConnectionTable() {
     try {
       // 检查Mihomo是否运行
       try {
-        const response = await fetch('http://127.0.0.1:9090/version');
-        if (!response.ok) {
+        // 使用mihomoAPI检查服务是否运行
+        const versionInfo = await mihomoAPI.version();
+        if (!versionInfo) {
           throw new Error('Mihomo未运行');
         }
       } catch (error) {
@@ -164,12 +176,7 @@ export default function ConnectionTable() {
       }
       
       // 获取连接信息
-      const response = await fetch('http://127.0.0.1:9090/connections');
-      if (!response.ok) {
-        throw new Error(`获取连接失败: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
+      const data = await mihomoAPI.connections();
       
       // 计算统计信息
       let totalUpload = 0;
@@ -209,13 +216,8 @@ export default function ConnectionTable() {
   // 断开所有连接
   const closeAllConnections = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:9090/connections', {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`断开连接失败: ${response.statusText}`);
-      }
+      // 使用mihomoAPI断开所有连接
+      await mihomoAPI.deleteConnections();
       
       // 重新获取连接列表
       fetchConnections();
@@ -228,13 +230,8 @@ export default function ConnectionTable() {
   // 断开单个连接
   const closeConnection = async (id: string) => {
     try {
-      const response = await fetch(`http://127.0.0.1:9090/connections/${id}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`断开连接失败: ${response.statusText}`);
-      }
+      // 使用mihomoAPI断开指定连接
+      await mihomoAPI.deleteConnections(id);
       
       // 更新本地连接列表（从UI上立即移除这个连接）
       setConnections(prevConnections => prevConnections.filter(conn => conn.id !== id));
@@ -262,6 +259,30 @@ export default function ConnectionTable() {
     };
   }, []);
 
+  useEffect(() => {
+    // 获取API配置
+    const getApiConfig = async () => {
+      if (window.electronAPI) {
+        try {
+          const apiConfigResult = await window.electronAPI.getApiConfig();
+          if (apiConfigResult.success) {
+            // 使用正确的API配置初始化mihomoAPI
+            mihomoAPI = useMihomoAPI({
+              host: apiConfigResult.controllerHost,
+              port: apiConfigResult.controllerPort,
+              secret: apiConfigResult.secret
+            });
+            console.log('ConnectionTable: API配置已更新:', apiConfigResult);
+          }
+        } catch (error) {
+          console.error('获取API配置失败:', error);
+        }
+      }
+    };
+    
+    getApiConfig();
+  }, []);
+
   // 渲染连接类型Badge
   const renderTypeBadge = (type: string, network: string) => {
     let badgeClass = "";
@@ -275,10 +296,10 @@ export default function ConnectionTable() {
       icon = <GlobeIcon className="w-2.5 h-2.5 mr-0.5" />;
     } else if (network === "tcp") {
       badgeClass = "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 border-purple-200 dark:border-purple-800/30";
-      icon = <ActivityLogIcon className="w-2.5 h-2.5 mr-0.5" />;
+      icon = <Network className="w-2.5 h-2.5 mr-0.5" />;
     } else if (network === "udp") {
       badgeClass = "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800/30";
-      icon = <ActivityLogIcon className="w-2.5 h-2.5 mr-0.5" />;
+      icon = <Network className="w-2.5 h-2.5 mr-0.5" />;
     }
     
     return (

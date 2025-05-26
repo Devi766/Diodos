@@ -30,12 +30,45 @@ type LogEntry = {
   timestamp: Date;
 };
 
-interface ElectronAPI {
+// 订阅相关信息类型
+interface SubscriptionInfo {
+  usedTraffic?: string;
+  remainingTraffic?: string;
+  expiryDate?: string;
+  lastUpdated?: string;
+}
+
+interface SubscriptionResult {
+  content: string;
+  subscriptionInfo?: SubscriptionInfo;
+}
+
+interface Subscription {
+  name: string; 
+  path: string;
+  usedTraffic?: string;
+  remainingTraffic?: string;
+  expiryDate?: string;
+  lastUpdated?: string;
+}
+
+interface MihomoApiResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  data: any; 
+}
+
+export interface ElectronAPI {
   // 导航相关
   loadPage: (pageName: string) => Promise<{ success: boolean, error?: string }>;
   
   // 版本号
   getAppVersion: () => Promise<string>;
+  
+  // Mihomo API请求
+  requestMihomoAPI: (endpoint: string, options?: RequestInit) => Promise<MihomoApiResponse>;
   
   // Mihomo 管理
   startMihomo: (configPath: string) => Promise<boolean>;
@@ -44,9 +77,41 @@ interface ElectronAPI {
   fetchConnectionsInfo: () => Promise<any>;
   restartService: () => Promise<{ success: boolean, message: string }>;
   
+  // 获取API配置信息
+  getApiConfig: () => Promise<{ success: boolean, controllerHost: string, controllerPort: string, secret: string, error?: string }>;
+  
+  // 代理请求相关
+  proxyFetch: (url: string, options?: any) => Promise<{ ok: boolean, status: number, statusText: string, headers: Record<string, string>, data: any }>;
+  switchNode: (nodeName: string, groupName?: string) => Promise<{ success: boolean, error?: string }>;
+  
+  // 获取代理配置
+  getProxyConfig: () => Promise<{ success: boolean, data: { host: string, port: number }, error?: string }>;
+  
+  // 通过HTTP代理发送请求
+  fetchWithProxy: (options: { 
+    url: string, 
+    method?: string, 
+    headers?: Record<string, string>, 
+    body?: any, 
+    timeout?: number,
+    proxy?: {
+      host: string,
+      port: number,
+      protocol?: string,
+      nodeName?: string
+    }
+  }) => Promise<{ 
+    ok: boolean, 
+    status: number, 
+    statusText: string, 
+    headers: Record<string, string>, 
+    data: any 
+  }>;
+  
   // 用户代理设置
   getProxySettings: () => Promise<{ success: boolean, settings?: any, error?: string }>;
   saveProxySettings: (settings: any) => Promise<{ success: boolean, message?: string, error?: string }>;
+  saveUASettings: (ua: string) => Promise<{ success: boolean, message?: string, error?: string }>;
   
   // 主题设置
   setTheme: (theme: string) => Promise<{ success: boolean, theme: string, error?: string }>;
@@ -54,13 +119,17 @@ interface ElectronAPI {
   onThemeChanged: (callback: (event: any, theme: string) => void) => void;
   removeThemeListener: () => void;
   
+  // 消息通信
+  onMessage: (channel: string, callback: (data: any) => void) => (() => void);
+  
   // 订阅管理
-  saveSubscription: (subUrl: string, configData: string, customName: string) => Promise<string>;
-  getSubscriptions: () => Promise<Array<{ name: string, path: string }>>;
+  saveSubscription: (subUrl: string, configData: string, customName: string, subscriptionInfo?: SubscriptionInfo) => Promise<string>;
+  getSubscriptions: () => Promise<Array<Subscription>>;
   deleteSubscription: (filePath: string) => Promise<boolean>;
-  fetchSubscription: (subUrl: string) => Promise<string | null>;
-  updateSubscription: (filePath: string, configData: string, subUrl: string) => Promise<boolean>;
+  fetchSubscription: (subUrl: string) => Promise<SubscriptionResult | null>;
+  updateSubscription: (filePath: string, configData: string, subUrl: string, subscriptionInfo?: SubscriptionInfo) => Promise<boolean>;
   refreshSubscription: (filePath: string) => Promise<{ success: boolean, filePath?: string, error?: string }>;
+  onImportSubscription: (callback: (url: string) => void) => () => void;
   
   // 节点管理
   selectNode: (nodeName: string, groupName: string) => Promise<{ success: boolean, nodeName: string, groupName: string, error?: string }>;
@@ -74,10 +143,16 @@ interface ElectronAPI {
   
   // 配置管理
   saveLastConfig?: (configPath: string) => Promise<{ success: boolean, error?: string }>;
+  getCurrentConfigName: () => Promise<{ success: boolean, configName?: string, error?: string }>;
   
   // 系统代理管理
   toggleSystemProxy: (enabled: boolean) => Promise<boolean>;
   getProxyStatus: () => Promise<boolean>;
+  
+  // TUN模式管理
+  toggleTunMode: (enabled: boolean) => Promise<boolean>;
+  getTunStatus: () => Promise<boolean>;
+  onTunStatus: (callback: (enabled: boolean) => void) => (() => void);
   
   // 自动启动设置
   setAutoStart: (enabled: boolean) => Promise<boolean>;
@@ -107,8 +182,91 @@ interface ElectronAPI {
   // 测速工具
   runSpeedtest: () => Promise<{ success: boolean, data?: SpeedtestResult, error?: string }>;
   runSpeedtestDirect: () => Promise<{ success: boolean, data?: SpeedtestResult, error?: string }>;
+  runProxySpeedtest: (options: { 
+    url?: string,
+    proxy?: {
+      host: string,
+      port: number,
+      nodeName?: string
+    }
+  }) => Promise<{ 
+    success: boolean, 
+    data?: { 
+      downloadSpeed: number,
+      bytesReceived: number,
+      duration: number,
+      url: string
+    }, 
+    error?: string 
+  }>;
+  
+  // UDP连通性测试
+  testUdpConnectivity: (options: {
+    proxy: {
+      host: string,
+      port: number,
+      nodeName: string
+    },
+    testServers?: Array<{
+      address: string,
+      port: number,
+      name: string
+    }>
+  }) => Promise<{
+    success: boolean,
+    udpType?: string,
+    successCount?: number,
+    details?: Array<any>,
+    error?: string
+  }>;
   onSpeedtestProgress: (callback: (progressData: SpeedtestProgress) => void) => (() => void);
   onSpeedtestOutput: (callback: (outputData: SpeedtestOutput) => void) => (() => void);
+  
+  // 批量测速相关
+  // 取消批量测速
+  cancelBatchSpeedtest: () => Promise<{
+    success: boolean,
+    error?: string
+  }>;
+  
+  // 测速报告管理
+  saveSpeedtestReport: (reportData: any) => Promise<{ 
+    success: boolean, 
+    filePath?: string, 
+    reportId?: string, 
+    error?: string 
+  }>;
+  getSpeedtestReports: () => Promise<{ 
+    success: boolean, 
+    reports?: SpeedtestReportSummary[], 
+    error?: string 
+  }>;
+  getSpeedtestReport: (reportId: string) => Promise<{ 
+    success: boolean, 
+    report?: SpeedtestReport, 
+    error?: string 
+  }>;
+  copySpeedtestReportToClipboard: (imageDataUrl: string) => Promise<{ 
+    success: boolean, 
+    error?: string 
+  }>;
+  // 新增puppeteer相关API
+  generateSpeedtestReportWithPuppeteer: (reportData: any) => Promise<{
+    success: boolean,
+    filePath?: string,
+    htmlPath?: string,
+    reportId?: string,
+    error?: string,
+    canceled?: boolean
+  }>;
+  copySpeedtestReportWithPuppeteer: (reportData: any) => Promise<{
+    success: boolean,
+    error?: string
+  }>;
+  openFileInDefaultApp: (filePath: string) => Promise<{
+    success: boolean,
+    error?: string
+  }>;
   
   // 日志管理
   saveLogs: (logEntries: any[]) => Promise<{ success: boolean, filePath?: string, error?: string }>;
@@ -172,4 +330,25 @@ interface SpeedtestOutput {
   error?: string;
 }
 
-export {}; 
+// 添加测速报告接口
+interface SpeedtestReport {
+  id: string;
+  timestamp: string;
+  proxyGroupName: string;
+  testResults: SpeedTestResult[];
+  skippedNodes: string[];
+  excludedNodes?: string[];
+}
+
+// 添加测速报告概要信息接口
+interface SpeedtestReportSummary {
+  id: string;
+  timestamp: string;
+  filePath: string;
+  proxyGroupName: string;
+  nodeCount: number;
+  skippedCount: number;
+  excludedCount: number;
+}
+
+// 已将ElectronAPI导出

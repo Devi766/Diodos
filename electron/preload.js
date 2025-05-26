@@ -3,7 +3,39 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 导航函数不再需要处理DOM事件，直接在NavMenu组件中处理
 // 删除旧的handleNavigation函数
 
+// 增强安全 - 令牌管理
+let securityToken = null;
+let tokenExpiry = 0;
+
+// 获取新的安全令牌
+async function getSecurityToken() {
+  try {
+    // 检查当前令牌是否有效
+    if (securityToken && tokenExpiry > Date.now()) {
+      return { success: true, token: securityToken };
+    }
+    
+    // 获取新令牌
+    const result = await ipcRenderer.invoke('get-auth-token');
+    
+    if (result && result.success && result.token) {
+      securityToken = result.token;
+      tokenExpiry = result.expiry || (Date.now() + 5 * 60 * 1000); // 默认5分钟
+      return { success: true, token: securityToken };
+    }
+    
+    console.error('无法获取安全令牌:', result.error || '未知错误');
+    return { success: false, error: result.error || '无法获取安全令牌' };
+  } catch (error) {
+    console.error('令牌获取异常:', error);
+    return { success: false, error: `令牌获取异常: ${error.message}` };
+  }
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
+  // 不直接暴露令牌获取方法
+  getAuthToken: null,
+  
   // 导航相关 - 新的页面加载方法
   loadPage: (pageName) => ipcRenderer.invoke('loadPage', pageName),
   
@@ -17,10 +49,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchConnectionsInfo: () => ipcRenderer.invoke('fetch-connections-info'),
   // 重启Mihomo服务（用于端口更改后）
   restartService: () => ipcRenderer.invoke('restart-service'),
+  // 获取API配置信息
+  getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   
   // 用户代理设置相关API
   getProxySettings: () => ipcRenderer.invoke('get-proxy-settings'),
   saveProxySettings: (settings) => ipcRenderer.invoke('save-proxy-settings', settings),
+  saveUASettings: (ua) => ipcRenderer.invoke('save-ua-settings', ua),
   
   // 添加主题设置相关方法
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
@@ -32,10 +67,134 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 媒体服务检测
   testMediaStreaming: (serviceName, checkUrl) => ipcRenderer.invoke('test-media-streaming', serviceName, checkUrl),
   
+  // 添加一个辅助函数用于发送mihomo API请求（自动处理密钥认证）
+  requestMihomoAPI: async (endpoint, options = {}) => {
+    try {
+      console.log(`[调试] preload.js - 开始发送API请求: ${endpoint}`);
+      
+      // 获取API配置
+      const apiConfig = await ipcRenderer.invoke('get-api-config');
+      console.log(`[调试] preload.js - API配置获取结果:`, apiConfig);
+      
+      if (!apiConfig.success) {
+        console.error(`[调试] preload.js - 获取API配置失败:`, apiConfig.error);
+        throw new Error(`无法获取API配置: ${apiConfig.error || '未知错误'}`);
+      }
+      
+      // 构建请求URL
+      const host = apiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : apiConfig.controllerHost;
+      const port = apiConfig.controllerPort;
+      const url = endpoint.startsWith('http') ? endpoint : `http://${host}:${port}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+      console.log(`[调试] preload.js - 构建完整URL: ${url}`);
+      
+      // 准备请求头
+      const headers = options.headers || {};
+      
+      // 显式检查和记录请求头中是否已有Authorization
+      if (headers['Authorization']) {
+        console.log('[调试] preload.js - 请求已包含Authorization头');
+      } else {
+        // 如果请求头中没有Authorization，并且有密钥，添加认证头
+        if (apiConfig.secret) {
+          headers['Authorization'] = `Bearer ${apiConfig.secret}`;
+          console.log('[调试] preload.js - 添加了密钥认证头');
+        } else {
+          console.warn('[警告] preload.js - 密钥为空，API请求可能被拒绝');
+        }
+      }
+      
+      console.log(`[调试] preload.js - 请求头:`, Object.keys(headers).join(', '));
+      
+      try {
+        // 发送请求
+        console.log(`[调试] preload.js - 发送${options.method || 'GET'}请求到: ${url}`);
+        const response = await fetch(url, {
+          ...options,
+          headers
+        });
+        
+        console.log(`[调试] preload.js - 请求响应状态: ${response.status} ${response.statusText}`);
+        
+        // 详细记录401错误
+        if (response.status === 401) {
+          console.error('[错误] preload.js - 授权失败 (401)，密钥可能不正确');
+          console.log('[调试] preload.js - 尝试的密钥:', apiConfig.secret ? '已设置但可能不正确' : '未设置');
+          
+          // 尝试读取错误响应内容
+          try {
+            const errorText = await response.text();
+            console.error('[调试] preload.js - 401错误详情:', errorText);
+          } catch (e) {
+            console.error('[调试] preload.js - 无法读取401错误详情');
+          }
+        }
+        
+        // 创建一个简单的对象返回，而不是Response对象
+        const result = {
+          ok: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          headers: {},
+          data: null
+        };
+
+        // 尝试填充headers (只发送可序列化的部分)
+        response.headers.forEach((value, key) => {
+          result.headers[key] = value;
+        });
+
+        try {
+          if (response.ok && response.status !== 204) { // 204 No Content
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              result.data = await response.json();
+            } else {
+              result.data = await response.text();
+            }
+          } else if (!response.ok) {
+            // 对于错误响应，也尝试读取文本内容作为data
+            result.data = await response.text(); 
+          }
+        } catch (e) {
+          console.warn('[调试] preload.js - 解析响应体失败:', e);
+          // 如果解析失败，data将保持为null，但status等信息仍然可用
+          if (!response.ok && !result.data) { // 如果是错误且没有data，尝试用statusText
+             result.data = response.statusText || `请求失败，状态码: ${response.status}`;
+          }
+        }
+
+        // 使用上面创建的普通对象
+        return result;
+      } catch (fetchError) {
+        console.error('[调试] preload.js - fetch请求失败:', fetchError);
+        
+        // 创建自定义错误响应，确保mihomo-api.ts可以正确处理
+        if (fetchError.name === 'AbortError') {
+          // 请求被中止
+          throw new Error('请求被中止');
+        } else if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
+          // 连接错误 - 可能是服务未运行或网络问题
+          console.error('[调试] preload.js - 连接失败，服务可能未运行', fetchError);
+          throw new Error('连接失败，服务可能未运行');
+        } else {
+          // 其他错误
+          throw new Error(`请求失败: ${fetchError.message}`);
+        }
+      }
+    } catch (error) {
+      console.error('[调试] preload.js - Mihomo API请求失败:', error);
+      throw error;
+    }
+  },
+  
   // 测速工具
   runSpeedtest: () => ipcRenderer.invoke('run-speedtest'),
   // 直接运行speedtest并接收实时输出
   runSpeedtestDirect: () => ipcRenderer.invoke('run-speedtest-direct'),
+  // 通过代理进行测速
+  runProxySpeedtest: (options) => ipcRenderer.invoke('run-proxy-speedtest', options),
+  // 测试UDP连通性
+  testUdpConnectivity: (options) => ipcRenderer.invoke('test-udp-connectivity', options),
   // 接收speedtest实时输出
   onSpeedtestOutput: (callback) => {
     const handler = (_, data) => callback(data);
@@ -43,17 +202,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('speedtest-output', handler);
   },
   
+  // 测速报告管理
+  saveSpeedtestReport: (reportData) => ipcRenderer.invoke('save-speedtest-report', reportData),
+  getSpeedtestReports: () => ipcRenderer.invoke('get-speedtest-reports'),
+  getSpeedtestReport: (reportId) => ipcRenderer.invoke('get-speedtest-report', reportId),
+  copySpeedtestReportToClipboard: (imageDataUrl) => ipcRenderer.invoke('copy-speedtest-report-to-clipboard', imageDataUrl),
+  // 新增puppeteer相关API
+  generateSpeedtestReportWithPuppeteer: (reportData) => ipcRenderer.invoke('generate-speedtest-report-with-puppeteer', reportData),
+  copySpeedtestReportWithPuppeteer: (reportData) => ipcRenderer.invoke('copy-speedtest-report-with-puppeteer', reportData),
+  openFileInDefaultApp: (filePath) => ipcRenderer.invoke('open-file-in-default-app', filePath),
+  
   // 订阅管理
-  saveSubscription: (subUrl, configData, customName) => {
+  saveSubscription: (subUrl, configData, customName, subscriptionInfo) => {
     console.log('preload.js - 传递订阅参数 - URL:', subUrl); 
     console.log('preload.js - 传递订阅参数 - 自定义名称:', customName);
-    return ipcRenderer.invoke('save-subscription', subUrl, configData, customName);
+    if (subscriptionInfo) {
+      console.log('preload.js - 传递订阅流量信息:', subscriptionInfo);
+    }
+    return ipcRenderer.invoke('save-subscription', subUrl, configData, customName, subscriptionInfo);
   },
   getSubscriptions: () => ipcRenderer.invoke('get-subscriptions'),
   deleteSubscription: (filePath) => ipcRenderer.invoke('delete-subscription', filePath),
   fetchSubscription: (subUrl) => ipcRenderer.invoke('fetch-subscription', subUrl),
-  updateSubscription: (filePath, configData, subUrl) => ipcRenderer.invoke('update-subscription', filePath, configData, subUrl),
+  updateSubscription: (filePath, configData, subUrl, subscriptionInfo) => ipcRenderer.invoke('update-subscription', filePath, configData, subUrl, subscriptionInfo),
   refreshSubscription: (filePath) => ipcRenderer.invoke('refresh-subscription', filePath),
+  
+  // 添加订阅导入事件监听
+  onImportSubscription: (callback) => {
+    const handler = (_, url) => {
+      console.log('preload.js - 收到导入订阅事件，URL:', url);
+      callback(url);
+    };
+    ipcRenderer.on('import-subscription', handler);
+    return () => ipcRenderer.removeListener('import-subscription', handler);
+  },
   
   // 节点管理
   selectNode: (nodeName, groupName) => ipcRenderer.invoke('select-node', nodeName, groupName),
@@ -64,10 +246,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProxyNodes: (configPath) => ipcRenderer.invoke('get-proxy-nodes', configPath),
   getConfigOrder: () => ipcRenderer.invoke('get-config-order'),
   notifyNodeChanged: (nodeName) => ipcRenderer.invoke('notify-node-changed', nodeName),
+  // 获取当前配置文件名称
+  getCurrentConfigName: () => ipcRenderer.invoke('get-current-config-name'),
   
-  // 系统代理管理
-  toggleSystemProxy: (enabled) => ipcRenderer.invoke('toggleSystemProxy', enabled),
+  // 系统代理管理 - 添加安全令牌
+  toggleSystemProxy: async (enabled) => {
+    try {
+      const tokenResult = await getSecurityToken();
+      if (!tokenResult.success) {
+        console.error('切换系统代理失败: 无法获取安全令牌');
+        return { success: false, error: tokenResult.error };
+      }
+      
+      return await ipcRenderer.invoke('toggleSystemProxy', tokenResult.token, enabled);
+    } catch (error) {
+      console.error('切换系统代理异常:', error);
+      return { success: false, error: `操作异常: ${error.message}` };
+    }
+  },
   getProxyStatus: () => ipcRenderer.invoke('getProxyStatus'),
+  
+  // TUN模式管理 - 使用新的令牌验证机制
+  toggleTunMode: async (enabled) => {
+    try {
+      const tokenResult = await getSecurityToken();
+      if (!tokenResult.success) {
+        console.error('切换TUN模式失败: 无法获取安全令牌');
+        return { success: false, error: tokenResult.error };
+      }
+      
+      return await ipcRenderer.invoke('toggleTunMode', tokenResult.token, enabled);
+    } catch (error) {
+      console.error('切换TUN模式异常:', error);
+      return { success: false, error: `操作异常: ${error.message}` };
+    }
+  },
+  getTunStatus: () => ipcRenderer.invoke('getTunStatus'),
   
   // 自动启动设置
   setAutoStart: (enabled) => ipcRenderer.invoke('set-auto-start', enabled),
@@ -77,9 +291,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
   getAutoLaunchState: () => ipcRenderer.invoke('get-auto-launch-state'),
   
-  // 系统操作
+  // 系统操作 - 添加安全令牌
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
-  openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
+  openFile: async (filePath) => {
+    try {
+      const tokenResult = await getSecurityToken();
+      if (!tokenResult.success) {
+        console.error('打开文件失败: 无法获取安全令牌');
+        return { success: false, error: tokenResult.error };
+      }
+      
+      return await ipcRenderer.invoke('open-file', tokenResult.token, filePath);
+    } catch (error) {
+      console.error('打开文件异常:', error);
+      return { success: false, error: `操作异常: ${error.message}` };
+    }
+  },
   openFileLocation: (filePath) => ipcRenderer.invoke('open-file-location', filePath),
   
   // 日志管理
@@ -121,6 +348,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('proxy-status', subscription);
     };
   },
+  onTunStatus: (callback) => {
+    const subscription = (event, enabled) => callback(enabled);
+    ipcRenderer.on('tun-status', subscription);
+    return () => {
+      ipcRenderer.removeListener('tun-status', subscription);
+    };
+  },
   onMihomoAutostart: (callback) => {
     const subscription = (event, ...args) => callback(...args);
     ipcRenderer.on('mihomo-autostart', subscription);
@@ -142,11 +376,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('connections-update', subscription);
     };
   },
+  // 优化流量数据传输 - 添加限流功能
   onTrafficUpdate: (callback) => {
-    const handler = (_, stats) => callback(stats);
+    let lastUpdateTime = 0;
+    const throttleInterval = 1000; // 1秒限流
+    
+    const handler = (_, stats) => {
+      const now = Date.now();
+      if (now - lastUpdateTime >= throttleInterval) {
+        callback(stats);
+        lastUpdateTime = now;
+      }
+    };
+    
     ipcRenderer.on('traffic-update', handler);
     return () => ipcRenderer.removeListener('traffic-update', handler);
   },
+  
   // 添加主题变更事件监听器
   onThemeChanged: (callback) => {
     const handler = (event, theme) => callback(event, theme);
@@ -183,8 +429,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeAllListeners('mihomo-error');
       ipcRenderer.removeAllListeners('mihomo-stopped');
       ipcRenderer.removeAllListeners('proxy-status');
+      ipcRenderer.removeAllListeners('tun-status');
       ipcRenderer.removeAllListeners('mihomo-autostart');
       ipcRenderer.removeAllListeners('node-changed');
+      // 添加流量相关监听器的移除
+      ipcRenderer.removeAllListeners('traffic-update');
+      ipcRenderer.removeAllListeners('connections-update');
     } else if (prefix === 'proxy-nodes') {
       // 仅移除ProxyNodes组件使用的事件
       ipcRenderer.removeAllListeners('node-changed');
@@ -194,15 +444,46 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeAllListeners('mihomo-error');
       ipcRenderer.removeAllListeners('mihomo-stopped');
       ipcRenderer.removeAllListeners('proxy-status'); 
+      ipcRenderer.removeAllListeners('tun-status');
       ipcRenderer.removeAllListeners('mihomo-autostart');
       ipcRenderer.removeAllListeners('node-changed');
       ipcRenderer.removeAllListeners('theme-changed');
+      ipcRenderer.removeAllListeners('traffic-update');
+      ipcRenderer.removeAllListeners('connections-update');
+      ipcRenderer.removeAllListeners('speedtest-output');
+      ipcRenderer.removeAllListeners('service-restarted');
+      ipcRenderer.removeAllListeners('test-all-nodes');
+      ipcRenderer.removeAllListeners('connections-closed');
+      ipcRenderer.removeAllListeners('import-subscription');
     }
   },
   // 移除主题监听器
   removeThemeListener: () => {
     ipcRenderer.removeAllListeners('theme-changed');
-  }
+  },
+  // 移除流量监听器
+  removeTrafficListeners: () => {
+    ipcRenderer.removeAllListeners('traffic-update');
+    ipcRenderer.removeAllListeners('connections-update');
+  },
+  
+  // 节点和代理组管理
+  getProxies: () => ipcRenderer.invoke('get-proxies'),
+  // 切换节点
+  switchNode: (nodeName) => ipcRenderer.invoke('switch-node', nodeName),
+  // 通过代理进行网络请求测试
+  proxyFetch: (url, options) => ipcRenderer.invoke('proxy-fetch', url, options),
+  // 获取配置顺序
+  getConfigOrder: () => ipcRenderer.invoke('get-config-order'),
+  
+  // 添加获取代理配置的方法
+  getProxyConfig: () => ipcRenderer.invoke('get-proxy-config'),
+  
+  // 添加通过HTTP代理发送请求的方法，支持指定节点
+  fetchWithProxy: (options) => ipcRenderer.invoke('fetch-with-proxy', options),
+  // 添加取消批量测速的API
+  cancelBatchSpeedtest: () => ipcRenderer.invoke('cancel-batch-speedtest'),
+  // 监听测速进度
 });
 
 // 移除重复的事件监听器

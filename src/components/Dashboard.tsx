@@ -13,8 +13,22 @@ import {
   InfoCircledIcon,
   FileTextIcon,
   DesktopIcon,
-  BarChartIcon
+  BarChartIcon,
+  Cross2Icon,
+  ActivityLogIcon
 } from '@radix-ui/react-icons';
+import { TabsTrigger, TabsContent, TabsList } from '@/components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
+import { format } from 'date-fns';
+import { Check, X, Zap, Activity, BarChart2, List, Radio, Power, RefreshCw, Save, Network } from 'lucide-react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Toast from '@radix-ui/react-toast';
+import * as Dialog from '@radix-ui/react-dialog';
+import { useMihomoAPI } from '../services/mihomo-api';
 
 // 引入 LogEntry 类型，无需重新定义 electronAPI
 type LogEntry = {
@@ -31,8 +45,9 @@ type TrafficData = {
 };
 
 export default function Dashboard() {
-  const [isRunning, setIsRunning] = useState(false);
+  const [isRunning, setIsRunning] = useState<boolean>(false);
   const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [tunEnabled, setTunEnabled] = useState(false); // 添加TUN模式状态
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [activeConfig, setActiveConfig] = useState<string | null>(null);
   const [subscriptions, setSubscriptions] = useState<Array<{name: string, path: string}>>([]);
@@ -51,6 +66,50 @@ export default function Dashboard() {
   const logEndRef = useRef<HTMLDivElement>(null);
   const logIdCounterRef = useRef(0);
   const [isProxyUpdating, setIsProxyUpdating] = useState(false);
+  const [isTunUpdating, setIsTunUpdating] = useState(false); // 添加TUN模式更新状态
+  const [isLoading, setIsLoading] = useState(false);
+  let mihomoAPI = useMihomoAPI();
+  
+  // 添加限制数据存储数量的常量
+  const MAX_TRAFFIC_DATA_POINTS = 60; // 保存1分钟的数据（假设每秒一个数据点）
+  const MAX_CONNECTION_DATA = 30; // 保存30个连接数据点
+  
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTitle, setToastTitle] = useState('');
+  const [toastDescription, setToastDescription] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  // 对话框状态
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogTitle, setDialogTitle] = useState('');
+  const [dialogDescription, setDialogDescription] = useState('');
+  const [dialogAction, setDialogAction] = useState<() => Promise<void>>(() => async () => {});
+  const [dialogActionText, setDialogActionText] = useState('');
+  const [dialogCancelText, setDialogCancelText] = useState('');
+  
+  useEffect(() => {
+    // 获取API配置
+    const getApiConfig = async () => {
+      if (window.electronAPI) {
+        try {
+          const apiConfigResult = await window.electronAPI.getApiConfig();
+          if (apiConfigResult.success) {
+            // 使用正确的API配置初始化mihomoAPI
+            mihomoAPI = useMihomoAPI({
+              host: apiConfigResult.controllerHost,
+              port: apiConfigResult.controllerPort,
+              secret: apiConfigResult.secret
+            });
+            console.log('Dashboard: API配置已更新:', apiConfigResult);
+          }
+        } catch (error) {
+          console.error('获取API配置失败:', error);
+        }
+      }
+    };
+    
+    getApiConfig();
+  }, []);
   
   // 获取所有配置文件
   useEffect(() => {
@@ -93,109 +152,101 @@ export default function Dashboard() {
     }
   }, [selectedConfig]);
   
-  // 新增：从mihomo API获取当前节点信息
+  // 获取当前节点信息
   const fetchCurrentNode = async () => {
-    if (!window.electronAPI || !isRunning) return;
-    
     try {
-      console.log('正在从mihomo API获取当前节点信息...');
+      if (!window.electronAPI) return;
       
-      // 第一步：获取配置文件中的代理组信息
-      let firstProxyGroup = "PROXY"; // 默认尝试PROXY组
+      // 首先尝试获取配置文件中的第一个代理组
+      let firstProxyGroup = "PROXY"; // 默认值
       
-      if (window.electronAPI) {
-        // 使用适当的类型声明获取配置顺序
-        try {
-          const result = await window.electronAPI.getConfigOrder();
-          
-          if (result.success && result.data && result.data.proxyGroups.length > 0) {
-            // 获取配置文件中的第一个代理组名
-            firstProxyGroup = result.data.proxyGroups[0].name;
-            console.log(`从配置文件获取到第一个代理组: ${firstProxyGroup}`);
-          } else {
-            console.warn('无法从配置获取代理组信息，使用默认PROXY组');
-          }
-        } catch (error) {
-          console.error('获取配置顺序出错:', error);
+      try {
+        // 获取配置顺序信息
+        const result = await window.electronAPI.getConfigOrder();
+        if (result.success && result.data && result.data.proxyGroups && result.data.proxyGroups.length > 0) {
+          // 使用配置文件中的第一个代理组
+          firstProxyGroup = result.data.proxyGroups[0].name;
+          console.log(`使用配置文件中的第一个代理组: ${firstProxyGroup}`);
+        } else {
+          console.log(`无法获取配置文件代理组信息，使用默认组: ${firstProxyGroup}`);
         }
+      } catch (error) {
+        console.error('获取配置顺序失败:', error);
       }
       
-      // 第二步：尝试请求第一个代理组的信息
+      // 尝试获取第一个代理组信息
       try {
-        console.log(`尝试请求代理组[${firstProxyGroup}]的信息...`);
-        const response = await fetch(`http://127.0.0.1:9090/proxies/${firstProxyGroup}`);
+        console.log(`请求${firstProxyGroup}组信息...`);
         
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.name && data.now) {
-            console.log(`从mihomo API获取到当前节点: ${data.now}`);
+        // 使用mihomoAPI获取代理组信息
+        const proxiesData = await mihomoAPI.proxies();
+        if (proxiesData && proxiesData.proxies && proxiesData.proxies[firstProxyGroup]) {
+          const groupData = proxiesData.proxies[firstProxyGroup];
+          if (groupData.now) {
+            console.log(`获取到当前节点: ${groupData.now}`);
             // 只有当节点有变化时才更新
-            if (currentNode !== data.now) {
-              console.log(`更新当前节点: ${currentNode} -> ${data.now}`);
-              setCurrentNode(data.now);
-              addLogEntry('info', `当前节点: ${data.now}`);
+            if (currentNode !== groupData.now) {
+              console.log(`更新当前节点: ${currentNode} -> ${groupData.now}`);
+              setCurrentNode(groupData.now);
+              addLogEntry('info', `当前节点: ${groupData.now}`);
             }
             return;
           }
         } else {
-          console.warn(`获取${firstProxyGroup}组信息失败: ${response.status} ${response.statusText}`);
+          console.warn(`获取${firstProxyGroup}组信息失败，尝试备选方案`);
         }
       } catch (error) {
         console.error(`请求${firstProxyGroup}组信息出错:`, error);
       }
       
-      // 如果第一个组获取失败，尝试使用默认的PROXY组
+      // 如果第一个代理组获取失败，且不是PROXY组，尝试使用PROXY组作为备选
       if (firstProxyGroup !== "PROXY") {
         try {
-          console.log('尝试请求默认PROXY组的信息...');
-          const response = await fetch('http://127.0.0.1:9090/proxies/PROXY');
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data && data.now) {
-              console.log(`从默认PROXY组获取到当前节点: ${data.now}`);
-              // 只有当节点有变化时才更新
-              if (currentNode !== data.now) {
-                console.log(`更新当前节点: ${currentNode} -> ${data.now}`);
-                setCurrentNode(data.now);
-                addLogEntry('info', `当前节点: ${data.now}`);
+          console.log('尝试请求默认PROXY组信息...');
+          const proxiesData = await mihomoAPI.proxies();
+          if (proxiesData && proxiesData.proxies && proxiesData.proxies["PROXY"]) {
+            const groupData = proxiesData.proxies["PROXY"];
+            if (groupData.now) {
+              console.log(`从PROXY组获取到当前节点: ${groupData.now}`);
+              if (currentNode !== groupData.now) {
+                console.log(`更新当前节点: ${currentNode} -> ${groupData.now}`);
+                setCurrentNode(groupData.now);
+                addLogEntry('info', `当前节点: ${groupData.now}`);
               }
               return;
             }
           }
         } catch (error) {
-          console.error('请求默认PROXY组信息出错:', error);
+          console.error('请求PROXY组信息出错:', error);
         }
       }
       
-      // 如果还是获取失败，尝试获取所有代理组信息
+      // 如果无法获取指定代理组信息，尝试获取所有代理组
       try {
         console.log('尝试获取所有代理组信息...');
-        const response = await fetch('http://127.0.0.1:9090/proxies');
         
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.proxies) {
-            // 查找类型为Selector的代理组
-            const selectorGroups = Object.entries(data.proxies).filter(
-              ([name, proxy]) => (proxy as any).type === 'Selector'
-            );
+        // 使用mihomoAPI获取所有代理组信息
+        const proxiesData = await mihomoAPI.proxies();
+        if (proxiesData && proxiesData.proxies) {
+          // 查找类型为Selector的代理组
+          const selectorGroups = Object.entries(proxiesData.proxies).filter(
+            ([name, proxy]) => (proxy as any).type === 'Selector'
+          );
+          
+          if (selectorGroups.length > 0) {
+            // 选择第一个Selector组
+            const [groupName, groupInfo] = selectorGroups[0];
+            const nodeName = (groupInfo as any).now;
             
-            if (selectorGroups.length > 0) {
-              // 选择第一个Selector组
-              const [groupName, groupInfo] = selectorGroups[0];
-              const nodeName = (groupInfo as any).now;
-              
-              if (nodeName) {
-                console.log(`从代理组[${groupName}]获取到当前节点: ${nodeName}`);
-                // 只有当节点有变化时才更新
-                if (currentNode !== nodeName) {
-                  console.log(`更新当前节点: ${currentNode} -> ${nodeName}`);
-                  setCurrentNode(nodeName);
-                  addLogEntry('info', `当前节点: ${nodeName}`);
-                }
-                return;
+            if (nodeName) {
+              console.log(`从代理组[${groupName}]获取到当前节点: ${nodeName}`);
+              // 只有当节点有变化时才更新
+              if (currentNode !== nodeName) {
+                console.log(`更新当前节点: ${currentNode} -> ${nodeName}`);
+                setCurrentNode(nodeName);
+                addLogEntry('info', `当前节点: ${nodeName}`);
               }
+              return;
             }
           }
         }
@@ -225,15 +276,33 @@ export default function Dashboard() {
           // 额外检查mihomo API是否可访问
           let serviceRunning = false;
           try {
-            // 尝试访问mihomo API
-            const response = await fetch('http://127.0.0.1:9090/version', { 
-              method: 'GET', 
-              signal: AbortSignal.timeout(1000) // 1秒超时
-            });
-            serviceRunning = response.ok;
+            // 使用mihomoAPI检查服务是否运行
+            console.log('[调试] 开始检查Mihomo API状态...');
+            const versionInfo = await mihomoAPI.version();
+            // 只要能拿到 version 字段且不是空字符串就认为服务在运行
+            serviceRunning = !!(versionInfo && versionInfo.version);
+            console.log('[调试] Mihomo版本检查成功:', versionInfo);
           } catch (apiError) {
-            console.log('mihomo API不可访问，服务可能未运行');
-            serviceRunning = false;
+            // 如果是401，提示密钥错误
+            let errorMsg = '';
+            if (apiError instanceof Error) {
+              errorMsg = apiError.message;
+              console.error('[调试] API错误类型:', apiError.constructor.name);
+              if (apiError.stack) {
+                console.error('[调试] API错误堆栈:', apiError.stack);
+              }
+            } else {
+              errorMsg = String(apiError);
+              console.error('[调试] 非Error类型API错误:', typeof apiError, errorMsg);
+            }
+            if (errorMsg.includes('401') || errorMsg.includes('未授权') || errorMsg.includes('unauthorized')) {
+              addLogEntry('error', '无法访问Mihomo API: 密钥认证失败，请检查密钥设置');
+              serviceRunning = false;
+            } else {
+              // 其他错误才认为服务未运行
+              console.error('[调试] Mihomo API检查失败:', apiError);
+              serviceRunning = false;
+            }
           }
           
           // 运行状态取决于配置文件存在且服务确实在运行
@@ -312,9 +381,9 @@ export default function Dashboard() {
           
           setTrafficData(prev => {
             const newDataArray = [...prev, newData];
-            // 只保留最近30个数据点
-            if (newDataArray.length > 30) {
-              return newDataArray.slice(-30);
+            // 增加保留的数据点数量以提高图表的颗粒度，从30提高到60
+            if (newDataArray.length > 60) {
+              return newDataArray.slice(-60);
             }
             return newDataArray;
           });
@@ -331,8 +400,27 @@ export default function Dashboard() {
       }
     };
     
-    const intervalId = setInterval(fetchTrafficData, 1000);
+    // 增加采样频率，从1000毫秒改为500毫秒，获取更细腻的数据
+    const intervalId = setInterval(fetchTrafficData, 500);
     return () => clearInterval(intervalId);
+  }, []);
+  
+  // 修复流量图表显示：在组件挂载后开始渲染流量图表
+  useEffect(() => {
+    if (trafficData.length === 0) {
+      // 添加初始数据点，避免空数据显示等待
+      const initialTimestamp = Date.now();
+      const initialData = [
+        { timestamp: initialTimestamp - 3000, up: 0, down: 0 },
+        { timestamp: initialTimestamp - 2500, up: 0, down: 0 },
+        { timestamp: initialTimestamp - 2000, up: 0, down: 0 },
+        { timestamp: initialTimestamp - 1500, up: 0, down: 0 },
+        { timestamp: initialTimestamp - 1000, up: 0, down: 0 },
+        { timestamp: initialTimestamp - 500, up: 0, down: 0 },
+        { timestamp: initialTimestamp, up: 0, down: 0 }
+      ];
+      setTrafficData(initialData);
+    }
   }, []);
   
   // 设置事件监听
@@ -361,12 +449,22 @@ export default function Dashboard() {
       addLogEntry('info', `系统代理已${enabled ? '启用' : '禁用'}`);
     };
     
-    const handleMihomoAutostart = (result: {success: boolean, configPath?: string, error?: string}) => {
+    const handleMihomoAutostart = (result: {success: boolean, configPath?: string, error?: string, existing?: boolean}) => {
       if (result.success && result.configPath) {
         setIsRunning(true);
         setActiveConfig(result.configPath);
-        setSelectedConfig(result.configPath);
-        addLogEntry('info', '已自动启动Mihomo');
+        
+        // 只有在不是连接已有内核的情况下才更新selectedConfig
+        if (!result.existing) {
+          setSelectedConfig(result.configPath);
+        }
+        
+        // 根据是否连接到现有内核显示不同的日志信息
+        if (result.existing) {
+          addLogEntry('info', '已连接到已在运行的Mihomo内核');
+        } else {
+          addLogEntry('info', '已自动启动Mihomo');
+        }
         
         // 延迟2秒后获取实际节点信息
         setTimeout(async () => {
@@ -425,6 +523,30 @@ export default function Dashboard() {
       }
     };
     
+    // 添加TUN模式错误处理函数
+    const handleTunModeError = (data: {message: string}) => {
+      console.error('收到TUN模式错误通知:', data.message);
+      showToast('错误', `TUN模式错误: ${data.message}`, 'error');
+    };
+    
+    // 添加服务重启通知处理函数
+    const handleServiceRestarting = (data: {reason: string, tunEnabled: boolean}) => {
+      console.log('收到服务重启通知:', data);
+      if (data.reason === 'tun-mode-change') {
+        showToast('信息', `${data.tunEnabled ? '启用' : '禁用'}TUN模式需要重启服务，服务将在几秒后自动重启...`, 'success');
+      }
+    };
+    
+    // 添加服务重启完成处理函数
+    const handleServiceRestarted = (data: {success: boolean, tunEnabled?: boolean, error?: string}) => {
+      console.log('收到服务重启完成通知:', data);
+      if (data.success) {
+        showToast('成功', `服务重启成功，TUN模式已${data.tunEnabled ? '启用' : '禁用'}`, 'success');
+      } else if (data.error) {
+        showToast('错误', data.error, 'error');
+      }
+    };
+    
     // 注册事件监听
     console.log('注册事件监听器...');
     window.electronAPI.onMihomoLog(handleMihomoLog);
@@ -434,6 +556,13 @@ export default function Dashboard() {
     window.electronAPI.onMihomoAutostart(handleMihomoAutostart);
     window.electronAPI.onNodeChanged(handleNodeChanged);
     window.electronAPI.onConnectionsUpdate(handleConnectionsUpdate);
+    
+    // 注册TUN模式相关事件监听
+    if (window.electronAPI.onMessage) {
+      window.electronAPI.onMessage('tun-mode-error', handleTunModeError);
+      window.electronAPI.onMessage('service-restarting', handleServiceRestarting);
+      window.electronAPI.onMessage('service-restarted', handleServiceRestarted);
+    }
     
     // 初始请求当前节点和连接信息
     if (isRunning && currentNode) {
@@ -456,20 +585,6 @@ export default function Dashboard() {
       }
     };
   }, [isRunning, currentNode]);  // 仅保留isRunning和currentNode作为依赖项
-  
-  // 修复流量图表显示：在组件挂载后开始渲染流量图表
-  useEffect(() => {
-    if (trafficData.length === 0) {
-      // 添加初始数据点，避免空数据显示等待
-      const initialTimestamp = Date.now();
-      const initialData = [
-        { timestamp: initialTimestamp - 2000, up: 0, down: 0 },
-        { timestamp: initialTimestamp - 1000, up: 0, down: 0 },
-        { timestamp: initialTimestamp, up: 0, down: 0 }
-      ];
-      setTrafficData(initialData);
-    }
-  }, []);
   
   // 监听系统代理状态变更事件
   useEffect(() => {
@@ -507,6 +622,90 @@ export default function Dashboard() {
     };
   }, []);
   
+  // 监听TUN模式状态变更事件
+  useEffect(() => {
+    // 安全检查
+    const api = window.electronAPI;
+    if (!api) return;
+
+    // 首次加载时获取TUN模式状态
+    const checkTunStatus = async () => {
+      try {
+        const status = await api.getTunStatus();
+        setTunEnabled(status);
+      } catch (error) {
+        // 静默处理错误
+      }
+    };
+    
+    checkTunStatus();
+
+    // 监听TUN模式状态变化
+    const handleTunStatus = (enabled: boolean) => {
+      setTunEnabled(enabled);
+      addLogEntry('info', `TUN模式已${enabled ? '启用' : '禁用'}`);
+    };
+
+    // 添加事件监听
+    const removeListener = api.onTunStatus(handleTunStatus);
+    
+    // 每5秒检查一次TUN状态，确保UI始终显示正确状态
+    const intervalId = setInterval(async () => {
+      try {
+        // 只有在服务运行状态下才检查TUN状态
+        if (isRunning) {
+          const currentStatus = await api.getTunStatus();
+          // 只有当状态不一致时才更新
+          if (currentStatus !== tunEnabled) {
+            setTunEnabled(currentStatus);
+          }
+        }
+      } catch (error) {
+        // 静默处理错误
+      }
+    }, 5000);
+
+    // 清理函数
+    return () => {
+      if (removeListener) {
+        removeListener();
+      }
+      clearInterval(intervalId);
+    };
+  }, [isRunning, tunEnabled]);
+  
+  // 添加监听配置切换事件的useEffect
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.onMessage) {
+      // 监听配置切换消息
+      const removeListener = window.electronAPI.onMessage('config-switched', (data) => {
+        console.log('收到配置切换事件:', data);
+        if (data.configPath) {
+          // 更新配置路径
+          setActiveConfig(data.configPath);
+          setSelectedConfig(data.configPath);
+          setIsRunning(true);
+          
+          // 如果有节点信息，直接更新
+          if (data.nodeName) {
+            console.log('从事件更新当前节点:', data.nodeName);
+            setCurrentNode(data.nodeName);
+          } else {
+            // 否则延迟获取
+            setTimeout(fetchCurrentNode, 1000);
+          }
+          
+          addLogEntry('info', `配置已切换到: ${data.configPath}`);
+        }
+      });
+      
+      return () => {
+        // 清理监听器
+        removeListener();
+      };
+    }
+  }, []);
+  
   const addLogEntry = (type: 'info' | 'error', content: string) => {
     // 增加计数器来确保唯一ID
     logIdCounterRef.current += 1;
@@ -522,137 +721,94 @@ export default function Dashboard() {
     ]);
   };
   
+  // 修改启动按钮的处理函数，恢复直接启动功能
   const handleStartMihomo = async () => {
     if (!window.electronAPI) return;
     
+    // 如果没有selectedConfig，则使用activeConfig（如果有）
+    const configToUse = selectedConfig || activeConfig;
+    
+    if (!configToUse) {
+      showToast('错误', '未选择配置文件，请先在订阅管理页面选择一个配置', 'error');
+      return;
+    }
+    
     try {
-      // 检查是否有选择的配置文件
-      if (!selectedConfig) {
-        console.error('没有选择配置文件');
-        addLogEntry('error', '请先选择一个配置文件');
-        return;
-      }
+      setIsLoading(true);
+      addLogEntry('info', '正在启动服务...');
       
-      // 保存最后使用的配置文件
-      try {
-        // 如果API存在则调用，否则忽略
-        if (window.electronAPI.saveLastConfig) {
-          await window.electronAPI.saveLastConfig(selectedConfig);
-          console.log('已保存最后使用的配置文件');
-        } else {
-          console.log('saveLastConfig API不可用，跳过保存');
-        }
-      } catch (saveError) {
-        console.error('保存最后使用的配置文件失败:', saveError);
-        // 继续执行，这不是致命错误
-      }
-      
-      console.log('启动Mihomo使用配置文件:', selectedConfig);
-      addLogEntry('info', `正在启动Mihomo: ${selectedConfig}`);
-      
-      const result = await window.electronAPI.startMihomo(selectedConfig);
+      const result = await window.electronAPI.startMihomo(configToUse);
       
       if (result) {
-        console.log('Mihomo启动成功');
-        addLogEntry('info', 'Mihomo启动成功');
-        setIsRunning(true);
-        setActiveConfig(selectedConfig);
-        
-        // 更新当前使用的节点信息
+        setActiveConfig(configToUse);
+        showToast('成功', '服务启动成功', 'success');
+        // 延迟获取节点信息
         setTimeout(fetchCurrentNode, 2000);
       } else {
-        console.error('Mihomo启动失败');
-        addLogEntry('error', 'Mihomo启动失败，请检查配置文件');
+        showToast('错误', '服务启动失败', 'error');
       }
     } catch (error) {
-      console.error('启动Mihomo失败:', error);
-      addLogEntry('error', `启动Mihomo失败: ${error}`);
+      console.error('启动服务失败:', error);
+      showToast('错误', `启动服务失败: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
   
+  // 修改停止按钮的处理函数，恢复直接停止功能
   const handleStopMihomo = async () => {
     if (!window.electronAPI) return;
     
     try {
-      addLogEntry('info', '正在停止Mihomo...');
+      setIsLoading(true);
+      addLogEntry('info', '正在停止服务...');
+      
       const result = await window.electronAPI.stopMihomo();
       
       if (result) {
-        setIsRunning(false);
         setActiveConfig(null);
         setCurrentNode(null);
-        addLogEntry('info', 'Mihomo已停止');
+        showToast('成功', '服务已停止', 'success');
       } else {
-        addLogEntry('error', '停止Mihomo失败');
+        showToast('信息', '服务已经处于停止状态', 'success');
       }
     } catch (error) {
-      console.error('停止Mihomo失败:', error);
-      addLogEntry('error', `停止Mihomo失败: ${error}`);
+      console.error('停止服务失败:', error);
+      showToast('错误', `停止服务失败: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
   
-  // 切换配置文件
-  const handleSwitchConfig = async (newConfigPath: string) => {
-    if (!window.electronAPI) return;
+  // 重启服务功能
+  const handleRestartMihomo = async () => {
+    if (!window.electronAPI || !activeConfig) return;
     
     try {
-      console.log('开始切换配置文件:', newConfigPath);
+      setIsLoading(true);
+      addLogEntry('info', '正在重启服务...');
       
-      // 保存最后使用的配置文件
-      try {
-        // 如果API存在则调用，否则忽略
-        if (window.electronAPI.saveLastConfig) {
-          await window.electronAPI.saveLastConfig(newConfigPath);
-          console.log('已保存最后使用的配置文件');
-        } else {
-          console.log('saveLastConfig API不可用，跳过保存');
-        }
-      } catch (saveError) {
-        console.error('保存最后使用的配置文件失败:', saveError);
-        // 继续执行，这不是致命错误
+      // 先停止
+      await window.electronAPI.stopMihomo();
+      
+      // 等待一段时间确保完全停止
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // 重新启动
+      const result = await window.electronAPI.startMihomo(activeConfig);
+      
+      if (result) {
+        showToast('成功', '服务重启成功', 'success');
+        // 延迟获取节点信息
+        setTimeout(fetchCurrentNode, 2000);
+      } else {
+        showToast('错误', '服务重启失败', 'error');
       }
-      
-      // 先停止当前Mihomo
-      console.log('停止当前Mihomo服务...');
-      await handleStopMihomo();
-      
-      // 等待服务完全停止
-      console.log('等待服务停止...');
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // 设置新配置并启动
-      console.log('设置新配置并启动:', newConfigPath);
-      setSelectedConfig(newConfigPath);
-      
-      // 确保选择器已更新
-      setTimeout(async () => {
-        console.log('启动Mihomo使用配置:', newConfigPath);
-        // 直接启动Mihomo，传入新配置路径
-        if (window.electronAPI) {
-          try {
-            console.log('直接调用startMihomo API:', newConfigPath);
-            const result = await window.electronAPI.startMihomo(newConfigPath);
-            
-            if (result) {
-              console.log('切换配置成功:', newConfigPath);
-              setActiveConfig(newConfigPath);
-              setIsRunning(true);
-              // 延迟获取节点信息，使用增强版节点获取函数
-              setTimeout(fetchCurrentNode, 2000);
-            } else {
-              console.error('直接启动失败，尝试使用handleStartMihomo');
-              await handleStartMihomo();
-            }
-          } catch (error) {
-            console.error('直接启动出错，回退到handleStartMihomo:', error);
-            await handleStartMihomo();
-          }
-        }
-        console.log('配置切换完成');
-      }, 500);
     } catch (error) {
-      console.error('切换配置文件失败:', error);
-      addLogEntry('error', `切换配置文件失败: ${error}`);
+      console.error('重启服务失败:', error);
+      showToast('错误', `重启服务失败: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
   
@@ -702,28 +858,6 @@ export default function Dashboard() {
             </div>
             
             <div className="flex items-center space-x-3">
-              <select 
-                className="py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-[#333333] text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
-                value={selectedConfig || ''}
-                onChange={(e) => {
-                  const newConfig = e.target.value;
-                  setSelectedConfig(newConfig);
-                  // 如果Mihomo正在运行且选择了不同的配置，直接切换
-                  if (isRunning && newConfig !== activeConfig) {
-                    handleSwitchConfig(newConfig);
-                  }
-                }}
-              >
-                {subscriptions.length === 0 && (
-                  <option value="" disabled>没有可用的配置文件</option>
-                )}
-                {subscriptions.map((sub) => (
-                  <option key={sub.path} value={sub.path}>
-                    {sub.name}
-                  </option>
-                ))}
-              </select>
-              
               <button
                 className={`flex items-center justify-center rounded-lg transition-all duration-300 ${
                   isRunning 
@@ -731,9 +865,17 @@ export default function Dashboard() {
                     : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white'
                 } py-1.5 px-3 transform hover:scale-105`}
                 onClick={isRunning ? handleStopMihomo : handleStartMihomo}
-                disabled={!selectedConfig && !isRunning}
+                disabled={isLoading}
               >
-                {isRunning ? (
+                {isLoading ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    处理中...
+                  </>
+                ) : isRunning ? (
                   <>
                     <StopIcon className="mr-1.5" />
                     停止
@@ -749,20 +891,23 @@ export default function Dashboard() {
               {isRunning && (
                 <button
                   className="flex items-center justify-center bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg py-1.5 px-3 transition-all duration-300 transform hover:scale-105"
-                  onClick={async () => {
-                    // 检查是否选择了新的配置文件
-                    if (selectedConfig !== activeConfig) {
-                      // 使用新选择的配置重启
-                      handleSwitchConfig(selectedConfig || '');
-                    } else {
-                      // 使用相同的配置重启
-                      await handleStopMihomo();
-                      setTimeout(handleStartMihomo, 1000);
-                    }
-                  }}
+                  onClick={handleRestartMihomo}
+                  disabled={isLoading}
                 >
-                  <ReloadIcon className="mr-1.5" />
-                  重启
+                  {isLoading ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      重启中...
+                    </>
+                  ) : (
+                    <>
+                      <ReloadIcon className="mr-1.5" />
+                      重启
+                    </>
+                  )}
                 </button>
               )}
             </div>
@@ -772,11 +917,12 @@ export default function Dashboard() {
         {/* 主要内容区域 */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 flex-grow">
           {/* 左侧面板 - 状态信息和开关 */}
-          <div className="md:col-span-4 space-y-6">
-            {/* 状态信息面板 */}
+          <div className="md:col-span-4 space-y-4">
+            {/* 状态信息和开关集成面板 */}
             <div className="bg-white/80 dark:bg-[#2a2a2a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-700 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">状态信息</h3>
               
+              {/* 状态信息部分 */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-[#222222] dark:to-[#1a1a1a] rounded-lg">
                   <div className="flex items-center text-blue-800 dark:text-blue-300">
@@ -810,12 +956,11 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-            </div>
-            
-            {/* 开关面板 - 新增 */}
-            <div className="bg-white/80 dark:bg-[#2a2a2a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">开关</h3>
               
+              {/* 分割线 */}
+              <div className="my-6 border-t border-gray-200 dark:border-gray-700"></div>
+              
+              {/* 开关部分 */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-[#222222] dark:to-[#1a1a1a] rounded-lg">
                   <div className="flex items-center text-indigo-800 dark:text-indigo-300">
@@ -826,16 +971,58 @@ export default function Dashboard() {
                     <Switch.Root
                       checked={proxyEnabled}
                       onCheckedChange={handleProxyToggle}
-                      disabled={!isRunning}
+                      disabled={!isRunning || isProxyUpdating}
                       className={`w-11 h-6 rounded-full transition-colors duration-200 ${
                         proxyEnabled 
-                          ? 'bg-indigo-500 dark:bg-[#444444]' 
+                          ? 'bg-indigo-500 dark:bg-indigo-600' 
                           : 'bg-gray-200 dark:bg-gray-600'
-                      } ${!isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      } ${(!isRunning || isProxyUpdating) ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <Switch.Thumb 
                         className={`block w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-200 ${
                           proxyEnabled ? 'translate-x-6' : 'translate-x-0.5'
+                        }`} 
+                      />
+                    </Switch.Root>
+                  </div>
+                </div>
+
+                {/* TUN模式开关 */}
+                <div className="flex items-center justify-between p-3 bg-gradient-to-br from-green-50 to-green-100 dark:from-[#222222] dark:to-[#1a1a1a] rounded-lg">
+                  <div className="flex items-center text-green-800 dark:text-green-300">
+                    <Network className="w-4 h-4 mr-1.5" />
+                    <span>TUN模式</span>
+                    <Tooltip.Provider>
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <InfoCircledIcon className="w-3.5 h-3.5 ml-1.5 text-gray-400 cursor-help" />
+                        </Tooltip.Trigger>
+                        <Tooltip.Portal>
+                          <Tooltip.Content
+                            className="bg-black/80 text-white text-xs rounded p-2 max-w-xs z-50"
+                            sideOffset={5}
+                          >
+                            TUN模式可以接管所有流量，包括不遵循系统代理设置的应用程序流量
+                            <Tooltip.Arrow className="fill-black/80" />
+                          </Tooltip.Content>
+                        </Tooltip.Portal>
+                      </Tooltip.Root>
+                    </Tooltip.Provider>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Switch.Root
+                      checked={tunEnabled}
+                      onCheckedChange={handleTunToggle}
+                      disabled={!isRunning || isTunUpdating}
+                      className={`w-11 h-6 rounded-full transition-colors duration-200 ${
+                        tunEnabled 
+                          ? 'bg-green-500 dark:bg-green-600' 
+                          : 'bg-gray-200 dark:bg-gray-600'
+                      } ${(!isRunning || isTunUpdating) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <Switch.Thumb 
+                        className={`block w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-200 ${
+                          tunEnabled ? 'translate-x-6' : 'translate-x-0.5'
                         }`} 
                       />
                     </Switch.Root>
@@ -879,8 +1066,7 @@ export default function Dashboard() {
                 </div>
               </div>
               
-              <div className="mt-4">
-                <h4 className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">实时流量</h4>
+              <div className="mt-2">
                 {renderTrafficChart()}
               </div>
             </div>
@@ -992,10 +1178,32 @@ export default function Dashboard() {
       );
     }
 
+    // 减少渲染的数据点，提高性能
+    const downsampleData = (data: TrafficData[], maxPoints = 30) => {
+      if (data.length <= maxPoints) return data;
+      
+      const step = Math.floor(data.length / maxPoints);
+      const result: TrafficData[] = [];
+      
+      for (let i = 0; i < data.length; i += step) {
+        result.push(data[i]);
+      }
+      
+      // 确保包含最新的数据点
+      if (result[result.length - 1] !== data[data.length - 1]) {
+        result.push(data[data.length - 1]);
+      }
+      
+      return result;
+    };
+    
+    // 对数据进行降采样
+    const downsampledData = downsampleData(trafficData);
+
     // 将数据转换为相同的单位（KB）进行显示
     const convertToKB = (bytes: number) => bytes / 1024;
     
-    const normalizedData = trafficData.map(d => ({
+    const normalizedData = downsampledData.map(d => ({
       timestamp: d.timestamp,
       up: convertToKB(d.up || 0),
       down: convertToKB(d.down || 0)
@@ -1006,101 +1214,416 @@ export default function Dashboard() {
       ...normalizedData.map(d => Math.max(d.up, d.down)),
       1  // 最小值设为1KB
     );
+
+    // 优化：计算合适的Y轴刻度
+    const calculateYAxisTicks = (max: number): number[] => {
+      // 四舍五入到最接近的整数量级
+      const magnitude = Math.pow(10, Math.floor(Math.log10(max)));
+      const normalizedMax = Math.ceil(max / magnitude) * magnitude;
+      
+      // 生成4个刻度点，减少一个以适应更紧凑的高度
+      const tickCount = 4;
+      const ticks = [];
+      for (let i = 0; i <= tickCount; i++) {
+        ticks.push((normalizedMax / tickCount) * i);
+      }
+      return ticks;
+    };
     
-    const generatePath = (data: typeof normalizedData[0][], key: 'up' | 'down') => {
+    const yAxisTicks = calculateYAxisTicks(maxValue);
+    
+    // 格式化Y轴刻度显示
+    const formatYAxisLabel = (value: number): string => {
+      if (value === 0) return '0';
+      if (value < 1024) return `${Math.round(value)} KB`;
+      return `${(value / 1024).toFixed(1)} MB`;
+    };
+    
+    // 计算平滑的贝塞尔曲线路径
+    const generateSmoothPath = (data: typeof normalizedData[0][], key: 'up' | 'down') => {
+      if (data.length < 2) return '';
+      
       const width = 100 / (data.length - 1);
       const paddingTop = 15;
-      const paddingBottom = 15;
+      const paddingBottom = 12; // 减少底部padding
       const availableHeight = 100 - paddingTop - paddingBottom;
       
+      // 开始路径，平滑开始点
       let path = `M 0,${paddingTop + availableHeight - (data[0][key] / maxValue) * availableHeight}`;
       
-      for (let i = 1; i < data.length; i++) {
-        const x = i * width;
-        const y = paddingTop + availableHeight - (data[i][key] / maxValue) * availableHeight;
-        path += ` L ${x},${y}`;
+      // 使用更平滑的曲线张力
+      const tension = 0.4; // 较小的值会使曲线更加丝滑
+      
+      if (data.length === 2) {
+        // 只有两个点时使用简单的线段
+        const x2 = width;
+        const y2 = paddingTop + availableHeight - (data[1][key] / maxValue) * availableHeight;
+        path += ` L ${x2},${y2}`;
+      } else {
+        // 使用Cardinal样条算法，创建更加丝滑的曲线
+        for (let i = 0; i < data.length - 1; i++) {
+          const x1 = i * width;
+          const y1 = paddingTop + availableHeight - (data[i][key] / maxValue) * availableHeight;
+          const x2 = (i + 1) * width;
+          const y2 = paddingTop + availableHeight - (data[i + 1][key] / maxValue) * availableHeight;
+          
+          // 计算控制点，考虑前后点的影响，实现更连续的曲线
+          let cpx1, cpy1, cpx2, cpy2;
+          
+          if (i === 0) {
+            // 第一段曲线的控制点
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            
+            cpx1 = x1 + dx * tension;
+            cpy1 = y1 + dy * tension;
+            
+            // 如果有第三个点，用它来影响第二个控制点
+            if (data.length > 2) {
+              const x3 = (i + 2) * width;
+              const y3 = paddingTop + availableHeight - (data[i + 2][key] / maxValue) * availableHeight;
+              const dx2 = x3 - x1;
+              const dy2 = y3 - y1;
+              
+              cpx2 = x2 - dx2 * tension / 3;
+              cpy2 = y2 - dy2 * tension / 3;
+            } else {
+              cpx2 = x2 - dx * tension;
+              cpy2 = y2 - dy * tension;
+            }
+          } else if (i === data.length - 2) {
+            // 最后一段曲线的控制点
+            const x0 = (i - 1) * width;
+            const y0 = paddingTop + availableHeight - (data[i - 1][key] / maxValue) * availableHeight;
+            const dx1 = x2 - x0;
+            const dy1 = y2 - y0;
+            
+            cpx1 = x1 + dx1 * tension / 3;
+            cpy1 = y1 + dy1 * tension / 3;
+            
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            
+            cpx2 = x2 - dx * tension;
+            cpy2 = y2 - dy * tension;
+          } else {
+            // 中间段曲线的控制点，考虑前后点以确保连续性
+            const x0 = (i - 1) * width;
+            const y0 = paddingTop + availableHeight - (data[i - 1][key] / maxValue) * availableHeight;
+            const x3 = (i + 2) * width;
+            const y3 = paddingTop + availableHeight - (data[i + 2][key] / maxValue) * availableHeight;
+            
+            // 使用Catmull-Rom样条的变体来计算控制点
+            const dx1 = (x2 - x0) * tension;
+            const dy1 = (y2 - y0) * tension;
+            const dx2 = (x3 - x1) * tension;
+            const dy2 = (y3 - y1) * tension;
+            
+            cpx1 = x1 + dx1 / 3;
+            cpy1 = y1 + dy1 / 3;
+            cpx2 = x2 - dx2 / 3;
+            cpy2 = y2 - dy2 / 3;
+          }
+          
+          // 添加贝塞尔曲线段
+          path += ` C ${cpx1},${cpy1} ${cpx2},${cpy2} ${x2},${y2}`;
+        }
       }
       
       return path;
     };
     
-    const upPath = generatePath(normalizedData, 'up');
-    const downPath = generatePath(normalizedData, 'down');
+    const upPath = generateSmoothPath(normalizedData, 'up');
+    const downPath = generateSmoothPath(normalizedData, 'down');
     
-    const generateFillPath = (linePath: string) => {
-      const endPoint = 85;
-      return `${linePath} L 100,${endPoint} L 0,${endPoint} Z`;
+    // 生成填充区域路径，使用更美观的底部曲线
+    const generateGradientFillPath = (linePath: string) => {
+      const endPoint = 88;
+      // 使用更加平滑的底部连接曲线，而不是直接的直线连接
+      return `${linePath} L 100,${endPoint} Q 50,${endPoint + 0.8} 0,${endPoint} Z`;
     };
     
-    const upFillPath = generateFillPath(upPath);
-    const downFillPath = generateFillPath(downPath);
+    const upFillPath = generateGradientFillPath(upPath);
+    const downFillPath = generateGradientFillPath(downPath);
+    
+    // 格式化时间轴标签
+    const formatTimeLabel = (timestamp: number): string => {
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }).slice(-8);
+    };
+    
+    // 生成时间轴标签
+    const generateTimeLabels = () => {
+      // 增加标签数量，使时间轴更详细
+      const labelCount = Math.min(7, normalizedData.length);
+      if (labelCount <= 1) return [];
+      
+      const labels = [];
+      for (let i = 0; i < labelCount; i++) {
+        const index = Math.floor((normalizedData.length - 1) * (i / (labelCount - 1)));
+        const data = normalizedData[index];
+        labels.push({
+          x: (index / (normalizedData.length - 1)) * 100,
+          time: formatTimeLabel(data.timestamp)
+        });
+      }
+      return labels;
+    };
+    
+    const timeLabels = generateTimeLabels();
 
     // 格式化KB单位的显示
     const formatKBSpeed = (kb: number): string => {
-      if (kb < 1) return `${(kb * 1024).toFixed(2)} B/s`;
-      if (kb < 1024) return `${kb.toFixed(2)} KB/s`;
+      if (kb < 1) return `${(kb * 1024).toFixed(0)} B/s`;
+      if (kb < 1024) return `${kb.toFixed(1)} KB/s`;
       if (kb < 1024 * 1024) return `${(kb / 1024).toFixed(2)} MB/s`;
       return `${(kb / 1024 / 1024).toFixed(2)} GB/s`;
     };
+
+    // 获取最后一个数据点，用于显示当前值标记
+    const lastDataIndex = normalizedData.length - 1;
+    const lastUpValue = normalizedData[lastDataIndex].up;
+    const lastDownValue = normalizedData[lastDataIndex].down;
+    const lastUpY = 15 + (88 - 15) - (lastUpValue / maxValue) * (88 - 15);
+    const lastDownY = 15 + (88 - 15) - (lastDownValue / maxValue) * (88 - 15);
     
     return (
-      <div className="bg-gray-50 dark:bg-[#222222] rounded-lg shadow-sm p-4 h-60 flex flex-col border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div className="flex justify-between items-center text-sm text-gray-500 dark:text-gray-400 mb-2">
-          <div className="flex items-center">
-            <span className="block w-4 h-3 bg-blue-500 rounded-sm mr-2"></span>
-            <span>下载</span>
-            <span className="ml-2 font-semibold text-blue-600 dark:text-blue-400">{formatKBSpeed(convertToKB(downSpeed))}</span>
-          </div>
-          <div className="flex items-center">
-            <span className="block w-4 h-3 bg-green-500 rounded-sm mr-2"></span>
-            <span>上传</span>
-            <span className="ml-2 font-semibold text-green-600 dark:text-green-400">{formatKBSpeed(convertToKB(upSpeed))}</span>
-          </div>
+      <div className="relative overflow-hidden border dark:border-gray-800 rounded-lg bg-white dark:bg-[#2a2a2a] h-56">
+        {/* 像心电图一样的网格背景 */}
+        <div className="absolute inset-0" style={{
+          backgroundImage: `
+            linear-gradient(to right, rgba(226, 232, 240, 0.05) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(226, 232, 240, 0.05) 1px, transparent 1px)
+          `,
+          backgroundSize: '20px 20px'
+        }}></div>
+        
+        <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+          {/* 定义渐变和滤镜 */}
+          <defs>
+            <linearGradient id="downGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="rgba(59, 130, 246, 0.3)" />
+              <stop offset="100%" stopColor="rgba(59, 130, 246, 0.01)" />
+            </linearGradient>
+            <linearGradient id="upGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="rgba(34, 197, 94, 0.3)" />
+              <stop offset="100%" stopColor="rgba(34, 197, 94, 0.01)" />
+            </linearGradient>
+
+            {/* 边缘渐变遮罩 */}
+            <linearGradient id="edgeGradientLeft" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="edgeGradientLeftDark" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#2a2a2a" stopOpacity="1" />
+              <stop offset="100%" stopColor="#2a2a2a" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="edgeGradientRight" x1="100%" y1="0%" x2="0%" y2="0%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="edgeGradientRightDark" x1="100%" y1="0%" x2="0%" y2="0%">
+              <stop offset="0%" stopColor="#2a2a2a" stopOpacity="1" />
+              <stop offset="100%" stopColor="#2a2a2a" stopOpacity="0" />
+            </linearGradient>
+            
+            {/* 发光效果滤镜 */}
+            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="1" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+            
+            {/* 心电图线条样式滤镜 */}
+            <filter id="ecgGlow" x="-10%" y="-10%" width="120%" height="120%">
+              <feGaussianBlur stdDeviation="0.2" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+            
+            {/* 增强脉冲效果滤镜 */}
+            <filter id="pulseGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="0.6" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          {/* Y轴刻度线和标签 - 使用更淡的颜色 */}
+          <g className="y-axis">
+            {yAxisTicks.map((tick, index) => (
+              <g key={`y-tick-${index}`}>
+                <line 
+                  x1="0" 
+                  y1={15 + (88 - 15) - (tick / maxValue) * (88 - 15)} 
+                  x2="100" 
+                  y2={15 + (88 - 15) - (tick / maxValue) * (88 - 15)} 
+                  stroke="rgba(226, 232, 240, 0.15)" 
+                  strokeDasharray={index > 0 ? "1,1" : "none"}
+                  strokeWidth={index === 0 ? 0.75 : 0.5} 
+                />
+                {/* 移除Y轴文字标签 */}
+              </g>
+            ))}
+          </g>
+
+          {/* X轴时间标签 - 使用更淡的颜色 */}
+          <g className="x-axis">
+            {timeLabels.map((label, index) => (
+              <g key={`x-tick-${index}`}>
+                <line 
+                  x1={label.x} 
+                  y1="88" 
+                  x2={label.x} 
+                  y2="89" 
+                  stroke="rgba(148, 163, 184, 0.15)" 
+                  strokeWidth="0.5" 
+                />
+                {/* 移除X轴文字标签 */}
+              </g>
+            ))}
+          </g>
+          
+          {/* 图表底部基线 */}
+          <line x1="0" y1="88" x2="100" y2="88" stroke="rgba(148, 163, 184, 0.2)" strokeWidth="0.5" />
+          
+          {/* 下载流量图形填充 */}
+          <path 
+            d={downFillPath}
+            fill="url(#downGradient)"
+            stroke="none"
+            opacity="0.6"
+          />
+          
+          {/* 上传流量图形填充 */}
+          <path 
+            d={upFillPath}
+            fill="url(#upGradient)"
+            stroke="none"
+            opacity="0.6"
+          />
+          
+          {/* 下载流量线条 - 心电图效果 */}
+          <path 
+            d={downPath} 
+            fill="none" 
+            stroke="#3b82f6" 
+            strokeWidth="0.8"
+            filter="url(#ecgGlow)"
+            className="drop-shadow-sm"
+          />
+          
+          {/* 上传流量线条 - 心电图效果 */}
+          <path 
+            d={upPath} 
+            fill="none" 
+            stroke="#22c55e" 
+            strokeWidth="0.8"
+            filter="url(#ecgGlow)"
+            className="drop-shadow-sm"
+          />
+          
+          {/* 动态数据点 - 下载（改进动画） */}
+          <g className="animate-pulse">
+            <circle 
+              cx="100" 
+              cy={lastDownY} 
+              r="1" 
+              fill="#3b82f6" 
+              filter="url(#pulseGlow)"
+            />
+            <circle 
+              cx="100" 
+              cy={lastDownY} 
+              r="1.6" 
+              fill="none" 
+              stroke="#3b82f6" 
+              strokeWidth="0.4"
+              opacity="0.6"
+            />
+          </g>
+          
+          {/* 动态数据点 - 上传（改进动画） */}
+          <g className="animate-pulse">
+            <circle 
+              cx="100" 
+              cy={lastUpY} 
+              r="1" 
+              fill="#22c55e"
+              filter="url(#pulseGlow)"
+            />
+            <circle 
+              cx="100" 
+              cy={lastUpY} 
+              r="1.6" 
+              fill="none" 
+              stroke="#22c55e" 
+              strokeWidth="0.4"
+              opacity="0.6"
+            />
+          </g>
+          
+          {/* 添加额外装饰点，增强心电图的视觉效果 */}
+          {normalizedData.map((data, index) => {
+            // 更多的装饰点，但避免最后几个和最前几个
+            if (index % 6 === 0 && index > 3 && index < normalizedData.length - 3) {
+              const x = (index / (normalizedData.length - 1)) * 100;
+              const yDown = 15 + (88 - 15) - (data.down / maxValue) * (88 - 15);
+              const yUp = 15 + (88 - 15) - (data.up / maxValue) * (88 - 15);
+              
+              // 使用二元装饰点系统 - 大小不同的点组合
+              return (
+                <g key={`point-${index}`}>
+                  <circle 
+                    cx={x} 
+                    cy={yDown} 
+                    r="0.6" 
+                    fill="#3b82f6" 
+                    opacity="0.6"
+                  />
+                  <circle 
+                    cx={x} 
+                    cy={yDown} 
+                    r="0.2" 
+                    fill="#ffffff" 
+                    opacity="0.9"
+                  />
+                  <circle 
+                    cx={x} 
+                    cy={yUp} 
+                    r="0.6" 
+                    fill="#22c55e" 
+                    opacity="0.6"
+                  />
+                  <circle 
+                    cx={x} 
+                    cy={yUp} 
+                    r="0.2" 
+                    fill="#ffffff" 
+                    opacity="0.9"
+                  />
+                </g>
+              );
+            }
+            return null;
+          })}
+        </svg>
+
+        {/* 悬浮显示最大值 */}
+        <div className="absolute top-3 right-3 text-xs bg-white/70 dark:bg-black/50 rounded px-1.5 py-0.5 text-gray-700 dark:text-gray-300 backdrop-blur-sm shadow-sm">
+          峰值 {formatKBSpeed(maxValue)}
         </div>
         
-        <div className="flex-1 relative">
-          <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-            {/* 网格线 */}
-            <line x1="0" y1="25" x2="100" y2="25" stroke="rgba(229, 231, 235, 0.3)" strokeWidth="1" />
-            <line x1="0" y1="50" x2="100" y2="50" stroke="rgba(229, 231, 235, 0.3)" strokeWidth="1" />
-            <line x1="0" y1="75" x2="100" y2="75" stroke="rgba(229, 231, 235, 0.3)" strokeWidth="1" />
-            
-            {/* 下载流量图形填充 */}
-            <path 
-              d={downFillPath}
-              fill="rgba(59, 130, 246, 0.15)"
-              stroke="none"
-            />
-            
-            {/* 上传流量图形填充 */}
-            <path 
-              d={upFillPath}
-              fill="rgba(34, 197, 94, 0.15)"
-              stroke="none"
-            />
-            
-            {/* 下载流量线条 */}
-            <path 
-              d={downPath} 
-              fill="none" 
-              stroke="rgb(59 130 246)" 
-              strokeWidth="1.5"
-            />
-            
-            {/* 上传流量线条 */}
-            <path 
-              d={upPath} 
-              fill="none" 
-              stroke="rgb(34 197 94)" 
-              strokeWidth="1.5"
-            />
-          </svg>
-        </div>
+        {/* 使用SVG渐变替代DIV遮罩，实现更好的暗黑模式兼容 */}
+        <svg className="absolute inset-0 pointer-events-none z-10" preserveAspectRatio="none" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="8" height="100" fill="url(#edgeGradientLeft)" className="dark:hidden" />
+          <rect x="0" y="0" width="8" height="100" fill="url(#edgeGradientLeftDark)" className="hidden dark:block" />
+          <rect x="94" y="0" width="6" height="100" fill="url(#edgeGradientRight)" className="dark:hidden" />
+          <rect x="94" y="0" width="6" height="100" fill="url(#edgeGradientRightDark)" className="hidden dark:block" />
+        </svg>
       </div>
     );
   };
   
-  // 处理系统代理开关
+  // 处理系统代理开关 - 适配新的安全验证
   const handleProxyToggle = async (enabled: boolean) => {
     try {
       if (!window.electronAPI) return;
@@ -1111,13 +1634,230 @@ export default function Dashboard() {
       const result = await window.electronAPI.toggleSystemProxy(enabled);
       console.log('系统代理切换结果:', result);
       
+      // 处理新的返回格式
+      if (result && typeof result === 'object' && 'success' in result) {
+        const apiResult = result as { success: boolean; error?: string; status?: boolean };
+        
+        if (!apiResult.success) {
+          console.error('系统代理切换失败:', apiResult.error);
+          showToast('错误', `切换系统代理失败: ${apiResult.error || '未知错误'}`, 'error');
+          // 手动恢复UI状态，因为状态事件可能不会触发
+          setProxyEnabled(!enabled);
+        }
+      }
+      
       // 状态由后端通过事件通知更新
     } catch (error) {
       console.error('切换系统代理失败:', error);
-      alert(`切换系统代理失败: ${error}`);
+      showToast('错误', `切换系统代理失败: ${error}`, 'error');
+      // 恢复UI状态
+      setProxyEnabled(!enabled);
     } finally {
       setIsProxyUpdating(false);
     }
+  };
+  
+  // 处理TUN模式开关
+  const handleTunToggle = async (enabled: boolean) => {
+    try {
+      if (!window.electronAPI) return;
+
+      if (enabled) {
+        // 显示确认对话框
+        showConfirmDialog(
+          '启用TUN模式',
+          '启动TUN模式将重启内核，可能需要管理员权限运行FlyClash才可以开启，是否继续操作?',
+          async () => {
+            try {
+              setIsTunUpdating(true);
+              console.log('启用TUN模式...');
+              
+              // 立即更新UI状态，提供反馈
+              setTunEnabled(true);
+              
+                              if (window.electronAPI) {
+                const result = await window.electronAPI.toggleTunMode(true);
+                console.log('TUN模式启用结果:', result);
+                
+                if (result && typeof result === 'object' && 'success' in result) {
+                  const apiResult = result as { success: boolean; error?: string; status?: boolean };
+                  
+                  if (apiResult.success) {
+                    showToast('成功', 'TUN模式已启用', 'success');
+                  } else {
+                    showToast('失败', `TUN模式启用失败: ${apiResult.error || '未知错误'}`, 'error');
+                    setTunEnabled(false);
+                  }
+                } else if (result) {
+                  // 兼容旧API
+                  showToast('成功', 'TUN模式已启用', 'success');
+                } else {
+                  showToast('失败', 'TUN模式启用失败', 'error');
+                  setTunEnabled(false);
+                }
+                
+                // 1秒后再次检查TUN状态以确保UI和实际状态一致
+                setTimeout(async () => {
+                  try {
+                    if (!window.electronAPI) return;
+                    const currentStatus = await window.electronAPI.getTunStatus();
+                    if (currentStatus !== tunEnabled) {
+                      console.log('TUN状态不一致，同步UI:', { current: currentStatus, ui: tunEnabled });
+                      setTunEnabled(currentStatus);
+                    }
+                  } catch (error) {
+                    console.error('操作后检查TUN状态失败:', error);
+                  }
+                }, 1000);
+              } else {
+                showToast('错误', 'ElectronAPI不可用', 'error');
+                setTunEnabled(false);
+              }
+            } catch (error) {
+              console.error('启用TUN模式失败:', error);
+              showToast('错误', `启用TUN模式失败: ${error}`, 'error');
+              // 恢复UI状态
+              setTunEnabled(false);
+            } finally {
+              setIsTunUpdating(false);
+            }
+          },
+          '启用',
+          '取消'
+        );
+      } else {
+        // 关闭TUN模式不需要确认
+        setIsTunUpdating(true);
+        console.log('关闭TUN模式...');
+        
+        // 立即更新UI状态，提供反馈
+        setTunEnabled(false);
+        
+        if (window.electronAPI) {
+          const result = await window.electronAPI.toggleTunMode(false);
+          console.log('TUN模式关闭结果:', result);
+          
+          if (result && typeof result === 'object' && 'success' in result) {
+            const apiResult = result as { success: boolean; error?: string; status?: boolean };
+            
+            if (apiResult.success) {
+              showToast('成功', 'TUN模式已关闭', 'success');
+            } else {
+              showToast('失败', `TUN模式关闭失败: ${apiResult.error || '未知错误'}`, 'error');
+              setTunEnabled(true);
+            }
+          } else if (result) {
+            // 兼容旧API
+            showToast('成功', 'TUN模式已关闭', 'success');
+          } else {
+            showToast('失败', 'TUN模式关闭失败', 'error');
+            setTunEnabled(true);
+          }
+          
+          // 操作后检查TUN状态
+          setTimeout(async () => {
+            try {
+              if (!window.electronAPI) return;
+              const currentStatus = await window.electronAPI.getTunStatus();
+              if (currentStatus !== tunEnabled) {
+                console.log('TUN状态不一致，同步UI:', { current: currentStatus, ui: tunEnabled });
+                setTunEnabled(currentStatus);
+              }
+            } catch (error) {
+              console.error('操作后检查TUN状态失败:', error);
+            }
+          }, 1000);
+        } else {
+          showToast('错误', 'ElectronAPI不可用', 'error');
+          setTunEnabled(true);
+        }
+        
+        setIsTunUpdating(false);
+      }
+    } catch (error) {
+      console.error('切换TUN模式失败:', error);
+      showToast('错误', `切换TUN模式失败: ${error}`, 'error');
+      // 恢复UI状态
+      setTunEnabled(!enabled);
+      setIsTunUpdating(false);
+    }
+  };
+  
+  // 在组件卸载时清理资源
+  useEffect(() => {
+    return () => {
+      // 清理事件监听器
+      if (window.electronAPI) {
+        window.electronAPI.removeAllListeners('dashboard');
+      }
+      // 清空数据以释放内存
+      setTrafficData([]);
+      setConnectionCount(0);
+      setUpstreamTraffic(0);
+      setDownstreamTraffic(0);
+      setUpSpeed(0);
+      setDownSpeed(0);
+      setTotalUpload(0);
+      setTotalDownload(0);
+    };
+  }, []);
+  
+  // 优化流量数据的处理
+  useEffect(() => {
+    // 添加清理过期数据的逻辑
+    const cleanupInterval = setInterval(() => {
+      setTrafficData(prev => {
+        if (prev.length > MAX_TRAFFIC_DATA_POINTS) {
+          return prev.slice(-MAX_TRAFFIC_DATA_POINTS);
+        }
+        return prev;
+      });
+    }, 10000); // 每10秒检查一次
+    
+    return () => {
+      clearInterval(cleanupInterval);
+    };
+  }, []);
+  
+  // 优化连接数据的处理 
+  useEffect(() => {
+    // 添加清理过多连接数据的逻辑
+    const cleanupConnectionsInterval = setInterval(() => {
+      setConnectionCount(prev => {
+        if (prev > MAX_CONNECTION_DATA) {
+          return MAX_CONNECTION_DATA;
+        }
+        return prev;
+      });
+    }, 15000); // 每15秒检查一次
+    
+    return () => {
+      clearInterval(cleanupConnectionsInterval);
+    };
+  }, []);
+  
+  // 显示Toast提示
+  const showToast = (title: string, description: string, type: 'success' | 'error') => {
+    setToastTitle(title);
+    setToastDescription(description);
+    setToastType(type);
+    setToastOpen(true);
+  };
+
+  // 显示确认对话框
+  const showConfirmDialog = (
+    title: string, 
+    description: string, 
+    actionFn: () => Promise<void>,
+    actionText: string = '确认',
+    cancelText: string = '取消'
+  ) => {
+    setDialogTitle(title);
+    setDialogDescription(description);
+    setDialogAction(() => actionFn);
+    setDialogActionText(actionText);
+    setDialogCancelText(cancelText);
+    setDialogOpen(true);
   };
   
   return (
@@ -1156,6 +1896,70 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      
+      {/* 添加Toast提示组件 */}
+      <Toast.Provider swipeDirection="right">
+        <Toast.Root
+          open={toastOpen} 
+          onOpenChange={setToastOpen}
+          className={`fixed bottom-4 right-4 p-4 rounded-md shadow-md ${
+            toastType === 'success' 
+              ? 'bg-green-500 text-white' 
+              : 'bg-red-500 text-white'
+          }`}
+        >
+          <Toast.Title className="font-medium">{toastTitle}</Toast.Title>
+          <Toast.Description>{toastDescription}</Toast.Description>
+          <Toast.Close asChild>
+            <button 
+              className="absolute top-2 right-2 text-white" 
+              aria-label="Close"
+            >
+              <Cross2Icon />
+            </button>
+          </Toast.Close>
+        </Toast.Root>
+        
+        <Toast.Viewport />
+      </Toast.Provider>
+      
+      {/* 添加确认对话框组件 */}
+      <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 animate-fade-in" />
+          <Dialog.Content className="fixed left-[50%] top-[50%] w-[90%] max-w-md translate-x-[-50%] translate-y-[-50%] rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl animate-scale-in z-50">
+            <Dialog.Title className="text-lg font-bold text-gray-900 dark:text-white">{dialogTitle}</Dialog.Title>
+            <Dialog.Description className="mt-2 text-gray-600 dark:text-gray-300">{dialogDescription}</Dialog.Description>
+            
+            <div className="mt-6 flex justify-end space-x-3">
+              <button 
+                onClick={() => setDialogOpen(false)} 
+                className="py-2 px-4 rounded-md bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white transition-colors"
+              >
+                {dialogCancelText}
+              </button>
+              <button 
+                onClick={async () => {
+                  setDialogOpen(false);
+                  await dialogAction();
+                }} 
+                className="py-2 px-4 rounded-md bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+              >
+                {dialogActionText}
+              </button>
+            </div>
+            
+            <Dialog.Close asChild>
+              <button 
+                className="absolute top-3 right-3 w-6 h-6 flex items-center justify-center rounded-full text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white" 
+                aria-label="Close"
+              >
+                <Cross2Icon />
+              </button>
+            </Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

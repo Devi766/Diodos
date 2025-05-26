@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import * as NavigationMenu from "@radix-ui/react-navigation-menu";
 import { BarChartIcon, GearIcon, HomeIcon, ReaderIcon } from '@radix-ui/react-icons';
 import { usePathname } from 'next/navigation';
@@ -11,6 +11,8 @@ const isElectron = () => {
 
 export default function NavMenu() {
   const pathname = usePathname();
+  // 添加状态来跟踪当前活动页面
+  const [activePage, setActivePage] = useState<string>('index');
   
   const menuItems = [
     { name: '控制面板', href: '/', pageName: 'index', icon: <HomeIcon className="w-5 h-5" /> },
@@ -20,13 +22,42 @@ export default function NavMenu() {
     { name: '系统设置', href: '/settings', pageName: 'settings', icon: <GearIcon className="w-5 h-5" /> },
   ];
 
+  // 初始化时从URL路径确定当前页面
+  useEffect(() => {
+    if (pathname) {
+      // 从URL获取当前页面名称
+      const pageFromPath = pathname === '/' ? 'index' : pathname.substring(1).split('/')[0];
+      
+      // 检查是否与menuItems中的某个页面匹配
+      const matchedItem = menuItems.find(item => item.pageName === pageFromPath || 
+                                               (pageFromPath === '' && item.pageName === 'index'));
+      if (matchedItem) {
+        setActivePage(matchedItem.pageName);
+      }
+    }
+  }, [pathname]);
+
   // 处理Electron环境下的导航
   const handleNavigation = (e: React.MouseEvent<HTMLAnchorElement>, item: typeof menuItems[0]) => {
     if (isElectron() && window.electronAPI) {
       e.preventDefault();
-      // 使用新的loadPage方法导航
+      // 更新当前活动页面
+      setActivePage(item.pageName);
+      // 使用loadPage方法导航
       console.log(`点击导航：${item.name}, 页面: ${item.pageName}`);
       window.electronAPI.loadPage(item.pageName);
+    }
+  };
+
+  // 确定菜单项是否为活动状态
+  const isActive = (item: typeof menuItems[0]) => {
+    if (isElectron()) {
+      // Electron环境下使用activePage状态判断
+      return activePage === item.pageName;
+    } else {
+      // Web环境下使用pathname判断
+      return pathname === item.href || 
+             (pathname && item.href !== '/' && pathname.startsWith(item.href));
     }
   };
 
@@ -47,7 +78,7 @@ export default function NavMenu() {
               onClick={(e) => handleNavigation(e, item)}
               className={classNames(
                 "flex items-center px-4 py-2 rounded-md transition-colors",
-                pathname === item.href
+                isActive(item)
                   ? "bg-blue-50 text-blue-600 dark:bg-[#2a2a2a] dark:text-blue-400"
                   : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
               )}

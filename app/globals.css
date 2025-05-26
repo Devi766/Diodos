@@ -121,3 +121,12 @@
 .dark .scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+.dark .md\:w-\[calc\(100\%-256px\)\] {
+
+  background-color: rgb(26 26 26 / var(--tw-bg-opacity, 1));
+}
+.md\:w-\[calc\(100\%-256px\)\] {
+
+  background-color: rgb(249 249 249 / var(--tw-bg-opacity, 1));
+}

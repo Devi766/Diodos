@@ -83,7 +83,23 @@ async function testMediaStreaming(serviceName, checkUrl) {
     const { default: fetch } = await import('node-fetch');
     
     // 获取检测代理服务器设置
-    const proxyPort = 7890; // mihomo默认端口
+    // 从用户设置中获取代理端口而不是硬编码
+    let proxyPort = 7890; // 兜底默认值
+    
+    try {
+      // 尝试从主进程的用户设置中获取实际配置的mixed-port
+      const { getUserSettings } = require('./settings');
+      const userSettings = getUserSettings();
+      if (userSettings && userSettings['mixed-port']) {
+        proxyPort = userSettings['mixed-port'];
+        await logger.log(`从用户设置获取代理端口: ${proxyPort}`);
+      } else {
+        await logger.log(`未找到代理端口配置，使用默认值: ${proxyPort}`);
+      }
+    } catch (error) {
+      await logger.log(`获取代理端口失败，使用默认值: ${proxyPort}，错误: ${error.message}`);
+    }
+    
     const proxyServer = `http://127.0.0.1:${proxyPort}`;
     await logger.log(`使用代理: ${proxyServer}`);
     

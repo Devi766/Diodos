@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Switch from '@radix-ui/react-switch';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Toast from '@radix-ui/react-toast';
+import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { useMihomoAPI } from '../services/mihomo-api';
 
@@ -11,12 +12,14 @@ export default function Settings() {
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
   const [appVersion, setAppVersion] = useState('');
+  const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty');
   const isFirstRender = useRef(true);
   
   // 代理设置相关状态
   const [mixedPort, setMixedPort] = useState(7890);
   const [allowLan, setAllowLan] = useState(false);
   const [enableIPv6, setEnableIPv6] = useState(false);
+  const [mihomoSecret, setMihomoSecret] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   
@@ -27,13 +30,24 @@ export default function Settings() {
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
   
   // 使用mihomo API
-  const mihomoAPI = useMihomoAPI();
+  let mihomoAPI = useMihomoAPI();
 
   // 在组件加载时获取保存的主题和应用版本号
   useEffect(() => {
     const fetchData = async () => {
       try {
         if (typeof window !== 'undefined' && window.electronAPI) {
+          // 获取API配置
+          const apiConfigResult = await window.electronAPI.getApiConfig();
+          if (apiConfigResult.success) {
+            // 使用正确的API配置初始化mihomoAPI
+            mihomoAPI = useMihomoAPI({
+              host: apiConfigResult.controllerHost,
+              port: apiConfigResult.controllerPort,
+              secret: apiConfigResult.secret
+            });
+          }
+          
           // 获取主题
           const themeResult = await window.electronAPI.getTheme();
           if (themeResult.success) {
@@ -47,6 +61,12 @@ export default function Settings() {
           // 获取开机启动状态
           const autoLaunchState = await window.electronAPI.getAutoLaunchState();
           setStartWithSystem(autoLaunchState);
+          
+          // 获取订阅UA设置
+          const userSettings = await window.electronAPI.getProxySettings();
+          if (userSettings.success && userSettings.settings && userSettings.settings['subscription-ua']) {
+            setSubscriptionUA(userSettings.settings['subscription-ua']);
+          }
         }
       } catch (error) {
         console.error('获取设置数据失败:', error);
@@ -159,6 +179,7 @@ export default function Settings() {
             setMixedPort(result.settings['mixed-port'] || 7890);
             setAllowLan(Boolean(result.settings['allow-lan'] || false));
             setEnableIPv6(Boolean(result.settings['ipv6'] || false));
+            setMihomoSecret(result.settings['secret'] || '');
             setConfigLoaded(true);
           } else {
             // 如果electronAPI失败，尝试从mihomo获取当前配置
@@ -182,6 +203,7 @@ export default function Settings() {
           setMixedPort(config['mixed-port'] || 7890);
           setAllowLan(config['allow-lan'] || false);
           setEnableIPv6(config['ipv6'] || false);
+          setMihomoSecret(config['secret'] || '');
           setConfigLoaded(true);
         }
       } catch (error) {
@@ -217,11 +239,13 @@ export default function Settings() {
       const lanAccess = allowLan === true;
       const ipv6Enabled = enableIPv6 === true;
       
-      // 更新所有相关配置项
+      // 更新所有相关配置项，包括订阅UA和密钥
       const configUpdate = {
         'mixed-port': portValue,
         'allow-lan': lanAccess,
-        'ipv6': ipv6Enabled
+        'ipv6': ipv6Enabled,
+        'secret': mihomoSecret,
+        'subscription-ua': subscriptionUA
       };
       
       console.log('提交配置更新:', configUpdate);
@@ -311,7 +335,7 @@ export default function Settings() {
                     checked={startWithSystem}
                     onCheckedChange={setStartWithSystem}
                   >
-                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full shadow-[0_2px_2px] shadow-black transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
+                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                   </Switch.Root>
                 </div>
                 
@@ -325,7 +349,7 @@ export default function Settings() {
                     checked={minimizeToTray}
                     onCheckedChange={setMinimizeToTray}
                   >
-                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full shadow-[0_2px_2px] shadow-black transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
+                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                   </Switch.Root>
                 </div>
                 
@@ -339,8 +363,43 @@ export default function Settings() {
                     checked={autoCheckUpdate}
                     onCheckedChange={setAutoCheckUpdate}
                   >
-                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full shadow-[0_2px_2px] shadow-black transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
+                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                   </Switch.Root>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">订阅下载 User-Agent</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">不同的 User-Agent 可能会影响订阅服务器返回的配置格式</p>
+                  <select
+                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                    value={subscriptionUA}
+                    onChange={(e) => {
+                      const newUA = e.target.value;
+                      setSubscriptionUA(newUA);
+                      
+                      // 使用专用API保存UA设置，不会重启服务
+                      if (typeof window !== 'undefined' && window.electronAPI) {
+                        window.electronAPI.saveUASettings(newUA)
+                          .then(result => {
+                            if (result.success) {
+                              showToast('成功', 'UA设置已保存', 'success');
+                            } else {
+                              showToast('错误', `保存UA设置失败: ${result.error}`, 'error');
+                            }
+                          })
+                          .catch(error => {
+                            console.error('保存UA设置失败:', error);
+                            showToast('错误', `保存UA设置失败: ${error}`, 'error');
+                          });
+                      }
+                    }}
+                  >
+                    <option value="FlyClash">FlyClash</option>
+                    <option value="Clash">Clash for Windows</option>
+                    <option value="Mihomo">Mihomo</option>
+                    <option value="MihomoParty">Clash Meta（默认）</option>
+                    <option value="Chrome">Chrome浏览器</option>
+                  </select>
                 </div>
                 
                 <div>
@@ -412,7 +471,7 @@ export default function Settings() {
                         setAllowLan(Boolean(checked));
                       }}
                     >
-                      <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full shadow-[0_2px_2px] shadow-black transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
+                      <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                     </Switch.Root>
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">允许其他设备通过局域网连接到本代理</span>
                   </div>
@@ -429,13 +488,29 @@ export default function Settings() {
                         setEnableIPv6(Boolean(checked));
                       }}
                     >
-                      <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full shadow-[0_2px_2px] shadow-black transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
+                      <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                     </Switch.Root>
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">启用IPv6支持（需要重启代理）</span>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-12">
                     启用后可支持IPv6连接，如果您的网络不支持IPv6可能会导致连接问题
                   </p>
+                </div>
+                
+                <div className="mb-4">
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Mihomo API密钥</h3>
+                  <div>
+                    <input
+                      type="text"
+                      className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                      value={mihomoSecret}
+                      onChange={(e) => setMihomoSecret(e.target.value)}
+                      placeholder="留空表示不使用密钥"
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      设置后将在与Mihomo内核通信时使用此密钥进行身份验证，增强安全性
+                    </p>
+                  </div>
                 </div>
                 
                 <div>
@@ -460,7 +535,7 @@ export default function Settings() {
             <Tabs.Content value="about" className="w-full">
               <div className="flex flex-col items-center text-center py-8">
                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">FlyClash</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: v{appVersion}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: V0.1.6</p>
                 
                 <div className="bg-gray-50 dark:bg-[#222222] p-4 rounded-md mb-6 text-left w-full max-w-lg">
                   <p className="text-sm text-gray-700 dark:text-gray-200 mb-2">

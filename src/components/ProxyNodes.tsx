@@ -14,6 +14,9 @@ import {
 import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+// 引入虚拟化列表库
+import { FixedSizeGrid as Grid } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
 
 // 定义类型
 type ProxyNode = {
@@ -50,13 +53,121 @@ export default function ProxyNodes() {
   const [activeTab, setActiveTab] = useState<string>('all');
   const [testingNodes, setTestingNodes] = useState<Set<string>>(new Set());
   const [favoriteNodes, setFavoriteNodes] = useState<Set<string>>(new Set());
-  const [switchingNode, setSwitchingNode] = useState<string | null>(null);
   const [mihomoRunning, setMihomoRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  
+  // 初始化折叠状态，从localStorage加载，确保有效
+  const loadSavedCollapsedState = () => {
+    try {
+      const savedState = localStorage.getItem('collapsedGroups');
+      if (savedState) {
+        const parsed = JSON.parse(savedState);
+        if (Array.isArray(parsed)) {
+          console.log('初始化时从localStorage加载折叠状态:', parsed);
+          return new Set(parsed);
+        }
+      }
+    } catch (error) {
+      console.error('加载折叠状态失败:', error);
+    }
+    return new Set();
+  };
+  
+  // 使用函数初始化，确保只运行一次
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(loadSavedCollapsedState);
+
+  // 导出调试函数到window对象，可在控制台访问
+  if (typeof window !== 'undefined') {
+    (window as any).debugCollapsedGroups = {
+      getCollapsed: () => Array.from(collapsedGroups),
+      getLocalStorage: () => {
+        try {
+          const saved = localStorage.getItem('collapsedGroups');
+          return saved ? JSON.parse(saved) : null;
+        } catch (e) {
+          return `Error: ${e}`;
+        }
+      },
+      forceCollapse: (groupName: string) => {
+        const newSet = new Set(collapsedGroups);
+        newSet.add(groupName);
+        setCollapsedGroups(newSet);
+        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(newSet)));
+        console.log(`已强制折叠: ${groupName}`);
+        return Array.from(newSet);
+      },
+      forceExpand: (groupName: string) => {
+        const newSet = new Set(collapsedGroups);
+        newSet.delete(groupName);
+        setCollapsedGroups(newSet);
+        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(newSet)));
+        console.log(`已强制展开: ${groupName}`);
+        return Array.from(newSet);
+      },
+      reset: () => {
+        setCollapsedGroups(new Set());
+        localStorage.removeItem('collapsedGroups');
+        console.log('已重置所有折叠状态');
+      }
+    };
+  }
+  
   const [currentMode, setCurrentMode] = useState<string>('rule');
-  const mihomoAPI = useMihomoAPI();
+  let mihomoAPI = useMihomoAPI();
+
+  // 获取节点的动画高度，用于折叠/展开动画
+  const getNodeRef = useRef<{[key: string]: HTMLDivElement | null}>({});
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    // 获取API配置并正确初始化mihomoAPI
+    const getApiConfig = async () => {
+      if (window.electronAPI) {
+        try {
+          const apiConfigResult = await window.electronAPI.getApiConfig();
+          if (apiConfigResult.success) {
+            // 确保密钥值存在且不为空，避免使用默认空字符串
+            const secret = apiConfigResult.secret ? apiConfigResult.secret : undefined;
+            
+            // 使用正确的API配置初始化mihomoAPI
+            mihomoAPI = useMihomoAPI({
+              host: apiConfigResult.controllerHost,
+              port: apiConfigResult.controllerPort,
+              secret: secret // 如果为空，则使用undefined
+            });
+            
+            console.log('[调试] API配置已更新, 密钥:', secret ? '已设置' : '未设置');
+            
+            // 立即触发版本检查以验证配置是否生效
+            try {
+              const versionInfo = await mihomoAPI.version();
+              console.log('[调试] Mihomo版本检查成功:', versionInfo);
+              setMihomoRunning(true);
+            } catch (versionError) {
+              console.error('[调试] Mihomo版本检查失败:', versionError);
+              setMihomoRunning(false);
+            }
+          } else {
+            console.error('[调试] 获取API配置失败:', apiConfigResult.error);
+          }
+        } catch (error) {
+          console.error('[调试] 获取API配置出错:', error);
+        }
+      }
+    };
+    
+    getApiConfig();
+    
+    // 定期刷新API配置，确保密钥最新
+    const configRefreshInterval = setInterval(() => {
+      getApiConfig();
+    }, 60000); // 每分钟刷新一次
+    
+    return () => {
+      clearInterval(configRefreshInterval);
+    };
+  }, []);
 
   // 显示错误提示
   const showError = (message: string) => {
@@ -74,6 +185,8 @@ export default function ProxyNodes() {
     );
     return { ...group, nodes: filteredNodes };
   }).filter(group => group.nodes.length > 0);
+  
+  // 注意：这里的groups已经是按配置文件顺序排列的，因为在fetchProxies中设置了groupsData的顺序
 
   // 收藏的节点，同样保持原始顺序
   const favoriteFilteredGroups = (() => {
@@ -108,13 +221,15 @@ export default function ProxyNodes() {
     try {
       // 检查Mihomo是否运行
       try {
-        const response = await fetch('http://127.0.0.1:9090/version');
-        if (!response.ok) {
+        // 使用API验证mihomo是否运行
+        const versionInfo = await mihomoAPI.version();
+        if (versionInfo) {
+          setMihomoRunning(true);
+        } else {
           setMihomoRunning(false);
           setIsLoading(false);
           return;
         }
-        setMihomoRunning(true);
       } catch (error) {
         console.error('Mihomo未运行:', error);
         setMihomoRunning(false);
@@ -150,41 +265,49 @@ export default function ProxyNodes() {
         try {
           // 使用类型断言解决TypeScript错误
           const api = window.electronAPI as any;
+          console.log('[调试] 开始从配置文件获取代理组顺序');
           const result = await api.getConfigOrder();
+          console.log('[调试] 获取配置文件顺序结果:', result);
+          
           if (result.success && result.data) {
             configOrder = result.data;
-            console.log('成功获取配置文件顺序:', configOrder);
+            console.log('[调试] 成功获取配置文件顺序');
+            
+            // 详细记录代理组顺序，方便调试
+            if (configOrder && configOrder.proxyGroups) {
+              console.log('[调试] 配置文件中的代理组顺序:');
+              configOrder.proxyGroups.forEach((group, index) => {
+                console.log(`${index+1}. ${group.name} (${group.type}), 包含节点: ${group.proxies.length}`);
+              });
+            } else {
+              console.log('[调试] 配置中没有代理组信息');
+            }
           } else {
-            console.warn('无法获取配置文件顺序:', result.error);
+            console.warn('[调试] 无法获取配置文件顺序:', result.error);
           }
         } catch (error) {
-          console.error('获取配置顺序失败:', error);
+          console.error('[调试] 获取配置顺序失败:', error);
         }
       }
       
       // 获取代理信息
-      const response = await fetch('http://127.0.0.1:9090/proxies');
-      if (!response.ok) {
-        throw new Error(`获取代理失败: ${response.statusText}`);
+      const proxiesData = await mihomoAPI.proxies();
+      if (!proxiesData || !proxiesData.proxies) {
+        throw new Error('获取代理信息失败');
       }
       
-      const data = await response.json();
+      const data = proxiesData;
       
       const groupsData: ProxyGroup[] = [];
       
       // 根据当前模式决定如何显示节点
       if (currentProxyMode === 'global') {
         // 全局模式下，只显示GLOBAL代理组
-        console.log(`当前为全局模式，只显示GLOBAL代理组`);
+        console.log(`[调试] 当前为全局模式，只显示GLOBAL代理组`);
         
         try {
-          // 获取GLOBAL代理组信息
-          const globalResponse = await fetch('http://127.0.0.1:9090/proxies/GLOBAL');
-          if (!globalResponse.ok) {
-            throw new Error(`获取GLOBAL代理组失败: ${globalResponse.statusText}`);
-          }
-          
-          const globalData = await globalResponse.json();
+          // 使用mihomoAPI获取GLOBAL代理组信息，不再直接用fetch
+          const globalData = data.proxies['GLOBAL'];
           
           if (globalData && globalData.all && Array.isArray(globalData.all)) {
             const nodes = globalData.all.map((nodeName: string) => {
@@ -194,9 +317,9 @@ export default function ProxyNodes() {
               return {
                 name: nodeName,
                 type: node?.type || 'Unknown',
-                server: isGroup ? '代理组' : (node?.server || 'Unknown'),
-                port: isGroup ? 0 : (node?.port || 0),
-                delay: node?.history?.length > 0 ? node.history[0].delay : undefined,
+                server: isGroup ? '代理组' : ((node as any)?.server || 'Unknown'),
+                port: isGroup ? 0 : ((node as any)?.port || 0),
+                delay: node?.history && node.history.length > 0 ? node.history[0].delay : undefined,
                 isGroup: isGroup,
               };
             });
@@ -209,62 +332,132 @@ export default function ProxyNodes() {
             });
           }
         } catch (error) {
-          console.error('获取GLOBAL代理组失败:', error);
+          console.error('[调试] 获取GLOBAL代理组失败:', error);
           showError(`获取GLOBAL代理组失败: ${String(error)}`);
         }
       } else {
+        // 规则模式下，显示所有代理组，但不包括GLOBAL
+        console.log(`[调试] 当前为规则模式，不显示GLOBAL代理组`);
         // 规则模式下，显示所有代理组
         // 使用配置文件顺序构建数据
-        const selectorGroups: {[key: string]: MihomoProxy} = {};
+        const selectorGroups: {[key: string]: any} = {};
         let groupsOrder: string[] = []; // 记录组的原始顺序
         
-        // 提取所有selector类型的组
-        for (const [name, proxy] of Object.entries<MihomoProxy>(data.proxies)) {
+        // 提取所有selector类型的组，规则模式下排除GLOBAL组
+        for (const [name, proxy] of Object.entries<any>(data.proxies)) {
+          // 在规则模式下不显示GLOBAL代理组
+          if (name === 'GLOBAL' && currentProxyMode === 'rule') {
+            console.log('[调试] 规则模式下忽略GLOBAL代理组');
+            continue;
+          }
+          
           if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
             selectorGroups[name] = proxy;
           }
         }
         
-        // 如果有配置文件顺序，优先使用配置文件中的顺序
-        if (configOrder && configOrder.proxyGroups.length > 0) {
-          // 使用配置文件中的组顺序
-          groupsOrder = configOrder.proxyGroups.map(group => group.name);
+        // 严格按照配置文件中的顺序排列代理组，完全忽略API返回的顺序
+        if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
+          // 使用配置文件中的组顺序，规则模式下过滤掉GLOBAL组
+          console.log('[调试] 严格使用配置文件中的代理组顺序');
+          groupsOrder = configOrder.proxyGroups
+            .filter(group => !(group.name === 'GLOBAL' && currentProxyMode === 'rule'))
+            .map(group => group.name);
+          
+          // 记录顺序详情
+          console.log(`[调试] 配置文件中的代理组顺序: ${groupsOrder.join(', ')}`);
+          
+          // 检查对比API中的代理组
+          const apiGroups = Object.keys(selectorGroups);
+          console.log(`[调试] API中的代理组: ${apiGroups.join(', ')}`);
+          
+          // 检查配置文件中有但API中没有的组
+          const missingInApi = groupsOrder.filter(name => !apiGroups.includes(name));
+          if (missingInApi.length > 0) {
+            console.log(`[调试] 配置文件中有但API中不存在的代理组: ${missingInApi.join(', ')}`);
+          }
+          
+          // 检查API中有但配置文件中没有的组
+          const missingInConfig = apiGroups.filter(name => !groupsOrder.includes(name));
+          if (missingInConfig.length > 0) {
+            console.log(`[调试] API中有但配置文件中不存在的代理组: ${missingInConfig.join(', ')}`);
+            
+            // 将API中额外的组添加到列表末尾
+            for (const name of missingInConfig) {
+              console.log(`[调试] 添加配置文件中不存在的代理组: ${name}`);
+              groupsOrder.push(name);
+            }
+          }
         } else {
+          console.log('[调试] 未找到配置文件中的代理组顺序，使用API返回的顺序');
           // 如果没有配置文件顺序，则使用API返回的顺序
           for (const name of Object.keys(selectorGroups)) {
             groupsOrder.push(name);
           }
         }
         
-        // 处理并构建所有代理组数据，按原始顺序
+        console.log(`将按照以下顺序构建代理组数据: ${groupsOrder.join(', ')}`);
+        
+        // 处理并构建所有代理组数据，严格按照groupsOrder的顺序
         for (const groupName of groupsOrder) {
           // 跳过API中不存在的组
-          if (!selectorGroups[groupName]) continue;
+          if (!selectorGroups[groupName]) {
+            console.log(`跳过API中不存在的组: ${groupName}`);
+            continue;
+          }
           
+          console.log(`构建代理组: ${groupName}`);
           const proxy = selectorGroups[groupName];
           if (proxy.all && Array.isArray(proxy.all)) {
             let nodesOrder = proxy.all;
             
-            // 如果有配置文件顺序，使用配置文件中的节点顺序
+            // 强制使用配置文件中的节点顺序
             if (configOrder) {
               const configGroup = configOrder.proxyGroups.find(g => g.name === groupName);
-              if (configGroup && configGroup.proxies.length > 0) {
-                console.log(`使用配置文件中 ${groupName} 组的节点顺序`);
-                nodesOrder = configGroup.proxies;
+              if (configGroup && configGroup.proxies && configGroup.proxies.length > 0) {
+                console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
+                
+                // 将配置文件中的顺序与API中的节点进行对比
+                const apiNodeNames = proxy.all || [];
+                const configNodeNames = configGroup.proxies;
+                
+                // 检查配置文件中有但API中没有的节点
+                const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
+                if (missingInApi.length > 0) {
+                  console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
+                }
+                
+                // 检查API中有但配置文件中没有的节点
+                const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
+                if (missingInConfig.length > 0) {
+                  console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
+                }
+                
+                // 使用配置文件中的顺序，并添加API中额外的节点
+                nodesOrder = [...configNodeNames];
+                
+                // 添加API中存在但配置文件中不存在的节点
+                missingInConfig.forEach((nodeName: string) => {
+                  nodesOrder.push(nodeName);
+                });
+                
+                console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
+              } else {
+                console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
               }
             }
             
             // 映射节点数据，保持顺序
             const nodes = nodesOrder.map((nodeName: string) => {
               const node = data.proxies[nodeName];
-              const isGroup = selectorGroups[nodeName] !== undefined;
+              const isGroup = node?.type === 'Selector' || node?.type === 'URLTest' || node?.type === 'Fallback';
               
               return {
                 name: nodeName,
                 type: node?.type || 'Unknown',
-                server: isGroup ? '代理组' : (node?.server || 'Unknown'),
-                port: isGroup ? 0 : (node?.port || 0),
-                delay: node?.history?.length > 0 ? node.history[0].delay : undefined,
+                server: isGroup ? '代理组' : ((node as any)?.server || 'Unknown'),
+                port: isGroup ? 0 : ((node as any)?.port || 0),
+                delay: node?.history && node.history.length > 0 ? node.history[0].delay : undefined,
                 isGroup: isGroup,
               };
             });
@@ -298,6 +491,8 @@ export default function ProxyNodes() {
         }
       }
       
+      // 确保groupsData的顺序保持不变，直接设置到状态中
+      console.log(`最终构建了${groupsData.length}个代理组`);
       setGroups(groupsData);
     } catch (error) {
       console.error('获取代理失败:', error);
@@ -310,16 +505,6 @@ export default function ProxyNodes() {
   // 初始加载
   useEffect(() => {
     fetchProxies();
-    
-    // 从本地存储加载折叠状态
-    try {
-      const savedCollapsedGroups = localStorage.getItem('collapsedGroups');
-      if (savedCollapsedGroups) {
-        setCollapsedGroups(new Set(JSON.parse(savedCollapsedGroups)));
-      }
-    } catch (error) {
-      console.error('加载折叠状态失败:', error);
-    }
     
     // 监听测试所有节点的事件
     if (window.electronAPI) {
@@ -344,10 +529,7 @@ export default function ProxyNodes() {
     
     // 无电子API时的清理函数
     return () => {};
-  }, []); // 删除groups依赖，避免循环渲染
-
-  // 获取节点的动画高度，用于折叠/展开动画
-  const getNodeRef = useRef<{[key: string]: HTMLDivElement | null}>({});
+  }, []);  // 初始加载时运行一次
 
   // 测试节点延迟
   const handleTestNode = async (nodeName: string) => {
@@ -366,21 +548,41 @@ export default function ProxyNodes() {
     });
     
     try {
-      // 使用简单的fetch处理
-      const url = new URL(`http://127.0.0.1:9090/proxies/${encodeURIComponent(nodeName)}/delay`);
-      url.searchParams.append('url', 'http://www.gstatic.com/generate_204');
-      url.searchParams.append('timeout', '5000');
+      // 首先获取API配置，确保使用最新的密钥
+      let apiConfig;
+      try {
+        apiConfig = await window.electronAPI!.getApiConfig();
+        console.log(`[调试] 获取API配置成功: ${apiConfig.success ? '成功' : '失败'}`);
+        if (!apiConfig.success) {
+          throw new Error(`获取API配置失败: ${apiConfig.error || '未知错误'}`);
+        }
+      } catch (configError) {
+        console.error('[调试] 获取API配置出错:', configError);
+        throw new Error(`获取API配置出错: ${String(configError)}`);
+      }
       
-      const response = await fetch(url.toString(), {
-        method: 'GET',
+      // 使用electronAPI.requestMihomoAPI处理
+      const urlPath = `/proxies/${encodeURIComponent(nodeName)}/delay?url=${encodeURIComponent('http://www.gstatic.com/generate_204')}&timeout=5000`;
+      
+      console.log(`[调试] 测试节点 ${nodeName} 延迟，URL路径: ${urlPath}`);
+      console.log(`[调试] 使用密钥: ${apiConfig.secret ? '已设置' : '未设置'}`);
+      
+      const response = await window.electronAPI!.requestMihomoAPI(urlPath, {
         headers: {
           'Content-Type': 'application/json'
         }
       });
       
       if (!response.ok) {
-        // 不再显示错误弹窗，只在控制台记录并将节点设为超时
-        console.error(`测试节点延迟失败: ${response.statusText}`);
+        // 记录详细的错误信息
+        console.error(`[调试] 测试节点延迟失败: 状态码=${response.status}, 状态文本=${response.statusText}`);
+        try {
+          const errorData = response.data;
+          console.error(`[调试] 错误响应内容: ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData)}`);
+        } catch (e) {
+          console.error('[调试] 无法读取错误响应内容');
+        }
+        
         // 更新节点为超时状态
         setGroups(prevGroups => {
           return prevGroups.map(group => {
@@ -396,7 +598,10 @@ export default function ProxyNodes() {
         return;
       }
       
-      const data = await response.json();
+      // 成功获取响应
+      console.log(`[调试] 测试节点 ${nodeName} 成功，状态码: ${response.status}`);
+      const data = response.data;
+      console.log(`[调试] 节点 ${nodeName} 延迟: ${data.delay}ms`);
       
       // 更新节点延迟
       setGroups(prevGroups => {
@@ -411,8 +616,7 @@ export default function ProxyNodes() {
         });
       });
     } catch (error) {
-      console.error('测试节点延迟失败:', error);
-      // 不再显示错误弹窗，只在控制台记录
+      console.error('[调试] 测试节点延迟失败:', error);
       // 更新节点为超时状态
       setGroups(prevGroups => {
         return prevGroups.map(group => {
@@ -516,15 +720,6 @@ export default function ProxyNodes() {
     }
   }, [favoriteNodes]);
 
-  // 保存折叠状态到本地存储
-  useEffect(() => {
-    try {
-      localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(collapsedGroups)));
-    } catch (error) {
-      console.error('保存折叠状态失败:', error);
-    }
-  }, [collapsedGroups]);
-
   // 从Electron持久化存储加载收藏节点
   useEffect(() => {
     const loadFavoriteNodes = async () => {
@@ -586,176 +781,32 @@ export default function ProxyNodes() {
     saveFavoriteNodes();
   }, [favoriteNodes]);
 
-  // 加载折叠状态
-  useEffect(() => {
-    const loadCollapsedGroups = async () => {
-      if (!window.electronAPI) return;
-      
-      try {
-        // 从主进程获取折叠状态
-        const result = await window.electronAPI.getCollapsedGroups();
-        if (result && result.success && Array.isArray(result.groups)) {
-          console.log('从持久化存储加载折叠状态:', result.groups);
-          setCollapsedGroups(new Set(result.groups));
-        }
-      } catch (error) {
-        console.error('从持久化存储加载折叠状态失败:', error);
-        
-        // 如果从持久化存储加载失败，尝试从localStorage加载作为备份
-        try {
-          const savedCollapsed = localStorage.getItem('collapsedGroups');
-          if (savedCollapsed) {
-            const collapsedArray = JSON.parse(savedCollapsed);
-            setCollapsedGroups(new Set(collapsedArray));
-            console.log('从localStorage加载折叠状态备份');
-          }
-        } catch (localStorageError) {
-          console.error('从localStorage加载折叠状态备份失败:', localStorageError);
-        }
-      }
-    };
-    
-    loadCollapsedGroups();
-  }, []);
-
-  // 保存折叠状态
-  useEffect(() => {
-    const saveCollapsedGroups = async () => {
-      if (!window.electronAPI) return;
-      
-      try {
-        // 保存到主进程的持久化存储
-        const result = await window.electronAPI.saveCollapsedGroups(Array.from(collapsedGroups));
-        if (result && result.success) {
-          console.log('折叠状态保存到持久化存储成功');
-      } else {
-          throw new Error('保存失败');
-        }
-      } catch (error) {
-        console.error('保存折叠状态到持久化存储失败:', error);
-        
-        // 如果持久化存储失败，同时保存到localStorage作为备份
-        try {
-          localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(collapsedGroups)));
-          console.log('折叠状态保存到localStorage备份');
-        } catch (localStorageError) {
-          console.error('保存折叠状态到localStorage备份失败:', localStorageError);
-        }
-      }
-    };
-    
-    saveCollapsedGroups();
-  }, [collapsedGroups]);
-
-  // 选择节点
-  const handleNodeSelect = async (nodeName: string, groupName: string) => {
-    if (!mihomoRunning) {
-      showError("切换失败: Mihomo服务未运行");
-      return;
-    }
-    
-    // 检查是否正在切换中或者选择的是当前组内相同的节点
-    const group = groups.find(g => g.name === groupName);
-    if (!group) return;
-    
-    // 如果在当前组中已经选中了该节点，则不需要再次切换
-    if (group.now === nodeName) {
-      console.log(`节点 ${nodeName} 已在组 ${groupName} 中被选中，无需切换`);
-      return;
-    }
-    
-    if (switchingNode) return;
-    setSwitchingNode(nodeName);
-    
-    try {
-      console.log(`尝试在组 ${groupName} 中切换到节点: ${nodeName}`);
-      
-      // 判断是否是主要代理组(PROXY或GLOBAL)
-      const isMainGroup = groupName === 'PROXY' || groupName === 'GLOBAL';
-      
-      // 仅在特定组内切换节点
-      const switchResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ name: nodeName })
-        });
-        
-        if (!switchResponse.ok) {
-          throw new Error(`切换失败: ${switchResponse.statusText}`);
-      }
-      
-      // 等待一段时间以确保切换生效
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // 验证切换是否成功，仅检查当前组
-      const verifyResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`);
-      const verifyData = await verifyResponse.json();
-      
-      if (verifyData.now !== nodeName) {
-        console.warn(`切换节点验证失败: 期望 ${nodeName}，实际 ${verifyData.now}`);
-        showError(`节点切换不一致，可能需要重试`);
-      } else {
-        console.log(`组 ${groupName} 节点切换成功: ${nodeName}`);
-        
-        // 如果切换的是主要代理组，才更新全局选中节点状态
-        if (isMainGroup) {
-          setSelectedNode(verifyData.now || nodeName);
-          // 在这里不再调用notifyNodeChanged，避免界面闪烁
-          // 我们只在本地更新状态即可
-        }
-      }
-      
-      // 仅更新当前组的选中节点，而不是全局选中节点
-      setGroups(prev => prev.map(group => 
-        group.name === groupName 
-          ? {...group, now: verifyData.now || nodeName}
-          : group
-      ));
-    } catch (error) {
-      console.error('切换节点失败:', error);
-      showError(`切换失败: ${String(error)}`);
-    } finally {
-      setSwitchingNode(null);
-    }
-  };
-
-  // 处理收藏节点
-  const handleToggleFavorite = (nodeName: string) => {
-    // 检查当前节点是否存在于任何组中
-    const nodeExists = groups.some(group => 
-      group.nodes.some(node => node.name === nodeName)
-    );
-    
-    if (!nodeExists) {
-      console.warn(`尝试收藏不存在的节点: ${nodeName}`);
-      showError(`节点 ${nodeName} 不存在或已被下线`);
-      return;
-    }
-    
-    setFavoriteNodes(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(nodeName)) {
-        newSet.delete(nodeName);
-        console.log(`已取消收藏节点: ${nodeName}`);
-      } else {
-        newSet.add(nodeName);
-        console.log(`已收藏节点: ${nodeName}`);
-      }
-      return newSet;
-    });
-  };
-
-  // 切换折叠状态
+  // 重写折叠切换函数，确保状态更改后立即保存到localStorage
   const toggleGroupCollapse = (groupName: string) => {
     setCollapsedGroups(prev => {
       const newSet = new Set(prev);
+      
+      // 检查是否是收藏节点组（以"fav-"开头）
+      const isFavGroup = groupName.startsWith('fav-');
+      // 如果是收藏节点组，获取真实的组名（移除"fav-"前缀）
+      const baseGroupName = isFavGroup ? groupName.substring(4) : groupName;
+      
       if (newSet.has(groupName)) {
         newSet.delete(groupName);
+        console.log(`展开节点组: ${groupName}`);
       } else {
         newSet.add(groupName);
+        console.log(`折叠节点组: ${groupName}`);
       }
+      
+      // 立即同步保存到localStorage
+      try {
+        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(newSet)));
+        console.log('已保存折叠状态到localStorage:', Array.from(newSet));
+      } catch (error) {
+        console.error('保存折叠状态失败:', error);
+      }
+      
       return newSet;
     });
   };
@@ -776,92 +827,203 @@ export default function ProxyNodes() {
     return 6; // 很短的节点名
   };
 
-  // 修改节点卡片组件，极度简化
-  const NodeCard: React.FC<{node: ProxyNode, group: ProxyGroup}> = ({ node, group }) => {
-    const isSelected = group.now === node.name;
-    const isTesting = testingNodes.has(node.name);
-    const isFavorite = favoriteNodes.has(node.name);
+  // 重构GroupNodes组件，简化渲染逻辑
+  const GroupNodes: React.FC<{
+    group: ProxyGroup; 
+    collapsedGroups: Set<string>;
+    handleTestNode: (nodeName: string) => Promise<void>;
+    handleNodeSelect: (nodeName: string, groupName: string) => Promise<void>;
+    handleToggleFavorite: (nodeName: string) => void;
+    testingNodes: Set<string>;
+    favoriteNodes: Set<string>;
+  }> = ({ 
+    group, 
+    collapsedGroups, 
+    handleTestNode, 
+    handleNodeSelect, 
+    handleToggleFavorite,
+    testingNodes,
+    favoriteNodes 
+  }) => {
+    // 简化状态管理，设置为true表示始终加载内容，确保内容可见
+    const [contentLoaded, setContentLoaded] = useState(true);
+    const isCollapsed = collapsedGroups.has(group.name);
+    
+    // 添加监听折叠状态的useEffect
+    useEffect(() => {
+      console.log(`组 ${group.name} 折叠状态更新: ${isCollapsed ? '已折叠' : '已展开'}`);
+    }, [group.name, isCollapsed]);
+    
+    // 根据节点名称长度计算最佳列数
+    const optimalColumns = calculateOptimalColumns(group.nodes);
+    
+    // 内部节点卡片组件 - 使用useCallback记忆化以避免不必要的重新渲染
+    const NodeCardInner = useCallback(({ node, group }: { node: ProxyNode, group: ProxyGroup }) => {
+      const isSelected = group.now === node.name;
+      const isTesting = testingNodes.has(node.name);
+      const isFavorite = favoriteNodes.has(node.name);
+      
+      return (
+        <div 
+          className={`relative border rounded-lg overflow-hidden transition-all cursor-pointer p-3 ${
+            isSelected 
+              ? 'border-blue-500 bg-blue-50/70 dark:bg-[#2a2a2a]/90 shadow-sm dark:border-blue-600' 
+              : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-[#2a2a2a] hover:border-gray-300 dark:hover:border-gray-600'
+          }`}
+          onClick={() => handleNodeSelect(node.name, group.name)}
+        >
+          <div className="flex flex-col space-y-1">
+            <div className="flex items-center justify-between">
+              <h3 
+                className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate max-w-[85%] group" 
+                title={node.name}
+              >
+                <span className="truncate inline-block w-full group-hover:whitespace-normal group-hover:break-words">
+                  {node.name}
+                </span>
+              </h3>
+              <div className="flex space-x-1 shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleTestNode(node.name);
+                  }}
+                  disabled={isTesting}
+                  className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400 disabled:opacity-50"
+                  title="测试延迟"
+                >
+                  <ReloadIcon className={`h-3 w-3 ${isTesting ? 'text-blue-500 animate-spin' : ''}`} />
+                </button>
+                
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleFavorite(node.name);
+                  }}
+                  className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  title={isFavorite ? "取消收藏" : "添加到收藏"}
+                >
+                  {isFavorite ? (
+                    <StarFilledIcon className="h-3 w-3 text-yellow-500" />
+                  ) : (
+                    <StarIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" />
+                  )}
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex justify-between items-center">
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {node.type}
+              </div>
+              {node.delay !== undefined && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  node.delay === 0
+                    ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                    : node.delay < 100 
+                    ? 'bg-green-100 text-green-800 dark:bg-[#2a2a2a] dark:text-green-400' 
+                    : node.delay < 300
+                    ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
+                    : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                }`}>
+                  {node.delay === 0 ? '超时' : `${node.delay}ms`}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }, [testingNodes, favoriteNodes, handleNodeSelect, handleTestNode, handleToggleFavorite]);
+    
+    // 内容渲染函数 - 仅在内容加载时渲染
+    const renderContent = () => {
+      if (group.nodes.length > 100) {
+        // 对于大量节点使用虚拟化渲染
+        return (
+          <div style={{ height: 'auto', width: '100%', minHeight: '400px' }}>
+            <AutoSizer>
+              {({ height, width }: { height: number, width: number }) => {
+                // 计算每个单元格的宽度和高度
+                const columnCount = Math.min(optimalColumns, 6);
+                const columnWidth = width / columnCount;
+                const rowCount = Math.ceil(group.nodes.length / columnCount);
+                // 卡片固定高度
+                const rowHeight = 90;
+                
+                return (
+                  <Grid
+                    columnCount={columnCount}
+                    columnWidth={columnWidth}
+                    height={Math.min(rowCount * rowHeight, 600)} // 设置最大高度，避免过长
+                    rowCount={rowCount}
+                    rowHeight={rowHeight}
+                    width={width}
+                    overscanRowCount={2} // 增加过扫描行数以提高滚动性能
+                    overscanColumnCount={1} // 增加过扫描列数以提高滚动性能
+                  >
+                    {({ columnIndex, rowIndex, style }) => {
+                      const index = rowIndex * columnCount + columnIndex;
+                      const node = group.nodes[index];
+                      
+                      if (!node) return null;
+                      
+                      return (
+                        <div style={{
+                          ...style,
+                          padding: '6px',
+                          boxSizing: 'border-box'
+                        }}>
+                          <NodeCardInner node={node} group={group} />
+                        </div>
+                      );
+                    }}
+                  </Grid>
+                );
+              }}
+            </AutoSizer>
+          </div>
+        );
+      }
+      
+      // 对于少量节点使用传统的网格布局
+      let gridClass = "";
+      switch(optimalColumns) {
+        case 2:
+          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
+          break;
+        case 3:
+          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2 mt-3";
+          break;
+        case 4:
+          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
+          break;
+        case 5:
+          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mt-3";
+          break;
+        case 6:
+        default:
+          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2 mt-3";
+          break;
+      }
+      
+      return (
+        <div className={gridClass}>
+          {group.nodes.map(node => (
+            <div key={node.name} className="node-card-container">
+              <NodeCardInner key={node.name} node={node} group={group} />
+            </div>
+          ))}
+        </div>
+      );
+    };
     
     return (
       <div 
-        className={`relative border rounded-lg overflow-hidden transition-all cursor-pointer p-3 ${
-          isSelected 
-            ? 'border-blue-500 bg-blue-50/70 dark:bg-[#2a2a2a]/90 shadow-sm dark:border-blue-600' 
-            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-[#2a2a2a] hover:border-gray-300 dark:hover:border-gray-600'
-        }`}
-        onClick={() => !switchingNode && handleNodeSelect(node.name, group.name)}
+        className={isCollapsed ? 'nodes-hidden' : 'nodes-visible'} 
+        data-collapsed={isCollapsed ? 'true' : 'false'}
+        data-group={group.name}
       >
-        {/* 卡片内容 - 极简结构 */}
-        <div className="flex flex-col space-y-1">
-          {/* 标题行 */}
-          <div className="flex items-center justify-between">
-            <h3 
-              className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate max-w-[85%] group" 
-              title={node.name}
-            >
-              <span className="truncate inline-block w-full group-hover:whitespace-normal group-hover:break-words">
-                {node.name}
-              </span>
-            </h3>
-            <div className="flex space-x-1 shrink-0">
-              {/* 测速按钮 */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleTestNode(node.name);
-                }}
-                disabled={isTesting}
-                className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400 disabled:opacity-50"
-                title="测试延迟"
-              >
-                <ReloadIcon className={`h-3 w-3 ${isTesting ? 'text-blue-500 animate-spin' : ''}`} />
-              </button>
-              
-              {/* 收藏按钮 */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleToggleFavorite(node.name);
-                }}
-                className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                title={isFavorite ? "取消收藏" : "添加到收藏"}
-              >
-                {isFavorite ? (
-                  <StarFilledIcon className="h-3 w-3 text-yellow-500" />
-                ) : (
-                  <StarIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" />
-                )}
-              </button>
-            </div>
-          </div>
-          
-          {/* 底部信息行 */}
-          <div className="flex justify-between items-center">
-            <div className="text-xs text-gray-500 dark:text-gray-400">
-              {node.type}
-            </div>
-            {node.delay !== undefined && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                node.delay === 0
-                  ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                  : node.delay < 100 
-                  ? 'bg-green-100 text-green-800 dark:bg-[#2a2a2a] dark:text-green-400' 
-                  : node.delay < 300
-                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
-                  : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-              }`}>
-                {node.delay === 0 ? '超时' : `${node.delay}ms`}
-              </span>
-            )}
-          </div>
-        </div>
-        
-        {/* 切换中状态覆盖层 */}
-        {switchingNode === node.name && (
-          <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 flex items-center justify-center z-20">
-            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          </div>
-        )}
+        {!isCollapsed && renderContent()}
       </div>
     );
   };
@@ -921,6 +1083,179 @@ export default function ProxyNodes() {
     </div>
   );
 
+  // 组件卸载时保存当前折叠状态
+  useEffect(() => {
+    // 返回清理函数
+    return () => {
+      console.log('组件卸载，保存折叠状态');
+      // 立即保存当前折叠状态到localStorage
+      try {
+        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(collapsedGroups)));
+        console.log('组件卸载时已保存折叠状态到localStorage:', Array.from(collapsedGroups));
+      } catch (error) {
+        console.error('组件卸载时保存折叠状态失败:', error);
+      }
+      
+      // 如果有electronAPI，也保存到持久化存储
+      if (window.electronAPI) {
+        window.electronAPI.saveCollapsedGroups(Array.from(collapsedGroups))
+          .then(result => {
+            if (result && result.success) {
+              console.log('组件卸载时已保存折叠状态到持久化存储');
+            }
+          })
+          .catch(error => {
+            console.error('组件卸载时保存到持久化存储失败:', error);
+          });
+      }
+    };
+  }, [collapsedGroups]);
+
+  // 选择节点 - 优化后的逻辑
+  const handleNodeSelect = async (nodeName: string, groupName: string) => {
+    if (!mihomoRunning) {
+      showError("切换失败: Mihomo服务未运行");
+      return;
+    }
+    
+    // 检查选择的是当前组内相同的节点
+    const group = groups.find(g => g.name === groupName);
+    if (!group) return;
+    
+    // 如果在当前组中已经选中了该节点，则不需要再次切换
+    if (group.now === nodeName) {
+      console.log(`节点 ${nodeName} 已在组 ${groupName} 中被选中，无需切换`);
+      return;
+    }
+    
+    // 保存旧节点，用于恢复
+    const oldNode = group.now;
+    
+    // 乐观更新UI
+    setGroups(prev => prev.map(g => 
+      g.name === groupName 
+        ? {...g, now: nodeName}
+        : g
+    ));
+    
+    // 判断是否是主要代理组(PROXY或GLOBAL)
+    const isMainGroup = groupName === 'PROXY' || groupName === 'GLOBAL';
+    if (isMainGroup) {
+      setSelectedNode(nodeName);
+    }
+    
+    try {
+      // 首先获取API配置，确保使用最新的密钥
+      let apiConfig;
+      try {
+        apiConfig = await window.electronAPI!.getApiConfig();
+        console.log(`[调试] 获取API配置成功: ${apiConfig.success ? '成功' : '失败'}`);
+        if (!apiConfig.success) {
+          throw new Error(`获取API配置失败: ${apiConfig.error || '未知错误'}`);
+        }
+      } catch (configError) {
+        console.error('[调试] 获取API配置出错:', configError);
+        throw new Error(`获取API配置出错: ${String(configError)}`);
+      }
+      
+      console.log(`[调试] 尝试在组 ${groupName} 中切换到节点: ${nodeName}`);
+      console.log(`[调试] 使用密钥: ${apiConfig.secret ? '已设置' : '未设置'}`);
+      
+      // 发送切换请求，使用electronAPI.requestMihomoAPI
+      const switchUrl = `/proxies/${encodeURIComponent(groupName)}`;
+      console.log(`[调试] 发送PUT请求到: ${switchUrl}`);
+      console.log(`[调试] 请求体: ${JSON.stringify({ name: nodeName })}`);
+      
+      const switchResponse = await window.electronAPI!.requestMihomoAPI(switchUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: nodeName })
+      });
+      
+      if (!switchResponse.ok) {
+        console.error(`[调试] 切换失败: 状态码=${switchResponse.status}, 状态文本=${switchResponse.statusText}`);
+        try {
+          const errorData = switchResponse.data;
+          console.error(`[调试] 错误响应内容: ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData)}`);
+        } catch (e) {
+          console.error('[调试] 无法读取错误响应内容');
+        }
+        throw new Error(`切换失败: ${switchResponse.statusText}`);
+      }
+      
+      console.log(`[调试] 切换请求成功，状态码: ${switchResponse.status}`);
+      
+      // 验证切换结果
+      const verifyUrl = `/proxies/${encodeURIComponent(groupName)}`;
+      console.log(`[调试] 发送验证请求到: ${verifyUrl}`);
+      
+      const verifyResponse = await window.electronAPI!.requestMihomoAPI(verifyUrl);
+      
+      if (!verifyResponse.ok) {
+        console.error(`[调试] 验证请求失败: 状态码=${verifyResponse.status}, 状态文本=${verifyResponse.statusText}`);
+        try {
+          const errorData = verifyResponse.data;
+          console.error(`[调试] 错误响应内容: ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData)}`);
+        } catch (e) {
+          console.error('[调试] 无法读取错误响应内容');
+        }
+        throw new Error(`验证请求失败: ${verifyResponse.statusText}`);
+      }
+      
+      const verifyData = verifyResponse.data;
+      console.log(`[调试] 验证响应数据:`, verifyData);
+      
+      if (verifyData.now !== nodeName) {
+        console.warn(`[调试] 切换节点验证失败: 期望 ${nodeName}，实际 ${verifyData.now}`);
+        throw new Error(`节点切换不一致，可能需要重试`);
+      } else {
+        console.log(`[调试] 组 ${groupName} 节点切换成功: ${nodeName}`);
+      }
+    } catch (error) {
+      console.error('[调试] 切换节点失败:', error);
+      showError(`切换失败: ${String(error)}`);
+      
+      // 恢复原来的选中状态
+      setGroups(prev => prev.map(g => 
+        g.name === groupName 
+          ? {...g, now: oldNode}
+          : g
+      ));
+      
+      if (isMainGroup && oldNode) {
+        setSelectedNode(oldNode);
+      }
+    }
+  };
+
+  // 处理收藏节点
+  const handleToggleFavorite = (nodeName: string) => {
+    // 检查当前节点是否存在于任何组中
+    const nodeExists = groups.some(group => 
+      group.nodes.some(node => node.name === nodeName)
+    );
+    
+    if (!nodeExists) {
+      console.warn(`尝试收藏不存在的节点: ${nodeName}`);
+      showError(`节点 ${nodeName} 不存在或已被下线`);
+      return;
+    }
+    
+    setFavoriteNodes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeName)) {
+        newSet.delete(nodeName);
+        console.log(`已取消收藏节点: ${nodeName}`);
+      } else {
+        newSet.add(nodeName);
+        console.log(`已收藏节点: ${nodeName}`);
+      }
+      return newSet;
+    });
+  };
+
   if (!mihomoRunning) {
     return (
       <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8">
@@ -940,43 +1275,6 @@ export default function ProxyNodes() {
       </div>
     );
   }
-
-  // 渲染节点网格 - 动态调整列数
-  const renderNodes = (group: ProxyGroup) => {
-    // 根据节点名称长度计算最佳列数
-    const optimalColumns = calculateOptimalColumns(group.nodes);
-    
-    // 使用Tailwind的响应式类决定不同屏幕尺寸的列数
-    let gridClass = "";
-    
-    // 根据最佳列数设置对应的网格类
-    switch(optimalColumns) {
-      case 2:
-        gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
-        break;
-      case 3:
-        gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2 mt-3";
-        break;
-      case 4:
-        gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
-        break;
-      case 5:
-        gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mt-3";
-        break;
-      case 6:
-      default:
-        gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2 mt-3";
-        break;
-    }
-    
-    return (
-      <div className={gridClass}>
-        {group.nodes.map(node => (
-          <NodeCard key={node.name} node={node} group={group} />
-        ))}
-      </div>
-    );
-  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -1104,10 +1402,19 @@ export default function ProxyNodes() {
                   </div>
                 ) : (
                   filteredGroups.map((group) => (
-                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
+                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden group-panel">
                       <div 
-                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none"
+                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none group-header"
                         onClick={() => toggleGroupCollapse(group.name)}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={!collapsedGroups.has(group.name)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleGroupCollapse(group.name);
+                          }
+                        }}
                       >
                         <div className="flex items-center space-x-2">
                           <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
@@ -1126,10 +1433,10 @@ export default function ProxyNodes() {
                               e.stopPropagation(); // 阻止事件冒泡
                               handleBatchTest(group.name);
                             }}
-                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-full transition-colors"
+                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
                             title="批量测速"
                           >
-                            <ReloadIcon className="h-4 w-4" />
+                            <ReloadIcon className={`h-4 w-4 ${testingNodes.has(group.name) ? 'text-blue-500 animate-spin' : ''}`} />
                           </button>
                           <div>
                             <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1159,7 +1466,15 @@ export default function ProxyNodes() {
                         className={`group-content ${collapsedGroups.has(group.name) ? 'collapsed' : 'expanded'}`}
                       >
                         <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                          {renderNodes(group)}
+                          <GroupNodes 
+                            group={group} 
+                            collapsedGroups={collapsedGroups} 
+                            handleTestNode={handleTestNode} 
+                            handleNodeSelect={handleNodeSelect} 
+                            handleToggleFavorite={handleToggleFavorite} 
+                            testingNodes={testingNodes} 
+                            favoriteNodes={favoriteNodes} 
+                          />
                         </div>
                       </div>
                     </div>
@@ -1183,10 +1498,19 @@ export default function ProxyNodes() {
                   </div>
                 ) : (
                   favoriteFilteredGroups.map((group) => (
-                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
+                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden group-panel">
                       <div 
-                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none"
+                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none group-header"
                         onClick={() => toggleGroupCollapse(`fav-${group.name}`)}
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={!collapsedGroups.has(`fav-${group.name}`)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            toggleGroupCollapse(`fav-${group.name}`);
+                          }
+                        }}
                       >
                         <div className="flex items-center space-x-2">
                           <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
@@ -1205,10 +1529,10 @@ export default function ProxyNodes() {
                               e.stopPropagation(); // 阻止事件冒泡
                               handleBatchTest(group.name);
                             }}
-                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-full transition-colors"
+                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
                             title="批量测速"
                           >
-                            <ReloadIcon className="h-4 w-4" />
+                            <ReloadIcon className={`h-4 w-4 ${testingNodes.has(group.name) ? 'text-blue-500 animate-spin' : ''}`} />
                           </button>
                           <div>
                             <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1238,7 +1562,15 @@ export default function ProxyNodes() {
                         className={`group-content ${collapsedGroups.has(`fav-${group.name}`) ? 'collapsed' : 'expanded'}`}
                       >
                         <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                          {renderNodes(group)}
+                          <GroupNodes 
+                            group={group} 
+                            collapsedGroups={collapsedGroups} 
+                            handleTestNode={handleTestNode} 
+                            handleNodeSelect={handleNodeSelect} 
+                            handleToggleFavorite={handleToggleFavorite} 
+                            testingNodes={testingNodes} 
+                            favoriteNodes={favoriteNodes} 
+                          />
                         </div>
                       </div>
                     </div>
@@ -1304,31 +1636,75 @@ export default function ProxyNodes() {
           background: #4b5563;
         }
         
-        /* 折叠动画相关样式 */
+        /* 优化的折叠动画相关样式 */
         .group-content {
-          transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-          will-change: height, opacity, transform;
-          transform-origin: top;
+          height: auto;
+          transition: all 0.3s ease;
+          opacity: 1;
+          transform: translateY(0);
+          overflow: hidden;
         }
         
         .group-content.collapsed {
-          height: 0 !important;
           opacity: 0;
-          transform: scaleY(0.95);
-        }
-        
-        .group-content.expanded {
-          opacity: 1;
-          transform: scaleY(1);
+          transform: translateY(-10px);
+          height: 0 !important;
+          margin: 0;
+          padding: 0;
+          transition: all 0.25s ease;
+          pointer-events: none;
         }
         
         /* 箭头旋转动画 */
         .arrow-icon {
-          transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+          transition: transform 0.3s ease;
+          transform: translateY(0);
+          color: #9CA3AF;
         }
         
         .arrow-icon.up {
           transform: rotate(180deg);
+        }
+        
+        /* 组面板样式 */
+        .group-panel {
+          transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+        }
+        
+        /* 组标题样式 */
+        .group-header {
+          transition: background-color 0.2s ease-out;
+        }
+        
+        .group-header:hover {
+          background-color: rgba(0, 0, 0, 0.02);
+        }
+        
+        .dark .group-header:hover {
+          background-color: rgba(255, 255, 255, 0.03);
+        }
+        
+        /* 节点容器样式 */
+        .nodes-visible {
+          opacity: 1;
+          transform: translateY(0);
+          transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        
+        .nodes-hidden {
+          opacity: 0;
+          height: 0;
+          overflow: hidden;
+        }
+        
+        /* 节点卡片容器 */
+        .node-card-container {
+          transform: translateY(0);
+          transition: transform 0.2s ease-out;
+        }
+        
+        .node-card-container:hover {
+          transform: translateY(-2px);
         }
       `}</style>
     </div>

@@ -7,6 +7,9 @@ import axios from 'axios';
 type Subscription = {
   name: string;
   path: string;
+  usedTraffic?: string;
+  remainingTraffic?: string;
+  expiryDate?: string;
   // 可能的其他字段，如最后更新时间等
   lastUpdated?: string;
 };
@@ -28,6 +31,25 @@ export default function SubscriptionManager() {
 
   useEffect(() => {
     loadSubscriptions();
+    
+    // 监听订阅导入事件
+    let unsubscribeImport: (() => void) | undefined;
+    
+    if (window.electronAPI?.onImportSubscription) {
+      unsubscribeImport = window.electronAPI.onImportSubscription((url: string) => {
+        console.log('收到订阅导入请求:', url);
+        if (url && url.trim() !== '') {
+          // 设置订阅URL并自动打开订阅添加对话框
+          setSubUrl(url);
+          setIsDialogOpen(true);
+        }
+      });
+    }
+    
+    // 清理函数
+    return () => {
+      if (unsubscribeImport) unsubscribeImport();
+    };
   }, []);
 
   const loadSubscriptions = async () => {
@@ -55,20 +77,54 @@ export default function SubscriptionManager() {
     setIsLoading(true);
     
     try {
-      const configData = await window.electronAPI.fetchSubscription(subUrl);
+      // 使用 as any 暂时解决类型不匹配的问题
+      const result = await window.electronAPI.fetchSubscription(subUrl) as any;
       
-      if (configData) {
+      // 检查是否为本地文件导入的返回结果
+      if (result && result.isLocalFile) {
+        showToast('错误', '对话框中不支持本地文件导入，请使用拖放或上传按钮', 'error');
+        setIsLoading(false);
+        return;
+      }
+      
+      if (result && (typeof result === 'string' || result.content)) {
         const customName = subName.trim() || '';
         console.log('准备保存订阅 - URL:', subUrl);
         console.log('准备保存订阅 - 自定义名称:', customName);
         
-        const filePath = await window.electronAPI.saveSubscription(subUrl, configData, customName);
+        // 处理可能的两种返回格式
+        const content = typeof result === 'string' ? result : result.content;
+        const subscriptionInfo = typeof result === 'string' ? undefined : result.subscriptionInfo;
         
-        showToast('成功', '订阅添加成功', 'success');
-        setSubUrl('');
-        setSubName('');
-        setIsDialogOpen(false);
-        await loadSubscriptions();
+        // 保存订阅配置文件，兼容新旧API
+        try {
+          // 尝试使用新的API格式（带subscription info）
+          const filePath = await window.electronAPI.saveSubscription(
+            subUrl, 
+            content, 
+            customName, 
+            subscriptionInfo
+          );
+          
+          showToast('成功', '订阅添加成功', 'success');
+          setSubUrl('');
+          setSubName('');
+          setIsDialogOpen(false);
+          await loadSubscriptions();
+        } catch (e) {
+          // 如果新API格式失败，回退到旧格式
+          const filePath = await (window.electronAPI.saveSubscription as any)(
+            subUrl, 
+            content, 
+            customName
+          );
+          
+          showToast('成功', '订阅添加成功', 'success');
+          setSubUrl('');
+          setSubName('');
+          setIsDialogOpen(false);
+          await loadSubscriptions();
+        }
       } else {
         showToast('错误', '获取订阅内容失败', 'error');
       }
@@ -449,6 +505,40 @@ export default function SubscriptionManager() {
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-3 break-all line-clamp-2" title={sub.path}>
                     {sub.path}
                   </p>
+                  
+                  {/* 添加流量信息显示 */}
+                  {(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate) && (
+                    <div className="mt-2 mb-3 bg-gray-50 dark:bg-gray-800/50 p-2 rounded-md">
+                      {(sub.usedTraffic || sub.remainingTraffic) && (
+                        <div className="flex justify-between text-xs text-gray-600 dark:text-gray-300 mb-1.5">
+                          {sub.usedTraffic && (
+                            <div className="flex items-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                              </svg>
+                              <span>已用: {sub.usedTraffic}</span>
+                            </div>
+                          )}
+                          {sub.remainingTraffic && (
+                            <div className="flex items-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                              </svg>
+                              <span>剩余: {sub.remainingTraffic}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {sub.expiryDate && (
+                        <div className="flex items-center text-xs text-gray-600 dark:text-gray-300">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          <span>到期时间: {sub.expiryDate}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   
                   <div className="flex space-x-2 mt-4">
                     <button

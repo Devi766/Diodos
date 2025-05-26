@@ -24,6 +24,12 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
     --radius: 0.5rem;
+    
+    /* 动画相关变量 */
+    --expand-transition: 300ms cubic-bezier(0.2, 0.5, 0.4, 1);
+    --collapse-transition: 250ms cubic-bezier(0.3, 0, 0.4, 1);
+    --node-stagger-delay: 15ms;
+    --node-fade-duration: 300ms;
   }
 
   .dark {
@@ -56,4 +62,31 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* 全局动画定义 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* 基础动画定义 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 } 

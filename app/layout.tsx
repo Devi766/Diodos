@@ -2,6 +2,7 @@
 
 import "./globals.css";
 import { useEffect, useState } from "react";
+import { SpeedTestProvider } from "./contexts/SpeedTestContext";
 
 export default function RootLayout({
   children,
@@ -77,7 +78,9 @@ export default function RootLayout({
         <link rel="icon" href="/favicon.ico" />
       </head>
       <body className="antialiased bg-[#f9f9f9] dark:bg-[#1f2937]">
-        {children}
+        <SpeedTestProvider>
+          {children}
+        </SpeedTestProvider>
       </body>
     </html>
   );

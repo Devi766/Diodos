@@ -9,13 +9,12 @@ const net = require('net');
 const http = require('http');
 const serveStatic = require('serve-static');
 const finalhandler = require('finalhandler');
-const { autoUpdater } = require('electron-updater');
-const request = require('request');
-const { testMediaStreaming, testMultipleServices, getSupportedServices } = require('./mediatest');
-const { setupTray, updateTrayMenu } = require('./tray');
+
+// 导入媒体检测模块
+const { testMediaStreaming } = require('./mediatest');
 
 // 应用版本号 - 统一管理所有界面显示的版本
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.4';
 
 let mainWindow;
 let tray;
@@ -126,7 +125,10 @@ function ensureUserSettingsFile() {
     const defaultSettings = {
       'mixed-port': 7890,
       'allow-lan': false,
-      'ipv6': false
+      'ipv6': false,
+      'tun': {
+        'enable': false
+      }
     };
     
     try {
@@ -172,6 +174,11 @@ function updateUserSettings(settings) {
       }
     }
     
+    // 处理tun字段
+    if (settings.tun && 'enable' in settings.tun) {
+      settings.tun.enable = Boolean(settings.tun.enable);
+    }
+    
     const newSettings = { ...currentSettings, ...settings };
     fs.writeFileSync(userSettingsPath, yaml.dump(newSettings), 'utf8');
     console.log('已更新用户设置:', newSettings);
@@ -202,6 +209,11 @@ let lastTrafficStats = {
 let trafficWebSocket = null;
 let trafficRetry = 10;
 let lastValidStats = null;  // 用于存储最后一次有效的流量数据
+let lastConnectionsFetchTime = 0; // 用于限制连接信息获取频率
+
+// 限制历史记录数量
+const MAX_TRAFFIC_HISTORY = 50;
+let trafficHistory = [];
 
 // 格式化流量数据
 function formatTraffic(bytes) {
@@ -346,198 +358,254 @@ function createWindow() {
       mainWindow.hide();
     }
   });
+
+  // 添加窗口事件监听器
+  mainWindow.on('minimize', () => {
+    console.log('[调试] 窗口最小化，降低更新频率');
+    // 暂停或减慢更新频率
+    stopTrafficStatsUpdate();
+    // 改为低频率更新
+    trafficStatsInterval = setInterval(() => {
+      updateTrafficStats();
+    }, 10000); // 每10秒更新一次
+  });
+
+  mainWindow.on('restore', () => {
+    console.log('[调试] 窗口恢复，恢复正常更新频率');
+    // 恢复正常更新频率
+    stopTrafficStatsUpdate();
+    startTrafficStatsUpdate();
+  });
 }
 
+// 启动mihomo
 async function startMihomo(configPath) {
-  if (mihomoProcess) {
-    mihomoProcess.kill();
-  }
-
-  configFilePath = configPath;
-  
-  // 使用全局辅助函数查找mihomo内核
-  const binPath = findMihomoExecutable();
-
-  if (!fs.existsSync(binPath)) {
-    console.error('未找到有效的内核文件:', binPath);
-    dialog.showErrorBox('错误', '无法找到有效的内核文件，请确保应用安装正确');
-    return false;
-  }
-  
-  console.log('使用内核文件:', binPath);
-
   try {
-    // 确保配置文件存在
     if (!fs.existsSync(configPath)) {
-      dialog.showErrorBox('错误', `配置文件不存在: ${configPath}`);
-      return false;
+      throw new Error(`配置文件不存在: ${configPath}`);
     }
 
-    // 创建mihomo工作目录
-    const mihomoDir = path.join(userDataPath, 'mihomo');
-    if (!fs.existsSync(mihomoDir)) {
-      fs.mkdirSync(mihomoDir, { recursive: true });
-    }
-    
-    // 确认工作目录有写权限
-    try {
-      const testFile = path.join(mihomoDir, 'test_write_permission.txt');
-      fs.writeFileSync(testFile, 'test');
-      fs.unlinkSync(testFile);
-      console.log('工作目录写权限正常');
-    } catch (error) {
-      console.error('工作目录写权限不足:', error);
-      dialog.showErrorBox('权限错误', `Mihomo工作目录没有写权限: ${error.message}`);
-      return false;
+    // 解析配置文件，获取API配置信息
+    const configData = parseConfigFile(configPath);
+    if (configData) {
+      // 获取代理组和代理节点信息
+      console.log('已解析配置文件，包含代理组：', configData.proxyGroups.length);
+      console.log('已解析配置文件，包含代理节点：', configData.proxies.length);
     }
 
-    // 读取用户设置
-    const userSettings = getUserSettings();
-    console.log('已读取用户设置:', userSettings);
+    // 始终使用固定的API配置，不管配置文件中的设置
+    activeApiConfig = {
+      controllerHost: '127.0.0.1',  // 服务器监听所有接口
+      controllerPort: '9090',
+      secret: ''
+    };
+    console.log('已设置API配置为固定值:', activeApiConfig);
 
-    // 读取原始配置
-    const configFilename = path.basename(configPath);
-    let configContent = fs.readFileSync(configPath, 'utf8');
-    const config = yaml.load(configContent);
-
-    // 创建高优先级配置文件（合并用户设置和原始配置）
-    const overrideConfigFilename = 'override-' + configFilename;
-    const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
-    
-    // 使用深度合并替换原来的浅合并
-    let mergedConfig, mergedConfigContent;
-    
-    try {
-      // 智能合并配置（用户设置优先级更高）
-      mergedConfig = deepMergeConfig(config, userSettings);
-      // 验证合并后的配置
-      mergedConfig = validateMergedConfig(mergedConfig);
-      mergedConfigContent = yaml.dump(mergedConfig);
-    } catch (error) {
-      console.error('配置合并失败:', error);
-      
-      // 使用安全的回退配置
-      const safeConfig = {
-        ...config,
-        'mixed-port': userSettings['mixed-port'] || 7890,
-        'allow-lan': !!userSettings['allow-lan'],
-        'ipv6': !!userSettings['ipv6'],
-        'log-level': userSettings['log-level'] || 'info'
-      };
-      
-      mergedConfig = safeConfig;
-      mergedConfigContent = yaml.dump(safeConfig);
-      console.log('使用安全的回退配置');
-    }
-    
-    // 保存合并后的配置
-    fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
-    console.log(`已创建高优先级配置文件: ${overrideConfigPath}`);
-
-    // 记录启动信息
-    console.log(`启动Mihomo: ${binPath} -f ${overrideConfigPath}`);
-    console.log(`工作目录: ${mihomoDir}`);
-
-    // 验证配置文件内容
-    try {
-      // 这些检查已经在validateMergedConfig中处理，这里是额外的安全检查
-      if (!mergedConfig.proxies || !Array.isArray(mergedConfig.proxies)) {
-        dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies字段');
-        return false;
-      }
-
-      if (!mergedConfig['proxy-groups'] || !Array.isArray(mergedConfig['proxy-groups'])) {
-        dialog.showErrorBox('配置错误', '配置文件缺少必要的proxy-groups字段');
-        return false;
-      }
-
-      // 检查代理组是否为空
-      if (mergedConfig['proxy-groups'].length === 0) {
-        console.warn('警告: 配置文件中的代理组为空');
-        // 不返回false，允许继续尝试启动
-      }
-
-      // 检查代理是否为空
-      if (mergedConfig.proxies.length === 0) {
-        console.warn('警告: 配置文件中没有代理节点');
-        // 不返回false，允许继续尝试启动
-      }
-    } catch (error) {
-      console.error('配置文件验证失败:', error);
-      dialog.showErrorBox('配置文件错误', `解析配置文件失败: ${error.message}`);
-      return false;
-    }
-
-    // 启动mihomo，使用高优先级的配置文件
-    mihomoProcess = spawn(binPath, ['-f', overrideConfigPath], {
-      cwd: mihomoDir,
-      env: {
-        ...process.env,
-        MIHOMO_CORE_PATH: mihomoDir
-      },
-      windowsHide: false,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-    
-    mihomoProcess.stdout.on('data', (data) => {
-      const logContent = data.toString();
-      console.log(`mihomo stdout: ${logContent}`);
-      
-      // 检查是否有配置相关日志
-      if (logContent.includes('Config') || logContent.includes('allow-lan')) {
-        console.log('发现配置相关日志:', logContent);
-      }
-      
-      if (mainWindow) {
-        mainWindow.webContents.send('mihomo-log', logContent);
-      }
-      
-      // 直接输出到控制台/终端
-      process.stdout.write(data);
-    });
-
-    mihomoProcess.stderr.on('data', (data) => {
-      console.error(`mihomo stderr: ${data}`);
-      if (mainWindow) {
-        mainWindow.webContents.send('mihomo-error', data.toString());
-      }
-      
-      // 直接输出到控制台/终端
-      process.stderr.write(data);
-    });
-
-    mihomoProcess.on('close', (code) => {
-      console.log(`mihomo process exited with code ${code}`);
-      // 使用集中处理函数处理mihomo进程退出
-      handleMihomoProcessExit(code);
-    });
-
-    // 检查进程是否成功启动
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    if (mihomoProcess && mihomoProcess.exitCode !== null) {
-      console.error(`Mihomo立即退出，退出代码: ${mihomoProcess.exitCode}`);
-      dialog.showErrorBox('启动失败', `Mihomo启动后立即退出，退出代码: ${mihomoProcess.exitCode}`);
-      return false;
-    }
-
-    // 启动成功后保存这个配置文件作为最后使用的配置
-    try {
-      const lastConfigPath = path.join(userDataPath, 'last-config.json');
-      fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
-      console.log('已将此配置设为最后使用的配置:', configPath);
-    } catch (saveError) {
-      console.error('保存最后使用的配置失败:', saveError);
-      // 继续执行，这不是致命错误
-    }
-    
     if (mihomoProcess) {
-      startTrafficStatsUpdate();
+      mihomoProcess.kill();
     }
 
-    return true;
+    configFilePath = configPath;
+    
+    // 确保mihomo数据文件准备好
+    try {
+      await ensureMihomoDataFiles();
+    } catch (error) {
+      console.error('准备mihomo数据文件失败，但将继续尝试启动:', error);
+    }
+    
+    // 使用全局辅助函数查找mihomo内核
+    const binPath = findMihomoExecutable();
+
+    if (!fs.existsSync(binPath)) {
+      console.error('未找到有效的内核文件:', binPath);
+      dialog.showErrorBox('错误', '无法找到有效的内核文件，请确保应用安装正确');
+      return false;
+    }
+    
+    console.log('使用内核文件:', binPath);
+
+    try {
+      // 确保配置文件存在
+      if (!fs.existsSync(configPath)) {
+        dialog.showErrorBox('错误', `配置文件不存在: ${configPath}`);
+        return false;
+      }
+
+      // 创建mihomo工作目录
+      const mihomoDir = path.join(userDataPath, 'mihomo');
+      if (!fs.existsSync(mihomoDir)) {
+        fs.mkdirSync(mihomoDir, { recursive: true });
+      }
+      
+      // 确认工作目录有写权限
+      try {
+        const testFile = path.join(mihomoDir, 'test_write_permission.txt');
+        fs.writeFileSync(testFile, 'test');
+        fs.unlinkSync(testFile);
+        console.log('工作目录写权限正常');
+      } catch (error) {
+        console.error('工作目录写权限不足:', error);
+        dialog.showErrorBox('权限错误', `Mihomo工作目录没有写权限: ${error.message}`);
+        return false;
+      }
+
+      // 读取用户设置
+      const userSettings = getUserSettings();
+      console.log('已读取用户设置:', userSettings);
+
+      // 读取原始配置
+      const configFilename = path.basename(configPath);
+      let configContent = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(configContent);
+
+      // 创建高优先级配置文件（合并用户设置和原始配置）
+      const overrideConfigFilename = 'override-' + configFilename;
+      const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+      
+      // 使用深度合并替换原来的浅合并
+      let mergedConfig, mergedConfigContent;
+      
+      try {
+        // 智能合并配置（用户设置优先级更高）
+        mergedConfig = deepMergeConfig(config, userSettings);
+        // 验证合并后的配置
+        mergedConfig = validateMergedConfig(mergedConfig);
+        // 强制覆盖API控制器设置，确保始终可访问
+        mergedConfig['external-controller'] = '0.0.0.0:9090';
+        mergedConfig['secret'] = '';
+        mergedConfigContent = yaml.dump(mergedConfig);
+      } catch (error) {
+        console.error('配置合并失败:', error);
+        
+        // 使用安全的回退配置
+        const safeConfig = {
+          ...config,
+          'mixed-port': userSettings['mixed-port'] || 7890,
+          'allow-lan': !!userSettings['allow-lan'],
+          'ipv6': !!userSettings['ipv6'],
+          'log-level': userSettings['log-level'] || 'info',
+          'external-controller': '0.0.0.0:9090',
+          'secret': ''
+        };
+        
+        mergedConfig = safeConfig;
+        mergedConfigContent = yaml.dump(safeConfig);
+        console.log('使用安全的回退配置');
+      }
+      
+      // 保存合并后的配置
+      fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
+      console.log(`已创建高优先级配置文件: ${overrideConfigPath}`);
+
+      // 记录启动信息
+      console.log(`启动Mihomo: ${binPath} -f ${overrideConfigPath}`);
+      console.log(`工作目录: ${mihomoDir}`);
+
+      // 验证配置文件内容
+      try {
+        // 这些检查已经在validateMergedConfig中处理，这里是额外的安全检查
+        if (!mergedConfig.proxies || !Array.isArray(mergedConfig.proxies)) {
+          dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies字段');
+          return false;
+        }
+
+        if (!mergedConfig['proxy-groups'] || !Array.isArray(mergedConfig['proxy-groups'])) {
+          dialog.showErrorBox('配置错误', '配置文件缺少必要的proxy-groups字段');
+          return false;
+        }
+
+        // 检查代理组是否为空
+        if (mergedConfig['proxy-groups'].length === 0) {
+          console.warn('警告: 配置文件中的代理组为空');
+          // 不返回false，允许继续尝试启动
+        }
+
+        // 检查代理是否为空
+        if (mergedConfig.proxies.length === 0) {
+          console.warn('警告: 配置文件中没有代理节点');
+          // 不返回false，允许继续尝试启动
+        }
+      } catch (error) {
+        console.error('配置文件验证失败:', error);
+        dialog.showErrorBox('配置文件错误', `解析配置文件失败: ${error.message}`);
+        return false;
+      }
+
+      // 启动mihomo，使用高优先级的配置文件
+      mihomoProcess = spawn(binPath, ['-f', overrideConfigPath], {
+        cwd: mihomoDir,
+        env: {
+          ...process.env,
+          MIHOMO_CORE_PATH: mihomoDir
+        },
+        windowsHide: false,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      
+      mihomoProcess.stdout.on('data', (data) => {
+        const logContent = data.toString();
+        console.log(`mihomo stdout: ${logContent}`);
+        
+        // 检查是否有配置相关日志
+        if (logContent.includes('Config') || logContent.includes('allow-lan')) {
+          console.log('发现配置相关日志:', logContent);
+        }
+        
+        if (mainWindow) {
+          mainWindow.webContents.send('mihomo-log', logContent);
+        }
+        
+        // 直接输出到控制台/终端
+        process.stdout.write(data);
+      });
+
+      mihomoProcess.stderr.on('data', (data) => {
+        console.error(`mihomo stderr: ${data}`);
+        if (mainWindow) {
+          mainWindow.webContents.send('mihomo-error', data.toString());
+        }
+        
+        // 直接输出到控制台/终端
+        process.stderr.write(data);
+      });
+
+      mihomoProcess.on('close', (code) => {
+        console.log(`mihomo process exited with code ${code}`);
+        // 使用集中处理函数处理mihomo进程退出
+        handleMihomoProcessExit(code);
+      });
+
+      // 检查进程是否成功启动
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (mihomoProcess && mihomoProcess.exitCode !== null) {
+        console.error(`Mihomo立即退出，退出代码: ${mihomoProcess.exitCode}`);
+        dialog.showErrorBox('启动失败', `Mihomo启动后立即退出，退出代码: ${mihomoProcess.exitCode}`);
+        return false;
+      }
+
+      // 启动成功后保存这个配置文件作为最后使用的配置
+      try {
+        const lastConfigPath = path.join(userDataPath, 'last-config.json');
+        fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
+        console.log('已将此配置设为最后使用的配置:', configPath);
+      } catch (saveError) {
+        console.error('保存最后使用的配置失败:', saveError);
+        // 继续执行，这不是致命错误
+      }
+      
+      if (mihomoProcess) {
+        startTrafficStatsUpdate();
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to start mihomo:', error);
+      dialog.showErrorBox('启动失败', `无法启动Mihomo: ${error.message}`);
+      return false;
+    }
   } catch (error) {
-    console.error('Failed to start mihomo:', error);
-    dialog.showErrorBox('启动失败', `无法启动Mihomo: ${error.message}`);
+    console.error('启动Mihomo时出错:', error);
     return false;
   }
 }
@@ -605,14 +673,30 @@ async function updateTrayMenu() {
       { label: '显示主窗口', click: () => mainWindow.show() },
       { type: 'separator' },
       { label: '启用系统代理', type: 'checkbox', checked: proxyEnabled, click: toggleSystemProxy },
+      { label: '启用TUN模式', type: 'checkbox', checked: tunModeEnabled, click: toggleTunMode },
       { 
         label: '断开所有连接', 
         click: async () => {
           try {
+            if (!activeApiConfig) {
+              console.error('无法断开连接: API配置不可用');
+              return;
+            }
+
             // 使用Mihomo API断开所有连接
             const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-            const response = await fetch('http://127.0.0.1:9090/connections', {
-              method: 'DELETE'
+            
+            const apiUrl = `http://${activeApiConfig.controllerHost}:${activeApiConfig.controllerPort}/connections`;
+            const headers = {};
+            
+            // 如果有secret，添加到请求头
+            if (activeApiConfig.secret) {
+              headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+            }
+            
+            const response = await fetch(apiUrl, {
+              method: 'DELETE',
+              headers
             });
             
             if (response.ok) {
@@ -642,7 +726,20 @@ async function updateTrayMenu() {
         const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
         
         // 获取代理节点信息
-        const response = await fetch('http://127.0.0.1:9090/proxies');
+        if (!activeApiConfig) {
+          console.error('无法获取代理节点: API配置不可用');
+          return;
+        }
+        
+        const apiUrl = `http://${activeApiConfig.controllerHost}:${activeApiConfig.controllerPort}/proxies`;
+        const headers = {};
+        
+        // 如果有secret，添加到请求头
+        if (activeApiConfig.secret) {
+          headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+        }
+        
+        const response = await fetch(apiUrl, { headers });
         if (response.ok) {
           const data = await response.json();
           
@@ -737,12 +834,25 @@ async function updateTrayMenu() {
                     click: async () => {
                       // 调用API切换节点
                       try {
+                        if (!activeApiConfig) {
+                          console.error('无法切换节点: API配置不可用');
+                          return;
+                        }
+                        
+                        const apiUrl = `http://${activeApiConfig.controllerHost}:${activeApiConfig.controllerPort}/proxies/${encodeURIComponent(group.name)}`;
+                        const headers = {
+                          'Content-Type': 'application/json'
+                        };
+                        
+                        // 如果有secret，添加到请求头
+                        if (activeApiConfig.secret) {
+                          headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+                        }
+                        
                         // 切换节点
-                        const switchResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(group.name)}`, {
+                        const switchResponse = await fetch(apiUrl, {
                           method: 'PUT',
-                          headers: {
-                            'Content-Type': 'application/json'
-                          },
+                          headers,
                           body: JSON.stringify({ name: nodeName })
                         });
                         
@@ -883,6 +993,11 @@ function toggleSystemProxy(menuItem) {
       }
       
       systemProxyEnabled = true;
+      // 保存代理状态到文件
+      const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
+      fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: true }), 'utf8');
+      console.log('已保存代理状态: 启用');
+      
       if (mainWindow) {
         mainWindow.webContents.send('proxy-status', true);
       }
@@ -913,6 +1028,11 @@ function toggleSystemProxy(menuItem) {
       }
       
       systemProxyEnabled = false;
+      // 保存代理状态到文件
+      const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
+      fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: false }), 'utf8');
+      console.log('已保存代理状态: 禁用');
+      
       if (mainWindow) {
         mainWindow.webContents.send('proxy-status', false);
       }
@@ -925,8 +1045,95 @@ function toggleSystemProxy(menuItem) {
     menuItem.checked = !menuItem.checked;
     systemProxyEnabled = !menuItem.checked;
     
+    // 保存恢复后的代理状态到文件
+    try {
+      const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
+      fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: systemProxyEnabled }), 'utf8');
+      console.log(`已保存恢复后的代理状态: ${systemProxyEnabled ? '启用' : '禁用'}`);
+    } catch (saveError) {
+      console.error('保存代理状态失败:', saveError);
+    }
+    
     if (mainWindow) {
       mainWindow.webContents.send('proxy-status', systemProxyEnabled);
+    }
+  }
+}
+
+// TUN模式状态
+let tunModeEnabled = false;
+
+// 切换TUN模式
+function toggleTunMode(menuItem) {
+  // 检查mihomo是否运行中
+  if (!mihomoProcess) {
+    dialog.showErrorBox('错误', '请先启动代理服务');
+    return;
+  }
+  
+  try {
+    // 读取当前用户设置
+    const userSettings = getUserSettings();
+    
+    // 确保tun字段存在
+    if (!userSettings.tun) {
+      userSettings.tun = {};
+    }
+    
+    // 设置TUN模式状态
+    userSettings.tun.enable = menuItem.checked;
+    
+    // 如果启用TUN模式，添加TUN基本配置
+    if (menuItem.checked) {
+      // Mihomo TUN配置
+      userSettings.tun = {
+        ...userSettings.tun,
+        enable: true,
+        stack: 'system',
+        'auto-route': true,
+        'auto-detect-interface': true,
+        'dns-hijack': ['any:53']
+      };
+      
+      console.log('启用TUN模式，配置:', userSettings.tun);
+    } else {
+      userSettings.tun.enable = false;
+      console.log('禁用TUN模式');
+    }
+    
+    // 更新用户设置
+    if (updateUserSettings(userSettings)) {
+      tunModeEnabled = menuItem.checked;
+      
+      // 保存TUN状态到文件
+      const tunConfigPath = path.join(userDataPath, 'tun-config.json');
+      fs.writeFileSync(tunConfigPath, JSON.stringify({ enabled: tunModeEnabled }), 'utf8');
+      console.log('已保存TUN模式状态:', tunModeEnabled ? '启用' : '禁用');
+      
+      // 通知前端
+      if (mainWindow) {
+        mainWindow.webContents.send('tun-status', tunModeEnabled);
+      }
+    }
+  } catch (error) {
+    console.error('设置TUN模式失败:', error);
+    dialog.showErrorBox('TUN模式错误', `设置TUN模式失败: ${error.message}`);
+    
+    // 恢复菜单项状态
+    menuItem.checked = !menuItem.checked;
+    tunModeEnabled = !menuItem.checked;
+    
+    // 保存恢复后的TUN状态到文件
+    try {
+      const tunConfigPath = path.join(userDataPath, 'tun-config.json');
+      fs.writeFileSync(tunConfigPath, JSON.stringify({ enabled: tunModeEnabled }), 'utf8');
+      console.log(`已保存恢复后的TUN模式状态: ${tunModeEnabled ? '启用' : '禁用'}`);
+    } catch (saveError) {
+      console.error('保存TUN模式状态失败:', saveError);
+    }
+    
+    if (mainWindow) {
+      mainWindow.webContents.send('tun-status', tunModeEnabled);
     }
   }
 }
@@ -978,6 +1185,101 @@ function updateSystemProxyIfEnabled() {
 // 自动启动Mihomo功能
 async function autoStartMihomo() {
   try {
+    // 首先检查内核是否已经在运行
+    console.log('检查内核是否已经在运行...');
+    
+    // 临时保存原始apiConfig，避免影响后续流程
+    const originalApiConfig = { ...activeApiConfig };
+    
+    // 确保API配置已设置（即使后续要重置）
+    if (!activeApiConfig) {
+      activeApiConfig = {
+        controllerHost: '127.0.0.1',
+        controllerPort: '9090',
+        secret: ''
+      };
+    }
+    
+    const isRunning = await checkMihomoService();
+    
+    if (isRunning) {
+      console.log('检测到内核已经在运行，获取内核信息...');
+      
+      try {
+        // 尝试获取当前内核的配置信息
+        const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
+        const port = activeApiConfig.controllerPort;
+        const headers = {};
+        if (activeApiConfig.secret) {
+          headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+        }
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        
+        const configResponse = await fetch(`http://${host}:${port}/configs`, { 
+          headers,
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (configResponse.ok) {
+          const configData = await configResponse.json();
+          console.log('成功获取现有内核配置信息', configData);
+          
+          // 保持当前activeApiConfig不变，因为它正常工作
+          
+          // 更新内核状态
+          configFilePath = configData.path || '已连接到现有内核';
+          
+          // 通知前端更新状态
+          if (mainWindow) {
+            mainWindow.webContents.send('mihomo-autostart', {
+              success: true,
+              configPath: configFilePath,
+              existing: true,
+              configData: configData
+            });
+          }
+          
+          // 启动连接管理和流量统计
+          startTrafficStatsUpdate();
+          startConnectionsWebSocket();
+          
+          // 获取当前节点
+          updateCurrentNodeInfo();
+          
+          return;
+        } else {
+          console.log(`无法获取内核配置信息，状态码: ${configResponse.status}`);
+        }
+      } catch (error) {
+        console.error('获取现有内核配置信息失败:', error);
+      }
+      
+      // 如果无法获取详细信息，则使用基本通知
+      if (mainWindow) {
+        mainWindow.webContents.send('mihomo-autostart', {
+          success: true,
+          configPath: '已连接到现有内核',
+          existing: true
+        });
+      }
+      
+      // 启动连接管理和流量统计
+      startTrafficStatsUpdate();
+      startConnectionsWebSocket();
+      
+      return;
+    }
+    
+    // 恢复原始设置，避免干扰后续启动流程
+    activeApiConfig = originalApiConfig;
+    
+    // 首先确保必要的mihomo数据文件已准备好
+    await ensureMihomoDataFiles();
+    
     // 获取保存的订阅列表
     const subscriptions = await getSubscriptionList();
     if (subscriptions.length === 0) {
@@ -1048,6 +1350,88 @@ async function autoStartMihomo() {
   }
 }
 
+// 新增函数：确保mihomo所需的数据文件存在
+async function ensureMihomoDataFiles() {
+  try {
+    // mihomo默认配置目录
+    const homeDir = process.env.USERPROFILE || process.env.HOME;
+    const mihomoConfigDir = path.join(homeDir, '.config', 'mihomo');
+    
+    console.log(`检查mihomo配置目录: ${mihomoConfigDir}`);
+    
+    // 确保mihomo配置目录存在
+    if (!fs.existsSync(mihomoConfigDir)) {
+      console.log(`创建mihomo配置目录: ${mihomoConfigDir}`);
+      fs.mkdirSync(mihomoConfigDir, { recursive: true });
+    }
+    
+    // 数据文件源目录
+    let dataSourceDir;
+    if (isDev) {
+      // 开发环境
+      dataSourceDir = path.join(process.cwd(), 'tools', 'data');
+      console.log(`开发环境数据源目录: ${dataSourceDir}`);
+    } else {
+      // 生产环境
+      dataSourceDir = path.join(process.resourcesPath, 'tools', 'data');
+      console.log(`生产环境数据源目录: ${dataSourceDir}`);
+    }
+    
+    // 检查源目录是否存在
+    if (!fs.existsSync(dataSourceDir)) {
+      console.warn(`数据源目录不存在: ${dataSourceDir}`);
+      // 尝试备用路径
+      if (isDev) {
+        dataSourceDir = path.join(process.cwd(), 'flycast-ui', 'tools', 'data');
+      } else {
+        dataSourceDir = path.join(app.getAppPath(), 'tools', 'data');
+      }
+      console.log(`尝试备用数据源目录: ${dataSourceDir}`);
+      
+      if (!fs.existsSync(dataSourceDir)) {
+        console.error(`备用数据源目录也不存在: ${dataSourceDir}`);
+        return;
+      }
+    }
+    
+    console.log(`从 ${dataSourceDir} 复制数据文件到 ${mihomoConfigDir}`);
+    
+    // 数据文件列表
+    const dataFiles = [
+      'geoip.metadb',
+      'geosite.dat',
+      'country.mmdb',
+      'geoip.dat',
+      'ASN.mmdb'
+    ];
+    
+    // 复制每个数据文件（如果目标文件不存在）
+    for (const fileName of dataFiles) {
+      const sourceFile = path.join(dataSourceDir, fileName);
+      const targetFile = path.join(mihomoConfigDir, fileName);
+      
+      if (!fs.existsSync(sourceFile)) {
+        console.warn(`源文件不存在: ${sourceFile}`);
+        continue;
+      }
+      
+      // 如果源文件存在且目标文件不存在，则复制
+      if (!fs.existsSync(targetFile)) {
+        console.log(`复制文件: ${fileName} (${fs.statSync(sourceFile).size / 1024 / 1024} MB)`);
+        fs.copyFileSync(sourceFile, targetFile);
+        console.log(`文件复制成功: ${targetFile}`);
+      } else {
+        console.log(`目标文件已存在，跳过: ${targetFile}`);
+      }
+    }
+    
+    console.log('mihomo数据文件检查和复制完成');
+  } catch (error) {
+    console.error('准备mihomo数据文件时出错:', error);
+    throw error;  // 重新抛出错误以便调用者处理
+  }
+}
+
 // 获取订阅列表
 function getSubscriptionList() {
   return new Promise((resolve) => {
@@ -1115,10 +1499,24 @@ function parseConfigFile(filePath) {
         }
       }
     }
+
+    // 提取API配置信息，强制使用固定的控制器地址和空密钥
+    const apiConfig = {
+      'external-controller': '0.0.0.0:9090',  // 服务器监听所有接口
+      'secret': ''  // 强制使用空密钥
+    };
+
+    // 使用127.0.0.1作为客户端连接地址
+    const controllerHost = '127.0.0.1';
+    const controllerPort = '9090';
     
-      return {
+    apiConfig.controllerHost = controllerHost;
+    apiConfig.controllerPort = controllerPort;
+      
+    return {
       proxyGroups,
-      proxies
+      proxies,
+      apiConfig
     };
   } catch (error) {
     console.error('解析配置文件失败:', error);
@@ -1192,88 +1590,123 @@ async function getConfig() {
 
 // 更新流量统计
 function updateTrafficStats() {
-  // 如果WebSocket已经连接，不需要重新连接
-  if (trafficWebSocket && trafficWebSocket.readyState === 1) { // 1 = OPEN
+  // 避免创建多个连接
+  if (trafficWebSocket && trafficWebSocket.readyState !== WebSocket.CLOSED) {
     return;
   }
-
-  // 使用标准的WebSocket地址
-  const wsUrl = 'ws://127.0.0.1:9090/traffic';
   
-  // 创建流量统计WebSocket
-  trafficWebSocket = new WebSocket(wsUrl);
-
-  trafficWebSocket.on('open', () => {
-    console.log('流量统计WebSocket连接已建立');
-    trafficRetry = 10; // 重置重试计数
-  });
-
-  trafficWebSocket.on('message', (data) => {
-    try {
-      const json = JSON.parse(data);
-      
-      // 确保数据格式正确
-      if (!json || typeof json.up !== 'number' || typeof json.down !== 'number') {
-        console.error('无效的流量数据格式');
-        return;
-      }
-
-      // 更新统计数据
-      const stats = {
-        up: json.up,
-        down: json.down,
-        timestamp: Date.now(),
-        upSpeed: json.up,
-        downSpeed: json.down
-      };
-
-      lastTrafficStats = stats;
-      
-      // 发送更新到主窗口
-      if (mainWindow) {
-        mainWindow.webContents.send('traffic-update', stats);
-      }
-      
-      // 每当收到流量更新时，同时获取总流量数据
-      fetchConnectionsInfo();
-      
-      // 只在流量变化较大时输出日志（大于10MB的变化）
-      const significantChange = Math.abs(stats.up - lastTrafficStats.up) > 10 * 1024 * 1024 || 
-                               Math.abs(stats.down - lastTrafficStats.down) > 10 * 1024 * 1024;
-      if (significantChange) {
-        console.log(`流量更新: 上传 ${formatTraffic(stats.up)}, 下载 ${formatTraffic(stats.down)}`);
-      }
-    } catch (error) {
-      console.error('处理流量数据时出错:', error);
+  try {
+    // 检查是否有解析的API配置
+    if (!activeApiConfig) {
+      console.error('无法连接WebSocket: API配置不可用');
+      return;
     }
-  });
 
-  trafficWebSocket.on('close', () => {
-    // 只在第一次关闭时输出日志
-    if (trafficRetry === 10) {
-      console.log('流量统计WebSocket连接已关闭');
+    // 确保使用127.0.0.1作为客户端连接地址
+    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
+    
+    // 使用解析的WebSocket地址
+    const wsUrl = `ws://${host}:${activeApiConfig.controllerPort}/traffic`;
+    
+    console.log(`[调试] 连接到流量统计WebSocket: ${wsUrl}`);
+    
+    // 创建流量统计WebSocket
+    trafficWebSocket = new WebSocket(wsUrl);
+
+    // 如果有secret密钥，添加到请求头或认证消息
+    if (activeApiConfig.secret) {
+      trafficWebSocket.on('open', () => {
+        trafficWebSocket.send(JSON.stringify({
+          type: 'auth',
+          payload: activeApiConfig.secret
+        }));
+      });
     }
-    trafficWebSocket = null;
 
-    if (trafficRetry > 0) {
-      trafficRetry--;
-      // 只在第一次和最后一次重试时输出日志
-      if (trafficRetry === 9 || trafficRetry === 0) {
-        console.log(`尝试重新连接WebSocket，剩余重试次数: ${trafficRetry}`);
+    trafficWebSocket.on('open', () => {
+      console.log('[调试] 流量统计WebSocket连接已建立');
+      trafficRetry = 10; // 重置重试计数
+    });
+
+    trafficWebSocket.on('message', (data) => {
+      try {
+        const json = JSON.parse(data);
+        
+        // 确保数据格式正确
+        if (!json || typeof json.up !== 'number' || typeof json.down !== 'number') {
+          console.error('[调试] 无效的流量数据格式');
+          return;
+        }
+
+        // 更新统计数据
+        const stats = {
+          up: json.up,
+          down: json.down,
+          timestamp: Date.now(),
+          upSpeed: json.up,
+          downSpeed: json.down
+        };
+
+        lastTrafficStats = stats;
+        
+        // 添加到历史记录并限制大小
+        trafficHistory.push(stats);
+        if (trafficHistory.length > MAX_TRAFFIC_HISTORY) {
+          trafficHistory.shift(); // 移除最旧的记录
+        }
+        
+        // 发送更新到主窗口
+        if (mainWindow) {
+          mainWindow.webContents.send('traffic-update', stats);
+        }
+        
+        // 减少连接信息获取频率，例如每5秒一次
+        const currentTime = Date.now();
+        if (!lastConnectionsFetchTime || (currentTime - lastConnectionsFetchTime) > 5000) {
+          fetchConnectionsInfo();
+          lastConnectionsFetchTime = currentTime;
+        }
+        
+        // 只在流量变化较大时输出日志（大于10MB的变化）
+        const significantChange = Math.abs(stats.up - lastTrafficStats.up) > 10 * 1024 * 1024 || 
+                                Math.abs(stats.down - lastTrafficStats.down) > 10 * 1024 * 1024;
+        if (significantChange) {
+          console.log(`[调试] 流量更新: 上传 ${formatTraffic(stats.up)}, 下载 ${formatTraffic(stats.down)}`);
+        }
+      } catch (error) {
+        console.error('[调试] 处理流量数据时出错:', error);
       }
-      updateTrafficStats();
-    } else {
-      console.log('WebSocket重连次数已达上限，停止重试');
-    }
-  });
+    });
 
-  trafficWebSocket.on('error', (error) => {
-    console.error('流量统计WebSocket错误:', error);
-    if (trafficWebSocket) {
-      trafficWebSocket.close();
+    trafficWebSocket.on('close', () => {
+      // 只在第一次关闭时输出日志
+      if (trafficRetry === 10) {
+        console.log('[调试] 流量统计WebSocket连接已关闭');
+      }
       trafficWebSocket = null;
-    }
-  });
+
+      if (trafficRetry > 0) {
+        trafficRetry--;
+        // 只在第一次和最后一次重试时输出日志
+        if (trafficRetry === 9 || trafficRetry === 0) {
+          console.log(`[调试] 尝试重新连接WebSocket，剩余重试次数: ${trafficRetry}`);
+        }
+        updateTrafficStats();
+      } else {
+        console.log('[调试] WebSocket重连次数已达上限，停止重试');
+      }
+    });
+
+    trafficWebSocket.on('error', (error) => {
+      console.error('[调试] 流量统计WebSocket错误:', error);
+      if (trafficWebSocket) {
+        trafficWebSocket.close();
+        trafficWebSocket = null;
+      }
+    });
+  } catch (error) {
+    // ... existing code ...
+  }
 }
 
 // 设置定时更新流量统计
@@ -1314,8 +1747,28 @@ async function startConnectionsWebSocket() {
       throw new Error('未选择节点');
     }
 
-    // 创建新的WebSocket连接
-    connectionsWebSocket = new WebSocket(`ws://localhost:8080/connections/${currentNode}`);
+    if (!activeApiConfig) {
+      throw new Error('API配置不可用');
+    }
+
+    // 确保使用127.0.0.1作为客户端连接地址
+    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
+
+    // 创建新的WebSocket连接，使用activeApiConfig中的参数
+    const wsUrl = `ws://${host}:${activeApiConfig.controllerPort}/connections/${currentNode}`;
+    console.log(`[调试] 连接到节点WebSocket: ${wsUrl}`);
+    
+    connectionsWebSocket = new WebSocket(wsUrl);
+    
+    // 如果有secret密钥，添加到认证消息
+    if (activeApiConfig.secret) {
+      connectionsWebSocket.on('open', () => {
+        connectionsWebSocket.send(JSON.stringify({
+          type: 'auth',
+          payload: activeApiConfig.secret
+        }));
+      });
+    }
     
     // 设置连接超时
     const connectionTimeout = setTimeout(() => {
@@ -1357,15 +1810,33 @@ async function startConnectionsWebSocket() {
 // 更新当前节点信息
 async function updateCurrentNodeInfo() {
   try {
+    if (!activeApiConfig) {
+      console.error('无法获取节点信息: API配置不可用');
+      return;
+    }
+
+    // 确保使用127.0.0.1作为客户端连接地址
+    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
+
     // 使用正确的API端点获取PROXY组信息
-    const response = await fetch('http://127.0.0.1:9090/proxies/PROXY');
+    const apiUrl = `http://${host}:${activeApiConfig.controllerPort}/proxies/PROXY`;
+    const headers = {};
+    
+    // 如果有secret，添加到请求头
+    if (activeApiConfig.secret) {
+      headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+    }
+    
+    console.log(`[调试] 请求节点信息: ${apiUrl}`);
+    
+    const response = await fetch(apiUrl, { headers });
     if (response.ok) {
       const data = await response.json();
-      console.log('获取到PROXY组信息:', data);
+      console.log('[调试] 获取到PROXY组信息:', data);
       
       if (data && data.now) {
         currentNode = data.now;
-        console.log('更新当前节点为:', currentNode);
+        console.log('[调试] 更新当前节点为:', currentNode);
         
         // 更新lastConnectionsInfo中的节点信息
         lastConnectionsInfo = {
@@ -1375,7 +1846,7 @@ async function updateCurrentNodeInfo() {
         
         // 通知主窗口节点已更新
         if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-          console.log('发送节点变更事件:', currentNode);
+          console.log('[调试] 发送节点变更事件:', currentNode);
           
           // 立即发送节点更新
           mainWindow.webContents.send('node-changed', { nodeName: currentNode });
@@ -1383,21 +1854,19 @@ async function updateCurrentNodeInfo() {
           // 添加延迟，确保前端有足够时间处理节点更新
           setTimeout(() => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              console.log('延迟发送连接信息更新:', lastConnectionsInfo);
+              console.log('[调试] 延迟发送连接信息更新:', lastConnectionsInfo);
               mainWindow.webContents.send('connections-update', lastConnectionsInfo);
             }
           }, 500);
-        } else {
-          console.warn('主窗口未准备好，无法发送节点变更事件');
         }
       } else {
-        console.error('PROXY组信息中没有now字段:', data);
+        console.warn('[调试] 无法获取当前节点信息:', data);
       }
     } else {
-      console.error('获取PROXY组信息失败:', response.status, response.statusText);
+      console.error('[调试] 获取节点信息请求失败:', response.status, response.statusText);
     }
   } catch (error) {
-    console.error('获取当前节点信息失败:', error);
+    console.error('[调试] 更新节点信息失败:', error);
   }
 }
 
@@ -1412,14 +1881,91 @@ function stopConnectionsWebSocket() {
 
 // 添加检查Mihomo服务状态的函数
 async function checkMihomoService() {
+  // 定义几个可能的端口和端点组合，按优先级排序
+  const possibleEndpoints = [
+    { port: '9090', path: '/proxies' },
+    { port: '9090', path: '/version' },
+    { port: '7890', path: '/proxies' },
+    { port: '7890', path: '/version' }
+  ];
+  
   try {
-    const response = await fetch('http://127.0.0.1:9090/proxies');
-    if (response.ok) {
-      return true;
+    if (!activeApiConfig) {
+      console.error('[调试] 无法检查Mihomo服务: API配置不可用');
+      return false;
     }
+
+    // 确保使用127.0.0.1作为客户端连接地址
+    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
+    const secret = activeApiConfig.secret;
+    
+    // 首先尝试使用配置中的端口和路径
+    const headers = {};
+    if (secret) {
+      headers['Authorization'] = `Bearer ${secret}`;
+    }
+    
+    const configuredPort = activeApiConfig.controllerPort;
+    const apiUrl = `http://${host}:${configuredPort}/proxies`;
+    
+    console.log(`[调试] 检查Mihomo服务(配置端口): ${apiUrl}`);
+    
+    try {
+      // 添加超时控制
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5秒超时
+      
+      const response = await fetch(apiUrl, { 
+        headers, 
+        signal: controller.signal 
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        console.log('[调试] Mihomo服务检查通过 (使用配置端口)');
+        return true;
+      }
+      console.log(`[调试] 使用配置端口检查失败，状态码: ${response.status}`);
+    } catch (error) {
+      console.log(`[调试] 使用配置端口检查出错: ${error.message}`);
+    }
+    
+    // 如果使用配置的端口检查失败，则尝试其他可能的组合
+    for (const endpoint of possibleEndpoints) {
+      // 跳过与配置相同的端口/路径组合
+      if (endpoint.port === configuredPort && endpoint.path === '/proxies') {
+        continue;
+      }
+      
+      const url = `http://${host}:${endpoint.port}${endpoint.path}`;
+      console.log(`[调试] 尝试检查Mihomo服务: ${url}`);
+      
+      try {
+        // 添加超时控制
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1秒超时
+        
+        const response = await fetch(url, { 
+          headers, 
+          signal: controller.signal 
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          console.log(`[调试] Mihomo服务检查通过 (使用端口 ${endpoint.port})`);
+          return true;
+        }
+      } catch (error) {
+        console.log(`[调试] 尝试端口 ${endpoint.port} 路径 ${endpoint.path} 失败: ${error.message}`);
+      }
+    }
+    
+    console.log('[调试] 所有Mihomo服务检查尝试都失败了');
     return false;
   } catch (error) {
-    console.error('[DEBUG] Mihomo服务检查失败:', error);
+    console.error('[调试] Mihomo服务检查失败:', error);
     return false;
   }
 }
@@ -1439,7 +1985,47 @@ function handleMihomoProcessExit(code) {
   }
 }
 
+// 应用启动时执行
 app.whenReady().then(() => {
+  // 注册协议处理器
+  if (process.platform === 'win32') {
+    app.setAsDefaultProtocolClient('clash');
+    app.setAsDefaultProtocolClient('flyclash');
+    
+    console.log('已注册协议处理器: clash://, flyclash://');
+    console.log('启动参数:', process.argv);
+    
+    // 处理启动时传入的命令行参数
+    const gotTheLock = app.requestSingleInstanceLock();
+    if (!gotTheLock) {
+      console.log('已有实例运行，退出当前实例');
+      app.quit();
+      return;
+    }
+    
+    // 检查启动参数是否包含协议URL
+    let foundProtocolArg = false;
+    for (const arg of process.argv) {
+      if (arg.includes('clash://') || 
+          arg.includes('flyclash://') ||
+          arg.includes('?url=')) {
+        console.log('检测到可能的协议URL参数:', arg);
+        foundProtocolArg = true;
+        handleProtocolUrl(arg);
+      }
+    }
+    
+    if (!foundProtocolArg) {
+      console.log('启动参数中未找到协议URL');
+    }
+  }
+  
+  createWindow();
+  
+  app.on('activate', function () {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
   // 加载主题设置
   try {
     const themeConfigPath = path.join(userDataPath, 'theme-config.json');
@@ -1454,6 +2040,13 @@ app.whenReady().then(() => {
 
   // 确保用户设置文件存在
   ensureUserSettingsFile();
+  
+  // 确保mihomo所需的数据文件存在
+  ensureMihomoDataFiles().then(() => {
+    console.log('mihomo数据文件初始化完成');
+  }).catch(error => {
+    console.error('mihomo数据文件初始化失败:', error);
+  });
   
   // 检查系统是否已经启用代理
   try {
@@ -1476,9 +2069,23 @@ app.whenReady().then(() => {
   } catch (error) {
     console.error('检查系统代理状态失败:', error);
   }
+  
+  // 检查TUN模式状态
+  try {
+    // 读取用户设置
+    const userSettings = getUserSettings();
+    // 检查TUN模式状态
+    tunModeEnabled = userSettings.tun && userSettings.tun.enable === true;
+    console.log('TUN模式状态:', tunModeEnabled ? '已启用' : '未启用');
+    
+    // 保存TUN状态到文件，方便重启应用后恢复
+    const tunConfigPath = path.join(userDataPath, 'tun-config.json');
+    fs.writeFileSync(tunConfigPath, JSON.stringify({ enabled: tunModeEnabled }), 'utf8');
+  } catch (error) {
+    console.error('检查TUN模式状态失败:', error);
+  }
 
   // 创建窗口和其他初始化操作
-  createWindow();
   setupTray();
   
   // 注册工具应用处理程序
@@ -1606,53 +2213,155 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('save-subscription', (event, subUrl, configData, customName) => {
-    // 添加调试输出
-    console.log('保存订阅 - URL:', subUrl);
-    console.log('保存订阅 - 自定义名称:', customName);
-    
-    // 如果提供了自定义名称，使用它作为文件名，否则使用时间戳
-    const fileName = customName 
-      ? `${customName.replace(/[^\w\u4e00-\u9fa5\-\.]/g, '_')}.yaml` // 替换非法字符
-      : `sub_${Date.now()}.yaml`;
-    
-    console.log('保存订阅 - 最终文件名:', fileName);
-    
-    const filePath = path.join(configDir, fileName);
-    fs.writeFileSync(filePath, configData);
-    
-    // 保存订阅URL到记录文件
+  // 保存订阅
+  ipcMain.handle('save-subscription', async (event, url, content, customName, subscriptionInfo) => {
     try {
-      // 读取订阅URL记录文件（如果存在）
-      const urlsPath = path.join(configDir, 'subscription_urls.json');
-      let urlsData = {};
-      if (fs.existsSync(urlsPath)) {
-        urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
+      // 确保配置目录存在
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
       }
       
-      // 更新URL记录
-      urlsData[fileName] = subUrl;
+      // 确保content是有效的
+      if (!content) {
+        throw new Error('保存失败：配置内容为空');
+      }
       
-      // 保存更新后的记录
-      fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
-      console.log(`订阅URL已记录: ${fileName} -> ${subUrl}`);
+      // 生成文件名
+      let fileName;
+      if (customName && customName.trim() !== '') {
+        fileName = `${customName.trim()}.yaml`;
+      } else {
+        // 如果没有提供自定义名称，使用URL的一部分作为名称
+        try {
+          const parsed = new URL(url);
+          fileName = `${parsed.hostname.replace(/\./g, '_')}.yaml`;
+        } catch (e) {
+          // 如果URL解析失败，使用时间戳
+          fileName = `subscription_${Date.now()}.yaml`;
+        }
+      }
+      
+      // 确保文件名是安全的
+      fileName = fileName.replace(/[^a-zA-Z0-9_\-.]/g, '_');
+      
+      // 构建文件路径
+      const filePath = path.join(configDir, fileName);
+      
+      // 写入内容
+      fs.writeFileSync(filePath, content);
+      
+      // 保存订阅URL，用于未来更新
+      try {
+        // 获取或创建订阅URL记录文件
+        const urlsPath = path.join(configDir, 'subscription_urls.json');
+        let urlsData = {};
+        
+        if (fs.existsSync(urlsPath)) {
+          urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
+        }
+        
+        // 将新的订阅URL添加到记录中
+        urlsData[fileName] = url;
+        
+        // 保存更新的记录
+        fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2));
+      } catch (error) {
+        console.warn('保存订阅URL记录失败，但配置文件已保存:', error);
+      }
+      
+      // 保存订阅信息（流量、到期时间等）
+      if (subscriptionInfo) {
+        try {
+          // 获取或创建订阅信息记录文件
+          const infoPath = path.join(configDir, 'subscription_info.json');
+          let infoData = {};
+          
+          if (fs.existsSync(infoPath)) {
+            infoData = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+          }
+          
+          // 将新的订阅信息添加到记录中
+          infoData[fileName] = {
+            ...subscriptionInfo,
+            lastUpdated: new Date().toISOString()
+          };
+          
+          // 保存更新的记录 - 确保将对象转换为JSON字符串
+          const infoContent = JSON.stringify(infoData, null, 2);
+          fs.writeFileSync(infoPath, infoContent);
+          
+          // 同时也保存到subscriptions_info.json（兼容性考虑）
+          try {
+            const infoPathPlural = path.join(configDir, 'subscriptions_info.json');
+            fs.writeFileSync(infoPathPlural, infoContent);
+          } catch (e) {
+            console.warn('保存subscriptions_info.json失败:', e);
+          }
+        } catch (error) {
+          console.warn('保存订阅信息记录失败，但配置文件已保存:', error);
+        }
+      }
+      
+      return filePath;
     } catch (error) {
-      console.warn('保存订阅URL记录失败:', error);
+      console.error('保存订阅失败:', error);
+      throw error;
     }
-    
-    return filePath;
   });
 
-  ipcMain.handle('get-subscriptions', () => {
-    if (!fs.existsSync(configDir)) return [];
-    
-    return fs.readdirSync(configDir)
-      .filter(file => file.endsWith('.yaml'))
-      .map(file => ({
-        name: file.replace('.yaml', ''),
-        path: path.join(configDir, file)
-      }));
+  ipcMain.handle('get-subscriptions', (event) => {
+    try {
+      return getSubscriptionList();
+    } catch (error) {
+      console.error('获取订阅列表失败:', error);
+      return [];
+    }
   });
+  
+  // 辅助函数：获取订阅列表
+  function getSubscriptionList() {
+    try {
+      // 确保配置目录存在
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
+        return [];
+      }
+      
+      // 读取目录中的.yaml文件
+      const files = fs.readdirSync(configDir).filter(file => file.endsWith('.yaml'));
+      
+      // 读取订阅信息记录
+      let subscriptionInfoData = {};
+      const infoPath = path.join(configDir, 'subscription_info.json');
+      if (fs.existsSync(infoPath)) {
+        try {
+          subscriptionInfoData = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+        } catch (e) {
+          console.error('读取订阅信息记录失败:', e);
+        }
+      }
+      
+      // 转换为订阅对象列表
+      return files.map(file => {
+        const filePath = path.join(configDir, file);
+        
+        // 获取各个订阅的信息数据
+        const info = subscriptionInfoData[file] || {};
+        
+        return {
+          name: file.replace(/\.yaml$/, ''),
+          path: filePath,
+          usedTraffic: info.usedTraffic || null,
+          remainingTraffic: info.remainingTraffic || null,
+          expiryDate: info.expiryDate || null,
+          lastUpdated: info.lastUpdated ? new Date(info.lastUpdated).toLocaleString() : null
+        };
+      });
+    } catch (error) {
+      console.error('获取订阅列表失败:', error);
+      return [];
+    }
+  }
 
   ipcMain.handle('delete-subscription', (event, filePath) => {
     try {
@@ -1679,11 +2388,53 @@ app.whenReady().then(() => {
       }
       
       console.log('正在获取订阅内容...');
-      const response = await fetch(subUrl);
+      const response = await fetch(subUrl, {
+        headers: {
+          'User-Agent': `FlyClash/${APP_VERSION}`
+        }
+      });
       
       if (!response.ok) {
         throw new Error(`获取订阅失败: ${response.statusText}`);
       }
+      
+      // 解析响应头的订阅信息
+      const subscriptionInfo = {
+        usedTraffic: response.headers.get('subscription-userinfo-upload') ? formatTraffic(parseInt(response.headers.get('subscription-userinfo-upload') || '0')) : null,
+        remainingTraffic: response.headers.get('subscription-userinfo-total') ? formatTraffic(parseInt(response.headers.get('subscription-userinfo-total') || '0') - parseInt(response.headers.get('subscription-userinfo-download') || '0') - parseInt(response.headers.get('subscription-userinfo-upload') || '0')) : null,
+        expiryDate: response.headers.get('subscription-userinfo-expire') ? new Date(parseInt(response.headers.get('subscription-userinfo-expire') || '0') * 1000).toLocaleDateString() : null,
+      };
+      
+      // 尝试解析完整的Subscription-Userinfo头
+      const subUserInfo = response.headers.get('subscription-userinfo');
+      if (subUserInfo) {
+        // 格式示例：upload=1; download=1; total=100; expire=1640995200
+        const parts = subUserInfo.split(';').map(part => part.trim());
+        for (const part of parts) {
+          const [key, value] = part.split('=').map(item => item.trim());
+          if (key === 'upload' && !subscriptionInfo.usedTraffic) {
+            const upload = parseInt(value) || 0;
+            const download = parseInt(parts.find(p => p.startsWith('download='))?.split('=')[1] || '0');
+            subscriptionInfo.usedTraffic = formatTraffic(upload + download);
+          }
+          if (key === 'total' && !subscriptionInfo.remainingTraffic) {
+            const total = parseInt(value) || 0;
+            const upload = parseInt(parts.find(p => p.startsWith('upload='))?.split('=')[1] || '0');
+            const download = parseInt(parts.find(p => p.startsWith('download='))?.split('=')[1] || '0');
+            if (total > 0) {
+              subscriptionInfo.remainingTraffic = formatTraffic(Math.max(0, total - upload - download));
+            }
+          }
+          if (key === 'expire' && !subscriptionInfo.expiryDate) {
+            const expire = parseInt(value) || 0;
+            if (expire > 0) {
+              subscriptionInfo.expiryDate = new Date(expire * 1000).toLocaleDateString();
+            }
+          }
+        }
+      }
+      
+      console.log('订阅流量信息:', subscriptionInfo);
       
       const content = await response.text();
       
@@ -1703,7 +2454,10 @@ app.whenReady().then(() => {
       }
       
       console.log('订阅内容获取成功');
-      return content;
+      return {
+        content,
+        subscriptionInfo
+      };
     } catch (error) {
       console.error('获取订阅失败:', error);
       return null;
@@ -1824,6 +2578,44 @@ app.whenReady().then(() => {
         throw new Error(`获取订阅失败: ${response.statusText}`);
       }
       
+      // 解析响应头的订阅信息
+      const subscriptionInfo = {
+        usedTraffic: response.headers.get('subscription-userinfo-upload') ? formatTraffic(parseInt(response.headers.get('subscription-userinfo-upload') || '0')) : null,
+        remainingTraffic: response.headers.get('subscription-userinfo-total') ? formatTraffic(parseInt(response.headers.get('subscription-userinfo-total') || '0') - parseInt(response.headers.get('subscription-userinfo-download') || '0') - parseInt(response.headers.get('subscription-userinfo-upload') || '0')) : null,
+        expiryDate: response.headers.get('subscription-userinfo-expire') ? new Date(parseInt(response.headers.get('subscription-userinfo-expire') || '0') * 1000).toLocaleDateString() : null,
+      };
+      
+      // 尝试解析完整的Subscription-Userinfo头
+      const subUserInfo = response.headers.get('subscription-userinfo');
+      if (subUserInfo) {
+        // 格式示例：upload=1; download=1; total=100; expire=1640995200
+        const parts = subUserInfo.split(';').map(part => part.trim());
+        for (const part of parts) {
+          const [key, value] = part.split('=').map(item => item.trim());
+          if (key === 'upload' && !subscriptionInfo.usedTraffic) {
+            const upload = parseInt(value) || 0;
+            const download = parseInt(parts.find(p => p.startsWith('download='))?.split('=')[1] || '0');
+            subscriptionInfo.usedTraffic = formatTraffic(upload + download);
+          }
+          if (key === 'total' && !subscriptionInfo.remainingTraffic) {
+            const total = parseInt(value) || 0;
+            const upload = parseInt(parts.find(p => p.startsWith('upload='))?.split('=')[1] || '0');
+            const download = parseInt(parts.find(p => p.startsWith('download='))?.split('=')[1] || '0');
+            if (total > 0) {
+              subscriptionInfo.remainingTraffic = formatTraffic(Math.max(0, total - upload - download));
+            }
+          }
+          if (key === 'expire' && !subscriptionInfo.expiryDate) {
+            const expire = parseInt(value) || 0;
+            if (expire > 0) {
+              subscriptionInfo.expiryDate = new Date(expire * 1000).toLocaleDateString();
+            }
+          }
+        }
+      }
+      
+      console.log('订阅流量信息:', subscriptionInfo);
+      
       const configData = await response.text();
       
       if (!configData || configData.trim() === '') {
@@ -1873,9 +2665,33 @@ app.whenReady().then(() => {
             urlsData[path.basename(filePath)] = subUrl;
             
             // 保存更新后的记录
-            fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2), 'utf8');
+            fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2));
           } catch (error) {
             console.warn('更新订阅URL记录失败，但配置文件已更新:', error);
+          }
+        }
+        
+        // 保存订阅信息（流量、到期时间等）
+        if (subscriptionInfo) {
+          try {
+            // 获取或创建订阅信息记录文件
+            const infoPath = path.join(configDir, 'subscription_info.json');
+            let infoData = {};
+            
+            if (fs.existsSync(infoPath)) {
+              infoData = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+            }
+            
+            // 将新的订阅信息添加到记录中
+            infoData[path.basename(filePath)] = {
+              ...subscriptionInfo,
+              lastUpdated: new Date().toISOString()
+            };
+            
+            // 保存更新的记录
+            fs.writeFileSync(infoPath, JSON.stringify(infoData, null, 2));
+          } catch (error) {
+            console.warn('保存订阅信息记录失败，但配置文件已更新:', error);
           }
         }
         
@@ -1975,78 +2791,38 @@ app.whenReady().then(() => {
       const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
       
       // 获取代理节点信息
-      const response = await fetch('http://127.0.0.1:9090/proxies');
-      const data = await response.json();
-      
-      console.log(`[DEBUG] 获取代理节点信息成功`);
-      
-      // 处理数据，提取节点组和当前选中的节点
-      const groups = [];
-      let selected = null;
-      
-      // 首先查找PROXY组
-      if (data.proxies && data.proxies['PROXY']) {
-        const proxyGroup = data.proxies['PROXY'];
-        selected = proxyGroup.now;
-        
-        // 提取节点组
-        if (proxyGroup.all && proxyGroup.all.length > 0) {
-          const nodes = [];
-          for (const nodeName of proxyGroup.all) {
-            if (data.proxies[nodeName]) {
-              const node = data.proxies[nodeName];
-              nodes.push({
-                name: nodeName,
-                type: node.type,
-                server: node.server || '',
-                port: node.port || 0,
-                delay: node.delay || undefined
-              });
-            }
-          }
-          
-          groups.push({
-            name: 'PROXY',
-            type: proxyGroup.type,
-            nodes: nodes
-          });
-        }
-      }
-      // 如果PROXY组不存在，则查找GLOBAL组作为备选
-      else if (data.proxies && data.proxies['GLOBAL']) {
-        const globalGroup = data.proxies['GLOBAL'];
-        selected = globalGroup.now;
-        
-        // 提取节点组
-        if (globalGroup.all && globalGroup.all.length > 0) {
-          const nodes = [];
-          for (const nodeName of globalGroup.all) {
-            if (data.proxies[nodeName]) {
-              const node = data.proxies[nodeName];
-              nodes.push({
-                name: nodeName,
-                type: node.type,
-                server: node.server || '',
-                port: node.port || 0,
-                delay: node.delay || undefined
-              });
-            }
-          }
-          
-          groups.push({
-            name: 'GLOBAL',
-            type: globalGroup.type,
-            nodes: nodes
-          });
-        }
+      if (!activeApiConfig) {
+        console.error('无法获取代理节点: API配置不可用');
+        return;
       }
       
-      // 提取其他节点组
-      for (const [name, proxy] of Object.entries(data.proxies)) {
-        if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback' || proxy.type === 'LoadBalance') {
-          if (name !== 'GLOBAL' && name !== 'PROXY' && proxy.all && proxy.all.length > 0) {
+      const apiUrl = `http://${activeApiConfig.controllerHost}:${activeApiConfig.controllerPort}/proxies`;
+      const headers = {};
+      
+      // 如果有secret，添加到请求头
+      if (activeApiConfig.secret) {
+        headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+      }
+      
+      const response = await fetch(apiUrl, { headers });
+      if (response.ok) {
+        const data = await response.json();
+        
+        console.log(`[DEBUG] 获取代理节点信息成功`);
+        
+        // 处理数据，提取节点组和当前选中的节点
+        const groups = [];
+        let selected = null;
+        
+        // 首先查找PROXY组
+        if (data.proxies && data.proxies['PROXY']) {
+          const proxyGroup = data.proxies['PROXY'];
+          selected = proxyGroup.now;
+          
+          // 提取节点组
+          if (proxyGroup.all && proxyGroup.all.length > 0) {
             const nodes = [];
-            for (const nodeName of proxy.all) {
+            for (const nodeName of proxyGroup.all) {
               if (data.proxies[nodeName]) {
                 const node = data.proxies[nodeName];
                 nodes.push({
@@ -2060,18 +2836,73 @@ app.whenReady().then(() => {
             }
             
             groups.push({
-              name: name,
-              type: proxy.type,
+              name: 'PROXY',
+              type: proxyGroup.type,
               nodes: nodes
             });
           }
         }
+        // 如果PROXY组不存在，则查找GLOBAL组作为备选
+        else if (data.proxies && data.proxies['GLOBAL']) {
+          const globalGroup = data.proxies['GLOBAL'];
+          selected = globalGroup.now;
+          
+          // 提取节点组
+          if (globalGroup.all && globalGroup.all.length > 0) {
+            const nodes = [];
+            for (const nodeName of globalGroup.all) {
+              if (data.proxies[nodeName]) {
+                const node = data.proxies[nodeName];
+                nodes.push({
+                  name: nodeName,
+                  type: node.type,
+                  server: node.server || '',
+                  port: node.port || 0,
+                  delay: node.delay || undefined
+                });
+              }
+            }
+            
+            groups.push({
+              name: 'GLOBAL',
+              type: globalGroup.type,
+              nodes: nodes
+            });
+          }
+        }
+        
+        // 提取其他节点组
+        for (const [name, proxy] of Object.entries(data.proxies)) {
+          if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback' || proxy.type === 'LoadBalance') {
+            if (name !== 'GLOBAL' && name !== 'PROXY' && proxy.all && proxy.all.length > 0) {
+              const nodes = [];
+              for (const nodeName of proxy.all) {
+                if (data.proxies[nodeName]) {
+                  const node = data.proxies[nodeName];
+                  nodes.push({
+                    name: nodeName,
+                    type: node.type,
+                    server: node.server || '',
+                    port: node.port || 0,
+                    delay: node.delay || undefined
+                  });
+                }
+              }
+              
+              groups.push({
+                name: name,
+                type: proxy.type,
+                nodes: nodes
+              });
+            }
+          }
+        }
+        
+        return {
+          groups: groups,
+          selected: selected
+        };
       }
-      
-      return {
-        groups: groups,
-        selected: selected
-      };
     } catch (error) {
       console.error(`[DEBUG] 获取代理节点信息失败:`, error);
       return { groups: [], selected: null };
@@ -2334,21 +3165,31 @@ app.whenReady().then(() => {
   // 处理连接信息更新
   ipcMain.on('connections-update', (event, data) => {
     if (mainWindow) {
-      console.log('主进程发送连接信息更新:', data);
+      console.log('[调试] 处理IPC connections-update事件:', data);
+      
+      // 确保connections数组存在
+      const connections = data.connections || [];
+      
+      // 计算活跃连接数 - 与fetchConnectionsInfo保持一致
+      const activeConnections = connections.filter(conn => conn.isActive !== false).length;
+      
+      // 使用相同的字段结构发送到前端
       mainWindow.webContents.send('connections-update', {
-        connections: data.connections || [],
+        connections: connections,
         downloadTotal: data.downloadTotal || 0,
         uploadTotal: data.uploadTotal || 0,
         currentNode: currentNode,
-        activeConnections: data.connections ? data.connections.filter(conn => conn.isActive).length : 0
+        activeConnections: activeConnections
       });
+      
+      console.log(`[调试] 通过IPC发送连接更新，总连接数: ${connections.length}, 活跃连接: ${activeConnections}`);
     }
   });
 
   // 处理节点变更
   ipcMain.on('node-changed', (event, data) => {
     if (mainWindow) {
-      console.log('主进程发送节点变更:', data);
+      console.log('[调试] 处理节点变更事件:', data);
       // 更新当前节点
       if (data && data.nodeName) {
         currentNode = data.nodeName;
@@ -2359,10 +3200,16 @@ app.whenReady().then(() => {
       });
       
       // 同时更新连接信息
+      const connections = lastConnectionsInfo.connections || [];
+      const activeConnections = connections.filter(conn => conn.isActive !== false).length;
+      
       const connectionInfo = {
         ...lastConnectionsInfo,
-        currentNode: currentNode
+        currentNode: currentNode,
+        activeConnections: activeConnections
       };
+      
+      console.log(`[调试] 节点变更后发送连接更新，总连接数: ${connections.length}, 活跃连接: ${activeConnections}`);
       mainWindow.webContents.send('connections-update', connectionInfo);
     }
   });
@@ -2622,49 +3469,26 @@ app.whenReady().then(() => {
   ipcMain.handle('restart-service', restartMihomoService);
   ipcMain.handle('open-tools-app', (_, toolName) => openToolsApp(toolName));
 
-  // 测试流媒体服务
-  ipcMain.handle('test-media-service', async (event, serviceName, checkUrl) => {
+  // 新增: 切换TUN模式
+  ipcMain.handle('toggleTunMode', async (event, enabled) => {
     try {
-      const result = await testMediaStreaming(serviceName, checkUrl || '');
-      return result;
+      // 创建一个模拟的菜单项对象
+      const menuItem = { checked: enabled };
+      
+      // 调用现有的toggleTunMode函数
+      toggleTunMode(menuItem);
+      
+      // 返回当前的TUN模式状态
+      return tunModeEnabled;
     } catch (error) {
-      console.error(`测试媒体服务 ${serviceName} 时出错:`, error);
-      return {
-        available: false,
-        fullSupport: false,
-        message: '检测出错: ' + error.message,
-        checkTime: 0,
-        error: true
-      };
+      console.error('切换TUN模式失败:', error);
+      return false;
     }
   });
 
-  // 批量测试多个媒体服务
-  ipcMain.handle('test-multiple-media-services', async (event, serviceList) => {
-    try {
-      const results = await testMultipleServices(serviceList);
-      return results;
-    } catch (error) {
-      console.error('测试多个媒体服务时出错:', error);
-      return { error: error.message };
-    }
-  });
-
-  // 获取支持的流媒体服务列表
-  ipcMain.handle('get-supported-media-services', () => {
-    return getSupportedServices();
-  });
-
-  // 测试所有支持的流媒体服务
-  ipcMain.handle('test-all-media-services', async () => {
-    try {
-      const serviceList = getSupportedServices();
-      const results = await testMultipleServices(serviceList);
-      return results;
-    } catch (error) {
-      console.error('测试所有媒体服务时出错:', error);
-      return { error: error.message };
-    }
+  // 新增: 获取TUN模式状态
+  ipcMain.handle('getTunStatus', async () => {
+    return tunModeEnabled;
   });
 });
 
@@ -2672,6 +3496,21 @@ app.whenReady().then(() => {
 ipcMain.handle('test-media-streaming', async (event, serviceName, checkUrl) => {
   try {
     console.log(`收到媒体检测请求: ${serviceName}, URL: ${checkUrl}`);
+    console.log(`请确认mediatest.js模块已正确加载，testMediaStreaming函数是否存在:`, testMediaStreaming ? '存在' : '不存在');
+    
+    // 记录所有可能的服务名变体，方便调试
+    const nameVariants = {
+      'AbemaTV': ['Abema TV', 'AbemaTV', 'Abema'],
+      'myTVSuper': ['MyTVSuper', 'myTVSuper', 'mytvsuper', 'My TV Super']
+    };
+    
+    // 检查是否是已知服务的变体名称，如果是则显示相关信息
+    for (const [standardName, variants] of Object.entries(nameVariants)) {
+      if (variants.includes(serviceName)) {
+        console.log(`服务名称"${serviceName}"是"${standardName}"的变体，将使用标准名称处理`);
+      }
+    }
+    
     const result = await testMediaStreaming(serviceName, checkUrl);
     console.log(`媒体检测完成，返回结果:`, result);
     return result;
@@ -2714,17 +3553,46 @@ app.on('before-quit', () => {
 
 async function switchNode(nodeName) {
   try {
-    // 关闭现有连接
+    if (!activeApiConfig) {
+      console.error('无法切换节点: API配置不可用');
+      return;
+    }
+
+    // 准备请求参数
+    const apiUrl = `http://${activeApiConfig.controllerHost}:${activeApiConfig.controllerPort}/proxies/PROXY`;
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    
+    // 如果有secret，添加到请求头
+    if (activeApiConfig.secret) {
+      headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+    }
+    
+    // 切换节点
+    const response = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: headers,
+      body: JSON.stringify({ name: nodeName })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`切换节点请求失败: ${response.status} ${response.statusText}`);
+    }
+    
+    // 更新当前节点
+    currentNode = nodeName;
+    
+    // 关闭现有连接并重新建立
     if (connectionsWebSocket) {
       connectionsWebSocket.close();
       connectionsWebSocket = null;
     }
-
-    // 更新当前节点
-    currentNode = nodeName;
     
-    // 重新建立连接
-    await startConnectionsWebSocket();
+    // 重新建立连接 (可选)
+    if (false) { // 暂时不启用，以避免额外复杂性
+      await startConnectionsWebSocket();
+    }
     
     // 更新UI
     if (mainWindow) {
@@ -2739,6 +3607,9 @@ async function switchNode(nodeName) {
     }
     
     console.log(`已切换到节点: ${nodeName}`);
+    
+    // 刷新连接信息
+    fetchConnectionsInfo();
   } catch (error) {
     console.error('切换节点失败:', error);
     // 通知前端切换失败
@@ -2754,26 +3625,62 @@ async function switchNode(nodeName) {
 // 获取总连接信息和总流量
 async function fetchConnectionsInfo() {
   try {
-    const response = await fetch('http://127.0.0.1:9090/connections');
-    if (response.ok) {
-      const data = await response.json();
-      
-      // 更新连接信息，包括总流量
-      lastConnectionsInfo = {
-        ...lastConnectionsInfo,
-        downloadTotal: data.downloadTotal || 0,
-        uploadTotal: data.uploadTotal || 0,
-        connections: data.connections || [],
-        activeConnections: data.connections ? data.connections.length : 0
-      };
-      
-      // 发送更新到主窗口
-      if (mainWindow) {
-        mainWindow.webContents.send('connections-update', lastConnectionsInfo);
+    if (!activeApiConfig) {
+      console.error('[调试] 无法获取连接信息: API配置不可用');
+      return;
+    }
+
+    // 确保使用127.0.0.1作为客户端连接地址
+    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
+
+    // 使用正确的API端点获取连接信息
+    const apiUrl = `http://${host}:${activeApiConfig.controllerPort}/connections`;
+    const headers = {};
+    
+    // 如果有secret，添加到请求头
+    if (activeApiConfig.secret) {
+      headers['Authorization'] = `Bearer ${activeApiConfig.secret}`;
+    }
+    
+    try {
+      const response = await fetch(apiUrl, { headers });
+      if (response.ok) {
+        const data = await response.json();
+        
+        // 为了减少日志太多，仅在详细模式下输出
+        if (process.env.DEBUG_CONNECTIONS) {
+          console.log('获取到连接信息:', JSON.stringify(data));
+        }
+        
+        // 计算活跃连接数
+        const activeConnections = data.connections ? 
+          data.connections.filter(conn => conn.isActive !== false).length : 0;
+        
+        // 更新最后获取的连接信息
+        lastConnectionsInfo = {
+          ...data,
+          currentNode,
+          activeConnections: activeConnections
+        };
+        
+        // 发送到主窗口
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('connections-update', lastConnectionsInfo);
+        }
+      } else {
+        console.error(`[调试] 获取连接信息请求失败: 状态码 ${response.status}, 文本: ${response.statusText}`);
+        try {
+          const errorText = await response.text();
+          console.error('[调试] 错误详情:', errorText);
+        } catch (e) {
+          console.error('[调试] 无法读取错误详情');
+        }
       }
+    } catch (fetchError) {
+      console.error('[调试] Fetch操作失败:', fetchError);
     }
   } catch (error) {
-    console.error('获取连接信息失败:', error);
+    console.error('[调试] 获取连接信息失败:', error);
   }
 }
 
@@ -2962,6 +3869,11 @@ function validateMergedConfig(config) {
     }
   }
   
+  // 强制设置API控制器，确保始终可访问
+  validatedConfig['external-controller'] = '0.0.0.0:9090';
+  validatedConfig['secret'] = '';
+  console.log('已强制设置API控制器为0.0.0.0:9090，无密钥');
+  
   // 确保必要的数组字段存在
   const requiredArrayFields = ['proxies', 'proxy-groups'];
   for (const field of requiredArrayFields) {
@@ -3129,6 +4041,9 @@ function regenerateAndReloadConfig() {
       // 使用深度合并生成配置
       const mergedConfig = deepMergeConfig(config, userSettings);
       const validatedConfig = validateMergedConfig(mergedConfig);
+      // 强制覆盖API控制器设置，确保始终可访问
+      validatedConfig['external-controller'] = '0.0.0.0:9090';
+      validatedConfig['secret'] = '';
       const mergedConfigContent = yaml.dump(validatedConfig);
       
       try {
@@ -3581,5 +4496,194 @@ ipcMain.handle('run-speedtest-direct', async (event) => {
   } catch (error) {
     console.error('执行直接测速时出错:', error);
     return { success: false, error: error.message };
+  }
+});
+
+// 当前API配置
+let activeApiConfig = {
+  controllerHost: '127.0.0.1',
+  controllerPort: '9090',
+  secret: ''
+};
+
+// 添加新的IPC处理程序 - 获取API配置信息
+ipcMain.handle('get-api-config', (event) => {
+  try {
+    return {
+      success: true,
+      controllerHost: activeApiConfig.controllerHost,
+      controllerPort: activeApiConfig.controllerPort,
+      secret: activeApiConfig.secret
+    };
+  } catch (error) {
+    console.error('获取API配置信息失败:', error);
+    return {
+      success: false,
+      error: '获取API配置信息失败: ' + error.message
+    };
+  }
+});
+
+// 添加清理函数，用于关闭所有WebSocket连接
+function cleanupWebSockets() {
+  console.log('[调试] 清理所有WebSocket连接');
+  if (trafficWebSocket) {
+    trafficWebSocket.close();
+    trafficWebSocket = null;
+  }
+  if (connectionsWebSocket) {
+    connectionsWebSocket.close();
+    connectionsWebSocket = null;
+  }
+  
+  // 清理相关资源
+  if (trafficStatsInterval) {
+    clearInterval(trafficStatsInterval);
+    trafficStatsInterval = null;
+  }
+  
+  trafficRetry = 10;
+  connectionsRetry = 10;
+}
+
+// 在应用退出前调用清理函数
+app.on('will-quit', () => {
+  console.log('[调试] 应用即将退出，正在清理资源');
+  cleanupWebSockets();
+  if (memoryMonitorInterval) {
+    clearInterval(memoryMonitorInterval);
+    memoryMonitorInterval = null;
+  }
+});
+
+// 定期监控和管理内存
+let memoryMonitorInterval;
+function startMemoryMonitor() {
+  if (memoryMonitorInterval) clearInterval(memoryMonitorInterval);
+  
+  memoryMonitorInterval = setInterval(() => {
+    const memoryUsage = process.memoryUsage();
+    console.log(`内存使用: RSS ${formatTraffic(memoryUsage.rss)}, Heap ${formatTraffic(memoryUsage.heapUsed)}/${formatTraffic(memoryUsage.heapTotal)}`);
+    
+    // 如果堆内存使用超过阈值，建议进行垃圾回收
+    if (memoryUsage.heapUsed > 300 * 1024 * 1024) { // 300MB
+      try {
+        if (global.gc) {
+          global.gc();
+          console.log('[调试] 手动触发垃圾回收');
+        }
+      } catch (e) {
+        console.log('[调试] 无法手动触发垃圾回收，请使用 --expose-gc 启动参数');
+      }
+    }
+  }, 60000); // 每分钟检查一次
+}
+
+// 在应用准备就绪时启动内存监控
+app.on('ready', () => {
+  // ... existing code ...
+  startMemoryMonitor();
+});
+
+// 处理协议URL启动
+function handleProtocolUrl(url) {
+  try {
+    console.log('收到原始协议URL:', url);
+    
+    // 特殊处理Windows系统的URL格式
+    let subscriptionUrl = null;
+    
+    // 情况1: 标准协议URL格式: clash://install-config?url=https://example.com
+    if (url.startsWith('clash://') || url.startsWith('flyclash://')) {
+      const queryStartIndex = url.indexOf('?url=');
+      if (queryStartIndex > 0) {
+        subscriptionUrl = url.substring(queryStartIndex + 5);
+        // 如果URL中有其他参数，截取到下一个&符号
+        const ampIndex = subscriptionUrl.indexOf('&');
+        if (ampIndex > 0) {
+          subscriptionUrl = subscriptionUrl.substring(0, ampIndex);
+        }
+      }
+    } 
+    // 情况2: Windows特殊格式: C:\...?url=https%3A%2F%2Fexample.com
+    else if (url.includes('?url=')) {
+      const urlParam = url.substring(url.indexOf('?url=') + 5);
+      // 如果URL中有其他参数，截取到下一个&符号
+      const ampIndex = urlParam.indexOf('&');
+      subscriptionUrl = ampIndex > 0 ? urlParam.substring(0, ampIndex) : urlParam;
+    }
+
+    // 确保对URL进行解码
+    if (subscriptionUrl) {
+      try {
+        subscriptionUrl = decodeURIComponent(subscriptionUrl);
+        console.log('成功提取到订阅URL:', subscriptionUrl);
+        
+        // 只有在URL有效时才打开窗口和发送事件
+        if (subscriptionUrl.startsWith('http')) {
+          // 显示窗口（如果最小化或隐藏）
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
+            
+            // 导航到订阅页面
+            console.log('向渲染进程发送导入事件');
+            mainWindow.webContents.send('import-subscription', subscriptionUrl);
+            return true;
+          }
+        } else {
+          console.log('提取的URL不是有效的HTTP(S)地址:', subscriptionUrl);
+        }
+      } catch (decodeError) {
+        console.error('URL解码失败:', decodeError);
+      }
+    } else {
+      console.log('未能从协议URL中提取订阅地址');
+    }
+
+    return false;
+  } catch (error) {
+    console.error('处理协议URL时出错:', error);
+    return false;
+  }
+}
+
+// 注册 protocol handler events
+// 在 macOS 和 Linux 上，open-url 事件在 app 模块发出 ready 事件之前就会被触发
+// 在 Windows 上，我们需要监听 second-instance 事件
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  console.log('收到open-url事件，URL:', url);
+  handleProtocolUrl(url);
+});
+
+app.on('second-instance', (event, commandLine, workingDirectory) => {
+  // 当运行第二个实例时，这里将执行
+  console.log('检测到第二个实例启动，命令行参数:', commandLine);
+  
+  if (process.platform === 'win32') {
+    // 在 Windows 上，协议 URL 作为 command line 参数传递
+    let foundProtocolArg = false;
+    for (const arg of commandLine) {
+      if (arg.includes('clash://') || 
+          arg.includes('flyclash://') ||
+          arg.includes('?url=')) {
+        console.log('第二个实例中检测到可能的协议URL参数:', arg);
+        foundProtocolArg = true;
+        handleProtocolUrl(arg);
+      }
+    }
+    
+    if (!foundProtocolArg) {
+      console.log('第二个实例的命令行参数中未找到协议URL');
+    }
+  }
+  
+  // 聚焦到主窗口
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
   }
 });

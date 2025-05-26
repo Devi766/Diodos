@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Layout from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play } from 'lucide-react';
+import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play, ZapIcon, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
@@ -18,11 +18,25 @@ import {
 } from '@/components/ui/dialog';
 import SpeedtestShare from '../components/SpeedtestShare';
 import MediaStreamingTest from '../components/MediaStreamingTest';
+import BatchSpeedtest from '../components/BatchSpeedtest';
+import { useSpeedTest } from '../contexts/SpeedTestContext';
 
 export default function ToolsPage() {
   const [speedtestDialogOpen, setSpeedtestDialogOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mediaTestDialogOpen, setMediaTestDialogOpen] = useState(false);
+  const [batchTestDialogOpen, setBatchTestDialogOpen] = useState(false);
+  
+  // 获取后台测速状态
+  const { 
+    isBackgroundTesting, 
+    currentNodeName: bgTestNodeName, 
+    progress: bgTestProgress,
+    testingPhase: bgTestPhase,
+    navigateToTest,
+    showSpeedTestDialog,
+    setShowSpeedTestDialog
+  } = useSpeedTest();
   const [speedtestRunning, setSpeedtestRunning] = useState(false);
   const [speedtestResult, setSpeedtestResult] = useState<null | {
     downloadSpeed: number;
@@ -51,95 +65,116 @@ export default function ToolsPage() {
     if (!window.electronAPI) return;
     
     try {
-      // 第一步：获取配置文件中的代理组信息
-      let firstProxyGroup = "PROXY"; // 默认尝试PROXY组
-      
+      // 尝试直接使用electronAPI获取当前节点信息
       try {
-        const result = await window.electronAPI.getConfigOrder();
-        
-        if (result.success && result.data && result.data.proxyGroups.length > 0) {
-          // 获取配置文件中的第一个代理组名
-          firstProxyGroup = result.data.proxyGroups[0].name;
+        const connectionsInfo = await window.electronAPI.fetchConnectionsInfo();
+        if (connectionsInfo && connectionsInfo.currentNode) {
+          // currentNode已经是节点名称而不是策略组名称
+          setCurrentNode(connectionsInfo.currentNode);
+          console.log('通过connectionsInfo获取到节点名称:', connectionsInfo.currentNode);
+          return;
         }
       } catch (error) {
-        console.error('获取配置顺序出错:', error);
+        console.error('通过connections获取节点信息失败:', error);
       }
       
-      // 第二步：尝试请求第一个代理组的信息
+      // 尝试获取当前活跃的API配置并直接访问PROXY组
       try {
-        const response = await fetch(`http://127.0.0.1:9090/proxies/${firstProxyGroup}`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.name && data.now) {
-            setCurrentNode(data.now);
+        const apiConfig = await window.electronAPI.getApiConfig();
+        if (apiConfig && apiConfig.success) {
+          // 尝试直接请求PROXY组信息
+          const response = await window.electronAPI.requestMihomoAPI('/proxies/PROXY');
+          if (response && response.ok && response.data) {
+            // now字段是当前PROXY组选择的节点名称
+            if (response.data.now) {
+              setCurrentNode(response.data.now);
+              console.log('通过PROXY组获取到节点名称:', response.data.now);
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        console.error('请求PROXY组信息失败:', error);
+      }
+      
+      // 尝试获取所有代理组，并找出第一个策略组中选择的节点
+      try {
+        const configOrder = await window.electronAPI.getConfigOrder();
+        if (configOrder && configOrder.success && configOrder.data && 
+            configOrder.data.proxyGroups && configOrder.data.proxyGroups.length > 0) {
+          // 获取第一个代理组的名称
+          const firstGroupName = configOrder.data.proxyGroups[0].name;
+          console.log('获取到第一个代理组名称:', firstGroupName);
+          
+          // 请求该代理组的信息
+          const groupResponse = await window.electronAPI.requestMihomoAPI(`/proxies/${encodeURIComponent(firstGroupName)}`);
+          if (groupResponse && groupResponse.ok && groupResponse.data && groupResponse.data.now) {
+            // now字段是该组选择的节点名称
+            setCurrentNode(groupResponse.data.now);
+            console.log(`通过${firstGroupName}组获取到节点名称:`, groupResponse.data.now);
             return;
           }
         }
       } catch (error) {
-        console.error(`请求${firstProxyGroup}组信息出错:`, error);
+        console.error('请求特定代理组信息失败:', error);
       }
       
-      // 如果第一个组获取失败，尝试使用默认的PROXY组
-      if (firstProxyGroup !== "PROXY") {
-        try {
-          const response = await fetch('http://127.0.0.1:9090/proxies/PROXY');
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data && data.now) {
-              setCurrentNode(data.now);
-              return;
-            }
-          }
-        } catch (error) {
-          console.error('请求默认PROXY组信息出错:', error);
-        }
-      }
-      
-      // 如果还是获取失败，尝试获取所有代理组信息
+      // 获取所有代理信息作为后备方案
       try {
-        const response = await fetch('http://127.0.0.1:9090/proxies');
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.proxies) {
-            // 查找类型为Selector的代理组
-            const selectorGroups = Object.entries(data.proxies).filter(
-              ([name, proxy]) => (proxy as any).type === 'Selector'
-            );
-            
-            if (selectorGroups.length > 0) {
-              // 选择第一个Selector组
-              const [groupName, groupInfo] = selectorGroups[0];
-              const nodeName = (groupInfo as any).now;
-              
-              if (nodeName) {
-                setCurrentNode(nodeName);
-                return;
-              }
+        const proxiesResponse = await window.electronAPI.requestMihomoAPI('/proxies');
+        if (proxiesResponse && proxiesResponse.ok && proxiesResponse.data) {
+          // 查找PROXY组使用的节点
+          if (proxiesResponse.data.proxies && proxiesResponse.data.proxies.PROXY && proxiesResponse.data.proxies.PROXY.now) {
+            const nodeName = proxiesResponse.data.proxies.PROXY.now;
+            setCurrentNode(nodeName);
+            console.log('通过所有代理信息获取到PROXY组节点名称:', nodeName);
+            return;
+          }
+          
+          // 如果没有PROXY组，查找第一个类型为Selector的代理组选择的节点
+          const proxyGroups = Object.entries(proxiesResponse.data.proxies || {})
+            .filter(([_, proxy]) => proxy && typeof proxy === 'object' && (proxy as any).type === 'Selector');
+          
+          if (proxyGroups.length > 0) {
+            const [groupName, groupInfo] = proxyGroups[0];
+            const nodeName = (groupInfo as any).now;
+            if (nodeName) {
+              setCurrentNode(nodeName);
+              console.log(`通过所有代理信息获取到${groupName}组节点名称:`, nodeName);
+              return;
             }
           }
         }
       } catch (error) {
-        console.error('获取所有代理组信息出错:', error);
+        console.error('获取所有代理信息失败:', error);
       }
       
-      // 最后尝试使用电子API获取代理信息（这将是备用方法）
-      const proxies = await window.electronAPI.getProxies();
-      if (proxies && proxies.proxies) {
-        // 查找当前选择的全局代理
-        const selectedProxy = Object.values(proxies.proxies).find(
-          (proxy: any) => proxy.name === proxies.global
-        );
-        
-        if (selectedProxy && (selectedProxy as any).name) {
-          setCurrentNode((selectedProxy as any).name);
-          return;
+      // 尝试使用get-proxies API作为最后的后备方案
+      try {
+        const proxies = await window.electronAPI.getProxies();
+        if (proxies && proxies.proxies) {
+          // 查找PROXY组
+          if (proxies.proxies.PROXY && proxies.proxies.PROXY.now) {
+            const nodeName = proxies.proxies.PROXY.now;
+            setCurrentNode(nodeName);
+            console.log('通过getProxies获取到PROXY组节点名称:', nodeName);
+            return;
+          }
+          
+          // 尝试找到任意一个Selector类型的代理组
+          for (const [groupName, proxy] of Object.entries(proxies.proxies)) {
+            if ((proxy as any).type === 'Selector' && (proxy as any).now) {
+              const nodeName = (proxy as any).now;
+              setCurrentNode(nodeName);
+              console.log(`通过getProxies获取到${groupName}组节点名称:`, nodeName);
+              return;
+            }
+          }
         }
+      } catch (error) {
+        console.error('通过getProxies获取节点信息失败:', error);
       }
       
-      // 如果所有尝试都失败，保持默认值
     } catch (error) {
       console.error("获取节点信息失败:", error);
     }
@@ -224,6 +259,10 @@ export default function ToolsPage() {
 
   const openMediaTestDialog = () => {
     setMediaTestDialogOpen(true);
+  };
+
+  const openBatchTestDialog = () => {
+    setShowSpeedTestDialog(true);
   };
 
   const runSpeedtest = async () => {
@@ -515,6 +554,56 @@ export default function ToolsPage() {
               </Button>
             </CardContent>
           </Card>
+
+          <Card className="overflow-hidden border border-gray-200 dark:border-gray-800 hover:shadow-sm transition-shadow">
+            <CardHeader className="bg-white dark:bg-gray-950 pb-6">
+              <div className="flex items-center space-x-3 mb-2">
+                <ZapIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                <CardTitle>批量测速</CardTitle>
+              </div>
+              <CardDescription className="text-gray-500 dark:text-gray-400">
+                批量测试配置文件中的所有节点并生成测试报告
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {isBackgroundTesting ? (
+                <>
+                  <div className="text-sm text-blue-500 font-medium mb-2 flex items-center">
+                    <Activity className="w-4 h-4 mr-1 animate-pulse" />
+                    正在后台测速中 ({Math.round(bgTestProgress)}%)
+                  </div>
+                  <p className="text-xs text-gray-500 mb-2">
+                    当前节点: {bgTestNodeName || '准备中...'}
+                    {bgTestPhase && (
+                      <span className="block mt-1">测试阶段: {bgTestPhase}</span>
+                    )}
+                  </p>
+                  <Progress value={bgTestProgress} className="h-1 mb-3" />
+                  <Button 
+                    onClick={navigateToTest}
+                    className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                    variant="default"
+                  >
+                    <ArrowRight className="w-4 h-4 mr-1" />
+                    前往测速页面
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    测试当前配置文件中的第一个代理组的所有节点，并生成测试报告
+                  </p>
+                  <Button 
+                    onClick={openBatchTestDialog}
+                    className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                    variant="default"
+                  >
+                    开始批量测速
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
 
@@ -774,6 +863,29 @@ export default function ToolsPage() {
           <div className="py-4">
             <MediaStreamingTest currentNode={currentNode} />
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 批量测速对话框 */}
+      <Dialog open={showSpeedTestDialog} onOpenChange={setShowSpeedTestDialog}>
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>批量测速</DialogTitle>
+            <DialogDescription>
+              测试当前配置文件中的第一个代理组的所有节点，并生成测试报告
+            </DialogDescription>
+          </DialogHeader>
+          
+          <BatchSpeedtest onClose={() => setShowSpeedTestDialog(false)} inDialog={true} enableBackground={true} />
+          
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowSpeedTestDialog(false)}
+            >
+              关闭
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Layout>

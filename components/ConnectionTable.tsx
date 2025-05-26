@@ -150,53 +150,128 @@ export default function ConnectionTable() {
     setError(null);
     
     try {
-      // 检查Mihomo是否运行
-      try {
-        const response = await fetch('http://127.0.0.1:9090/version');
-        if (!response.ok) {
-          throw new Error('Mihomo未运行');
+      // 每次获取连接数据前先获取最新的API配置
+      if (window.electronAPI) {
+        try {
+          const apiConfigResult = await window.electronAPI.getApiConfig();
+          if (apiConfigResult.success) {
+            console.log('获取到API配置:', apiConfigResult);
+            // 构建API地址
+            const apiHost = apiConfigResult.controllerHost || '127.0.0.1';
+            const apiPort = apiConfigResult.controllerPort || '9090';
+            const apiSecret = apiConfigResult.secret || '';
+            
+            // 检查Mihomo是否运行
+            try {
+              const headers: HeadersInit = {};
+              if (apiSecret) {
+                headers['Authorization'] = `Bearer ${apiSecret}`;
+              }
+              
+              // 使用electronAPI.requestMihomoAPI请求版本信息
+              const response = await window.electronAPI!.requestMihomoAPI('/version');
+              if (!response.ok) {
+                throw new Error('Mihomo未运行');
+              }
+            } catch (error) {
+              console.error('Mihomo未运行:', error);
+              setIsLoading(false);
+              setError('Mihomo服务未运行，请先启动服务');
+              return;
+            }
+            
+            // 使用electronAPI.requestMihomoAPI获取连接信息
+            console.log('获取连接数据: /connections');
+                         const response = await window.electronAPI!.requestMihomoAPI('/connections');
+            if (!response.ok) {
+              throw new Error(`获取连接失败: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            // 计算统计信息
+            let totalUpload = 0;
+            let totalDownload = 0;
+            
+            if (data.connections && Array.isArray(data.connections)) {
+              data.connections.forEach((conn: Connection) => {
+                totalUpload += conn.upload;
+                totalDownload += conn.download;
+              });
+              
+              setStats({
+                totalConnections: data.connections.length,
+                activeConnections: data.connections.length,
+                totalUpload,
+                totalDownload
+              });
+              
+              setConnections(data.connections);
+            } else {
+              setConnections([]);
+              setStats({
+                totalConnections: 0,
+                activeConnections: 0,
+                totalUpload: 0,
+                totalDownload: 0
+              });
+            }
+          } else {
+            console.error('获取API配置失败:', apiConfigResult.error);
+            setError(`获取API配置失败: ${apiConfigResult.error}`);
+          }
+        } catch (apiError) {
+          console.error('API配置获取或使用时出错:', apiError);
+          setError(`API配置获取失败: ${String(apiError)}`);
         }
-      } catch (error) {
-        console.error('Mihomo未运行:', error);
-        setIsLoading(false);
-        setError('Mihomo服务未运行，请先启动服务');
-        return;
-      }
-      
-      // 获取连接信息
-      const response = await fetch('http://127.0.0.1:9090/connections');
-      if (!response.ok) {
-        throw new Error(`获取连接失败: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      // 计算统计信息
-      let totalUpload = 0;
-      let totalDownload = 0;
-      
-      if (data.connections && Array.isArray(data.connections)) {
-        data.connections.forEach((conn: Connection) => {
-          totalUpload += conn.upload;
-          totalDownload += conn.download;
-        });
-        
-        setStats({
-          totalConnections: data.connections.length,
-          activeConnections: data.connections.length,
-          totalUpload,
-          totalDownload
-        });
-        
-        setConnections(data.connections);
       } else {
-        setConnections([]);
-        setStats({
-          totalConnections: 0,
-          activeConnections: 0,
-          totalUpload: 0,
-          totalDownload: 0
-        });
+        // 使用默认值
+        try {
+          // 使用electronAPI.requestMihomoAPI请求版本信息
+          const response = await window.electronAPI!.requestMihomoAPI('/version');
+          if (!response.ok) {
+            throw new Error('Mihomo未运行');
+          }
+          
+          // 使用electronAPI.requestMihomoAPI获取连接信息
+          const connectionsResponse = await window.electronAPI!.requestMihomoAPI('/connections');
+          if (!connectionsResponse.ok) {
+            throw new Error(`获取连接失败: ${connectionsResponse.statusText}`);
+          }
+          
+          const data = await connectionsResponse.json();
+          
+          // 处理连接数据...
+          let totalUpload = 0;
+          let totalDownload = 0;
+          
+          if (data.connections && Array.isArray(data.connections)) {
+            data.connections.forEach((conn: Connection) => {
+              totalUpload += conn.upload;
+              totalDownload += conn.download;
+            });
+            
+            setStats({
+              totalConnections: data.connections.length,
+              activeConnections: data.connections.length,
+              totalUpload,
+              totalDownload
+            });
+            
+            setConnections(data.connections);
+          } else {
+            setConnections([]);
+            setStats({
+              totalConnections: 0,
+              activeConnections: 0,
+              totalUpload: 0,
+              totalDownload: 0
+            });
+          }
+        } catch (defaultError) {
+          console.error('使用默认API地址获取数据失败:', defaultError);
+          setError(`获取连接数据失败: ${String(defaultError)}`);
+        }
       }
     } catch (error) {
       console.error('获取连接数据失败:', error);
@@ -209,16 +284,49 @@ export default function ConnectionTable() {
   // 断开所有连接
   const closeAllConnections = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:9090/connections', {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`断开连接失败: ${response.statusText}`);
+      // 获取最新API配置
+      if (window.electronAPI) {
+        const apiConfigResult = await window.electronAPI.getApiConfig();
+        if (apiConfigResult.success) {
+          const apiHost = apiConfigResult.controllerHost || '127.0.0.1';
+          const apiPort = apiConfigResult.controllerPort || '9090';
+          const apiSecret = apiConfigResult.secret || '';
+          
+          const headers: HeadersInit = {
+            'Content-Type': 'application/json'
+          };
+          if (apiSecret) {
+            headers['Authorization'] = `Bearer ${apiSecret}`;
+          }
+          
+          // 使用electronAPI.requestMihomoAPI断开所有连接
+          const response = await window.electronAPI.requestMihomoAPI('/connections', {
+            method: 'DELETE'
+          });
+          
+          if (!response.ok) {
+            throw new Error(`断开连接失败: ${response.statusText}`);
+          }
+          
+          // 重新获取连接列表
+          fetchConnections();
+        } else {
+          console.error('获取API配置失败:', apiConfigResult.error);
+          setError(`获取API配置失败: ${apiConfigResult.error}`);
+        }
+      } else {
+        // 使用electronAPI.requestMihomoAPI断开所有连接
+        const response = await window.electronAPI!.requestMihomoAPI('/connections', {
+          method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`断开连接失败: ${response.statusText}`);
+        }
+        
+        // 重新获取连接列表
+        fetchConnections();
       }
-      
-      // 重新获取连接列表
-      fetchConnections();
     } catch (error) {
       console.error('断开所有连接失败:', error);
       setError(`断开所有连接失败: ${String(error)}`);
@@ -228,22 +336,60 @@ export default function ConnectionTable() {
   // 断开单个连接
   const closeConnection = async (id: string) => {
     try {
-      const response = await fetch(`http://127.0.0.1:9090/connections/${id}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        throw new Error(`断开连接失败: ${response.statusText}`);
+      // 获取最新API配置
+      if (window.electronAPI) {
+        const apiConfigResult = await window.electronAPI.getApiConfig();
+        if (apiConfigResult.success) {
+          const apiHost = apiConfigResult.controllerHost || '127.0.0.1';
+          const apiPort = apiConfigResult.controllerPort || '9090';
+          const apiSecret = apiConfigResult.secret || '';
+          
+          const headers: HeadersInit = {
+            'Content-Type': 'application/json'
+          };
+          if (apiSecret) {
+            headers['Authorization'] = `Bearer ${apiSecret}`;
+          }
+          
+          const response = await window.electronAPI!.requestMihomoAPI(`/connections/${id}`, {
+            method: 'DELETE'
+          });
+          
+          if (!response.ok) {
+            throw new Error(`断开连接失败: ${response.statusText}`);
+          }
+          
+          // 更新本地连接列表（从UI上立即移除这个连接）
+          setConnections(prevConnections => prevConnections.filter(conn => conn.id !== id));
+          
+          // 更新统计信息
+          setStats(prevStats => ({
+            ...prevStats,
+            activeConnections: prevStats.activeConnections - 1
+          }));
+        } else {
+          console.error('获取API配置失败:', apiConfigResult.error);
+          setError(`获取API配置失败: ${apiConfigResult.error}`);
+        }
+      } else {
+        // 使用默认值
+        const response = await window.electronAPI!.requestMihomoAPI(`/connections/${id}`, {
+          method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`断开连接失败: ${response.statusText}`);
+        }
+        
+        // 更新本地连接列表（从UI上立即移除这个连接）
+        setConnections(prevConnections => prevConnections.filter(conn => conn.id !== id));
+        
+        // 更新统计信息
+        setStats(prevStats => ({
+          ...prevStats,
+          activeConnections: prevStats.activeConnections - 1
+        }));
       }
-      
-      // 更新本地连接列表（从UI上立即移除这个连接）
-      setConnections(prevConnections => prevConnections.filter(conn => conn.id !== id));
-      
-      // 更新统计信息
-      setStats(prevStats => ({
-        ...prevStats,
-        activeConnections: prevStats.activeConnections - 1
-      }));
     } catch (error) {
       console.error(`断开连接 ${id} 失败:`, error);
       setError(`断开连接失败: ${String(error)}`);

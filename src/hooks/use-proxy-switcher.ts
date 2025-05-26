@@ -22,11 +22,11 @@ export const useProxySwitcher = () => {
     console.log(`[DEBUG] 目标组: ${groupName}`);
     
     try {
-      // 直接使用Mihomo RESTful API
+      // 使用electronAPI中的requestMihomoAPI函数
       // 1. 关闭现有连接以避免冲突
       try {
         console.log('[DEBUG] 步骤1: 尝试关闭所有现有连接...');
-        const closeResponse = await fetch('http://127.0.0.1:9090/connections', {
+        const closeResponse = await window.electronAPI!.requestMihomoAPI('/connections', {
           method: 'DELETE'
         });
         console.log(`[DEBUG] 关闭连接响应: ${closeResponse.status} ${closeResponse.statusText}`);
@@ -37,11 +37,11 @@ export const useProxySwitcher = () => {
       // 2. 切换节点
       const requestBody = { name: nodeName };
       console.log(`[DEBUG] 步骤2: 发送切换节点请求`);
-      console.log(`[DEBUG] 请求URL: http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`);
+      console.log(`[DEBUG] 请求目标: /proxies/${encodeURIComponent(groupName)}`);
       console.log(`[DEBUG] 请求方法: PUT`);
       console.log(`[DEBUG] 请求体: ${JSON.stringify(requestBody)}`);
       
-      const response = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`, {
+      const response = await window.electronAPI!.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -57,7 +57,7 @@ export const useProxySwitcher = () => {
         await new Promise(resolve => setTimeout(resolve, 200));
         
         console.log(`[DEBUG] 验证请求: GET /proxies/${encodeURIComponent(groupName)}`);
-        const verifyResponse = await fetch(`http://127.0.0.1:9090/proxies/${encodeURIComponent(groupName)}`);
+        const verifyResponse = await window.electronAPI!.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`);
         const verifyData = await verifyResponse.json();
         
         console.log(`[DEBUG] 验证结果: 当前选中的节点是 ${verifyData.now}`);
@@ -114,11 +114,11 @@ export const useProxySwitcher = () => {
       console.log(`[DEBUG] 开始测试节点延迟: ${nodeName}`);
       console.log(`[DEBUG] 测试URL: ${testUrl}, 超时: ${timeout}ms`);
       
-      // 使用Mihomo API进行测试
-      const url = `http://127.0.0.1:9090/proxies/${encodeURIComponent(nodeName)}/delay?url=${encodeURIComponent(testUrl)}&timeout=${timeout}`;
+      // 使用electronAPI.requestMihomoAPI进行测试
+      const urlPath = `/proxies/${encodeURIComponent(nodeName)}/delay?url=${encodeURIComponent(testUrl)}&timeout=${timeout}`;
       
-      console.log(`[DEBUG] 发送延迟测试请求: GET ${url}`);
-      const response = await fetch(url);
+      console.log(`[DEBUG] 发送延迟测试请求: GET ${urlPath}`);
+      const response = await window.electronAPI!.requestMihomoAPI(urlPath);
       
       console.log(`[DEBUG] 延迟测试响应: ${response.status} ${response.statusText}`);
       
