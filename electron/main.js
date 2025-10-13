@@ -145,7 +145,7 @@ const { testMediaStreaming } = require('./mediatest');
 app.name = 'flyclash';
 
 // 应用版本号 - 统一管理所有界面显示的版本
-const APP_VERSION = '0.1.6';
+const APP_VERSION = '0.1.7';
 
 // 全局变量
 let mainWindow;
@@ -185,7 +185,7 @@ try {
 }
 
 // 默认内核路径（可被用户覆盖）
-const DEFAULT_KERNEL_RELATIVE_PATH = path.join('cores', 'mihomo-windows-amd64.exe');
+const DEFAULT_KERNEL_RELATIVE_PATH = path.join('cores', 'mihomo-windows-amd64-compatible.exe');
 
 function getDefaultKernelPath() {
   const resourceKernel = path.join(process.resourcesPath, DEFAULT_KERNEL_RELATIVE_PATH);
@@ -1825,10 +1825,9 @@ async function autoStartMihomo() {
 // 新增函数：确保mihomo所需的数据文件存在
 async function ensureMihomoDataFiles() {
   try {
-    // mihomo默认配置目录
-    const homeDir = process.env.USERPROFILE || process.env.HOME;
-    const mihomoConfigDir = path.join(homeDir, '.config', 'mihomo');
-    
+    // mihomo配置目录，使用与应用其他部分一致的路径
+    const mihomoConfigDir = path.join(userDataPath, 'mihomo');
+
     console.log(`检查mihomo配置目录: ${mihomoConfigDir}`);
     
     // 确保mihomo配置目录存在

@@ -648,14 +648,14 @@ export default function Settings() {
             <Tabs.Content value="about" className="w-full">
               <div className="flex flex-col items-center text-center py-8">
                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">FlyClash</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: V0.1.6</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: V0.1.7</p>
                 
                 <div className="bg-gray-50 dark:bg-[#222222] p-4 rounded-md mb-6 text-left w-full max-w-lg">
                   <p className="text-sm text-gray-700 dark:text-gray-200 mb-2">
-                    FlyClash 是一个基于 Mihomo 内核的现代化代理客户端，拥有美观的界面和强大的功能。
+                    FlyClash 是一个基于 Clash 内核的现代化代理客户端，拥有美观的界面和强大的功能。
                   </p>
                   <p className="text-sm text-gray-700 dark:text-gray-200">
-                    Mihomo 是一个开源的代理内核，FlyClash 仅仅是一个基于此的用户界面。
+                   功能强大，简单易用，免费无广告
                   </p>
                 </div>
                 
@@ -666,7 +666,7 @@ export default function Settings() {
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    Mihomo 项目
+                    Clash 项目
                   </a>
                   <a
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"

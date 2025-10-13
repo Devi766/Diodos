@@ -33,7 +33,7 @@ export default function Layout({ children }: LayoutProps) {
     return storedState === 'true';
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('0.1.6');
+  const [appVersion, setAppVersion] = useState('0.1.7');
   const { hasProviders } = useProviderAvailability();
 
   const handleToggleSidebar = useCallback(() => {
