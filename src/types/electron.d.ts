@@ -114,6 +114,9 @@ export interface ElectronAPI {
   getProxySettings: () => Promise<{ success: boolean, settings?: any, error?: string }>;
   saveProxySettings: (settings: any) => Promise<{ success: boolean, message?: string, error?: string }>;
   saveUASettings: (ua: string) => Promise<{ success: boolean, message?: string, error?: string }>;
+  getKernelPath: () => Promise<{ success: boolean, path?: string, isDefault?: boolean, exists?: boolean, error?: string }>;
+  selectKernelExecutable: () => Promise<{ success: boolean, path?: string, needsRestart?: boolean, canceled?: boolean, error?: string }>;
+  resetKernelPath: () => Promise<{ success: boolean, path?: string, needsRestart?: boolean, error?: string }>;
   
   // 主题设置
   setTheme: (theme: string) => Promise<{ success: boolean, theme: string, error?: string }>;

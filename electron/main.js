@@ -184,71 +184,30 @@ try {
   console.error('创建安全日志文件失败:', error);
 }
 
-// 添加函数用于查找mihomo可执行文件
-function findMihomoExecutable() {
-  let binPath = null;
-  
-  if (isDev) {
-    // 开发环境下，尝试查找项目根目录下的所有可能的mihomo内核文件
-    const devDirPath = process.cwd();
-    const parentDir = path.join(devDirPath, '..');
-    
-    try {
-      // 搜索父目录中所有的exe文件
-      const files = fs.readdirSync(parentDir);
-      const mihomoExeFiles = files.filter(file => 
-        file.toLowerCase().includes('mihomo') && 
-        file.endsWith('.exe')
-      );
-      
-      if (mihomoExeFiles.length > 0) {
-        // 使用找到的第一个mihomo exe文件
-        binPath = path.join(parentDir, mihomoExeFiles[0]);
-        console.log('开发环境找到mihomo内核:', binPath);
-      }
-    } catch (error) {
-      console.error('搜索开发环境内核文件失败:', error);
-    }
-    
-    // 如果没找到，尝试使用默认路径
-    if (!binPath) {
-      binPath = path.join(parentDir, 'mihomo-windows-amd64.exe');
-    }
-  } else {
-    // 生产环境，搜索resources/cores目录
-    const coresDir = path.join(process.resourcesPath, 'cores');
-    
-    try {
-      if (fs.existsSync(coresDir)) {
-        // 搜索cores目录中所有的exe文件
-        const files = fs.readdirSync(coresDir);
-        const exeFiles = files.filter(file => file.endsWith('.exe'));
-        
-        if (exeFiles.length > 0) {
-          // 优先使用包含mihomo的文件名
-          const mihomoExe = exeFiles.find(file => file.toLowerCase().includes('mihomo'));
-          
-          if (mihomoExe) {
-            binPath = path.join(coresDir, mihomoExe);
-            console.log('发现mihomo内核:', binPath);
-          } else {
-            // 如果没有mihomo名称的exe，使用第一个exe文件
-            binPath = path.join(coresDir, exeFiles[0]);
-            console.log('使用默认内核文件:', binPath);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('搜索内核文件失败:', error);
-    }
-    
-    // 如果仍然没找到，尝试使用默认路径
-    if (!binPath) {
-      binPath = path.join(process.resourcesPath, 'cores/mihomo-windows-amd64.exe');
-    }
+// 默认内核路径（可被用户覆盖）
+const DEFAULT_KERNEL_RELATIVE_PATH = path.join('cores', 'mihomo-windows-amd64.exe');
+
+function getDefaultKernelPath() {
+  const resourceKernel = path.join(process.resourcesPath, DEFAULT_KERNEL_RELATIVE_PATH);
+  if (fs.existsSync(resourceKernel)) {
+    return resourceKernel;
   }
-  
-  return binPath;
+
+  const devKernel = path.join(__dirname, '..', DEFAULT_KERNEL_RELATIVE_PATH);
+  return devKernel;
+}
+
+function getKernelExecutablePath() {
+  const settings = getUserSettings();
+  const configuredPath = settings.kernelPath;
+  if (configuredPath && typeof configuredPath === 'string' && configuredPath.trim().length > 0) {
+    return configuredPath;
+  }
+  return getDefaultKernelPath();
+}
+
+function updateKernelExecutablePath(newPath) {
+  updateUserSettings({ kernelPath: newPath });
 }
 
 // 确保配置目录存在
@@ -284,7 +243,8 @@ function ensureUserSettingsFile() {
       'allow-lan': false,
       'ipv6': false,
       'subscription-ua': 'MihomoParty',
-      'secret': generateSecretKey() // 自动生成的安全密钥
+      'secret': generateSecretKey(), // 自动生成的安全密钥
+      'kernelPath': getDefaultKernelPath()
     };
     
     try {
@@ -925,8 +885,8 @@ async function startMihomo(configPath) {
       console.error('准备mihomo数据文件失败，但将继续尝试启动:', error);
     }
     
-    // 使用全局辅助函数查找mihomo内核
-    const binPath = findMihomoExecutable();
+    // 获取当前配置的Mihomo内核路径
+    const binPath = getKernelExecutablePath();
 
     // 验证可执行文件路径
     const binPathValidation = security.validateFilePath(binPath);
@@ -938,7 +898,7 @@ async function startMihomo(configPath) {
 
     if (!fs.existsSync(binPath)) {
       console.error('未找到有效的内核文件:', binPath);
-      dialog.showErrorBox('错误', '无法找到有效的内核文件，请确保应用安装正确');
+      dialog.showErrorBox('内核文件缺失', `无法找到有效的内核文件\n当前路径: ${binPath}\n请在设置中重新选择或恢复默认内核`);
       return false;
     }
     
@@ -2553,6 +2513,75 @@ app.whenReady().then(() => {
       return { success: true, settings };
     } catch (error) {
       console.error('获取代理设置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-kernel-path', async () => {
+    try {
+      const kernelPath = getKernelExecutablePath();
+      return {
+        success: true,
+        path: kernelPath,
+        isDefault: kernelPath === getDefaultKernelPath(),
+        exists: fs.existsSync(kernelPath)
+      };
+    } catch (error) {
+      console.error('获取内核路径失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('select-kernel-executable', async () => {
+    try {
+      const window = BrowserWindow.getFocusedWindow() || mainWindow;
+      const result = await dialog.showOpenDialog(window, {
+        title: '选择 Mihomo 内核文件',
+        filters: [
+          { name: '可执行文件', extensions: process.platform === 'win32' ? ['exe'] : ['exe', 'bin'] },
+          { name: '所有文件', extensions: ['*'] }
+        ],
+        properties: ['openFile']
+      });
+
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+
+      const selectedPath = result.filePaths[0];
+      const validation = security.validateFilePath(selectedPath);
+      if (!validation.valid) {
+        console.error('内核文件路径验证失败:', validation.error);
+        return { success: false, error: validation.error };
+      }
+
+      if (!fs.existsSync(validation.path)) {
+        console.error('选定的内核文件不存在:', validation.path);
+        return { success: false, error: '选定的内核文件不存在' };
+      }
+
+      updateKernelExecutablePath(validation.path);
+
+      const needsRestart = Boolean(mihomoProcess);
+      return {
+        success: true,
+        path: validation.path,
+        needsRestart
+      };
+    } catch (error) {
+      console.error('选择内核文件失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('reset-kernel-path', async () => {
+    try {
+      const defaultPath = getDefaultKernelPath();
+      updateKernelExecutablePath(defaultPath);
+      const needsRestart = Boolean(mihomoProcess);
+      return { success: true, path: defaultPath, needsRestart };
+    } catch (error) {
+      console.error('重置内核路径失败:', error);
       return { success: false, error: error.message };
     }
   });

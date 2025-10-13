@@ -13,6 +13,9 @@ export default function Settings() {
   const [theme, setTheme] = useState('system');
   const [appVersion, setAppVersion] = useState('');
   const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty');
+  const [kernelPath, setKernelPath] = useState('');
+  const [kernelIsDefault, setKernelIsDefault] = useState(true);
+  const [kernelExists, setKernelExists] = useState(true);
   const isFirstRender = useRef(true);
   
   // 代理设置相关状态
@@ -28,6 +31,23 @@ export default function Settings() {
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  const refreshKernelPath = useCallback(async () => {
+    if (typeof window === 'undefined' || !window.electronAPI) {
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.getKernelPath();
+      if (result && result.success) {
+        setKernelPath(result.path || '');
+        setKernelIsDefault(Boolean(result.isDefault));
+        setKernelExists(result.exists !== false);
+      }
+    } catch (error) {
+      console.error('获取内核路径失败:', error);
+    }
+  }, []);
   
   // 使用mihomo API
   let mihomoAPI = useMihomoAPI();
@@ -66,12 +86,14 @@ export default function Settings() {
           const userSettings = await window.electronAPI.getProxySettings();
           if (userSettings.success && userSettings.settings && userSettings.settings['subscription-ua']) {
             setSubscriptionUA(userSettings.settings['subscription-ua']);
-          }
         }
-      } catch (error) {
-        console.error('获取设置数据失败:', error);
+
+        await refreshKernelPath();
       }
-    };
+    } catch (error) {
+      console.error('获取设置数据失败:', error);
+    }
+  };
 
     fetchData();
 
@@ -114,7 +136,7 @@ export default function Settings() {
       };
     }
     return undefined;
-  }, []);
+  }, [refreshKernelPath]);
 
   // 监听开机启动设置变化
   const updateAutoLaunch = useCallback(async () => {
@@ -212,7 +234,8 @@ export default function Settings() {
     };
 
     fetchUserSettings();
-  }, []);
+    refreshKernelPath();
+  }, [refreshKernelPath]);
 
   // 显示Toast提示
   const showToast = (title: string, description: string, type: 'success' | 'error') => {
@@ -220,6 +243,51 @@ export default function Settings() {
     setToastDescription(description);
     setToastType(type);
     setToastOpen(true);
+  };
+
+  const handleSelectKernel = async () => {
+    if (typeof window === 'undefined' || !window.electronAPI) {
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.selectKernelExecutable();
+
+      if (result?.success) {
+        await refreshKernelPath();
+        const message = result.needsRestart
+          ? '内核路径已更新，请重新启动内核以生效'
+          : '内核路径已更新';
+        showToast('成功', message, 'success');
+      } else if (!result?.canceled) {
+        showToast('错误', result?.error || '选择内核文件失败', 'error');
+      }
+    } catch (error) {
+      console.error('选择内核文件失败:', error);
+      showToast('错误', String(error), 'error');
+    }
+  };
+
+  const handleResetKernel = async () => {
+    if (typeof window === 'undefined' || !window.electronAPI) {
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.resetKernelPath();
+      if (result?.success) {
+        await refreshKernelPath();
+        const message = result.needsRestart
+          ? '已恢复默认内核，请重新启动内核以生效'
+          : '已恢复默认内核';
+        showToast('成功', message, 'success');
+      } else {
+        showToast('错误', result?.error || '恢复默认内核失败', 'error');
+      }
+    } catch (error) {
+      console.error('恢复默认内核失败:', error);
+      showToast('错误', String(error), 'error');
+    }
   };
 
   // 保存代理设置
@@ -365,6 +433,51 @@ export default function Settings() {
                   >
                     <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                   </Switch.Root>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Mihomo 内核</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
+                    应用默认使用内置的内核文件，你也可以手动指定其他版本的 Mihomo 内核。
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                      value={kernelPath}
+                      readOnly
+                      spellCheck={false}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors shadow-sm"
+                        onClick={handleSelectKernel}
+                      >
+                        选择文件
+                      </button>
+                      <button
+                        className={`py-1.5 px-3 text-sm rounded-lg transition-colors shadow-sm ${
+                          kernelIsDefault && kernelExists
+                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-[#2a2a2a] dark:text-gray-500'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:text-gray-200 dark:hover:bg-[#333333]'
+                        }`}
+                        onClick={handleResetKernel}
+                        disabled={kernelIsDefault && kernelExists}
+                      >
+                        恢复默认
+                      </button>
+                    </div>
+                  </div>
+                  {!kernelExists && (
+                    <p className="text-xs text-red-500 dark:text-red-400 mt-2">
+                      无法找到当前配置的内核文件，请重新选择或恢复默认设置。
+                    </p>
+                  )}
+                  {kernelIsDefault && kernelExists && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      正在使用内置的默认内核文件。
+                    </p>
+                  )}
                 </div>
 
                 <div>

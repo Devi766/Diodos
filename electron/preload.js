@@ -56,6 +56,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProxySettings: () => ipcRenderer.invoke('get-proxy-settings'),
   saveProxySettings: (settings) => ipcRenderer.invoke('save-proxy-settings', settings),
   saveUASettings: (ua) => ipcRenderer.invoke('save-ua-settings', ua),
+  getKernelPath: () => ipcRenderer.invoke('get-kernel-path'),
+  selectKernelExecutable: () => ipcRenderer.invoke('select-kernel-executable'),
+  resetKernelPath: () => ipcRenderer.invoke('reset-kernel-path'),
   
   // 添加主题设置相关方法
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
