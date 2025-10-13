@@ -1,0 +1,18 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@10.9.3
+2 info using node@v22.20.0
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/mnt/f/code/FlyClash-PC/flycast-ui/.npmrc
+5 silly config load:file:/usr/etc/npmrc
+6 verbose title npm run build
+7 verbose argv "run" "build"
+8 verbose logfile logs-max:10 dir:/mnt/f/code/FlyClash-PC/flycast-ui/.npm/_logs/2025-10-13T01_21_33_499Z-
+9 verbose logfile /mnt/f/code/FlyClash-PC/flycast-ui/.npm/_logs/2025-10-13T01_21_33_499Z-debug-0.log
+10 silly logfile done cleaning log files
+11 http fetch GET https://registry.npmjs.org/npm attempt 1 failed with EAI_AGAIN
+12 verbose cwd /mnt/f/code/FlyClash-PC/flycast-ui
+13 verbose os Linux 6.6.87.2-microsoft-standard-WSL2
+14 verbose node v22.20.0
+15 verbose npm  v10.9.3
+16 verbose exit 1
+17 verbose code 1

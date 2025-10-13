@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import classNames from 'classnames';
@@ -15,6 +15,8 @@ import {
   RocketIcon,
   MixerHorizontalIcon
 } from '@radix-ui/react-icons';
+import { useProviderAvailability } from '@/hooks/use-provider-availability';
+import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -22,18 +24,44 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const pathname = usePathname();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    const storedState = window.localStorage.getItem('flyclash-sidebar-collapsed');
+    return storedState === 'true';
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('0.1.6');
+  const { hasProviders } = useProviderAvailability();
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('flyclash-sidebar-collapsed', next ? 'true' : 'false');
+      }
+      return next;
+    });
+  }, []);
   
-  const menuItems = [
-    { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
-    { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
-    { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
-    { name: '订阅管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
-    { name: '实用工具', href: '/tools', icon: <MixerHorizontalIcon className="w-5 h-5" /> },
-    { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
-  ];
+  const menuItems = useMemo(() => {
+    const items = [
+      { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
+      { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
+      { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
+      { name: '订阅管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
+      { name: '实用工具', href: '/tools', icon: <MixerHorizontalIcon className="w-5 h-5" /> },
+      { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
+    ];
+
+    if (hasProviders) {
+      items.splice(4, 0, { name: '外部资源', href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
+    }
+
+    return items;
+  }, [hasProviders]);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -76,7 +104,7 @@ export default function Layout({ children }: LayoutProps) {
           
           <button
             className="ml-auto text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            onClick={handleToggleSidebar}
           >
             <HamburgerMenuIcon className="w-5 h-5" />
           </button>

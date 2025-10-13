@@ -33,6 +33,7 @@ type ProxyGroup = {
   type: string;
   nodes: ProxyNode[];
   now?: string;
+  icon?: string | null;
 };
 
 type MihomoProxy = {
@@ -324,11 +325,15 @@ export default function ProxyNodes() {
               };
             });
             
+            const globalConfigGroup = configOrder?.proxyGroups?.find((g: any) => g.name === 'GLOBAL');
+            const globalIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
+
             groupsData.push({
               name: 'GLOBAL',
               type: 'Selector',
               nodes,
-              now: globalData.now
+              now: globalData.now,
+              icon: globalIcon,
             });
           }
         } catch (error) {
@@ -408,50 +413,40 @@ export default function ProxyNodes() {
           
           console.log(`构建代理组: ${groupName}`);
           const proxy = selectorGroups[groupName];
+          const configGroup = configOrder?.proxyGroups?.find((g: any) => g.name === groupName);
           if (proxy.all && Array.isArray(proxy.all)) {
             let nodesOrder = proxy.all;
-            
-            // 强制使用配置文件中的节点顺序
-            if (configOrder) {
-              const configGroup = configOrder.proxyGroups.find(g => g.name === groupName);
-              if (configGroup && configGroup.proxies && configGroup.proxies.length > 0) {
-                console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
-                
-                // 将配置文件中的顺序与API中的节点进行对比
-                const apiNodeNames = proxy.all || [];
-                const configNodeNames = configGroup.proxies;
-                
-                // 检查配置文件中有但API中没有的节点
-                const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
-                if (missingInApi.length > 0) {
-                  console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
-                }
-                
-                // 检查API中有但配置文件中没有的节点
-                const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
-                if (missingInConfig.length > 0) {
-                  console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
-                }
-                
-                // 使用配置文件中的顺序，并添加API中额外的节点
-                nodesOrder = [...configNodeNames];
-                
-                // 添加API中存在但配置文件中不存在的节点
-                missingInConfig.forEach((nodeName: string) => {
-                  nodesOrder.push(nodeName);
-                });
-                
-                console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
-              } else {
-                console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
+
+            if (configGroup && Array.isArray(configGroup.proxies) && configGroup.proxies.length > 0) {
+              console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
+
+              const apiNodeNames = proxy.all || [];
+              const configNodeNames = configGroup.proxies;
+
+              const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
+              if (missingInApi.length > 0) {
+                console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
               }
+
+              const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
+              if (missingInConfig.length > 0) {
+                console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
+              }
+
+              nodesOrder = [...configNodeNames];
+              missingInConfig.forEach((nodeName: string) => {
+                nodesOrder.push(nodeName);
+              });
+
+              console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
+            } else {
+              console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
             }
-            
-            // 映射节点数据，保持顺序
+
             const nodes = nodesOrder.map((nodeName: string) => {
               const node = data.proxies[nodeName];
               const isGroup = node?.type === 'Selector' || node?.type === 'URLTest' || node?.type === 'Fallback';
-              
+
               return {
                 name: nodeName,
                 type: node?.type || 'Unknown',
@@ -461,12 +456,15 @@ export default function ProxyNodes() {
                 isGroup: isGroup,
               };
             });
-            
+
+            const groupIcon = configGroup?.icon || (proxy as any)?.icon || null;
+
             groupsData.push({
               name: groupName,
               type: proxy.type,
               nodes,
-              now: proxy.now
+              now: proxy.now,
+              icon: groupIcon,
             });
           }
         }
@@ -1417,6 +1415,17 @@ export default function ProxyNodes() {
                         }}
                       >
                         <div className="flex items-center space-x-2">
+                          {group.icon && (
+                            <img
+                              src={group.icon}
+                              alt=""
+                              className="w-5 h-5 rounded object-cover"
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          )}
                           <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
                             <span>{group.name}</span>
                             {group.now && (
@@ -1513,6 +1522,17 @@ export default function ProxyNodes() {
                         }}
                       >
                         <div className="flex items-center space-x-2">
+                          {group.icon && (
+                            <img
+                              src={group.icon}
+                              alt=""
+                              className="w-5 h-5 rounded object-cover"
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none';
+                              }}
+                            />
+                          )}
                           <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
                             <span>{group.name}</span>
                             {group.now && (

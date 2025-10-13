@@ -3,6 +3,9 @@ import * as Dialog from '@radix-ui/react-dialog';
 import * as Toast from '@radix-ui/react-toast';
 import { Cross2Icon, PlusIcon, TrashIcon, GlobeIcon, Pencil1Icon, ReloadIcon, ExternalLinkIcon, UploadIcon, CheckIcon, PlayIcon, DragHandleDots2Icon } from '@radix-ui/react-icons';
 import axios from 'axios';
+import Link from 'next/link';
+import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
+import { useProviderAvailability } from '@/hooks/use-provider-availability';
 
 type Subscription = {
   name: string;
@@ -192,6 +195,7 @@ export default function SubscriptionManager() {
   
   // 元素引用，用于滚动到视图中
   const draggedItemRef = useRef<HTMLDivElement | null>(null);
+  const { hasProviders, refreshProvidersAvailability } = useProviderAvailability();
 
   useEffect(() => {
     loadSubscriptions();
@@ -234,6 +238,7 @@ export default function SubscriptionManager() {
       const config = await window.electronAPI.getActiveConfig();
       setActiveConfig(config);
       setIsServiceRunning(!!config);
+      refreshProvidersAvailability();
     } catch (error) {
       console.error('获取当前配置失败:', error);
     }
@@ -715,6 +720,16 @@ export default function SubscriptionManager() {
           </h1>
           
           <div className="flex space-x-3">
+            {hasProviders && (
+              <Link
+                href="/providers"
+                className="flex items-center py-2 px-4 bg-blue-100 hover:bg-blue-200 text-blue-600 dark:bg-[#1f2937] dark:hover:bg-[#273049] dark:text-blue-300 rounded-md transition-colors shadow-sm"
+              >
+                <CloudOutlineIcon className="mr-2 w-5 h-5" />
+                外部资源
+              </Link>
+            )}
+
             {/* 上传YAML文件按钮 */}
             <button
               className="flex items-center py-2 px-4 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors shadow-sm"

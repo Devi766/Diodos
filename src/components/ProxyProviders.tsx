@@ -33,9 +33,10 @@ const ProxyProviders: React.FC = () => {
 
       if (result.success && result.data && result.data.providers) {
         const providerList = Object.values(result.data.providers) as ProxyProvider[];
-        // 过滤掉 Inline 和 File 类型的 providers，或者不包含 subscriptionInfo 的
+        // 仅显示真正的远程代理提供者，排除内联 / 文件型和代理组等配置项
+        // Clash 返回的代理组没有 subscriptionInfo 字段，只保留真正的订阅提供者
         const filteredProviders = providerList.filter(p =>
-          p.vehicleType !== 'Inline' && p.vehicleType !== 'File'
+          Object.prototype.hasOwnProperty.call(p, 'subscriptionInfo')
         );
         setProviders(filteredProviders);
       } else {

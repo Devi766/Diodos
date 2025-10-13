@@ -1991,7 +1991,8 @@ function parseConfigFile(filePath) {
           proxyGroups.push({
             name: group.name,
             type: group.type,
-            proxies: group.proxies || []
+            proxies: group.proxies || [],
+            icon: typeof group.icon === 'string' ? group.icon : null
           });
         }
       }
