@@ -12,6 +12,29 @@ const finalhandler = require('finalhandler');
 const crypto = require('crypto'); // 添加加密模块
 const security = require('./security'); // 引入安全模块
 
+// ==================== IPC 通信配置 ====================
+// 定义 Mihomo IPC 路径（Unix Socket / Named Pipe）
+const mihomoIpcPath = process.platform === 'win32'
+  ? '\\\\.\\pipe\\FlyClash\\mihomo'  // Windows Named Pipe
+  : '/tmp/flyclash-mihomo.sock';     // Linux/macOS Unix Socket
+
+// IPC 控制参数
+const mihomoCtlParam = process.platform === 'win32'
+  ? '-ext-ctl-pipe'
+  : '-ext-ctl-unix';
+
+// WebSocket 连接管理
+let mihomoTrafficWs = null;
+let mihomoLogsWs = null;
+let mihomoConnectionsWs = null;
+let mihomoMemoryWs = null;
+
+// WebSocket 重连计数器
+let trafficRetry = 10;
+let logsRetry = 10;
+let connectionsRetry = 10;
+let memoryRetry = 10;
+
 // 增强认证安全性 - 生成主密钥
 const MASTER_SECRET = crypto.randomBytes(32).toString('hex');
 
@@ -133,9 +156,8 @@ let isQuitting = false;
 let autoStartEnabled = true; // 默认启用自动启动
 let currentNode = null;
 
-// 连接管理相关变量
+// 连接管理相关变量（⚠️ connectionsRetry 已移至顶部 IPC 配置区）
 let connectionsWebSocket = null;
-let connectionsRetry = 10;
 let lastConnectionsInfo = {
   downloadTotal: 0,
   uploadTotal: 0,
@@ -334,9 +356,8 @@ let lastTrafficStats = {
   timestamp: Date.now()
 };
 
-// WebSocket连接
+// WebSocket连接（⚠️ trafficRetry 已移至顶部 IPC 配置区）
 let trafficWebSocket = null;
-let trafficRetry = 10;
 let lastValidStats = null;  // 用于存储最后一次有效的流量数据
 let lastConnectionsFetchTime = 0; // 用于限制连接信息获取频率
 
@@ -377,55 +398,328 @@ function formatSpeed(bytesPerSecond) {
 }
 
 // 添加一个统一的mihomo API请求函数，自动添加密钥认证头
+// ==================== 基于 IPC 的 Mihomo API 请求函数 ====================
 async function fetchMihomoAPI(endpoint, options = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      // 解析 endpoint
+      const url = new URL(endpoint.startsWith('http') ? endpoint : `http://localhost${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
+      const path = url.pathname + url.search;
+      const method = options.method || 'GET';
+
+      // 获取密钥（保持兼容性）
+      const userSecret = getUserSettings()['secret'] || '';
+
+      // 准备请求头
+      const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers
+      };
+
+      // 如果有密钥，添加认证头
+      if (userSecret) {
+        headers['Authorization'] = `Bearer ${userSecret}`;
+      }
+
+      // 如果有请求体，添加 Content-Length
+      let body = null;
+      if (options.body) {
+        body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+        headers['Content-Length'] = Buffer.byteLength(body);
+      }
+
+      // 创建 HTTP 请求选项（通过 Unix Socket）
+      const requestOptions = {
+        socketPath: mihomoIpcPath,  // 🔑 关键！使用 IPC 路径
+        path: path,
+        method: method,
+        headers: headers,
+        timeout: options.timeout || 15000
+      };
+
+      console.log(`[IPC] ${method} ${path}`);
+
+      // 发送请求
+      const req = http.request(requestOptions, (res) => {
+        let data = '';
+
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          // 模拟 fetch Response 对象
+          const response = {
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            statusText: res.statusMessage,
+            headers: res.headers,
+            json: async () => JSON.parse(data),
+            text: async () => data
+          };
+
+          if (!response.ok) {
+            reject(new Error(`请求失败: ${res.statusCode} ${res.statusMessage}`));
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        console.error('[IPC] 请求失败:', error);
+        reject(error);
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('请求超时'));
+      });
+
+      // 发送请求体
+      if (body) {
+        req.write(body);
+      }
+
+      req.end();
+    } catch (error) {
+      console.error('[IPC] Mihomo API请求失败:', error);
+      reject(error);
+    }
+  });
+}
+
+// ==================== WebSocket 实时监控功能 ====================
+
+// 启动流量监控 WebSocket
+function startTrafficWebSocket() {
+  if (mihomoTrafficWs) {
+    mihomoTrafficWs.removeAllListeners();
+    if (mihomoTrafficWs.readyState === WebSocket.OPEN) {
+      mihomoTrafficWs.close();
+    }
+  }
+
   try {
-    // 确保API配置存在
-    if (!activeApiConfig) {
-      console.error('API配置不存在');
-      throw new Error('API配置不存在');
-    }
-    
-    // 获取最新的密钥
-    const userSecret = getUserSettings()['secret'] || '';
-    
-    // 确保activeApiConfig使用最新的密钥
-    activeApiConfig.secret = userSecret;
-    
-    // 确定主机地址，如果是0.0.0.0则改用127.0.0.1
-    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
-    const port = activeApiConfig.controllerPort;
-    
-    // 构建完整URL
-    const url = endpoint.startsWith('http') ? endpoint : `http://${host}:${port}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
-    
-    // 准备请求头
-    const headers = options.headers || {};
-    
-    // 如果设置了密钥，添加认证头
-    if (userSecret) {
-      headers['Authorization'] = `Bearer ${userSecret}`;
-    } else {
-    }
-    
-    // 合并选项
-    const fetchOptions = {
-      ...options,
-      headers
-    };
-    
-    // 发送请求
-    const response = await fetch(url, fetchOptions);
-    
-    // 检查响应状态
-    if (!response.ok) {
-      throw new Error(`请求失败: ${response.status} ${response.statusText}`);
-    }
-    
-    // 返回响应
-    return response;
+    const wsUrl = `ws+unix:${mihomoIpcPath}:/traffic`;
+    console.log('[IPC-WS] 连接流量监控:', wsUrl);
+
+    mihomoTrafficWs = new WebSocket(wsUrl);
+
+    mihomoTrafficWs.on('open', () => {
+      console.log('[IPC-WS] 流量监控已连接');
+      trafficRetry = 10;
+    });
+
+    mihomoTrafficWs.on('message', (data) => {
+      try {
+        const stats = JSON.parse(data.toString());
+        if (mainWindow) {
+          mainWindow.webContents.send('traffic-update', stats);
+        }
+      } catch (error) {
+        console.error('[IPC-WS] 流量数据解析失败:', error);
+      }
+    });
+
+    mihomoTrafficWs.on('close', () => {
+      console.log('[IPC-WS] 流量监控连接关闭');
+      if (trafficRetry > 0) {
+        trafficRetry--;
+        setTimeout(() => startTrafficWebSocket(), 2000);
+      }
+    });
+
+    mihomoTrafficWs.on('error', (error) => {
+      console.error('[IPC-WS] 流量监控错误:', error.message);
+    });
   } catch (error) {
-    console.error('Mihomo API请求失败:', error);
-    throw error;
+    console.error('[IPC-WS] 创建流量监控失败:', error);
+  }
+}
+
+// 启动日志监控 WebSocket
+function startLogsWebSocket() {
+  if (mihomoLogsWs) {
+    mihomoLogsWs.removeAllListeners();
+    if (mihomoLogsWs.readyState === WebSocket.OPEN) {
+      mihomoLogsWs.close();
+    }
+  }
+
+  try {
+    const userSettings = getUserSettings();
+    const logLevel = userSettings['log-level'] || 'info';
+    const wsUrl = `ws+unix:${mihomoIpcPath}:/logs?level=${logLevel}`;
+    console.log('[IPC-WS] 连接日志监控:', wsUrl);
+
+    mihomoLogsWs = new WebSocket(wsUrl);
+
+    mihomoLogsWs.on('open', () => {
+      console.log('[IPC-WS] 日志监控已连接');
+      logsRetry = 10;
+    });
+
+    mihomoLogsWs.on('message', (data) => {
+      try {
+        const logInfo = JSON.parse(data.toString());
+        if (mainWindow) {
+          mainWindow.webContents.send('mihomo-log', logInfo);
+        }
+      } catch (error) {
+        console.error('[IPC-WS] 日志数据解析失败:', error);
+      }
+    });
+
+    mihomoLogsWs.on('close', () => {
+      console.log('[IPC-WS] 日志监控连接关闭');
+      if (logsRetry > 0) {
+        logsRetry--;
+        setTimeout(() => startLogsWebSocket(), 2000);
+      }
+    });
+
+    mihomoLogsWs.on('error', (error) => {
+      console.error('[IPC-WS] 日志监控错误:', error.message);
+    });
+  } catch (error) {
+    console.error('[IPC-WS] 创建日志监控失败:', error);
+  }
+}
+
+// 启动连接监控 WebSocket
+function startConnectionsWebSocket() {
+  if (mihomoConnectionsWs) {
+    mihomoConnectionsWs.removeAllListeners();
+    if (mihomoConnectionsWs.readyState === WebSocket.OPEN) {
+      mihomoConnectionsWs.close();
+    }
+  }
+
+  try {
+    const wsUrl = `ws+unix:${mihomoIpcPath}:/connections`;
+    console.log('[IPC-WS] 连接监控:', wsUrl);
+
+    mihomoConnectionsWs = new WebSocket(wsUrl);
+
+    mihomoConnectionsWs.on('open', () => {
+      console.log('[IPC-WS] 连接监控已连接');
+      connectionsRetry = 10;
+    });
+
+    mihomoConnectionsWs.on('message', (data) => {
+      try {
+        const connectionsInfo = JSON.parse(data.toString());
+        if (mainWindow) {
+          mainWindow.webContents.send('connections-update', connectionsInfo);
+        }
+      } catch (error) {
+        console.error('[IPC-WS] 连接数据解析失败:', error);
+      }
+    });
+
+    mihomoConnectionsWs.on('close', () => {
+      console.log('[IPC-WS] 连接监控关闭');
+      if (connectionsRetry > 0) {
+        connectionsRetry--;
+        setTimeout(() => startConnectionsWebSocket(), 2000);
+      }
+    });
+
+    mihomoConnectionsWs.on('error', (error) => {
+      console.error('[IPC-WS] 连接监控错误:', error.message);
+    });
+  } catch (error) {
+    console.error('[IPC-WS] 创建连接监控失败:', error);
+  }
+}
+
+// 启动内存监控 WebSocket
+function startMemoryWebSocket() {
+  if (mihomoMemoryWs) {
+    mihomoMemoryWs.removeAllListeners();
+    if (mihomoMemoryWs.readyState === WebSocket.OPEN) {
+      mihomoMemoryWs.close();
+    }
+  }
+
+  try {
+    const wsUrl = `ws+unix:${mihomoIpcPath}:/memory`;
+    console.log('[IPC-WS] 连接内存监控:', wsUrl);
+
+    mihomoMemoryWs = new WebSocket(wsUrl);
+
+    mihomoMemoryWs.on('open', () => {
+      console.log('[IPC-WS] 内存监控已连接');
+      memoryRetry = 10;
+    });
+
+    mihomoMemoryWs.on('message', (data) => {
+      try {
+        const memoryInfo = JSON.parse(data.toString());
+        if (mainWindow) {
+          mainWindow.webContents.send('memory-update', memoryInfo);
+        }
+      } catch (error) {
+        console.error('[IPC-WS] 内存数据解析失败:', error);
+      }
+    });
+
+    mihomoMemoryWs.on('close', () => {
+      console.log('[IPC-WS] 内存监控连接关闭');
+      if (memoryRetry > 0) {
+        memoryRetry--;
+        setTimeout(() => startMemoryWebSocket(), 2000);
+      }
+    });
+
+    mihomoMemoryWs.on('error', (error) => {
+      console.error('[IPC-WS] 内存监控错误:', error.message);
+    });
+  } catch (error) {
+    console.error('[IPC-WS] 创建内存监控失败:', error);
+  }
+}
+
+// 启动所有 WebSocket 监控
+function startAllWebSockets() {
+  console.log('[IPC-WS] 启动所有实时监控...');
+
+  // 延迟启动，确保 Mihomo 已完全启动
+  setTimeout(() => {
+    startTrafficWebSocket();
+    startLogsWebSocket();
+    startConnectionsWebSocket();
+    startMemoryWebSocket();
+  }, 2000);
+}
+
+// 停止所有 WebSocket 监控
+function stopAllWebSockets() {
+  console.log('[IPC-WS] 停止所有实时监控...');
+
+  if (mihomoTrafficWs) {
+    mihomoTrafficWs.removeAllListeners();
+    mihomoTrafficWs.close();
+    mihomoTrafficWs = null;
+  }
+
+  if (mihomoLogsWs) {
+    mihomoLogsWs.removeAllListeners();
+    mihomoLogsWs.close();
+    mihomoLogsWs = null;
+  }
+
+  if (mihomoConnectionsWs) {
+    mihomoConnectionsWs.removeAllListeners();
+    mihomoConnectionsWs.close();
+    mihomoConnectionsWs = null;
+  }
+
+  if (mihomoMemoryWs) {
+    mihomoMemoryWs.removeAllListeners();
+    mihomoMemoryWs.close();
+    mihomoMemoryWs = null;
   }
 }
 
@@ -701,9 +995,9 @@ async function startMihomo(configPath) {
         return false;
       }
 
-      // 创建高优先级配置文件（合并用户设置和原始配置）
-      const overrideConfigFilename = 'override-' + configFilename;
-      const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+      // 创建配置文件（IPC 模式下必须命名为 config.yaml）
+      // 参考 mihomo-party 实现：IPC 模式不使用 -f 参数，配置文件固定为工作目录下的 config.yaml
+      const overrideConfigPath = path.join(mihomoDir, 'config.yaml');
       
       // 使用深度合并替换原来的浅合并
       let mergedConfig, mergedConfigContent;
@@ -784,9 +1078,28 @@ async function startMihomo(configPath) {
         workingDir: mihomoDir
       }, path.join(userDataPath, 'security.log'));
 
-      // 安全启动mihomo，使用高优先级的配置文件，确保参数安全
-      const args = ['-f', overrideConfigPath];
-      
+      // 清理旧的 IPC 文件（如果存在）
+      if (process.platform !== 'win32') {
+        try {
+          if (fs.existsSync(mihomoIpcPath)) {
+            fs.unlinkSync(mihomoIpcPath);
+            console.log('[IPC] 已清理旧的 Unix Socket 文件');
+          }
+        } catch (error) {
+          console.warn('[IPC] 清理 Unix Socket 文件失败:', error.message);
+        }
+      }
+
+      // 安全启动mihomo，使用 IPC 模式
+      // 参考 mihomo-party 实现：IPC 模式下不使用 -f 参数，会自动读取工作目录下的 config.yaml
+      const args = [
+        '-d', mihomoDir,    // 工作目录（包含 config.yaml）
+        mihomoCtlParam,     // IPC 控制参数 (-ext-ctl-unix 或 -ext-ctl-pipe)
+        mihomoIpcPath       // IPC 路径
+      ];
+
+      console.log(`[IPC] 启动参数: ${args.join(' ')}`);
+
       mihomoProcess = spawn(binPath, args, {
         cwd: mihomoDir,
         env: {
@@ -801,16 +1114,34 @@ async function startMihomo(configPath) {
       mihomoProcess.stdout.on('data', (data) => {
         const logContent = data.toString();
         console.log(`mihomo stdout: ${logContent}`);
-        
+
+        // 检查 IPC 是否成功启动（参考 mihomo-party 实现）
+        const ipcStartedWindows = logContent.includes('RESTful API pipe listening at');
+        const ipcStartedUnix = logContent.includes('RESTful API unix listening at');
+
+        if (ipcStartedWindows || ipcStartedUnix) {
+          console.log('[IPC] ✓ Mihomo IPC 模式启动成功！');
+          console.log(`[IPC] 监听地址: ${mihomoIpcPath}`);
+        }
+
+        // 检查 IPC 启动失败
+        const ipcErrorWindows = logContent.includes('External controller pipe listen error');
+        const ipcErrorUnix = logContent.includes('External controller unix listen error');
+
+        if (ipcErrorWindows || ipcErrorUnix) {
+          console.error('[IPC] ✗ Mihomo IPC 启动失败！');
+          console.error('[IPC] 错误信息:', logContent);
+        }
+
         // 检查是否有配置相关日志
         if (logContent.includes('Config') || logContent.includes('allow-lan')) {
           console.log('发现配置相关日志:', logContent);
         }
-        
+
         if (mainWindow) {
           mainWindow.webContents.send('mihomo-log', logContent);
         }
-        
+
         // 直接输出到控制台/终端
         process.stdout.write(data);
       });
@@ -851,6 +1182,9 @@ async function startMihomo(configPath) {
       
       if (mihomoProcess) {
         startTrafficStatsUpdate();
+
+        // 启动所有 WebSocket 实时监控
+        startAllWebSockets();
       }
 
       return true;
@@ -1423,8 +1757,8 @@ async function autoStartMihomo() {
           
           // 启动连接管理和流量统计
           startTrafficStatsUpdate();
-          startConnectionsWebSocket();
-          
+          startAllWebSockets();
+
           // 获取当前节点
           updateCurrentNodeInfo();
           
@@ -1447,8 +1781,8 @@ async function autoStartMihomo() {
       
       // 启动连接管理和流量统计
       startTrafficStatsUpdate();
-      startConnectionsWebSocket();
-      
+      startAllWebSockets();
+
       return;
     }
     
@@ -1887,71 +2221,7 @@ function stopTrafficStatsUpdate() {
   }
 }
 
-// 启动连接管理WebSocket
-async function startConnectionsWebSocket() {
-  try {
-    if (!currentNode) {
-      throw new Error('未选择节点');
-    }
-
-    if (!activeApiConfig) {
-      throw new Error('API配置不可用');
-    }
-
-    // 确保使用127.0.0.1作为客户端连接地址
-    const host = activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : activeApiConfig.controllerHost;
-
-    // 创建新的WebSocket连接，使用activeApiConfig中的参数
-    const wsUrl = `ws://${host}:${activeApiConfig.controllerPort}/connections/${currentNode}`;
-    console.log(`[调试] 连接到节点WebSocket: ${wsUrl}`);
-    
-    // 如果有secret密钥，添加到请求头
-    const wsOptions = {};
-    if (activeApiConfig.secret) {
-      wsOptions.headers = {
-        'Authorization': `Bearer ${activeApiConfig.secret}`
-      };
-      console.log('[调试] 已添加WebSocket认证头');
-    }
-    
-    connectionsWebSocket = new WebSocket(wsUrl, wsOptions);
-    
-    // 设置连接超时
-    const connectionTimeout = setTimeout(() => {
-      if (connectionsWebSocket.readyState !== WebSocket.OPEN) {
-        connectionsWebSocket.close();
-        throw new Error('连接超时');
-      }
-    }, 5000);
-
-    // 连接建立
-    connectionsWebSocket.on('open', () => {
-      clearTimeout(connectionTimeout);
-      console.log(`已连接到节点 ${currentNode}`);
-    });
-
-    // 连接关闭
-    connectionsWebSocket.on('close', () => {
-      console.log(`与节点 ${currentNode} 的连接已关闭`);
-      // 尝试重新连接
-      setTimeout(() => {
-        if (currentNode) {
-          startConnectionsWebSocket().catch(console.error);
-        }
-      }, 5000);
-    });
-
-    // 错误处理
-    connectionsWebSocket.on('error', (error) => {
-      console.error('WebSocket错误:', error);
-      clearTimeout(connectionTimeout);
-    });
-
-  } catch (error) {
-    console.error('启动WebSocket连接失败:', error);
-    throw error;
-  }
-}
+// 旧的 HTTP WebSocket 函数已删除，现在统一使用 IPC WebSocket（第 591 行）
 
 // 更新当前节点信息
 async function updateCurrentNodeInfo() {
@@ -2006,13 +2276,14 @@ async function updateCurrentNodeInfo() {
 }
 
 // 停止连接管理WebSocket
-function stopConnectionsWebSocket() {
-  if (connectionsWebSocket) {
-    connectionsWebSocket.close();
-    connectionsWebSocket = null;
-  }
-  connectionsRetry = 10;
-}
+// ⚠️ 已废弃：使用新的 stopAllWebSockets() 函数
+// function stopConnectionsWebSocket() {
+//   if (connectionsWebSocket) {
+//     connectionsWebSocket.close();
+//     connectionsWebSocket = null;
+//   }
+//   connectionsRetry = 10;
+// }
 
 // 添加检查Mihomo服务状态的函数
 async function checkMihomoService() {
@@ -2108,7 +2379,7 @@ function handleMihomoProcessExit(code) {
   console.log(`Mihomo进程退出，代码: ${code}`);
   mihomoProcess = null;
   stopTrafficStatsUpdate();
-  stopConnectionsWebSocket();
+  stopAllWebSockets();
   // 清除configFilePath确保状态正确更新
   configFilePath = null;
   
@@ -3682,7 +3953,7 @@ app.whenReady().then(() => {
         mihomoProcess.kill();
         mihomoProcess = null;
         stopTrafficStatsUpdate();
-        stopConnectionsWebSocket();
+        stopAllWebSockets();
         
         // 等待进程完全关闭
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -3722,7 +3993,10 @@ app.whenReady().then(() => {
         mihomoProcess.kill();
         mihomoProcess = null;
         stopTrafficStatsUpdate();
-        stopConnectionsWebSocket();
+
+        // 停止所有 WebSocket 监控
+        stopAllWebSockets();
+
         // 清除configFilePath，这样get-active-config将返回null
         configFilePath = null;
         console.log('Mihomo已停止');
@@ -3805,7 +4079,7 @@ app.whenReady().then(() => {
           if (mihomoProcess) {
             mihomoProcess.kill();
             stopTrafficStatsUpdate();
-            stopConnectionsWebSocket();
+            stopAllWebSockets();
             // 等待进程完全终止
             setTimeout(async () => {
               mihomoProcess = null;
@@ -3935,7 +4209,7 @@ ipcMain.handle('test-media-streaming', async (event, serviceName, checkUrl) => {
 });
 
 app.on('window-all-closed', () => {
-  stopConnectionsWebSocket(); // 停止连接管理
+  stopAllWebSockets(); // 停止连接管理
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -6002,12 +6276,12 @@ ipcMain.handle('toggleTunMode', async (event, token, enabled) => {
     // 获取请求来源窗口
     const webContents = event.sender;
     const win = BrowserWindow.fromWebContents(webContents);
-    
+
     if (!win) {
       console.error('TUN模式切换验证失败: 无法确定请求窗口');
       return { success: false, error: '安全验证失败: 无法确定请求窗口' };
     }
-    
+
     // 完整的令牌验证
     if (!sessionTokenManager.validateToken(token, win.id, 'toggleTunMode')) {
       console.error('TUN模式切换验证失败: 令牌无效');
@@ -6017,7 +6291,7 @@ ipcMain.handle('toggleTunMode', async (event, token, enabled) => {
       }, path.join(userDataPath, 'security.log'));
       return { success: false, error: '安全验证失败: 令牌无效' };
     }
-    
+
     // 验证通过，执行实际操作
     console.log(`TUN模式切换请求已授权 [窗口ID: ${win.id}, 启用: ${enabled}]`);
     const menuItem = { checked: enabled };
@@ -6026,6 +6300,70 @@ ipcMain.handle('toggleTunMode', async (event, token, enabled) => {
   } catch (error) {
     console.error('切换TUN模式失败:', error);
     return { success: false, error: `操作失败: ${error.message}` };
+  }
+});
+
+// ==================== Provider 管理相关的 IPC Handlers ====================
+
+// 获取 Proxy Providers
+ipcMain.handle('get-proxy-providers', async () => {
+  try {
+    const response = await fetchMihomoAPI('/providers/proxies');
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error('获取 Proxy Providers 失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 更新单个 Proxy Provider
+ipcMain.handle('update-proxy-provider', async (event, providerName) => {
+  try {
+    const response = await fetchMihomoAPI(`/providers/proxies/${encodeURIComponent(providerName)}`, {
+      method: 'PUT'
+    });
+    return { success: true };
+  } catch (error) {
+    console.error(`更新 Proxy Provider ${providerName} 失败:`, error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 获取 Rule Providers
+ipcMain.handle('get-rule-providers', async () => {
+  try {
+    const response = await fetchMihomoAPI('/providers/rules');
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error('获取 Rule Providers 失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 更新单个 Rule Provider
+ipcMain.handle('update-rule-provider', async (event, providerName) => {
+  try {
+    const response = await fetchMihomoAPI(`/providers/rules/${encodeURIComponent(providerName)}`, {
+      method: 'PUT'
+    });
+    return { success: true };
+  } catch (error) {
+    console.error(`更新 Rule Provider ${providerName} 失败:`, error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 获取运行时配置（用于获取 provider 详细信息）
+ipcMain.handle('get-runtime-config', async () => {
+  try {
+    const response = await fetchMihomoAPI('/configs');
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error('获取运行时配置失败:', error);
+    return { success: false, error: error.message };
   }
 });
 

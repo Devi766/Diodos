@@ -57,7 +57,9 @@ interface MihomoApiResponse {
   status: number;
   statusText: string;
   headers: Record<string, string>;
-  data: any; 
+  data: any;
+  json: () => Promise<any>;
+  text: () => Promise<string>;
 }
 
 export interface ElectronAPI {
@@ -278,6 +280,13 @@ export interface ElectronAPI {
   saveCollapsedGroups: (groups: string[]) => Promise<{ success: boolean, error?: string }>;
   getCollapsedGroups: () => Promise<{ success: boolean, groups: string[], error?: string }>;
   
+  // Provider 资源管理
+  getProxyProviders: () => Promise<{ success: boolean, data?: any, error?: string }>;
+  updateProxyProvider: (providerName: string) => Promise<{ success: boolean, error?: string }>;
+  getRuleProviders: () => Promise<{ success: boolean, data?: any, error?: string }>;
+  updateRuleProvider: (providerName: string) => Promise<{ success: boolean, error?: string }>;
+  getRuntimeConfig: () => Promise<{ success: boolean, data?: any, error?: string }>;
+
   // 事件监听
   onMihomoLog: (callback: (log: string) => void) => void;
   onMihomoError: (callback: (error: string) => void) => void;
@@ -290,7 +299,7 @@ export interface ElectronAPI {
   onServiceRestarted: (callback: (result: {success: boolean, error?: string}) => void) => () => void;
   onTestAllNodes: (callback: () => void) => () => void;
   onConnectionsClosed: (callback: () => void) => () => void;
-  
+
   // 移除监听器
   removeAllListeners: (prefix?: string) => void;
 }

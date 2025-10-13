@@ -484,6 +484,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 添加取消批量测速的API
   cancelBatchSpeedtest: () => ipcRenderer.invoke('cancel-batch-speedtest'),
   // 监听测速进度
+
+  // Provider 资源管理
+  getProxyProviders: () => ipcRenderer.invoke('get-proxy-providers'),
+  updateProxyProvider: (providerName) => ipcRenderer.invoke('update-proxy-provider', providerName),
+  getRuleProviders: () => ipcRenderer.invoke('get-rule-providers'),
+  updateRuleProvider: (providerName) => ipcRenderer.invoke('update-rule-provider', providerName),
+  getRuntimeConfig: () => ipcRenderer.invoke('get-runtime-config'),
 });
 
 // 移除重复的事件监听器
