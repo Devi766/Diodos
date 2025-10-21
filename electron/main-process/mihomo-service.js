@@ -664,6 +664,9 @@ module.exports = function initMihomoService(context) {
         if (typeof context.startTrafficStatsUpdate === 'function') {
           context.startTrafficStatsUpdate();
         }
+        if (typeof context.startMihomoLogs === 'function') {
+          context.startMihomoLogs();
+        }
       }
 
       return true;
@@ -684,6 +687,9 @@ module.exports = function initMihomoService(context) {
         }
         if (typeof context.stopConnectionsWebSocket === 'function') {
           context.stopConnectionsWebSocket();
+        }
+        if (typeof context.stopMihomoLogs === 'function') {
+          context.stopMihomoLogs();
         }
         state.configFilePath = null;
         console.log('Mihomo已停止');
@@ -788,6 +794,9 @@ module.exports = function initMihomoService(context) {
             if (typeof context.startConnectionsWebSocket === 'function') {
               context.startConnectionsWebSocket();
             }
+            if (typeof context.startMihomoLogs === 'function') {
+              context.startMihomoLogs();
+            }
             if (typeof context.updateCurrentNodeInfo === 'function') {
               context.updateCurrentNodeInfo();
             }
@@ -813,6 +822,9 @@ module.exports = function initMihomoService(context) {
         }
         if (typeof context.startConnectionsWebSocket === 'function') {
           context.startConnectionsWebSocket();
+        }
+        if (typeof context.startMihomoLogs === 'function') {
+          context.startMihomoLogs();
         }
 
         return;
@@ -857,25 +869,22 @@ module.exports = function initMihomoService(context) {
         });
 
         try {
-          const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-          if (fs.existsSync(proxyConfigPath)) {
-            const proxyConfig = JSON.parse(fs.readFileSync(proxyConfigPath, 'utf8'));
-            console.log('应用上次保存的代理状态:', proxyConfig.enabled);
+          const proxyEnabled = dbManager.getSetting('systemProxyEnabled', false);
+          console.log('应用上次保存的代理状态:', proxyEnabled);
 
-            if (proxyConfig.enabled) {
-              if (typeof context.enableSystemProxy === 'function') {
-                await context.enableSystemProxy();
-              }
-              if (state.mainWindow) {
-                state.mainWindow.webContents.send('proxy-status', true);
-              }
-            } else {
-              if (typeof context.disableSystemProxy === 'function') {
-                await context.disableSystemProxy();
-              }
-              if (state.mainWindow) {
-                state.mainWindow.webContents.send('proxy-status', false);
-              }
+          if (proxyEnabled) {
+            if (typeof context.enableSystemProxy === 'function') {
+              await context.enableSystemProxy();
+            }
+            if (state.mainWindow) {
+              state.mainWindow.webContents.send('proxy-status', true);
+            }
+          } else {
+            if (typeof context.disableSystemProxy === 'function') {
+              await context.disableSystemProxy();
+            }
+            if (state.mainWindow) {
+              state.mainWindow.webContents.send('proxy-status', false);
             }
           }
         } catch (error) {
@@ -931,6 +940,9 @@ module.exports = function initMihomoService(context) {
         }
         if (typeof context.stopConnectionsWebSocket === 'function') {
           context.stopConnectionsWebSocket();
+        }
+        if (typeof context.stopMihomoLogs === 'function') {
+          context.stopMihomoLogs();
         }
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }

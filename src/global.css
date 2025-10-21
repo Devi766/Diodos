@@ -56,6 +56,27 @@
     @apply border-border;
   }
 
+  html,
+  body,
+  #__next,
+  #__next *,
+  #__next *::before,
+  #__next *::after {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-user-drag: none !important;
+  }
+
+  input,
+  textarea,
+  select,
+  button,
+  [contenteditable='true'],
+  .selectable-text {
+    -webkit-user-select: text !important;
+    user-select: text !important;
+  }
+
   html {
     background: transparent;
   }

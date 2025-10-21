@@ -756,7 +756,9 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
       down: Math.max(0, entry.downSpeed) / 1024
     }));
 
-    const peak = data.reduce((acc, item) => Math.max(acc, item.up, item.down), 0);
+    const upPeak = data.reduce((acc, item) => Math.max(acc, item.up), 0);
+    const downPeak = data.reduce((acc, item) => Math.max(acc, item.down), 0);
+    const peak = Math.max(upPeak, downPeak);
     const safeMax = peak > 0 ? peak : 1;
 
     const paddingTop = 8;
@@ -832,7 +834,8 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
       yTicks,
       timeTicks,
       upShape,
-      downShape
+      downShape,
+      peak
     };
   }, [samples]);
 
@@ -845,8 +848,30 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
   }
 
   return (
-    <div className="relative h-48 w-full overflow-hidden rounded-xl bg-gradient-to-b from-white via-slate-50 to-white dark:from-slate-900 dark:via-slate-900/80 dark:to-slate-900">
-      <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <div className="space-y-3">
+      {/* 图例和峰值 */}
+      <div className="flex items-center justify-between px-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-slate-500 dark:text-slate-400">峰值</span>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+            {formatSpeed(chart.peak * 1024)}
+          </span>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <div className="h-2 w-2 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500"></div>
+            <span className="text-xs text-slate-600 dark:text-slate-400">上传</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-2 w-2 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"></div>
+            <span className="text-xs text-slate-600 dark:text-slate-400">下载</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 图表 */}
+      <div className="relative h-48 w-full overflow-hidden rounded-xl bg-gradient-to-b from-white via-slate-50 to-white dark:from-slate-900 dark:via-slate-900/80 dark:to-slate-900">
+        <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         <defs>
           <linearGradient id="traffic-download-fill" x1="0%" y1="0%" x2="0%" y2="100%">
             <stop offset="0%" stopColor="rgba(99, 102, 241, 0.32)" />
@@ -899,6 +924,7 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
         <path d={chart.downShape.line} fill="none" stroke="url(#traffic-download-line)" strokeWidth="0.5" />
         <path d={chart.upShape.line} fill="none" stroke="url(#traffic-upload-line)" strokeWidth="0.5" />
       </svg>
+      </div>
     </div>
   );
 }

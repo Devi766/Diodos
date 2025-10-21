@@ -123,7 +123,11 @@ export interface ElectronAPI {
   getTheme: () => Promise<{ success: boolean, theme: string, error?: string }>;
   onThemeChanged: (callback: (event: any, theme: string) => void) => void;
   removeThemeListener: () => void;
-  
+
+  // 静默启动设置
+  getSilentStart: () => Promise<{ success: boolean, silentStart: boolean, error?: string }>;
+  setSilentStart: (enabled: boolean) => Promise<{ success: boolean, error?: string }>;
+
   // 消息通信
   onMessage: (channel: string, callback: (data: any) => void) => (() => void);
   
@@ -131,6 +135,8 @@ export interface ElectronAPI {
   saveSubscription: (subUrl: string, configData: string, customName: string, subscriptionInfo?: SubscriptionInfo) => Promise<string>;
   getSubscriptions: () => Promise<Array<Subscription>>;
   deleteSubscription: (filePath: string) => Promise<boolean>;
+  editSubscription: (params: { oldPath: string; newName: string; newUrl: string }) => Promise<{ success: boolean; newPath: string }>;
+  getSubscriptionUrl: (filePath: string) => Promise<string | null>;
   fetchSubscription: (subUrl: string) => Promise<SubscriptionResult | null>;
   updateSubscription: (filePath: string, configData: string, subUrl: string, subscriptionInfo?: SubscriptionInfo) => Promise<boolean>;
   refreshSubscription: (filePath: string) => Promise<{ success: boolean, filePath?: string, error?: string }>;

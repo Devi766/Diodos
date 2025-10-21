@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import * as Switch from '@radix-ui/react-switch';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Toast from '@radix-ui/react-toast';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { useMihomoAPI } from '../services/mihomo-api';
+import { Switch } from './ui/switch';
 
 export default function Settings() {
   const [startWithSystem, setStartWithSystem] = useState(false);
+  const [silentStart, setSilentStart] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
@@ -81,7 +82,13 @@ export default function Settings() {
           // 获取开机启动状态
           const autoLaunchState = await window.electronAPI.getAutoLaunchState();
           setStartWithSystem(autoLaunchState);
-          
+
+          // 获取静默启动设置
+          const silentStartResult = await window.electronAPI.getSilentStart();
+          if (silentStartResult.success) {
+            setSilentStart(silentStartResult.silentStart);
+          }
+
           // 获取订阅UA设置
           const userSettings = await window.electronAPI.getProxySettings();
           if (userSettings.success && userSettings.settings && userSettings.settings['subscription-ua']) {
@@ -155,6 +162,22 @@ export default function Settings() {
       }
     }
   }, [startWithSystem]);
+
+  // 监听静默启动设置变化
+  const updateSilentStart = useCallback(async () => {
+    if (typeof window !== 'undefined' && window.electronAPI) {
+      try {
+        const result = await window.electronAPI.setSilentStart(silentStart);
+        if (result.success) {
+          console.log('静默启动设置已更新:', silentStart);
+        } else {
+          console.error('更新静默启动设置失败:', result.error);
+        }
+      } catch (error) {
+        console.error('更新静默启动设置失败:', error);
+      }
+    }
+  }, [silentStart]);
   
   useEffect(() => {
     // 组件首次加载时不调用，只在状态变化时调用
@@ -162,9 +185,18 @@ export default function Settings() {
       isFirstRender.current = false;
       return;
     }
-    
+
     updateAutoLaunch();
   }, [updateAutoLaunch]);
+
+  useEffect(() => {
+    // 组件首次加载时不调用，只在状态变化时调用
+    if (isFirstRender.current) {
+      return;
+    }
+
+    updateSilentStart();
+  }, [updateSilentStart]);
 
   // 处理主题切换
   const handleThemeChange = async (newTheme: string) => {
@@ -397,13 +429,21 @@ export default function Settings() {
                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">开机启动</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动计算机时自动启动FlyClash</p>
                   </div>
-                  <Switch.Root
-                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
+                  <Switch
                     checked={startWithSystem}
                     onCheckedChange={setStartWithSystem}
-                  >
-                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
-                  </Switch.Root>
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">静默启动</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动时不显示主窗口，仅在托盘后台运行</p>
+                  </div>
+                  <Switch
+                    checked={silentStart}
+                    onCheckedChange={setSilentStart}
+                  />
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -411,13 +451,10 @@ export default function Settings() {
                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">最小化到托盘</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">关闭窗口时最小化到系统托盘</p>
                   </div>
-                  <Switch.Root
-                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
+                  <Switch
                     checked={minimizeToTray}
                     onCheckedChange={setMinimizeToTray}
-                  >
-                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
-                  </Switch.Root>
+                  />
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -425,13 +462,10 @@ export default function Settings() {
                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动检查更新</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动时自动检查是否有新版本</p>
                   </div>
-                  <Switch.Root
-                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
+                  <Switch
                     checked={autoCheckUpdate}
                     onCheckedChange={setAutoCheckUpdate}
-                  >
-                    <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
-                  </Switch.Root>
+                  />
                 </div>
 
                 <div>
@@ -575,16 +609,13 @@ export default function Settings() {
                 <div className="mb-4">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">允许局域网访问</h3>
                   <div className="flex items-center">
-                    <Switch.Root
-                      className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
+                    <Switch
                       checked={allowLan}
                       onCheckedChange={(checked) => {
                         console.log('允许局域网访问切换为:', checked, '类型:', typeof checked);
                         setAllowLan(Boolean(checked));
                       }}
-                    >
-                      <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
-                    </Switch.Root>
+                    />
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">允许其他设备通过局域网连接到本代理</span>
                   </div>
                 </div>
@@ -592,16 +623,13 @@ export default function Settings() {
                 <div className="mb-4">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">IPv6支持</h3>
                   <div className="flex items-center">
-                    <Switch.Root
-                      className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
+                    <Switch
                       checked={enableIPv6}
                       onCheckedChange={(checked) => {
                         console.log('IPv6支持切换为:', checked);
                         setEnableIPv6(Boolean(checked));
                       }}
-                    >
-                      <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
-                    </Switch.Root>
+                    />
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">启用IPv6支持（需要重启代理）</span>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-12">

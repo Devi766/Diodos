@@ -831,20 +831,39 @@ export default function ProxyNodes() {
     });
   };
 
-  const resetCollapsedGroups = () => {
-    setCollapsedGroups(new Set());
+  const toggleAllGroups = () => {
+    // 检查是否所有组都已收起
+    const hasAnyCollapsed = collapsedGroups.size > 0;
 
-    try {
-      localStorage.removeItem('collapsedGroups');
-      console.log('已清空折叠状态');
-    } catch (error) {
-      console.error('清空折叠状态失败:', error);
-    }
-
-    if (window.electronAPI?.saveCollapsedGroups) {
-      window.electronAPI.saveCollapsedGroups([]).catch((error: unknown) => {
-        console.error('同步清空持久化折叠状态失败:', error);
-      });
+    if (hasAnyCollapsed) {
+      // 如果有任何组被收起,则全部展开
+      setCollapsedGroups(new Set());
+      try {
+        localStorage.removeItem('collapsedGroups');
+        console.log('已展开所有代理组');
+      } catch (error) {
+        console.error('展开所有代理组失败:', error);
+      }
+      if (window.electronAPI?.saveCollapsedGroups) {
+        window.electronAPI.saveCollapsedGroups([]).catch((error: unknown) => {
+          console.error('同步清空持久化折叠状态失败:', error);
+        });
+      }
+    } else {
+      // 如果所有组都已展开,则全部收起
+      const allGroupNames = new Set(displayGroups.map(g => g.name));
+      setCollapsedGroups(allGroupNames);
+      try {
+        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(allGroupNames)));
+        console.log('已收起所有代理组');
+      } catch (error) {
+        console.error('收起所有代理组失败:', error);
+      }
+      if (window.electronAPI?.saveCollapsedGroups) {
+        window.electronAPI.saveCollapsedGroups(Array.from(allGroupNames)).catch((error: unknown) => {
+          console.error('同步持久化折叠状态失败:', error);
+        });
+      }
     }
   };
 
@@ -989,6 +1008,7 @@ export default function ProxyNodes() {
                 
                 return (
                   <Grid
+                    className="custom-scrollbar"
                     columnCount={columnCount}
                     columnWidth={columnWidth}
                     height={Math.min(rowCount * rowHeight, 600)} // 设置最大高度，避免过长
@@ -1442,9 +1462,9 @@ export default function ProxyNodes() {
                 </button>
                 <button
                   type="button"
-                  onClick={resetCollapsedGroups}
+                  onClick={toggleAllGroups}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
-                  title="重置折叠"
+                  title={collapsedGroups.size > 0 ? "展开所有代理组" : "收起所有代理组"}
                 >
                   <MixerHorizontalIcon className="h-4 w-4" />
                 </button>
@@ -1473,7 +1493,7 @@ export default function ProxyNodes() {
               return (
                 <div
                   key={`${group.name}-${group.type}`}
-                  className="group-panel rounded-2xl bg-white px-4 py-3 shadow-sm transition dark:bg-[#2a2a2a]"
+                  className="group-panel rounded-2xl bg-white px-4 py-3 shadow-sm transition dark:bg-[#2a2a2a] overflow-hidden"
                 >
                   <button
                     type="button"
@@ -1492,19 +1512,21 @@ export default function ProxyNodes() {
                     <span className="text-xs text-muted-foreground">{isCollapsed ? '展开' : '收起'}</span>
                   </button>
 
-                  {!isCollapsed && (
-                    <div className="border-t border-slate-100 pt-3 dark:border-slate-800/50">
-                      <GroupNodes
-                        group={group}
-                        collapsedGroups={effectiveCollapsed}
-                        handleTestNode={handleTestNode}
-                        handleNodeSelect={handleNodeSelect}
-                        handleToggleFavorite={handleToggleFavorite}
-                        testingNodes={testingNodes}
-                        favoriteNodes={favoriteNodes}
-                      />
-                    </div>
-                  )}
+                  <div
+                    className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-300 ease-in-out overflow-hidden ${
+                      isCollapsed ? 'max-h-0 opacity-0 pt-0' : 'max-h-[10000px] opacity-100 pt-3'
+                    }`}
+                  >
+                    <GroupNodes
+                      group={group}
+                      collapsedGroups={effectiveCollapsed}
+                      handleTestNode={handleTestNode}
+                      handleNodeSelect={handleNodeSelect}
+                      handleToggleFavorite={handleToggleFavorite}
+                      testingNodes={testingNodes}
+                      favoriteNodes={favoriteNodes}
+                    />
+                  </div>
                 </div>
               );
             })}

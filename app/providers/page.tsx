@@ -10,26 +10,20 @@ export default function ProvidersPage() {
 
   return (
     <Layout>
-      <div className="bg-[#f9f9f9] dark:bg-[#1a1a1a] min-h-screen p-6">
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-              外部资源
-            </h1>
-            <p className="text-gray-500 dark:text-gray-400 mt-1">
-              管理外部代理提供者和规则提供者资源
-            </p>
-          </div>
-
-          {status === 'absent' && (
-            <div className="bg-white dark:bg-[#1f1f1f] border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-8 text-center text-gray-500 dark:text-gray-400">
-              当前配置不包含任何 Provider
-            </div>
-          )}
-
-          <ProxyProviders />
-          <RuleProviders />
+      <div className="space-y-6">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold text-foreground">提供者</h1>
+          <p className="text-sm text-muted-foreground">管理外部代理提供者和规则提供者资源</p>
         </div>
+
+        {status === 'absent' && (
+          <div className="bg-white dark:bg-[#2a2a2a] border border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-8 text-center text-slate-500 dark:text-slate-400">
+            当前配置不包含任何 Provider
+          </div>
+        )}
+
+        <ProxyProviders />
+        <RuleProviders />
       </div>
     </Layout>
   );

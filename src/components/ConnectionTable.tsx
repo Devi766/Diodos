@@ -291,8 +291,8 @@ export default function ConnectionTable() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="space-y-6 min-w-0 w-full">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
         {metrics.map((metric) => (
           <Card
             key={metric.label}
@@ -310,8 +310,8 @@ export default function ConnectionTable() {
         ))}
       </div>
 
-      <section className="space-y-4">
-        <Card className="space-y-4 rounded-3xl bg-white p-5 shadow-sm dark:bg-[#2a2a2a]">
+      <section className="space-y-4 min-w-0">
+        <Card className="space-y-4 rounded-3xl bg-white p-5 shadow-sm dark:bg-[#2a2a2a] min-w-0">
           <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
             <div className="inline-flex rounded-full bg-white/70 p-1 text-xs shadow-sm dark:bg-[#222222]">
               {FILTERS.map((filter) => (
@@ -389,9 +389,9 @@ export default function ConnectionTable() {
           </div>
         )}
 
-        <Card className="flex flex-col overflow-hidden rounded-3xl bg-white shadow-sm dark:bg-[#2a2a2a]">
-          <div className="border-b border-white/20 bg-white text-slate-600 dark:border-gray-700 dark:bg-[#2a2a2a] dark:text-slate-200 overflow-x-auto">
-            <table className="w-full min-w-[720px] text-xs">
+        <Card className="flex flex-col overflow-hidden rounded-3xl bg-white shadow-sm dark:bg-[#2a2a2a] min-w-0">
+          <div className="connection-table-scroll border-b border-white/20 bg-white text-slate-600 dark:border-gray-700 dark:bg-[#2a2a2a] dark:text-slate-200 overflow-x-auto">
+            <table className="w-full min-w-[560px] md:min-w-[720px] text-xs">
               <thead>
                 <tr>
                   <th
@@ -480,8 +480,8 @@ export default function ConnectionTable() {
             </table>
           </div>
 
-          <div className="flex-1 overflow-x-auto overflow-y-auto">
-            <table className="w-full min-w-[720px] text-xs">
+          <div className="connection-table-scroll flex-1 overflow-x-auto overflow-y-auto">
+            <table className="w-full min-w-[560px] md:min-w-[720px] text-xs">
               <tbody className="divide-y divide-white/20 dark:divide-white/15">
                 {filteredConnections.length > 0 ? (
                   filteredConnections.map((connection) => (

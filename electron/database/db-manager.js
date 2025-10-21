@@ -1,0 +1,342 @@
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
+
+class DatabaseManager {
+  constructor(dbPath) {
+    this.dbPath = dbPath;
+    this.db = null;
+  }
+
+  /**
+   * 初始化数据库连接和表结构
+   */
+  initialize() {
+    try {
+      // 确保数据库目录存在
+      const dbDir = path.dirname(this.dbPath);
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+
+      // 初始化 better-sqlite3
+      this.db = new Database(this.dbPath);
+
+      // 启用外键约束
+      this.db.pragma('foreign_keys = ON');
+
+      // 创建表
+      this.createTables();
+
+      console.log('[数据库] 初始化成功:', this.dbPath);
+      return true;
+    } catch (error) {
+      console.error('[数据库] 初始化失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 创建数据库表
+   */
+  createTables() {
+    // 订阅表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        file_path TEXT NOT NULL UNIQUE,
+        url TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+    // 订阅流量信息表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS subscription_info (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subscription_id INTEGER NOT NULL,
+        used_traffic INTEGER,
+        total_traffic INTEGER,
+        expiry_timestamp INTEGER,
+        FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+      )
+    `);
+
+    // 设置表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        type TEXT NOT NULL
+      )
+    `);
+
+    // 创建索引
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_file_path ON subscriptions(file_path)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscription_info_subscription_id ON subscription_info(subscription_id)`);
+  }
+
+  /**
+   * 关闭数据库连接
+   */
+  close() {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+      console.log('[数据库] 连接已关闭');
+    }
+  }
+
+  // ==================== 订阅管理 ====================
+
+  /**
+   * 添加订阅
+   */
+  addSubscription(name, filePath, url = null) {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      `INSERT INTO subscriptions (name, file_path, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+    );
+    const info = stmt.run(name, filePath, url, now, now);
+    return info.lastInsertRowid;
+  }
+
+  /**
+   * 更新订阅
+   */
+  updateSubscription(id, updates) {
+    const fields = [];
+    const values = [];
+
+    if (updates.name !== undefined) {
+      fields.push('name = ?');
+      values.push(updates.name);
+    }
+    if (updates.file_path !== undefined) {
+      fields.push('file_path = ?');
+      values.push(updates.file_path);
+    }
+    if (updates.url !== undefined) {
+      fields.push('url = ?');
+      values.push(updates.url);
+    }
+
+    fields.push('updated_at = ?');
+    values.push(Date.now());
+
+    values.push(id);
+
+    const stmt = this.db.prepare(
+      `UPDATE subscriptions SET ${fields.join(', ')} WHERE id = ?`
+    );
+    stmt.run(...values);
+  }
+
+  /**
+   * 根据文件路径更新订阅
+   */
+  updateSubscriptionByPath(filePath, updates) {
+    const fields = [];
+    const values = [];
+
+    if (updates.name !== undefined) {
+      fields.push('name = ?');
+      values.push(updates.name);
+    }
+    if (updates.url !== undefined) {
+      fields.push('url = ?');
+      values.push(updates.url);
+    }
+
+    fields.push('updated_at = ?');
+    values.push(Date.now());
+
+    values.push(filePath);
+
+    const stmt = this.db.prepare(
+      `UPDATE subscriptions SET ${fields.join(', ')} WHERE file_path = ?`
+    );
+    stmt.run(...values);
+  }
+
+  /**
+   * 删除订阅
+   */
+  deleteSubscription(id) {
+    const stmt = this.db.prepare('DELETE FROM subscriptions WHERE id = ?');
+    return stmt.run(id);
+  }
+
+  /**
+   * 根据文件路径删除订阅
+   */
+  deleteSubscriptionByPath(filePath) {
+    const stmt = this.db.prepare('DELETE FROM subscriptions WHERE file_path = ?');
+    return stmt.run(filePath);
+  }
+
+  /**
+   * 获取所有订阅
+   */
+  getAllSubscriptions() {
+    const stmt = this.db.prepare(`
+      SELECT s.*, si.used_traffic, si.total_traffic, si.expiry_timestamp
+      FROM subscriptions s
+      LEFT JOIN subscription_info si ON s.id = si.subscription_id
+      ORDER BY s.created_at DESC
+    `);
+
+    return stmt.all();
+  }
+
+  /**
+   * 根据文件路径获取订阅
+   */
+  getSubscriptionByPath(filePath) {
+    const stmt = this.db.prepare(`
+      SELECT s.*, si.used_traffic, si.total_traffic, si.expiry_timestamp
+      FROM subscriptions s
+      LEFT JOIN subscription_info si ON s.id = si.subscription_id
+      WHERE s.file_path = ?
+    `);
+
+    return stmt.get(filePath);
+  }
+
+  /**
+   * 根据ID获取订阅
+   */
+  getSubscriptionById(id) {
+    const stmt = this.db.prepare(`
+      SELECT s.*, si.used_traffic, si.total_traffic, si.expiry_timestamp
+      FROM subscriptions s
+      LEFT JOIN subscription_info si ON s.id = si.subscription_id
+      WHERE s.id = ?
+    `);
+
+    return stmt.get(id);
+  }
+
+  // ==================== 订阅信息管理 ====================
+
+  /**
+   * 设置订阅流量信息
+   */
+  setSubscriptionInfo(subscriptionId, usedTraffic, totalTraffic, expiryTimestamp) {
+    // 先删除旧记录
+    this.db.prepare('DELETE FROM subscription_info WHERE subscription_id = ?').run(subscriptionId);
+    
+    // 插入新记录
+    const stmt = this.db.prepare(`
+      INSERT INTO subscription_info (subscription_id, used_traffic, total_traffic, expiry_timestamp)
+      VALUES (?, ?, ?, ?)
+    `);
+    
+    return stmt.run(subscriptionId, usedTraffic, totalTraffic, expiryTimestamp);
+  }
+
+  /**
+   * 根据文件路径设置订阅流量信息
+   */
+  setSubscriptionInfoByPath(filePath, usedTraffic, totalTraffic, expiryTimestamp) {
+    const sub = this.getSubscriptionByPath(filePath);
+    if (!sub) {
+      throw new Error('订阅不存在');
+    }
+    
+    return this.setSubscriptionInfo(sub.id, usedTraffic, totalTraffic, expiryTimestamp);
+  }
+
+  // ==================== 设置管理 ====================
+
+  /**
+   * 获取设置值
+   */
+  getSetting(key, defaultValue = null) {
+    const stmt = this.db.prepare('SELECT value, type FROM settings WHERE key = ?');
+    const row = stmt.get(key);
+    
+    if (!row) {
+      return defaultValue;
+    }
+    
+    return this.deserializeValue(row.value, row.type);
+  }
+
+  /**
+   * 设置值
+   */
+  setSetting(key, value) {
+    const { serialized, type } = this.serializeValue(value);
+    
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO settings (key, value, type)
+      VALUES (?, ?, ?)
+    `);
+    
+    return stmt.run(key, serialized, type);
+  }
+
+  /**
+   * 获取所有设置
+   */
+  getAllSettings() {
+    const stmt = this.db.prepare('SELECT key, value, type FROM settings');
+    const rows = stmt.all();
+
+    const settings = {};
+    for (const row of rows) {
+      settings[row.key] = this.deserializeValue(row.value, row.type);
+    }
+
+    return settings;
+  }
+
+  /**
+   * 删除设置
+   */
+  deleteSetting(key) {
+    const stmt = this.db.prepare('DELETE FROM settings WHERE key = ?');
+    return stmt.run(key);
+  }
+
+  // ==================== 辅助方法 ====================
+
+  /**
+   * 序列化值
+   */
+  serializeValue(value) {
+    if (typeof value === 'string') {
+      return { serialized: value, type: 'string' };
+    } else if (typeof value === 'number') {
+      return { serialized: String(value), type: 'number' };
+    } else if (typeof value === 'boolean') {
+      return { serialized: String(value), type: 'boolean' };
+    } else {
+      return { serialized: JSON.stringify(value), type: 'json' };
+    }
+  }
+
+  /**
+   * 反序列化值
+   */
+  deserializeValue(serialized, type) {
+    switch (type) {
+      case 'string':
+        return serialized;
+      case 'number':
+        return Number(serialized);
+      case 'boolean':
+        return serialized === 'true';
+      case 'json':
+        return JSON.parse(serialized);
+      default:
+        return serialized;
+    }
+  }
+}
+
+module.exports = DatabaseManager;
+

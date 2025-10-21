@@ -192,9 +192,23 @@ export default function SubscriptionManager() {
   const [draggedItem, setDraggedItem] = useState<Subscription | null>(null);
   const [dragOverItem, setDragOverItem] = useState<Subscription | null>(null);
   const [isDraggingCard, setIsDraggingCard] = useState(false);
-  
+  const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
+  const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragPreviewPos, setDragPreviewPos] = useState<{ x: number; y: number } | null>(null);
+
+  // 右键菜单相关状态
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenuSub, setContextMenuSub] = useState<Subscription | null>(null);
+
+  // 编辑对话框相关状态
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingSub, setEditingSub] = useState<Subscription | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [editingUrl, setEditingUrl] = useState('');
+
   // 元素引用，用于滚动到视图中
   const draggedItemRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{ dragged: Subscription | null; target: Subscription | null }>({ dragged: null, target: null });
   const { hasProviders, refreshProvidersAvailability } = useProviderAvailability();
 
   useEffect(() => {
@@ -229,6 +243,20 @@ export default function SubscriptionManager() {
       if (unsubscribeImport) unsubscribeImport();
     };
   }, []);
+
+  // 监听点击外部关闭右键菜单
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (contextMenuPosition) {
+        closeContextMenu();
+      }
+    };
+
+    if (contextMenuPosition) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [contextMenuPosition]);
 
   // 新增: 加载当前活跃的配置
   const loadActiveConfig = async () => {
@@ -311,13 +339,14 @@ export default function SubscriptionManager() {
 
   const loadSubscriptions = async () => {
     if (!window.electronAPI) return;
-    
+
     try {
       const subs = await window.electronAPI.getSubscriptions();
-      
+      console.log('[前端] 加载的订阅数据:', subs);
+
       // 从本地存储中获取排序信息
       const savedOrder = getSavedOrder();
-      
+
       // 应用排序
       const sortedSubs = sortSubscriptionsByOrder(subs, savedOrder);
       setSubscriptions(sortedSubs);
@@ -339,18 +368,18 @@ export default function SubscriptionManager() {
   };
   
   // 新增: 保存排序到本地存储
-  const saveOrder = (subs: Subscription[]) => {
+  const saveOrder = useCallback((subs: Subscription[]) => {
     try {
       const orderMap: Record<string, number> = {};
       subs.forEach((sub, index) => {
         orderMap[sub.path] = index;
       });
-      
+
       localStorage.setItem('subscriptionOrder', JSON.stringify(orderMap));
     } catch (error) {
       console.error('保存排序信息失败:', error);
     }
-  };
+  }, []);
   
   // 新增: 根据排序信息排序订阅
   const sortSubscriptionsByOrder = (subs: Subscription[], orderMap: Record<string, number>): Subscription[] => {
@@ -361,73 +390,99 @@ export default function SubscriptionManager() {
     });
   };
   
-  // 新增: 拖拽开始处理函数
-  const handleCardDragStart = (e: React.DragEvent<HTMLDivElement>, item: Subscription) => {
-    setDraggedItem(item);
-    setIsDraggingCard(true);
-    
-    // 为拖拽元素设置数据
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', item.path);
-    
-    // 延迟设置拖拽样式，解决 Firefox 中的拖拽图像问题
-    setTimeout(() => {
-      if (e.target instanceof HTMLElement) {
-        e.target.classList.add('opacity-50');
+  // 长按开始拖拽
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>, item: Subscription) => {
+    // 如果点击的是按钮,不触发拖拽
+    if ((e.target as HTMLElement).closest('button')) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      dragStateRef.current.dragged = item;
+      dragStateRef.current.target = null;
+      setDraggedItem(item);
+      setIsDraggingCard(true);
+      setDragStartPos({ x: e.clientX, y: e.clientY });
+      setDragPreviewPos({ x: e.clientX, y: e.clientY });
+
+      // 创建鼠标移动处理函数
+      const handleMove = (moveEvent: MouseEvent) => {
+        // 更新拖拽预览位置
+        setDragPreviewPos({ x: moveEvent.clientX, y: moveEvent.clientY });
+
+        // 获取鼠标下的元素
+        const elementUnderMouse = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+        if (!elementUnderMouse) return;
+
+        // 查找最近的订阅卡片
+        const card = elementUnderMouse.closest('[data-subscription-path]');
+        if (card) {
+          const path = card.getAttribute('data-subscription-path');
+          const targetSub = subscriptions.find(sub => sub.path === path);
+          if (targetSub && targetSub.path !== item.path) {
+            dragStateRef.current.target = targetSub;
+            setDragOverItem(targetSub);
+          }
+        }
+      };
+
+      // 创建鼠标释放处理函数
+      const handleUp = () => {
+        // 移除全局监听
+        document.removeEventListener('mousemove', handleMove);
+        document.removeEventListener('mouseup', handleUp);
+
+        // 使用 ref 中的状态执行排序
+        const currentDragged = dragStateRef.current.dragged;
+        const currentOver = dragStateRef.current.target;
+
+        if (currentDragged && currentOver && currentDragged.path !== currentOver.path) {
+          setSubscriptions(currentSubs => {
+            const newSubscriptions = [...currentSubs];
+            const draggedIndex = newSubscriptions.findIndex(sub => sub.path === currentDragged.path);
+            const targetIndex = newSubscriptions.findIndex(sub => sub.path === currentOver.path);
+
+            if (draggedIndex !== -1 && targetIndex !== -1) {
+              // 移除拖拽的项并在目标位置插入
+              const [draggedSub] = newSubscriptions.splice(draggedIndex, 1);
+              newSubscriptions.splice(targetIndex, 0, draggedSub);
+
+              // 保存新顺序
+              saveOrder(newSubscriptions);
+
+              return newSubscriptions;
+            }
+            return currentSubs;
+          });
+        }
+
+        // 清除拖拽状态
+        setDraggedItem(null);
+        setDragOverItem(null);
+        setIsDraggingCard(false);
+        setDragStartPos(null);
+        setDragPreviewPos(null);
+        dragStateRef.current.dragged = null;
+        dragStateRef.current.target = null;
+      };
+
+      // 添加全局鼠标移动和释放监听
+      document.addEventListener('mousemove', handleMove);
+      document.addEventListener('mouseup', handleUp);
+    }, 300); // 300ms 长按
+
+    setLongPressTimer(timer);
+
+    // 添加鼠标抬起监听,如果在长按完成前抬起,取消拖拽
+    const handleMouseUp = () => {
+      if (timer) {
+        clearTimeout(timer);
+        setLongPressTimer(null);
       }
-    }, 0);
-  };
-  
-  // 新增: 拖拽结束处理函数
-  const handleCardDragEnd = (e: React.DragEvent<HTMLDivElement>) => {
-    setIsDraggingCard(false);
-    setDraggedItem(null);
-    setDragOverItem(null);
-    
-    // 清除拖拽样式
-    if (e.target instanceof HTMLElement) {
-      e.target.classList.remove('opacity-50');
-    }
-  };
-  
-  // 新增: 拖拽悬停处理函数
-  const handleCardDragOver = (e: React.DragEvent<HTMLDivElement>, item: Subscription) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    
-    // 只有悬停在不同项上时才更新
-    if (draggedItem && draggedItem.path !== item.path) {
-      setDragOverItem(item);
-    }
-  };
-  
-  // 新增: 处理元素放置函数
-  const handleCardDrop = (e: React.DragEvent<HTMLDivElement>, target: Subscription) => {
-    e.preventDefault();
-    
-    if (!draggedItem) return;
-    
-    // 重新排序订阅列表
-    const newSubscriptions = [...subscriptions];
-    const draggedIndex = newSubscriptions.findIndex(sub => sub.path === draggedItem.path);
-    const targetIndex = newSubscriptions.findIndex(sub => sub.path === target.path);
-    
-    if (draggedIndex === -1 || targetIndex === -1) return;
-    
-    // 移除拖拽的项并在目标位置插入
-    const [draggedSub] = newSubscriptions.splice(draggedIndex, 1);
-    newSubscriptions.splice(targetIndex, 0, draggedSub);
-    
-    // 更新状态
-    setSubscriptions(newSubscriptions);
-    
-    // 保存新顺序
-    saveOrder(newSubscriptions);
-    
-    // 清除拖拽状态
-    setDraggedItem(null);
-    setDragOverItem(null);
-  };
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [subscriptions, saveOrder]);
 
   const addSubscription = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -528,8 +583,9 @@ export default function SubscriptionManager() {
 
   const openConfigFile = async (filePath: string) => {
     if (!window.electronAPI) return;
-    
+
     try {
+      console.log('[前端] 打开文件，路径:', filePath);
       await window.electronAPI.openFile(filePath);
     } catch (error) {
       console.error('打开文件失败:', error);
@@ -539,12 +595,75 @@ export default function SubscriptionManager() {
 
   const openConfigFolder = async (filePath: string) => {
     if (!window.electronAPI) return;
-    
+
     try {
       await window.electronAPI.openFileLocation(filePath);
     } catch (error) {
       console.error('打开目录失败:', error);
       showToast('错误', `打开目录失败: ${error}`, 'error');
+    }
+  };
+
+  // 处理右键菜单
+  const handleContextMenu = (e: React.MouseEvent, sub: Subscription) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setContextMenuSub(sub);
+  };
+
+  // 关闭右键菜单
+  const closeContextMenu = () => {
+    setContextMenuPosition(null);
+    setContextMenuSub(null);
+  };
+
+  // 打开编辑对话框
+  const openEditDialog = async (sub: Subscription) => {
+    setEditingSub(sub);
+    setEditingName(sub.name);
+
+    // 如果是URL类型的配置,加载URL
+    const isUrlType = !!(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate);
+
+    if (isUrlType) {
+      try {
+        const url = await window.electronAPI?.getSubscriptionUrl?.(sub.path);
+        setEditingUrl(url || '');
+      } catch (error) {
+        console.error('加载订阅URL失败:', error);
+        setEditingUrl('');
+      }
+    } else {
+      setEditingUrl('');
+    }
+
+    setIsEditDialogOpen(true);
+    closeContextMenu();
+  };
+
+  // 保存编辑
+  const saveEdit = async () => {
+    if (!editingSub || !window.electronAPI) return;
+
+    try {
+      setIsLoading(true);
+
+      // 调用后端API保存编辑
+      await window.electronAPI.editSubscription({
+        oldPath: editingSub.path,
+        newName: editingName,
+        newUrl: editingUrl
+      });
+
+      showToast('成功', '配置已更新', 'success');
+      setIsEditDialogOpen(false);
+      loadSubscriptions();
+    } catch (error) {
+      console.error('编辑配置失败:', error);
+      showToast('错误', `编辑配置失败: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -716,7 +835,7 @@ export default function SubscriptionManager() {
       <Toast.Provider swipeDirection="right">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
-            <h1 className="text-2xl font-semibold text-foreground">订阅管理</h1>
+            <h1 className="text-2xl font-semibold text-foreground">配置管理</h1>
             <p className="text-sm text-muted-foreground">导入、更新并维护你的订阅配置</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -743,16 +862,14 @@ export default function SubscriptionManager() {
             <p className="text-sm text-muted-foreground">支持拖拽导入 YAML 配置，或使用下方操作快速管理订阅。</p>
 
             <div className="flex flex-wrap items-center gap-2">
-              {hasProviders && (
-                <Link
-                  href="/providers"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                  title="外部资源"
-                >
-                  <CloudOutlineIcon className="h-5 w-5" />
-                  <span className="sr-only">外部资源</span>
-                </Link>
-              )}
+              <Link
+                href="/providers"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                title="外部资源"
+              >
+                <CloudOutlineIcon className="h-5 w-5" />
+                <span className="sr-only">外部资源</span>
+              </Link>
 
               <button
                 type="button"
@@ -903,28 +1020,6 @@ export default function SubscriptionManager() {
               </svg>
               我的订阅
             </h2>
-            
-            <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-              {subscriptions.length > 0 && (
-                <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-1 rounded-full">
-                  共 {subscriptions.length} 个订阅
-                </span>
-              )}
-              {isServiceRunning && (
-                <span className="ml-2 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-2 py-1 rounded-full flex items-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                  </svg>
-                  服务运行中
-                </span>
-              )}
-              {subscriptions.length > 1 && (
-                <span className="ml-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-2 py-1 rounded-full flex items-center">
-                  <DragHandleDots2Icon className="h-3 w-3 mr-1" />
-                  可直接拖动卡片排序
-                </span>
-              )}
-            </div>
           </div>
           
           {subscriptions.length === 0 ? (
@@ -947,10 +1042,11 @@ export default function SubscriptionManager() {
           ) : (
             <div className="grid auto-rows-[minmax(170px,1fr)] grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
               {subscriptions.map((sub) => (
-                <div 
-                  key={sub.path} 
+                <div
+                  key={sub.path}
+                  data-subscription-path={sub.path}
                   ref={draggedItem?.path === sub.path ? draggedItemRef : null}
-                  className={`relative flex h-full min-h-[180px] flex-col overflow-hidden rounded-xl border ${
+                  className={`relative flex h-full min-h-[180px] flex-col overflow-hidden rounded-xl border select-none ${
                     activeConfig === sub.path
                       ? 'bg-white dark:bg-[#2a2a2a] border-l-4 border-l-blue-500 dark:border-l-blue-400 border-slate-200 dark:border-slate-700'
                       : 'bg-white dark:bg-[#2a2a2a] border-slate-200 dark:border-slate-700'
@@ -960,19 +1056,15 @@ export default function SubscriptionManager() {
                     ${isDraggingCard && draggedItem?.path !== sub.path && dragOverItem?.path !== sub.path ? 'opacity-90' : ''}
                     ${activeConfig !== sub.path ? 'hover:bg-blue-50/50 dark:hover:bg-blue-900/5' : ''}
                     cursor-grab active:cursor-grabbing`}
+                  onMouseDown={(e) => handleMouseDown(e, sub)}
                   onClick={(e) => {
-                    // 只有点击卡片本身或者内容区域时才激活配置
-                    // 不要在拖拽过程中触发点击事件
+                    // 单击激活配置(如果没有在拖拽)
                     if (!isDraggingCard && activeConfig !== sub.path && !switchingConfig) {
                       e.stopPropagation();
                       switchConfig(sub.path);
                     }
                   }}
-                  draggable="true"
-                  onDragStart={(e) => handleCardDragStart(e, sub)}
-                  onDragEnd={handleCardDragEnd}
-                  onDragOver={(e) => { e.preventDefault(); handleCardDragOver(e, sub); }}
-                  onDrop={(e) => { e.stopPropagation(); handleCardDrop(e, sub); }}
+                  onContextMenu={(e) => handleContextMenu(e, sub)}
                 >
                   {/* 活跃标志 - 更简洁的设计 */}
                   {activeConfig === sub.path && (
@@ -980,27 +1072,31 @@ export default function SubscriptionManager() {
                       <CheckIcon className="w-3 h-3" />
                     </div>
                   )}
-                  
+
                   {/* 操作按钮 - 正常状态半透明，悬浮时完全显示 */}
                   <div className="absolute top-2 right-2.5 flex gap-0 opacity-70 group-hover:opacity-100 transition-opacity">
                     {/* 打开文件按钮 */}
                     <button
+                      draggable="false"
                       onClick={(e) => {
                         e.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
                         openConfigFile(sub.path);
                       }}
+                      onMouseDown={(e) => e.stopPropagation()}
                       className="text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300 p-0.5 rounded-full hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
                       title="打开文件"
                     >
                       <ExternalLinkIcon className="w-4 h-4" />
                     </button>
-                    
+
                     {/* 打开目录按钮 */}
                     <button
+                      draggable="false"
                       onClick={(e) => {
                         e.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
                         openConfigFolder(sub.path);
                       }}
+                      onMouseDown={(e) => e.stopPropagation()}
                       className="text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
                       title="打开目录"
                     >
@@ -1008,30 +1104,36 @@ export default function SubscriptionManager() {
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                       </svg>
                     </button>
-                    
+
                     {/* 刷新按钮 */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
-                        refreshSubscription(sub.path);
-                      }}
-                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 p-0.5 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
-                      title="更新订阅"
-                      disabled={updatingSubPath === sub.path}
-                    >
-                      {updatingSubPath === sub.path ? (
-                        <ReloadIcon className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <ReloadIcon className="w-4 h-4" />
-                      )}
-                    </button>
-                    
+                    {(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate) && (
+                      <button
+                        draggable="false"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          refreshSubscription(sub.path);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 p-0.5 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+                        title="更新订阅"
+                        disabled={updatingSubPath === sub.path}
+                      >
+                        {updatingSubPath === sub.path ? (
+                          <ReloadIcon className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ReloadIcon className="w-4 h-4" />
+                        )}
+                      </button>
+                    )}
+
                     {/* 删除按钮 */}
                     <button
+                      draggable="false"
                       onClick={(e) => {
                         e.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
                         deleteSubscription(sub.path);
                       }}
+                      onMouseDown={(e) => e.stopPropagation()}
                       className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
                       title="删除订阅"
                       disabled={activeConfig === sub.path} // 不允许删除当前活跃的配置
@@ -1215,7 +1317,228 @@ export default function SubscriptionManager() {
         
         <Toast.Viewport />
       </Toast.Provider>
-      
+
+      {/* 右键菜单 */}
+      {contextMenuPosition && contextMenuSub && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={closeContextMenu}
+          />
+          <div
+            className="fixed z-50 min-w-[180px] rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-[#2a2a2a]"
+            style={{
+              left: `${contextMenuPosition.x}px`,
+              top: `${contextMenuPosition.y}px`,
+            }}
+          >
+            {/* 更新 - 仅URL类型配置显示 */}
+            {(contextMenuSub.usedTraffic || contextMenuSub.remainingTraffic || contextMenuSub.expiryDate) && (
+              <button
+                onClick={() => {
+                  refreshSubscription(contextMenuSub.path);
+                  closeContextMenu();
+                }}
+                className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
+              >
+                <ReloadIcon className="mr-2 h-4 w-4" />
+                更新
+              </button>
+            )}
+
+            {/* 编辑 */}
+            <button
+              onClick={() => openEditDialog(contextMenuSub)}
+              className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
+            >
+              <Pencil1Icon className="mr-2 h-4 w-4" />
+              编辑
+            </button>
+
+            {/* 打开文件 */}
+            <button
+              onClick={() => {
+                openConfigFile(contextMenuSub.path);
+                closeContextMenu();
+              }}
+              className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
+            >
+              <ExternalLinkIcon className="mr-2 h-4 w-4" />
+              打开文件
+            </button>
+
+            {/* 打开文件夹 */}
+            <button
+              onClick={() => {
+                openConfigFolder(contextMenuSub.path);
+                closeContextMenu();
+              }}
+              className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+              打开文件夹
+            </button>
+
+            {/* 分隔线 */}
+            <div className="my-1 h-px bg-slate-200 dark:bg-slate-700" />
+
+            {/* 删除 */}
+            <button
+              onClick={() => {
+                deleteSubscription(contextMenuSub.path);
+                closeContextMenu();
+              }}
+              disabled={activeConfig === contextMenuSub.path}
+              className="flex w-full items-center px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              <TrashIcon className="mr-2 h-4 w-4" />
+              删除
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 编辑对话框 */}
+      <Dialog.Root open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-6 shadow-lg dark:border-slate-700 dark:bg-[#2a2a2a]">
+            <Dialog.Title className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">
+              编辑配置
+            </Dialog.Title>
+
+            <div className="space-y-4">
+              {/* 配置名称 */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  配置名称
+                </label>
+                <input
+                  type="text"
+                  value={editingName}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
+                  placeholder="请输入配置名称"
+                />
+              </div>
+
+              {/* 订阅URL - 仅URL类型配置显示 */}
+              {editingSub && (editingSub.usedTraffic || editingSub.remainingTraffic || editingSub.expiryDate) && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    订阅URL
+                  </label>
+                  <input
+                    type="text"
+                    value={editingUrl}
+                    onChange={(e) => setEditingUrl(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
+                    placeholder="请输入订阅URL"
+                  />
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    {editingUrl ? '当前URL已加载' : 'URL记录为空,请输入订阅URL'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <Dialog.Close asChild>
+                <button className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-[#222222] dark:text-slate-300 dark:hover:bg-slate-800">
+                  取消
+                </button>
+              </Dialog.Close>
+              <button
+                onClick={saveEdit}
+                disabled={isLoading || !editingName}
+                className="rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoading ? '保存中...' : '保存'}
+              </button>
+            </div>
+
+            <Dialog.Close asChild>
+              <button className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <Cross2Icon className="h-4 w-4" />
+              </button>
+            </Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* 拖拽预览 - 跟随鼠标的卡片 */}
+      {isDraggingCard && draggedItem && dragPreviewPos && (
+        <div
+          className="fixed z-[100] pointer-events-none"
+          style={{
+            left: `${dragPreviewPos.x}px`,
+            top: `${dragPreviewPos.y}px`,
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          <div className="w-[280px] min-h-[180px] flex flex-col overflow-hidden rounded-xl border border-blue-500 dark:border-blue-400 bg-white dark:bg-[#2a2a2a] p-2.5 shadow-2xl opacity-90 scale-105">
+            {/* 订阅标题 */}
+            <div className="mb-2 border-b border-gray-100 pb-1.5 dark:border-gray-800">
+              <h3 className="flex items-center truncate text-[13px] font-medium text-gray-800 dark:text-white">
+                {draggedItem.name}
+              </h3>
+            </div>
+
+            {/* 内容区域 */}
+            <div className="flex flex-1 flex-col">
+              {(draggedItem.usedTraffic || draggedItem.remainingTraffic || draggedItem.expiryDate || draggedItem.lastUpdated) ? (
+                <div className="flex h-full flex-col justify-between rounded-xl bg-gray-50 p-2 text-[11px] dark:bg-[#222222]">
+                  <div className="flex flex-col space-y-2">
+                    {/* 本地配置文件标识 */}
+                    {(!draggedItem.usedTraffic && !draggedItem.remainingTraffic && !draggedItem.expiryDate) && (
+                      <div className="flex flex-col items-center justify-center py-4 space-y-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">本地配置文件</p>
+                      </div>
+                    )}
+
+                    {/* 流量信息 */}
+                    {(draggedItem.usedTraffic || draggedItem.remainingTraffic) && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center">
+                          <span className="flex items-center text-gray-500 dark:text-gray-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            流量使用情况
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <div className="flex items-center space-x-1.5">
+                            {draggedItem.usedTraffic && (
+                              <span className={getTrafficInfo(draggedItem).usedColorClass}>{draggedItem.usedTraffic}</span>
+                            )}
+                            {draggedItem.usedTraffic && draggedItem.remainingTraffic && (
+                              <span className="text-gray-400 dark:text-gray-500">/</span>
+                            )}
+                            {draggedItem.remainingTraffic && (
+                              <span className={getTrafficInfo(draggedItem).remainingColorClass}>{draggedItem.remainingTraffic}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-xl bg-gray-50 p-2 dark:bg-[#222222]">
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">本地配置</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 拖拽中的全局指示 */}
       {isDraggingCard && (
         <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-blue-500 text-white py-2 px-4 rounded-md shadow-lg z-50 flex items-center">
@@ -1225,4 +1548,4 @@ export default function SubscriptionManager() {
       )}
     </div>
   );
-} 
+}

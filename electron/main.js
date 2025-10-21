@@ -59,6 +59,31 @@ context.set('userDataPath', userDataPath);
 context.set('configDir', configDir);
 context.set('testMediaStreaming', testMediaStreaming);
 
+// 初始化数据库
+const DatabaseManager = require('./database/db-manager');
+const MigrationManager = require('./database/migration');
+
+const dbPath = path.join(configDir, 'flyclash.db');
+const dbManager = new DatabaseManager(dbPath);
+dbManager.initialize();
+
+context.set('dbManager', dbManager);
+
+// 检查并执行数据迁移
+const migrationManager = new MigrationManager(configDir, dbManager);
+if (!migrationManager.isMigrated()) {
+  console.log('[启动] 检测到未迁移的数据,开始自动迁移...');
+  migrationManager.migrate().then(result => {
+    if (result.success) {
+      console.log('[启动] 数据迁移成功');
+    } else {
+      console.error('[启动] 数据迁移失败:', result.error);
+    }
+  });
+} else {
+  console.log('[启动] 数据已迁移,跳过迁移步骤');
+}
+
 let cachedFetchFn = null;
 
 async function resolveFetchFn() {
@@ -235,6 +260,24 @@ context.clearKernelPreference = clearKernelPreference;
 context.getKernelExecutablePath = getKernelExecutablePath;
 context.kernelPreference = loadKernelPreference();
 
+// 格式化流量数据 - 需要在注册订阅处理器之前定义
+function formatTraffic(bytes) {
+  if (bytes === 0) return '0 B';
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let size = bytes;
+
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+
+  return `${size.toFixed(2)} ${units[i]}`;
+}
+
+context.formatTraffic = formatTraffic;
+
 require('./main-process/user-settings')(context);
 require('./main-process/mihomo-service')(context);
 require('./main-process/system-integration')(context);
@@ -324,24 +367,6 @@ if (!fs.existsSync(configDir)) {
 
 // 流量统计相关变量
 const MAX_TRAFFIC_HISTORY = 50;
-
-// 格式化流量数据
-function formatTraffic(bytes) {
-  if (bytes === 0) return '0 B';
-  
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  let size = bytes;
-  
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024;
-    i++;
-  }
-  
-  return `${size.toFixed(2)} ${units[i]}`;
-}
-
-context.formatTraffic = formatTraffic;
 
 // 格式化速度
 function formatSpeed(bytesPerSecond) {
@@ -476,11 +501,18 @@ function createWindow() {
 
   state.mainWindow.once('ready-to-show', () => {
     applyWindowsBackdrop(state.mainWindow);
-    state.mainWindow.show();
-    
+
+    // 检查是否启用静默启动
+    const silentStart = dbManager.getSetting('silentStart', false);
+    if (!silentStart) {
+      state.mainWindow.show();
+    } else {
+      console.log('静默启动模式: 窗口不显示');
+    }
+
     // 通知渲染进程当前主题状态
     try {
-      const currentTheme = nativeTheme.themeSource === 'system' 
+      const currentTheme = nativeTheme.themeSource === 'system'
         ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
         : nativeTheme.themeSource;
       state.mainWindow.webContents.send('theme-changed', currentTheme);
@@ -488,7 +520,7 @@ function createWindow() {
     } catch (error) {
       console.error('通知主题状态失败:', error);
     }
-    
+
     // 自动启动Mihomo
     if (state.autoStartEnabled) {
       setTimeout(autoStartMihomo, 1000);
@@ -750,6 +782,85 @@ function stopTrafficStatsUpdate() {
 context.startTrafficStatsUpdate = startTrafficStatsUpdate;
 context.stopTrafficStatsUpdate = stopTrafficStatsUpdate;
 
+// 日志WebSocket连接
+function startMihomoLogs() {
+  // 避免创建多个连接
+  if (state.logsWebSocket && state.logsWebSocket.readyState !== WebSocket.CLOSED) {
+    return;
+  }
+
+  try {
+    // 检查是否有解析的API配置
+    if (!state.activeApiConfig) {
+      console.error('无法连接日志WebSocket: API配置不可用');
+      return;
+    }
+
+    // 确保使用127.0.0.1作为客户端连接地址
+    const host = state.activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : state.activeApiConfig.controllerHost;
+
+    // 获取日志级别，默认为info
+    const logLevel = 'info';
+    const wsUrl = `ws://${host}:${state.activeApiConfig.controllerPort}/logs?level=${logLevel}`;
+
+    console.log(`[调试] 连接到日志WebSocket: ${wsUrl}`);
+
+    // 创建日志WebSocket
+    state.logsWebSocket = new WebSocket(wsUrl);
+
+    state.logsWebSocket.on('open', () => {
+      console.log('[调试] 日志WebSocket连接已建立');
+      state.logsRetry = 10; // 重置重试计数
+    });
+
+    state.logsWebSocket.on('message', (data) => {
+      try {
+        const log = JSON.parse(data);
+        // 发送日志到渲染进程
+        if (state.mainWindow) {
+          state.mainWindow.webContents.send('mihomo-logs', log);
+        }
+      } catch (error) {
+        console.error('[调试] 解析日志数据失败:', error);
+      }
+    });
+
+    state.logsWebSocket.on('close', () => {
+      console.log('[调试] 日志WebSocket连接已关闭');
+      state.logsWebSocket = null;
+
+      if (state.logsRetry > 0) {
+        state.logsRetry--;
+        console.log(`[调试] 尝试重新连接日志WebSocket，剩余重试次数: ${state.logsRetry}`);
+        setTimeout(() => startMihomoLogs(), 3000);
+      } else {
+        console.log('[调试] 日志WebSocket重连次数已达上限，停止重试');
+      }
+    });
+
+    state.logsWebSocket.on('error', (error) => {
+      console.error('[调试] 日志WebSocket错误:', error);
+      if (state.logsWebSocket) {
+        state.logsWebSocket.close();
+        state.logsWebSocket = null;
+      }
+    });
+  } catch (error) {
+    console.error('[调试] 启动日志WebSocket失败:', error);
+  }
+}
+
+function stopMihomoLogs() {
+  if (state.logsWebSocket) {
+    state.logsWebSocket.close();
+    state.logsWebSocket = null;
+  }
+  state.logsRetry = 10;
+}
+
+context.startMihomoLogs = startMihomoLogs;
+context.stopMihomoLogs = stopMihomoLogs;
+
 // 立即注册基础IPC，避免渲染进程早期调用时报“handler 未注册”
 ipcMain.handle('get-traffic-stats', () => state.lastTrafficStats);
 ipcMain.handle('get-auth-token', () => {
@@ -916,6 +1027,7 @@ function handleMihomoProcessExit(code) {
   state.mihomoProcess = null;
   stopTrafficStatsUpdate();
   stopConnectionsWebSocket();
+  stopMihomoLogs();
   // 清除state.configFilePath确保状态正确更新
   state.configFilePath = null;
   
@@ -956,6 +1068,70 @@ ipcMain.handle('window-close', () => {
     return { success: true };
   }
   return { success: false };
+});
+
+ipcMain.handle('open-file', async (event, token, filePath) => {
+  try {
+    console.log('打开文件请求，token:', token);
+    console.log('打开文件请求，原始路径:', filePath);
+
+    // 验证安全令牌
+    if (!verifyAuthToken(token)) {
+      console.error('安全令牌验证失败');
+      return { success: false, error: '安全令牌验证失败' };
+    }
+
+    // 规范化路径
+    const normalizedPath = path.normalize(filePath);
+    console.log('规范化后的路径:', normalizedPath);
+
+    // 检查文件是否存在
+    if (!fs.existsSync(normalizedPath)) {
+      console.error('文件不存在:', normalizedPath);
+      return { success: false, error: `文件不存在: ${normalizedPath}` };
+    }
+
+    const errorMessage = await shell.openPath(normalizedPath);
+    if (errorMessage) {
+      console.error('打开文件失败:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+    console.log('文件打开成功');
+    return { success: true };
+  } catch (error) {
+    console.error('打开文件失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('open-file-location', (event, token, filePath) => {
+  try {
+    console.log('打开文件位置请求，token:', token);
+    console.log('打开文件位置请求，原始路径:', filePath);
+
+    // 验证安全令牌
+    if (!verifyAuthToken(token)) {
+      console.error('安全令牌验证失败');
+      return { success: false, error: '安全令牌验证失败' };
+    }
+
+    // 规范化路径
+    const normalizedPath = path.normalize(filePath);
+    console.log('规范化后的路径:', normalizedPath);
+
+    // 检查文件是否存在
+    if (!fs.existsSync(normalizedPath)) {
+      console.error('文件不存在:', normalizedPath);
+      return { success: false, error: `文件不存在: ${normalizedPath}` };
+    }
+
+    shell.showItemInFolder(normalizedPath);
+    console.log('文件位置打开成功');
+    return { success: true };
+  } catch (error) {
+    console.error('打开文件所在目录失败:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('get-kernel-path', async () => {
@@ -1087,12 +1263,9 @@ app.whenReady().then(() => {
 
   // 加载主题设置
   try {
-    const themeConfigPath = path.join(userDataPath, 'theme-config.json');
-    if (fs.existsSync(themeConfigPath)) {
-      const themeConfig = JSON.parse(fs.readFileSync(themeConfigPath, 'utf8'));
-      nativeTheme.themeSource = themeConfig.theme || 'system';
-      console.log('已加载主题设置:', themeConfig.theme);
-    }
+    const theme = dbManager.getSetting('theme', 'system');
+    nativeTheme.themeSource = theme;
+    console.log('已加载主题设置:', theme);
   } catch (error) {
     console.error('加载主题设置失败:', error);
   }
@@ -1136,10 +1309,9 @@ app.whenReady().then(() => {
     // 检查TUN模式状态
     state.tunModeEnabled = userSettings.tun && userSettings.tun.enable === true;
     console.log('TUN模式状态:', state.tunModeEnabled ? '已启用' : '未启用');
-    
-    // 保存TUN状态到文件，方便重启应用后恢复
-    const tunConfigPath = path.join(userDataPath, 'tun-config.json');
-    fs.writeFileSync(tunConfigPath, JSON.stringify({ enabled: state.tunModeEnabled }), 'utf8');
+
+    // 保存TUN状态到数据库
+    dbManager.setSetting('tunModeEnabled', state.tunModeEnabled);
   } catch (error) {
     console.error('检查TUN模式状态失败:', error);
   }
@@ -1170,9 +1342,8 @@ app.whenReady().then(() => {
         return { success: false, error: '窗口不存在' };
       }
 
-      // 保存主题设置到配置文件
-      const themeConfigPath = path.join(userDataPath, 'theme-config.json');
-      fs.writeFileSync(themeConfigPath, JSON.stringify({ theme }), 'utf8');
+      // 保存主题设置到数据库
+      dbManager.setSetting('theme', theme);
       
       // 根据主题更新窗口
       switch (theme) {
@@ -1208,18 +1379,35 @@ app.whenReady().then(() => {
   // 添加: 获取当前主题设置
   ipcMain.handle('get-theme', () => {
     try {
-      // 从配置文件读取主题设置
-      const themeConfigPath = path.join(userDataPath, 'theme-config.json');
-      if (fs.existsSync(themeConfigPath)) {
-        const themeConfig = JSON.parse(fs.readFileSync(themeConfigPath, 'utf8'));
-        return { success: true, theme: themeConfig.theme || 'system' };
-      }
-      
-      // 默认返回系统设置
-      return { success: true, theme: 'system' };
+      // 从数据库读取主题设置
+      const theme = dbManager.getSetting('theme', 'system');
+      return { success: true, theme };
     } catch (error) {
       console.error('获取主题设置失败:', error);
       return { success: false, theme: 'system', error: error.message };
+    }
+  });
+
+  // 获取静默启动设置
+  ipcMain.handle('get-silent-start', () => {
+    try {
+      const silentStart = dbManager.getSetting('silentStart', false);
+      return { success: true, silentStart };
+    } catch (error) {
+      console.error('获取静默启动设置失败:', error);
+      return { success: false, silentStart: false, error: error.message };
+    }
+  });
+
+  // 设置静默启动
+  ipcMain.handle('set-silent-start', (event, enabled) => {
+    try {
+      dbManager.setSetting('silentStart', Boolean(enabled));
+      console.log('静默启动设置已更新:', enabled);
+      return { success: true };
+    } catch (error) {
+      console.error('设置静默启动失败:', error);
+      return { success: false, error: error.message };
     }
   });
 
@@ -1612,7 +1800,7 @@ app.whenReady().then(() => {
       const menuItem = { checked: Boolean(enabled) };
       toggleSystemProxy(menuItem);
 
-      return state.systemProxyEnabled;
+      return { success: true, enabled: state.systemProxyEnabled };
     } catch (error) {
       console.error('切换系统代理失败:', error);
       return { success: false, error: error?.message || String(error) };
@@ -1824,6 +2012,7 @@ app.whenReady().then(() => {
             state.mihomoProcess.kill();
             stopTrafficStatsUpdate();
             stopConnectionsWebSocket();
+            stopMihomoLogs();
             // 等待进程完全终止
             setTimeout(async () => {
               state.mihomoProcess = null;
@@ -1975,6 +2164,7 @@ ipcMain.handle('test-media-streaming', async (event, serviceName, checkUrl) => {
 
 app.on('window-all-closed', () => {
   stopConnectionsWebSocket(); // 停止连接管理
+  stopMihomoLogs(); // 停止日志
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -2729,7 +2919,11 @@ function cleanupWebSockets() {
     state.connectionsWebSocket.close();
     state.connectionsWebSocket = null;
   }
-  
+  if (state.logsWebSocket) {
+    state.logsWebSocket.close();
+    state.logsWebSocket = null;
+  }
+
   // 清理相关资源
   if (state.trafficStatsInterval) {
     clearInterval(state.trafficStatsInterval);
@@ -2747,6 +2941,11 @@ app.on('will-quit', () => {
   if (state.memoryMonitorInterval) {
     clearInterval(state.memoryMonitorInterval);
     state.memoryMonitorInterval = null;
+  }
+
+  // 关闭数据库连接
+  if (dbManager) {
+    dbManager.close();
   }
 });
 

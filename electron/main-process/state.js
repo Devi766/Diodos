@@ -36,5 +36,7 @@ module.exports = {
     controllerPort: '9090',
     secret: ''
   },
-  memoryMonitorInterval: null
+  memoryMonitorInterval: null,
+  logsWebSocket: null,
+  logsRetry: 10
 };

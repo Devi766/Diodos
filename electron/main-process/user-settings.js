@@ -1,5 +1,5 @@
 module.exports = function initUserSettings(context) {
-  const { fs, path, yaml, userDataPath } = context;
+  const { fs, path, yaml, userDataPath, dbManager } = context;
 
   const userSettingsPath = path.join(userDataPath, 'user-settings.yaml');
 
@@ -27,6 +27,12 @@ module.exports = function initUserSettings(context) {
 
   function getUserSettings() {
     try {
+      // 从数据库读取设置
+      if (dbManager) {
+        return dbManager.getAllSettings();
+      }
+
+      // 降级方案:从YAML文件读取
       ensureUserSettingsFile();
       const content = fs.readFileSync(userSettingsPath, 'utf8');
       return yaml.load(content) || {};
@@ -67,11 +73,21 @@ module.exports = function initUserSettings(context) {
 
   function updateUserSettings(settings) {
     try {
-      ensureUserSettingsFile();
       const currentSettings = getUserSettings();
       const normalized = normalizeSettings(settings || {});
       const newSettings = { ...currentSettings, ...normalized };
+
+      // 保存到数据库
+      if (dbManager) {
+        for (const [key, value] of Object.entries(newSettings)) {
+          dbManager.setSetting(key, value);
+        }
+      }
+
+      // 同时保存到YAML文件作为备份
+      ensureUserSettingsFile();
       fs.writeFileSync(userSettingsPath, yaml.dump(newSettings), 'utf8');
+
       console.log('已更新用户设置:', newSettings);
       return true;
     } catch (error) {

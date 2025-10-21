@@ -5,7 +5,8 @@ module.exports = function initSystemIntegration(context) {
     fs,
     path,
     state,
-    userDataPath
+    userDataPath,
+    dbManager
   } = context;
 
   function ensureUpdateSettingsFn() {
@@ -43,8 +44,7 @@ module.exports = function initSystemIntegration(context) {
         }
 
         state.systemProxyEnabled = true;
-        const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-        fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: true }), 'utf8');
+        dbManager.setSetting('systemProxyEnabled', true);
         state.mainWindow?.webContents.send('proxy-status', true);
       } else {
         console.log('禁用系统代理');
@@ -65,8 +65,7 @@ module.exports = function initSystemIntegration(context) {
         }
 
         state.systemProxyEnabled = false;
-        const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-        fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: false }), 'utf8');
+        dbManager.setSetting('systemProxyEnabled', false);
         state.mainWindow?.webContents.send('proxy-status', false);
       }
     } catch (error) {
@@ -77,8 +76,7 @@ module.exports = function initSystemIntegration(context) {
       state.systemProxyEnabled = !menuItem.checked;
 
       try {
-        const proxyConfigPath = path.join(userDataPath, 'proxy-config.json');
-        fs.writeFileSync(proxyConfigPath, JSON.stringify({ enabled: state.systemProxyEnabled }), 'utf8');
+        dbManager.setSetting('systemProxyEnabled', state.systemProxyEnabled);
       } catch (saveError) {
         console.error('保存代理状态失败:', saveError);
       }
@@ -165,8 +163,7 @@ module.exports = function initSystemIntegration(context) {
       const updater = ensureUpdateSettingsFn();
       if (updater && updater(userSettings)) {
         state.tunModeEnabled = menuItem.checked;
-        const tunConfigPath = path.join(userDataPath, 'tun-config.json');
-        fs.writeFileSync(tunConfigPath, JSON.stringify({ enabled: state.tunModeEnabled }), 'utf8');
+        dbManager.setSetting('tunModeEnabled', state.tunModeEnabled);
         state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
       }
     } catch (error) {
@@ -177,8 +174,7 @@ module.exports = function initSystemIntegration(context) {
       state.tunModeEnabled = !menuItem.checked;
 
       try {
-        const tunConfigPath = path.join(userDataPath, 'tun-config.json');
-        fs.writeFileSync(tunConfigPath, JSON.stringify({ enabled: state.tunModeEnabled }), 'utf8');
+        dbManager.setSetting('tunModeEnabled', state.tunModeEnabled);
       } catch (saveError) {
         console.error('保存TUN模式状态失败:', saveError);
       }

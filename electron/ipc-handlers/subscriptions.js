@@ -6,7 +6,8 @@ module.exports = function registerSubscriptionHandlers(context) {
     configDir,
     formatTraffic,
     getUserSettings,
-    yaml
+    yaml,
+    dbManager
   } = context;
 
   ipcMain.handle('save-subscription', async (event, url, content, customName, subscriptionInfo) => {
@@ -18,60 +19,59 @@ module.exports = function registerSubscriptionHandlers(context) {
       }
 
       let fileName;
-      let urlRecordName;
+      let name;
 
       if (customName) {
         const sanitized = customName.replace(/[/\\?%*:|"<>]/g, '_');
         fileName = `${sanitized}.yaml`;
-        urlRecordName = `${sanitized}.yaml`;
+        name = customName;
       } else if (url) {
         const urlObj = new URL(url);
         const host = urlObj.hostname.replace(/[/\\?%*:|"<>]/g, '_');
         const timestamp = Date.now();
         fileName = `${host}_${timestamp}.yaml`;
-        urlRecordName = fileName;
+        name = host;
       } else {
-        fileName = `subscription_${Date.now()}.yaml`;
-        urlRecordName = fileName;
+        const timestamp = Date.now();
+        fileName = `subscription_${timestamp}.yaml`;
+        name = `subscription_${timestamp}`;
       }
 
       const filePath = path.join(configDir, fileName);
 
-      if (url) {
-        try {
-          const urlsPath = path.join(configDir, 'subscription_urls.json');
-          let urlsData = {};
-
-          if (fs.existsSync(urlsPath)) {
-            urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
-          }
-
-          urlsData[urlRecordName] = url;
-          fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2));
-        } catch (error) {
-          console.warn('保存订阅URL记录失败:', error);
-        }
-      }
-
+      // 保存YAML文件
       fs.writeFileSync(filePath, content, 'utf8');
 
+      // 保存到数据库
+      const subscriptionId = dbManager.addSubscription(name, filePath, url);
+
+      // 保存订阅信息
       if (subscriptionInfo) {
         try {
-          const infoPath = path.join(configDir, 'subscription_info.json');
-          let infoData = {};
+          const usedTrafficBytes = parseTraffic(subscriptionInfo.usedTraffic);
+          const remainingTrafficBytes = parseTraffic(subscriptionInfo.remainingTraffic);
 
-          if (fs.existsSync(infoPath)) {
-            infoData = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+          // 计算总流量 = 已用流量 + 剩余流量
+          let totalTrafficBytes = null;
+          if (usedTrafficBytes !== null && remainingTrafficBytes !== null) {
+            totalTrafficBytes = usedTrafficBytes + remainingTrafficBytes;
+          } else if (usedTrafficBytes !== null) {
+            totalTrafficBytes = usedTrafficBytes;
+          } else if (remainingTrafficBytes !== null) {
+            totalTrafficBytes = remainingTrafficBytes;
           }
 
-          infoData[fileName] = {
-            ...subscriptionInfo,
-            lastUpdated: new Date().toISOString()
-          };
+          const expiryTimestamp = subscriptionInfo.expiryDate ?
+            new Date(subscriptionInfo.expiryDate).getTime() : null;
 
-          fs.writeFileSync(infoPath, JSON.stringify(infoData, null, 2));
+          dbManager.setSubscriptionInfo(
+            subscriptionId,
+            usedTrafficBytes,
+            totalTrafficBytes,
+            expiryTimestamp
+          );
         } catch (error) {
-          console.warn('保存订阅信息记录失败:', error);
+          console.warn('保存订阅信息失败:', error);
         }
       }
 
@@ -85,31 +85,27 @@ module.exports = function registerSubscriptionHandlers(context) {
 
   ipcMain.handle('get-subscriptions', () => {
     try {
-      if (!fs.existsSync(configDir)) {
-        return [];
-      }
+      const subscriptions = dbManager.getAllSubscriptions();
 
-      const files = fs.readdirSync(configDir).filter((file) => file.endsWith('.yaml'));
+      return subscriptions.map((sub) => {
+        // 格式化流量数据
+        const usedTraffic = sub.used_traffic ? formatTraffic(sub.used_traffic) : null;
+        const totalTraffic = sub.total_traffic ? formatTraffic(sub.total_traffic) : null;
+        const remainingTraffic = (sub.total_traffic && sub.used_traffic) ?
+          formatTraffic(Math.max(0, sub.total_traffic - sub.used_traffic)) : null;
 
-      let subscriptionInfoData = {};
-      const infoPath = path.join(configDir, 'subscription_info.json');
-      if (fs.existsSync(infoPath)) {
-        try {
-          subscriptionInfoData = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
-        } catch (e) {
-          console.error('读取订阅信息记录失败:', e);
-        }
-      }
+        // 格式化到期日期
+        const expiryDate = sub.expiry_timestamp ?
+          new Date(sub.expiry_timestamp).toLocaleDateString() : null;
 
-      return files.map((file) => {
-        const info = subscriptionInfoData[file] || {};
         return {
-          name: file.replace(/\.yaml$/, ''),
-          path: path.join(configDir, file),
-          usedTraffic: info.usedTraffic || null,
-          remainingTraffic: info.remainingTraffic || null,
-          expiryDate: info.expiryDate || null,
-          lastUpdated: info.lastUpdated ? new Date(info.lastUpdated).toLocaleString() : null
+          name: sub.name,
+          path: sub.file_path,
+          usedTraffic,
+          remainingTraffic,
+          totalTraffic,
+          expiryDate,
+          lastUpdated: new Date(sub.updated_at).toLocaleString()
         };
       });
     } catch (error) {
@@ -120,11 +116,76 @@ module.exports = function registerSubscriptionHandlers(context) {
 
   ipcMain.handle('delete-subscription', (event, filePath) => {
     try {
-      fs.unlinkSync(filePath);
+      // 从数据库删除
+      dbManager.deleteSubscriptionByPath(filePath);
+
+      // 删除YAML文件
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+
       return true;
     } catch (error) {
       console.error(`Failed to delete ${filePath}:`, error);
       return false;
+    }
+  });
+
+  ipcMain.handle('get-subscription-url', (event, filePath) => {
+    try {
+      const sub = dbManager.getSubscriptionByPath(filePath);
+      return sub ? sub.url : null;
+    } catch (error) {
+      console.error('获取订阅URL失败:', error);
+      return null;
+    }
+  });
+
+  ipcMain.handle('edit-subscription', async (event, params) => {
+    try {
+      const { oldPath, newName, newUrl } = params;
+
+      // 读取旧文件内容
+      const content = fs.readFileSync(oldPath, 'utf8');
+
+      // 生成新文件名
+      const sanitized = newName.replace(/[/\\?%*:|"<>]/g, '_');
+      const newFileName = `${sanitized}.yaml`;
+      const newPath = path.join(configDir, newFileName);
+
+      // 如果文件名改变了,需要重命名文件
+      if (oldPath !== newPath) {
+        // 检查新文件名是否已存在
+        if (fs.existsSync(newPath)) {
+          throw new Error('该配置名称已存在');
+        }
+
+        // 写入新文件
+        fs.writeFileSync(newPath, content, 'utf8');
+
+        // 删除旧文件
+        fs.unlinkSync(oldPath);
+      }
+
+      // 更新数据库记录
+      const updates = {
+        name: newName
+      };
+
+      if (oldPath !== newPath) {
+        updates.file_path = newPath;
+      }
+
+      if (newUrl !== undefined) {
+        updates.url = newUrl;
+      }
+
+      dbManager.updateSubscriptionByPath(oldPath, updates);
+
+      return { success: true, newPath };
+    } catch (error) {
+      console.error('编辑配置失败:', error);
+      throw error;
     }
   });
 
@@ -215,34 +276,11 @@ module.exports = function registerSubscriptionHandlers(context) {
 
       const getSubscriptionUrlHandler = async (targetPath) => {
         try {
-          const urlsPath = path.join(configDir, 'subscription_urls.json');
-          if (!fs.existsSync(urlsPath)) {
-            fs.writeFileSync(urlsPath, JSON.stringify({}, null, 2), 'utf8');
-            return { success: false, error: '未找到订阅URL记录。这可能是因为此订阅是在旧版本添加的，请尝试删除并重新添加订阅。' };
-          }
-
-          const urlsData = JSON.parse(fs.readFileSync(urlsPath, 'utf8'));
-          const fileName = path.basename(targetPath);
-
-          let url = urlsData[fileName];
-          if (!url) {
-            const fileNameOnly = fileName.replace(/\.yaml$/, '');
-            for (const [key, value] of Object.entries(urlsData)) {
-              const keyWithoutExt = key.replace(/\.yaml$/, '');
-              if (keyWithoutExt === fileNameOnly) {
-                url = value;
-                urlsData[fileName] = value;
-                fs.writeFileSync(urlsPath, JSON.stringify(urlsData, null, 2));
-                break;
-              }
-            }
-          }
-
-          if (!url) {
+          const sub = dbManager.getSubscriptionByPath(targetPath);
+          if (!sub || !sub.url) {
             return { success: false, error: '未找到对应的订阅URL。请尝试删除并重新添加订阅。' };
           }
-
-          return { success: true, url };
+          return { success: true, url: sub.url };
         } catch (error) {
           console.error('获取订阅URL失败:', error);
           return { success: false, error: error.message };
@@ -353,28 +391,32 @@ module.exports = function registerSubscriptionHandlers(context) {
       fs.writeFileSync(filePath, content, 'utf8');
       console.log('订阅刷新成功:', filePath);
 
+      // 保存订阅信息到数据库
       try {
-        const infoPath = path.join(configDir, 'subscription_info.json');
-        let infoData = {};
-        if (fs.existsSync(infoPath)) {
-          infoData = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+        const usedTrafficBytes = parseTraffic(subscriptionInfo.usedTraffic);
+        const remainingTrafficBytes = parseTraffic(subscriptionInfo.remainingTraffic);
+
+        // 计算总流量 = 已用流量 + 剩余流量
+        let totalTrafficBytes = null;
+        if (usedTrafficBytes !== null && remainingTrafficBytes !== null) {
+          totalTrafficBytes = usedTrafficBytes + remainingTrafficBytes;
+        } else if (usedTrafficBytes !== null) {
+          totalTrafficBytes = usedTrafficBytes;
+        } else if (remainingTrafficBytes !== null) {
+          totalTrafficBytes = remainingTrafficBytes;
         }
 
-        infoData[path.basename(filePath)] = {
-          ...subscriptionInfo,
-          lastUpdated: new Date().toISOString()
-        };
+        const expiryTimestamp = subscriptionInfo.expiryDate ?
+          new Date(subscriptionInfo.expiryDate).getTime() : null;
 
-        fs.writeFileSync(infoPath, JSON.stringify(infoData, null, 2));
+        dbManager.setSubscriptionInfoByPath(
+          filePath,
+          usedTrafficBytes,
+          totalTrafficBytes,
+          expiryTimestamp
+        );
       } catch (error) {
-        console.warn('保存订阅信息记录失败:', error);
-      }
-
-      try {
-        const infoPathPlural = path.join(configDir, 'subscriptions_info.json');
-        fs.writeFileSync(infoPathPlural, fs.readFileSync(path.join(configDir, 'subscription_info.json')));
-      } catch (e) {
-        console.warn('保存subscriptions_info.json失败:', e);
+        console.warn('保存订阅信息失败:', error);
       }
 
       return { success: true, filePath, subscriptionInfo };
@@ -394,4 +436,37 @@ module.exports = function registerSubscriptionHandlers(context) {
       return { success: false, error: error.message };
     }
   });
+
+  /**
+   * 解析流量字符串为字节数
+   * 例如: "1.23 GB" -> 1320702443
+   */
+  function parseTraffic(trafficStr) {
+    if (!trafficStr || typeof trafficStr !== 'string') {
+      return null;
+    }
+
+    const match = trafficStr.match(/^([\d.]+)\s*([A-Z]+)$/i);
+    if (!match) {
+      return null;
+    }
+
+    const value = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+
+    const units = {
+      'B': 1,
+      'KB': 1024,
+      'MB': 1024 * 1024,
+      'GB': 1024 * 1024 * 1024,
+      'TB': 1024 * 1024 * 1024 * 1024
+    };
+
+    const multiplier = units[unit];
+    if (!multiplier) {
+      return null;
+    }
+
+    return Math.floor(value * multiplier);
+  }
 };

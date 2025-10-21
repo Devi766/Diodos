@@ -74,6 +74,26 @@
     @apply border-border;
   }
 
+  html,
+  body,
+  body *,
+  body *::before,
+  body *::after {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-user-drag: none !important;
+  }
+
+  input,
+  textarea,
+  select,
+  button,
+  [contenteditable='true'],
+  .selectable-text {
+    -webkit-user-select: text !important;
+    user-select: text !important;
+  }
+
   body {
     @apply text-foreground;
     min-height: 100vh;
@@ -136,24 +156,50 @@
   }
 
 
-main::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+/* 现代简洁滚动条样式 - 自动隐藏 */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
   }
 
-  main::-webkit-scrollbar-track {
+  .custom-scrollbar:hover {
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  }
+
+  .dark .custom-scrollbar:hover {
+    scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
 
-  main::-webkit-scrollbar-thumb {
-    background: rgba(59, 130, 246, 0.35);
-    border-radius: 999px;
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.7);
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 5px;
+    transition: background 0.2s ease;
   }
 
-  main:hover::-webkit-scrollbar-thumb,
-  main::-webkit-scrollbar-thumb:active {
-    background: rgba(59, 130, 246, 0.55);
+  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 5px;
+  }
+
+  .dark .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.45);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55) !important;
+  }
+
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.65) !important;
   }
 }
 
@@ -188,6 +234,45 @@ main::-webkit-scrollbar {
 
   body.platform-windows .glass-app-shell::before {
     display: none;
+  }
+
+  .connection-table-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.55) transparent;
+  }
+
+  .dark .connection-table-scroll {
+    scrollbar-color: rgba(100, 116, 139, 0.65) transparent;
+  }
+
+  .connection-table-scroll::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+
+  .connection-table-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .connection-table-scroll::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.6);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  .dark .connection-table-scroll::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.7);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  .connection-table-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.75);
+  }
+
+  .dark .connection-table-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.8);
   }
 
   .glass-panel {

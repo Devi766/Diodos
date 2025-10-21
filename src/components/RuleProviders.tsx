@@ -109,10 +109,8 @@ const RuleProviders: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="bg-white dark:bg-[#1f1f1f] rounded-lg shadow-sm p-6">
-        <div className="flex items-center justify-center">
-          <div className="text-gray-500 dark:text-gray-400">加载中...</div>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <div className="text-muted-foreground">加载中...</div>
       </div>
     );
   }
@@ -122,37 +120,35 @@ const RuleProviders: React.FC = () => {
   }
 
   return (
-    <div className="bg-white dark:bg-[#1f1f1f] rounded-lg shadow-sm">
-      <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            规则提供者
-          </h2>
-          <button
-            onClick={updateAllProviders}
-            disabled={updatingAll}
-            className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white rounded-md flex items-center gap-2 transition-colors"
-          >
-            <UpdateIcon className={updatingAll ? 'animate-spin' : ''} />
-            {updatingAll ? '更新中...' : '全部更新'}
-          </button>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-foreground">
+          规则提供者
+        </h2>
+        <button
+          onClick={updateAllProviders}
+          disabled={updatingAll}
+          className="px-4 py-2 bg-primary hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground text-primary-foreground rounded-lg flex items-center gap-2 transition-colors"
+        >
+          <UpdateIcon className={updatingAll ? 'animate-spin' : ''} />
+          {updatingAll ? '更新中...' : '全部更新'}
+        </button>
       </div>
 
-      <div className="divide-y divide-gray-200 dark:divide-gray-700">
+      <div className="space-y-3">
         {providers.map((provider) => (
-          <div key={provider.name} className="p-6">
+          <div key={provider.name} className="bg-white dark:bg-[#2a2a2a] rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-3">
-                  <h3 className="text-base font-medium text-gray-900 dark:text-gray-100">
+                  <h3 className="text-base font-medium text-foreground">
                     {provider.name}
                   </h3>
-                  <span className="px-2 py-1 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-xs rounded">
+                  <span className="px-2 py-1 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 text-xs rounded-md">
                     {provider.ruleCount} 规则
                   </span>
                 </div>
-                <div className="mt-2 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
                   <span>更新时间: {formatDate(provider.updatedAt)}</span>
                   <span>格式: {provider.format}</span>
                   <span>类型: {provider.vehicleType}::{provider.behavior}</span>
@@ -162,7 +158,7 @@ const RuleProviders: React.FC = () => {
               <button
                 onClick={() => updateProvider(provider.name)}
                 disabled={updating[provider.name]}
-                className="px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md flex items-center gap-2 transition-colors disabled:opacity-50"
+                className="px-3 py-2 bg-muted hover:bg-muted/80 text-foreground rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
               >
                 <ReloadIcon className={updating[provider.name] ? 'animate-spin' : ''} />
                 {updating[provider.name] ? '更新中' : '更新'}

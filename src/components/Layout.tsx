@@ -90,13 +90,14 @@ export default function Layout({ children }: LayoutProps) {
       { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
       { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
       { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
-      { name: '订阅管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
+      { name: '配置管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
       { name: '实用工具', href: '/tools', icon: <MixerHorizontalIcon className="w-5 h-5" /> },
+      { name: '日志', href: '/logs', icon: <InfoCircledIcon className="w-5 h-5" /> },
       { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
     ];
 
     if (hasProviders) {
-      items.splice(4, 0, { name: '外部资源', href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
+      items.splice(4, 0, { name: '提供者', href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
     }
 
     return items;
@@ -148,13 +149,15 @@ export default function Layout({ children }: LayoutProps) {
     pathname.startsWith('/subscriptions') ||
     pathname.startsWith('/connections') ||
     pathname.startsWith('/tools') ||
-    pathname.startsWith('/settings');
+    pathname.startsWith('/settings') ||
+    pathname.startsWith('/providers') ||
+    pathname.startsWith('/logs');
 
   return (
     <div className="relative h-screen overflow-hidden bg-transparent">
       <TitleBar />
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
         {/* Sidebar - Desktop */}
         <aside
           className={classNames(
@@ -212,7 +215,7 @@ export default function Layout({ children }: LayoutProps) {
         </aside>
 
         {/* Main Content */}
-        <div className="flex flex-1 flex-col gap-3 md:gap-4 h-full">
+        <div className="flex h-full min-w-0 flex-1 flex-col gap-3 md:gap-4">
           {/* Mobile Navigation */}
           <div className="md:hidden">
             <div className="glass-panel flex items-center justify-between rounded-2xl px-4 py-3" data-hoverable="false">
@@ -252,18 +255,18 @@ export default function Layout({ children }: LayoutProps) {
 
           <div
             className={classNames(
-              'flex flex-1 flex-col overflow-hidden',
+              'flex flex-1 flex-col min-w-0 overflow-y-auto custom-scrollbar',
               { 'glass-panel card-surface rounded-2xl': !isPlainView }
             )}
             data-hoverable={!isPlainView ? 'false' : undefined}
           >
-            <main className="relative flex-1 overflow-y-auto [scrollbar-width:none]">
+            <main className="relative flex-1 min-w-0">
               <div
                 className={classNames(
-                  'w-full py-5 sm:py-6 md:py-6',
+                  'w-full min-w-0 py-5 sm:py-6 md:py-6',
                   isPlainView
-                    ? 'px-4 sm:px-6 md:px-8'
-                    : 'mx-auto max-w-[1200px] px-4 sm:px-5 md:px-6'
+                    ? 'pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'
+                    : 'mx-auto max-w-[1400px] pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'
                 )}
               >
                 {children}

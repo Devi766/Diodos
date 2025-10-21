@@ -64,6 +64,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
   getTheme: () => ipcRenderer.invoke('get-theme'),
 
+  // 静默启动设置
+  getSilentStart: () => ipcRenderer.invoke('get-silent-start'),
+  setSilentStart: (enabled) => ipcRenderer.invoke('set-silent-start', enabled),
+
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
@@ -230,6 +234,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getSubscriptions: () => ipcRenderer.invoke('get-subscriptions'),
   deleteSubscription: (filePath) => ipcRenderer.invoke('delete-subscription', filePath),
+  editSubscription: (params) => ipcRenderer.invoke('edit-subscription', params),
+  getSubscriptionUrl: (filePath) => ipcRenderer.invoke('get-subscription-url', filePath),
   fetchSubscription: (subUrl) => ipcRenderer.invoke('fetch-subscription', subUrl),
   updateSubscription: (filePath, configData, subUrl, subscriptionInfo) => ipcRenderer.invoke('update-subscription', filePath, configData, subUrl, subscriptionInfo),
   refreshSubscription: (filePath) => ipcRenderer.invoke('refresh-subscription', filePath),
@@ -314,7 +320,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return { success: false, error: `操作异常: ${error.message}` };
     }
   },
-  openFileLocation: (filePath) => ipcRenderer.invoke('open-file-location', filePath),
+  openFileLocation: async (filePath) => {
+    try {
+      const tokenResult = await getSecurityToken();
+      if (!tokenResult.success) {
+        console.error('打开文件位置失败: 无法获取安全令牌');
+        return { success: false, error: tokenResult.error };
+      }
+
+      return await ipcRenderer.invoke('open-file-location', tokenResult.token, filePath);
+    } catch (error) {
+      console.error('打开文件位置异常:', error);
+      return { success: false, error: `操作异常: ${error.message}` };
+    }
+  },
   
   // 日志管理
   saveLogs: (logEntries) => ipcRenderer.invoke('save-logs', logEntries),
@@ -498,6 +517,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRuleProviders: () => ipcRenderer.invoke('get-rule-providers'),
   updateRuleProvider: (providerName) => ipcRenderer.invoke('update-rule-provider', providerName),
   getRuntimeConfig: () => ipcRenderer.invoke('get-runtime-config'),
+
+  // 日志监听
+  onMihomoLogs: (callback) => {
+    const listener = (event, log) => callback(log);
+    ipcRenderer.on('mihomo-logs', listener);
+    return () => ipcRenderer.removeListener('mihomo-logs', listener);
+  },
+  offMihomoLogs: () => ipcRenderer.removeAllListeners('mihomo-logs'),
 });
 
 // 移除重复的事件监听器
