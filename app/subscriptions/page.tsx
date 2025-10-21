@@ -6,9 +6,9 @@ import SubscriptionManager from '@/components/Subscription';
 export default function SubscriptionsPage() {
   return (
     <Layout>
-      <div className="bg-[#f9f9f9] dark:bg-[#1a1a1a] min-h-screen">
+      <div className="space-y-6">
         <SubscriptionManager />
       </div>
     </Layout>
   );
-} 
+}

@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import classNames from 'classnames';
-import { 
-  HomeIcon, 
-  GlobeIcon, 
-  ReaderIcon, 
+import {
+  HomeIcon,
+  GlobeIcon,
+  ReaderIcon,
   GearIcon,
   DashboardIcon,
   InfoCircledIcon,
@@ -17,6 +17,7 @@ import {
 } from '@radix-ui/react-icons';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
+import TitleBar from '@/components/TitleBar';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -35,6 +36,44 @@ export default function Layout({ children }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('0.1.7');
   const { hasProviders } = useProviderAvailability();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const ua = navigator.userAgent.toLowerCase();
+    const body = document.body;
+    const classes: string[] = [];
+
+    if (ua.includes('windows')) {
+      classes.push('platform-windows');
+    } else if (ua.includes('macintosh') || ua.includes('mac os')) {
+      classes.push('platform-macos');
+    }
+
+    classes.forEach((cls) => body.classList.add(cls));
+
+    return () => {
+      classes.forEach((cls) => body.classList.remove(cls));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncTheme = () => {
+      const isDark = document.documentElement.classList.contains('dark');
+      document.body.classList.toggle('theme-dark', isDark);
+    };
+
+    syncTheme();
+
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => {
@@ -78,140 +117,161 @@ export default function Layout({ children }: LayoutProps) {
     fetchVersion();
   }, []);
 
+  const isActivePath = (href: string) => {
+    if (!pathname) return false;
+    if (pathname === href) return true;
+    return href !== '/' && pathname.startsWith(href);
+  };
+
+  const getNavLinkClass = (href: string, collapsed: boolean) =>
+    classNames(
+      'group relative flex items-center rounded-lg text-[13px] font-medium transition-all duration-150',
+      collapsed ? 'justify-center px-0 py-2.5' : 'gap-2.5 px-3 py-2',
+      isActivePath(href)
+        ? 'bg-primary text-primary-foreground'
+        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+    );
+
+  const getIconWrapperClass = (href: string, collapsed: boolean) =>
+    classNames(
+      'flex h-6 w-6 flex-shrink-0 items-center justify-center',
+      isActivePath(href)
+        ? 'text-primary-foreground'
+        : 'text-muted-foreground group-hover:text-foreground'
+    );
+
+  const isDashboard = !pathname || pathname === '/';
+  const isPlainView =
+    !pathname ||
+    pathname === '/' ||
+    pathname.startsWith('/nodes') ||
+    pathname.startsWith('/subscriptions') ||
+    pathname.startsWith('/connections') ||
+    pathname.startsWith('/tools') ||
+    pathname.startsWith('/settings');
+
   return (
-    <div className="flex h-screen bg-[#f9f9f9] dark:bg-[#1a1a1a] overflow-hidden">
-      {/* Sidebar - Desktop */}
-      <div 
-        className={classNames(
-          "hidden md:flex flex-col bg-white dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-gray-800 h-screen transition-all duration-300 overflow-hidden",
-          sidebarCollapsed ? "w-16" : "w-64"
-        )}
-      >
-        <div className="flex items-center px-4 py-6 border-b border-gray-200 dark:border-gray-800">
-          {!sidebarCollapsed && (
-            <div className="flex items-center">
-              <img src="/logo.png" alt="FlyClash Logo" className="h-8 w-8 mr-2" />
-              <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">FlyClash</h1>
-            </div>
+    <div className="relative h-screen overflow-hidden bg-transparent">
+      <TitleBar />
+
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
+        {/* Sidebar - Desktop */}
+        <aside
+          className={classNames(
+            'hidden md:flex h-full flex-col shrink-0 border-r border-white/15 px-0 transition-[width] duration-300 ease-out backdrop-blur-xl dark:border-white/10',
+            sidebarCollapsed ? 'w-[70px]' : 'w-[220px]'
           )}
-          {sidebarCollapsed && (
-            <div className="mx-auto">
-              <div className="w-6 h-6 rounded-md bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500 flex items-center justify-center text-white font-bold">
-                F
-              </div>
-            </div>
-          )}
-          
-          <button
-            className="ml-auto text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-            onClick={handleToggleSidebar}
+        >
+          <div
+            className={classNames(
+              'flex items-center px-3 pt-6 pb-4 transition-all duration-300',
+              sidebarCollapsed ? 'justify-center' : 'gap-3'
+            )}
           >
-            <HamburgerMenuIcon className="w-5 h-5" />
-          </button>
-        </div>
-        
-        <div className="flex-1 py-6">
-          <nav className="px-2 space-y-2">
-            {menuItems.map((item) => (
-              <Link 
-                key={item.href}
-                href={item.href}
-                className={classNames(
-                  "flex items-center px-4 py-3 rounded-lg transition-colors",
-                  (pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href)))
-                    ? "bg-blue-50 text-blue-600 dark:bg-[#2a2a2a] dark:text-blue-400"
-                    : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                )}
-              >
-                <span className="flex-shrink-0">{item.icon}</span>
-                {!sidebarCollapsed && <span className="ml-3">{item.name}</span>}
-              </Link>
-            ))}
-          </nav>
-        </div>
-        
-        <div className="p-4 border-t border-gray-200 dark:border-gray-800">
-          <div className={classNames(
-            "flex items-center",
-            sidebarCollapsed ? "justify-center" : "justify-start"
-          )}>
-            <span className={classNames(
-              "flex items-center justify-center w-8 h-8 rounded-full bg-green-100 dark:bg-[#2a2a2a]", 
-              sidebarCollapsed ? "" : "mr-3"
-            )}>
-              <InfoCircledIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-            </span>
-            
+            <img src="/logo.png" alt="FlyClash Logo" className="h-8 w-8" />
             {!sidebarCollapsed && (
-              <div>
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">已连接</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">v{appVersion}</div>
+              <div className="leading-tight">
+                <span className="block text-sm font-semibold text-foreground">FlyClash</span>
+                <span className="text-xs text-muted-foreground">桌面客户端</span>
               </div>
             )}
           </div>
-        </div>
-      </div>
-      
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Fixed Title Bar */}
-        <div className={classNames(
-          "fixed top-0 right-0 h-12 z-50",
-          sidebarCollapsed ? "md:w-[calc(100%-64px)]" : "md:w-[calc(100%-256px)]",
-          "w-full"
-        )}>
-          <div 
-            className="w-full h-full bg-transparent" 
-            style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-          />
-        </div>
 
-        {/* Top Bar - Mobile */}
-        <div className="md:hidden bg-white dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800">
-          <div className="flex items-center justify-between px-4 py-4">
-            <div className="flex items-center">
-              <img src="/logo.png" alt="FlyClash Logo" className="h-7 w-7 mr-2" />
-              <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">FlyClash</h1>
-            </div>
-            
-            <button 
-              className="text-gray-700 dark:text-gray-300" 
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? <Cross1Icon className="w-5 h-5" /> : <HamburgerMenuIcon className="w-5 h-5" />}
-            </button>
+          <div className="flex-1 px-3 pb-4">
+            <nav className="flex flex-col gap-1">
+              {menuItems.map((item) => (
+                <Link 
+                  key={item.href}
+                  href={item.href}
+                  className={getNavLinkClass(item.href, sidebarCollapsed)}
+                >
+                  <span className={getIconWrapperClass(item.href, sidebarCollapsed)}>
+                    {item.icon}
+                  </span>
+                  {!sidebarCollapsed && <span className="text-[13px]">{item.name}</span>}
+                  {sidebarCollapsed && <span className="sr-only">{item.name}</span>}
+                </Link>
+              ))}
+            </nav>
           </div>
-          
-          {/* Mobile Menu */}
-          {mobileMenuOpen && (
-            <div className="px-4 pb-4 bg-white dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800">
-              <nav className="space-y-2">
+
+          <div className="px-3 pb-4">
+            <div
+              className={classNames(
+                'flex items-center gap-2 text-[11px] text-muted-foreground',
+                sidebarCollapsed ? 'justify-center' : 'justify-between'
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="indicator-dot" />
+                {!sidebarCollapsed && <span className="font-medium text-foreground">已连接</span>}
+              </div>
+              <span className="text-muted-foreground">v{appVersion}</span>
+            </div>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <div className="flex flex-1 flex-col gap-3 md:gap-4 h-full">
+          {/* Mobile Navigation */}
+          <div className="md:hidden">
+            <div className="glass-panel flex items-center justify-between rounded-2xl px-4 py-3" data-hoverable="false">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                  <img src="/logo.png" alt="FlyClash Logo" className="h-5 w-5" />
+                </div>
+                <span className="text-sm font-semibold text-foreground">FlyClash</span>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-muted-foreground hover:text-foreground"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              >
+                {mobileMenuOpen ? <Cross1Icon className="h-4 w-4" /> : <HamburgerMenuIcon className="h-4 w-4" />}
+              </button>
+            </div>
+
+            {mobileMenuOpen && (
+              <div className="mt-2 glass-panel space-y-1 rounded-2xl px-2.5 py-2.5" data-hoverable="false">
                 {menuItems.map((item) => (
-                  <Link 
+                  <Link
                     key={item.href}
                     href={item.href}
                     onClick={() => setMobileMenuOpen(false)}
-                    className={classNames(
-                      "flex items-center px-4 py-3 rounded-lg transition-colors",
-                      (pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href)))
-                        ? "bg-blue-50 text-blue-600 dark:bg-[#2a2a2a] dark:text-blue-400"
-                        : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                    )}
+                    className={getNavLinkClass(item.href, false)}
                   >
-                    <span className="flex-shrink-0">{item.icon}</span>
-                    <span className="ml-3">{item.name}</span>
+                    <span className={getIconWrapperClass(item.href, false)}>
+                      {item.icon}
+                    </span>
+                    <span className="text-[13px]">{item.name}</span>
                   </Link>
                 ))}
-              </nav>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+
+          <div
+            className={classNames(
+              'flex flex-1 flex-col overflow-hidden',
+              { 'glass-panel card-surface rounded-2xl': !isPlainView }
+            )}
+            data-hoverable={!isPlainView ? 'false' : undefined}
+          >
+            <main className="relative flex-1 overflow-y-auto [scrollbar-width:none]">
+              <div
+                className={classNames(
+                  'w-full py-5 sm:py-6 md:py-6',
+                  isPlainView
+                    ? 'px-4 sm:px-6 md:px-8'
+                    : 'mx-auto max-w-[1200px] px-4 sm:px-5 md:px-6'
+                )}
+              >
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
-        
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto pt-12 relative">
-          {children}
-        </main>
       </div>
     </div>
   );
-} 
+}

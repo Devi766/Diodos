@@ -47,6 +47,10 @@ interface ElectronAPI {
   getTheme: () => Promise<any>;
   setTheme: (theme: string) => Promise<any>;
   
+  minimizeWindow: () => Promise<{ success: boolean }>;
+  maximizeWindow: () => Promise<{ success: boolean; maximized?: boolean }>;
+  closeWindow: () => Promise<{ success: boolean }>;
+
   // 新增: 保存最后使用的配置文件
   saveLastConfig: (configPath: string) => Promise<any>;
 
@@ -134,6 +138,10 @@ const electronAPI = {
   getTheme: () => ipcRenderer.invoke('get-theme'),
   setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
   
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window-toggle-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+
   // 新增: 保存最后使用的配置文件
   saveLastConfig: (configPath: string) => ipcRenderer.invoke('save-last-config', configPath),
 

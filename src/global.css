@@ -4,54 +4,50 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Surge 6 Light Mode */
+    --background: 0 0% 96%;
+    --foreground: 0 0% 20%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 0 0% 20%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --popover-foreground: 0 0% 20%;
+    --primary: 211 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 94%;
+    --secondary-foreground: 0 0% 20%;
+    --muted: 0 0% 88%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 94%;
+    --accent-foreground: 0 0% 20%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 88%;
+    --input: 0 0% 88%;
+    --ring: 211 100% 50%;
     --radius: 0.5rem;
-    
-    /* 动画相关变量 */
-    --expand-transition: 300ms cubic-bezier(0.2, 0.5, 0.4, 1);
-    --collapse-transition: 250ms cubic-bezier(0.3, 0, 0.4, 1);
-    --node-stagger-delay: 15ms;
-    --node-fade-duration: 300ms;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    /* Surge 6 Dark Mode */
+    --background: 0 0% 12%;
+    --foreground: 0 0% 90%;
+    --card: 0 0% 15%;
+    --card-foreground: 0 0% 90%;
+    --popover: 0 0% 15%;
+    --popover-foreground: 0 0% 90%;
+    --primary: 211 100% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 18%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 25%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 0 0% 18%;
+    --accent-foreground: 0 0% 90%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 90%;
+    --border: 0 0% 25%;
+    --input: 0 0% 25%;
+    --ring: 211 100% 55%;
   }
 }
 
@@ -59,12 +55,268 @@
   * {
     @apply border-border;
   }
+
+  html {
+    background: transparent;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background: transparent !important;
+    overflow: hidden;
+  }
+
+  /* 确保根元素也是透明的 */
+  #__next {
+    background: transparent;
   }
 }
 
-/* 全局动画定义 */
+/* Surge 6 Glass Effects - 使用半透明背景配合Windows原生模糊 */
+@layer components {
+  /* 侧边栏 - 半透明背景 */
+  .glass-sidebar {
+    background: rgba(248, 248, 248, 0.3) !important;
+    border-radius: 16px;
+    backdrop-filter: blur(32px) saturate(165%);
+    -webkit-backdrop-filter: blur(32px) saturate(165%);
+    box-shadow:
+      0 18px 40px rgba(15, 23, 42, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+
+  .dark .glass-sidebar {
+    background: rgba(30, 30, 30, 0.34) !important;
+    backdrop-filter: blur(34px) saturate(150%);
+    -webkit-backdrop-filter: blur(34px) saturate(150%);
+    box-shadow:
+      0 18px 44px rgba(2, 6, 23, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* 主面板 */
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.24) !important;
+    backdrop-filter: blur(30px) saturate(170%);
+    -webkit-backdrop-filter: blur(30px) saturate(170%);
+    box-shadow:
+      0 20px 44px rgba(15, 23, 42, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  .dark .glass-panel {
+    background: rgba(35, 35, 35, 0.32) !important;
+    backdrop-filter: blur(32px) saturate(150%);
+    -webkit-backdrop-filter: blur(32px) saturate(150%);
+    box-shadow:
+      0 22px 48px rgba(2, 6, 23, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* 卡片表面 */
+  .card-surface {
+    background: rgba(255, 255, 255, 0.18) !important;
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+  }
+
+  .dark .card-surface {
+    background: rgba(45, 45, 45, 0.28) !important;
+    backdrop-filter: blur(26px) saturate(150%);
+    -webkit-backdrop-filter: blur(26px) saturate(150%);
+  }
+
+  /* Metric Cards */
+  .metric-card {
+    background: rgba(255, 255, 255, 0.2) !important;
+    border-radius: 12px;
+    padding: 16px;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(28px) saturate(165%);
+    -webkit-backdrop-filter: blur(28px) saturate(165%);
+    box-shadow:
+      0 14px 32px rgba(15, 23, 42, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+
+  .dark .metric-card {
+    background: rgba(50, 50, 50, 0.28) !important;
+    backdrop-filter: blur(30px) saturate(150%);
+    -webkit-backdrop-filter: blur(30px) saturate(150%);
+    box-shadow:
+      0 16px 34px rgba(2, 6, 23, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .metric-card:hover {
+    background: rgba(255, 255, 255, 0.26) !important;
+    transform: translateY(-2px);
+    box-shadow:
+      0 22px 42px rgba(15, 23, 42, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  }
+
+  .dark .metric-card:hover {
+    background: rgba(60, 60, 60, 0.32) !important;
+    box-shadow:
+      0 24px 48px rgba(2, 6, 23, 0.42),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-app-shell {
+    position: relative;
+    background: rgba(255, 255, 255, 0.18) !important;
+    backdrop-filter: blur(32px) saturate(175%);
+    -webkit-backdrop-filter: blur(32px) saturate(175%);
+  }
+
+  .dark .glass-app-shell {
+    background: rgba(17, 17, 17, 0.42) !important;
+    backdrop-filter: blur(36px) saturate(150%);
+    -webkit-backdrop-filter: blur(36px) saturate(150%);
+  }
+
+  .glass-app-shell::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background:
+      radial-gradient(120% 120% at 0% 0%, rgba(59, 130, 246, 0.20), transparent 60%),
+      radial-gradient(120% 120% at 100% 0%, rgba(129, 140, 248, 0.22), transparent 65%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.08));
+    opacity: 0.85;
+    pointer-events: none;
+  }
+
+  .dark .glass-app-shell::before {
+    background:
+      radial-gradient(120% 120% at 0% 0%, rgba(14, 165, 233, 0.18), transparent 55%),
+      radial-gradient(120% 120% at 100% 0%, rgba(124, 58, 237, 0.18), transparent 60%),
+      linear-gradient(180deg, rgba(17, 24, 39, 0.46), rgba(12, 12, 12, 0.16));
+    opacity: 0.75;
+  }
+
+  .glass-app-shell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.05) 100%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+  }
+
+  body.platform-windows .glass-app-shell {
+    background: rgba(255, 255, 255, 0.02) !important;
+    backdrop-filter: blur(45px) saturate(185%);
+    -webkit-backdrop-filter: blur(45px) saturate(185%);
+  }
+
+  body.platform-windows .glass-app-shell::before,
+  body.platform-windows .glass-app-shell::after {
+    display: none;
+  }
+
+  body.platform-windows .glass-panel {
+    background: rgba(255, 255, 255, 0.035) !important;
+    box-shadow:
+      0 14px 28px rgba(15, 23, 42, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  }
+
+  body.platform-windows .metric-card {
+    background: rgba(255, 255, 255, 0.045) !important;
+    box-shadow:
+      0 10px 24px rgba(15, 23, 42, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  }
+
+  body.platform-windows .metric-card:hover {
+    background: rgba(255, 255, 255, 0.065) !important;
+  }
+
+  body.platform-windows .glass-sidebar {
+    background: rgba(255, 255, 255, 0.04) !important;
+    box-shadow:
+      0 16px 32px rgba(15, 23, 42, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  }
+
+  body.platform-windows .card-surface {
+    background: rgba(255, 255, 255, 0.05) !important;
+  }
+
+  body.platform-windows .glass-titlebar,
+  body.platform-windows.theme-dark .glass-titlebar,
+  .glass-titlebar,
+  .dark .glass-titlebar {
+    background: transparent !important;
+    border-bottom: 1px solid transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+
+  body.platform-windows.theme-dark .glass-app-shell {
+    background: rgba(18, 18, 18, 0.32) !important;
+    backdrop-filter: blur(45px) saturate(150%);
+    -webkit-backdrop-filter: blur(45px) saturate(150%);
+  }
+
+  body.platform-windows.theme-dark .glass-panel,
+  body.platform-windows.theme-dark .glass-sidebar,
+  body.platform-windows.theme-dark .metric-card,
+  body.platform-windows.theme-dark .card-surface {
+    background: rgba(20, 24, 32, 0.46) !important;
+    border-color: rgba(148, 163, 184, 0.2) !important;
+    box-shadow:
+      0 18px 34px rgba(2, 6, 23, 0.38),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  @supports not (backdrop-filter: blur(10px)) {
+    .glass-app-shell {
+      background: rgba(255, 255, 255, 0.85) !important;
+    }
+    .dark .glass-app-shell {
+      background: rgba(17, 17, 17, 0.85) !important;
+    }
+    .glass-app-shell::before,
+    .glass-app-shell::after {
+      display: none;
+    }
+  }
+
+  /* Status dot */
+  .indicator-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #34c759;
+    box-shadow: 0 0 6px rgba(52, 199, 89, 0.5);
+  }
+
+  /* Chip/Badge */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.05);
+    color: hsl(var(--muted-foreground));
+  }
+
+  .dark .chip {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
@@ -79,14 +331,4 @@
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
-
-/* 基础动画定义 */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-} 
+ 

@@ -63,7 +63,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 添加主题设置相关方法
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
   getTheme: () => ipcRenderer.invoke('get-theme'),
-  
+
+  minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window-toggle-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window-close'),
+
   // 工具应用
   openToolsApp: (toolName) => ipcRenderer.invoke('open-tools-app', toolName),
   

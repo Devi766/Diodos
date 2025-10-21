@@ -1,28 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  ReloadIcon, 
-  Cross1Icon,
-  MagnifyingGlassIcon,
+'use client';
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityLogIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   ClockIcon,
-  UploadIcon,
+  Cross1Icon,
   DownloadIcon,
   GlobeIcon,
-  ChevronUpIcon,
-  ChevronDownIcon,
-  ActivityLogIcon
+  MagnifyingGlassIcon,
+  ReloadIcon,
+  UploadIcon
 } from '@radix-ui/react-icons';
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Card } from "./ui/card";
-import { Progress } from "./ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Card } from './ui/card';
+import { Input } from './ui/input';
+import { Progress } from './ui/progress';
 import { formatBytes, formatDuration } from '../utils/formatters';
-import { useMihomoAPI } from '../services/mihomo-api';
 import { Network } from 'lucide-react';
 
-// 定义连接类型
-type Connection = {
+interface Connection {
   id: string;
   metadata: {
     network: string;
@@ -37,16 +36,14 @@ type Connection = {
   };
   upload: number;
   download: number;
-  start: string; // ISO字符串
+  start: string;
   chains: string[];
   rule: string;
   rulePayload?: string;
-};
+}
 
-// 排序键类型
 type SortKey = keyof Connection | 'duration';
 
-// 统计信息
 type Stats = {
   totalConnections: number;
   activeConnections: number;
@@ -54,604 +51,539 @@ type Stats = {
   totalDownload: number;
 };
 
+const FILTERS: Array<{ value: 'all' | 'http' | 'https' | 'tcp' | 'udp'; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'http', label: 'HTTP' },
+  { value: 'https', label: 'HTTPS' },
+  { value: 'tcp', label: 'TCP' },
+  { value: 'udp', label: 'UDP' }
+];
+
 export default function ConnectionTable() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'http' | 'https' | 'tcp' | 'udp'>('all');
   const [stats, setStats] = useState<Stats>({
     totalConnections: 0,
     activeConnections: 0,
     totalUpload: 0,
     totalDownload: 0
   });
-  const [sortConfig, setSortConfig] = useState<{
-    key: SortKey; 
-    direction: 'asc' | 'desc'
-  }>({
-    key: 'start', 
+  const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({
+    key: 'start',
     direction: 'desc'
   });
-  let mihomoAPI = useMihomoAPI();
 
-  // 格式化连接时间（计算持续时间）
   const formatConnectionDuration = (startTimeISO: string) => {
     const startTime = new Date(startTimeISO).getTime();
-    const now = new Date().getTime();
-    const duration = now - startTime;
-    return formatDuration(duration);
+    const now = Date.now();
+    return formatDuration(now - startTime);
   };
 
-  // 排序连接
   const sortedConnections = useCallback(() => {
-    const sortableItems = [...connections];
+    const sortable = [...connections];
+
     if (sortConfig.key === 'duration') {
-      return sortableItems.sort((a, b) => {
-        const aDuration = new Date().getTime() - new Date(a.start).getTime();
-        const bDuration = new Date().getTime() - new Date(b.start).getTime();
-        return sortConfig.direction === 'asc' 
-          ? aDuration - bDuration 
-          : bDuration - aDuration;
+      return sortable.sort((a, b) => {
+        const durationA = Date.now() - new Date(a.start).getTime();
+        const durationB = Date.now() - new Date(b.start).getTime();
+        return sortConfig.direction === 'asc' ? durationA - durationB : durationB - durationA;
       });
     }
-    
-    return sortableItems.sort((a, b) => {
-      // 断言sortConfig.key为keyof Connection (不包括'duration')
+
+    return sortable.sort((a, b) => {
       const key = sortConfig.key as Exclude<SortKey, 'duration'>;
-      
-      // 检查可能的嵌套属性
+
       if (key === 'metadata') {
-        // 对于metadata对象，我们比较host属性
-        const aValue = a.metadata?.host || '';
-        const bValue = b.metadata?.host || '';
-        return sortConfig.direction === 'asc'
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue);
+        const hostA = a.metadata?.host ?? '';
+        const hostB = b.metadata?.host ?? '';
+        return sortConfig.direction === 'asc' ? hostA.localeCompare(hostB) : hostB.localeCompare(hostA);
       }
-      
-      // 对于其他属性，直接比较
-      const aValue = a[key];
-      const bValue = b[key];
-      
-      if (aValue === undefined && bValue === undefined) return 0;
-      if (aValue === undefined) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (bValue === undefined) return sortConfig.direction === 'asc' ? 1 : -1;
-      
-      if (aValue < bValue) {
-        return sortConfig.direction === 'asc' ? -1 : 1;
-      }
-      if (aValue > bValue) {
-        return sortConfig.direction === 'asc' ? 1 : -1;
-      }
-      return 0;
+
+      const valueA = a[key];
+      const valueB = b[key];
+
+      if (valueA === valueB) return 0;
+      if (valueA == null) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valueB == null) return sortConfig.direction === 'asc' ? 1 : -1;
+
+      return sortConfig.direction === 'asc'
+        ? (valueA as number) < (valueB as number) ? -1 : 1
+        : (valueA as number) > (valueB as number) ? -1 : 1;
     });
   }, [connections, sortConfig]);
 
-  // 请求排序
   const requestSort = (key: SortKey) => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setSortConfig({ key, direction });
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
   };
 
-  // 过滤连接
-  const filteredConnections = sortedConnections().filter(connection => {
-    // 根据搜索词过滤
-    if (searchTerm && !connection.metadata.host.toLowerCase().includes(searchTerm.toLowerCase()) && 
-        !connection.metadata.sourceIP.includes(searchTerm) && 
-        !connection.rule.toLowerCase().includes(searchTerm.toLowerCase())) {
-      return false;
-    }
-    
-    // 根据活动标签过滤
-    if (activeTab === 'http' && connection.metadata.type !== 'HTTP') return false;
-    if (activeTab === 'https' && connection.metadata.type !== 'HTTPS') return false;
-    if (activeTab === 'tcp' && connection.metadata.network !== 'tcp') return false;
-    if (activeTab === 'udp' && connection.metadata.network !== 'udp') return false;
-    
-    return true;
-  });
+  const filteredConnections = useMemo(() => {
+    return sortedConnections().filter((connection) => {
+      const term = searchTerm.trim().toLowerCase();
+      if (term) {
+        const matchesHost = connection.metadata.host?.toLowerCase().includes(term);
+        const matchesSource = connection.metadata.sourceIP.includes(term);
+        const matchesRule = connection.rule?.toLowerCase().includes(term);
+        if (!matchesHost && !matchesSource && !matchesRule) {
+          return false;
+        }
+      }
 
-  // 获取连接数据
+      if (activeTab === 'http' && connection.metadata.type !== 'HTTP') return false;
+      if (activeTab === 'https' && connection.metadata.type !== 'HTTPS') return false;
+      if (activeTab === 'tcp' && connection.metadata.network !== 'tcp') return false;
+      if (activeTab === 'udp' && connection.metadata.network !== 'udp') return false;
+
+      return true;
+    });
+  }, [activeTab, searchTerm, sortedConnections]);
+
   const fetchConnections = async () => {
     setIsLoading(true);
     setError(null);
-    
+
     try {
-      // 检查Mihomo是否运行
-      try {
-        // 使用mihomoAPI检查服务是否运行
-        const versionInfo = await mihomoAPI.version();
-        if (!versionInfo) {
-          throw new Error('Mihomo未运行');
+      let apiHost = '127.0.0.1';
+      let apiPort = '9090';
+      let apiSecret = '';
+
+      if (window.electronAPI) {
+        try {
+          const apiConfigResult = await window.electronAPI.getApiConfig();
+          if (apiConfigResult?.success) {
+            apiHost = apiConfigResult.controllerHost || apiHost;
+            apiPort = apiConfigResult.controllerPort || apiPort;
+            apiSecret = apiConfigResult.secret || apiSecret;
+          }
+        } catch (apiError) {
+          console.error('获取 API 配置失败:', apiError);
         }
-      } catch (error) {
-        console.error('Mihomo未运行:', error);
-        setIsLoading(false);
-        setError('Mihomo服务未运行，请先启动服务');
+      }
+
+      const versionResponse = await window.electronAPI?.requestMihomoAPI?.('/version');
+      if (versionResponse && !versionResponse.ok) {
+        throw new Error('Mihomo 未运行');
+      }
+
+      const connectionsResponse = await window.electronAPI?.requestMihomoAPI?.('/connections');
+      const data = connectionsResponse?.data ?? connectionsResponse;
+
+      if (!data?.connections || !Array.isArray(data.connections)) {
+        setConnections([]);
+        setStats({ totalConnections: 0, activeConnections: 0, totalUpload: 0, totalDownload: 0 });
         return;
       }
-      
-      // 获取连接信息
-      const data = await mihomoAPI.connections();
-      
-      // 计算统计信息
+
       let totalUpload = 0;
       let totalDownload = 0;
-      
-      if (data.connections && Array.isArray(data.connections)) {
-        data.connections.forEach((conn: Connection) => {
-          totalUpload += conn.upload;
-          totalDownload += conn.download;
-        });
-        
-        setStats({
-          totalConnections: data.connections.length,
-          activeConnections: data.connections.length,
-          totalUpload,
-          totalDownload
-        });
-        
-        setConnections(data.connections);
-      } else {
-        setConnections([]);
-        setStats({
-          totalConnections: 0,
-          activeConnections: 0,
-          totalUpload: 0,
-          totalDownload: 0
-        });
-      }
-    } catch (error) {
-      console.error('获取连接数据失败:', error);
-      setError(`获取连接数据失败: ${String(error)}`);
+      data.connections.forEach((conn: Connection) => {
+        totalUpload += conn.upload;
+        totalDownload += conn.download;
+      });
+
+      setStats({
+        totalConnections: data.connections.length,
+        activeConnections: data.connections.length,
+        totalUpload,
+        totalDownload
+      });
+      setConnections(data.connections);
+    } catch (err) {
+      console.error('获取连接数据失败:', err);
+      setError(`获取连接数据失败: ${String(err)}`);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 断开所有连接
   const closeAllConnections = async () => {
     try {
-      // 使用mihomoAPI断开所有连接
-      await mihomoAPI.deleteConnections();
-      
-      // 重新获取连接列表
+      const response = await window.electronAPI?.requestMihomoAPI?.('/connections', { method: 'DELETE' });
+      if (response && !response.ok) {
+        throw new Error(response.statusText || '断开失败');
+      }
       fetchConnections();
-    } catch (error) {
-      console.error('断开所有连接失败:', error);
-      setError(`断开所有连接失败: ${String(error)}`);
+    } catch (err) {
+      console.error('断开所有连接失败:', err);
+      setError(`断开所有连接失败: ${String(err)}`);
     }
   };
 
-  // 断开单个连接
   const closeConnection = async (id: string) => {
     try {
-      // 使用mihomoAPI断开指定连接
-      await mihomoAPI.deleteConnections(id);
-      
-      // 更新本地连接列表（从UI上立即移除这个连接）
-      setConnections(prevConnections => prevConnections.filter(conn => conn.id !== id));
-      
-      // 更新统计信息
-      setStats(prevStats => ({
-        ...prevStats,
-        activeConnections: prevStats.activeConnections - 1
+      const response = await window.electronAPI?.requestMihomoAPI?.(`/connections/${id}`, { method: 'DELETE' });
+      if (response && !response.ok) {
+        throw new Error(response.statusText || '断开失败');
+      }
+      setConnections((prev) => prev.filter((conn) => conn.id !== id));
+      setStats((prev) => ({
+        ...prev,
+        activeConnections: Math.max(prev.activeConnections - 1, 0)
       }));
-    } catch (error) {
-      console.error(`断开连接 ${id} 失败:`, error);
-      setError(`断开连接失败: ${String(error)}`);
+    } catch (err) {
+      console.error(`断开连接 ${id} 失败:`, err);
+      setError(`断开连接失败: ${String(err)}`);
     }
   };
 
-  // 初始加载和定时刷新
   useEffect(() => {
     fetchConnections();
-    
-    // 定时刷新连接列表（每5秒）
     const intervalId = setInterval(fetchConnections, 5000);
-    
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, []);
 
-  useEffect(() => {
-    // 获取API配置
-    const getApiConfig = async () => {
-      if (window.electronAPI) {
-        try {
-          const apiConfigResult = await window.electronAPI.getApiConfig();
-          if (apiConfigResult.success) {
-            // 使用正确的API配置初始化mihomoAPI
-            mihomoAPI = useMihomoAPI({
-              host: apiConfigResult.controllerHost,
-              port: apiConfigResult.controllerPort,
-              secret: apiConfigResult.secret
-            });
-            console.log('ConnectionTable: API配置已更新:', apiConfigResult);
-          }
-        } catch (error) {
-          console.error('获取API配置失败:', error);
-        }
-      }
-    };
-    
-    getApiConfig();
-  }, []);
-
-  // 渲染连接类型Badge
   const renderTypeBadge = (type: string, network: string) => {
-    let badgeClass = "";
-    let icon = null;
-    
-    if (type === "HTTP") {
-      badgeClass = "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800/30";
-      icon = <GlobeIcon className="w-2.5 h-2.5 mr-0.5" />;
-    } else if (type === "HTTPS") {
-      badgeClass = "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800/30";
-      icon = <GlobeIcon className="w-2.5 h-2.5 mr-0.5" />;
-    } else if (network === "tcp") {
-      badgeClass = "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 border-purple-200 dark:border-purple-800/30";
-      icon = <Network className="w-2.5 h-2.5 mr-0.5" />;
-    } else if (network === "udp") {
-      badgeClass = "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800/30";
-      icon = <Network className="w-2.5 h-2.5 mr-0.5" />;
+    let badgeClass = '';
+    let icon: React.ReactNode = null;
+
+    if (type === 'HTTP') {
+      badgeClass = 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800/40';
+      icon = <GlobeIcon className="mr-1 h-2.5 w-2.5" />;
+    } else if (type === 'HTTPS') {
+      badgeClass = 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800/40';
+      icon = <GlobeIcon className="mr-1 h-2.5 w-2.5" />;
+    } else if (network === 'tcp') {
+      badgeClass = 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800/40';
+      icon = <Network className="mr-1 h-2.5 w-2.5" />;
+    } else if (network === 'udp') {
+      badgeClass = 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800/40';
+      icon = <Network className="mr-1 h-2.5 w-2.5" />;
     }
-    
+
     return (
-      <Badge className={`${badgeClass} py-0.5 px-1.5 flex items-center border text-[10px]`}>
+      <Badge className={`flex items-center rounded-full border px-1.5 py-0.5 text-[10px] ${badgeClass}`}>
         {icon}
         {type || network.toUpperCase()}
       </Badge>
     );
   };
 
+  const metrics = [
+    {
+      label: '活跃连接',
+      value: stats.activeConnections.toString(),
+      helper: '当前活跃连接数',
+      icon: <GlobeIcon className="h-4 w-4 text-primary" />
+    },
+    {
+      label: '上传流量',
+      value: formatBytes(stats.totalUpload),
+      helper: '会话累计上传',
+      icon: <UploadIcon className="h-4 w-4 text-emerald-500" />
+    },
+    {
+      label: '下载流量',
+      value: formatBytes(stats.totalDownload),
+      helper: '会话累计下载',
+      icon: <DownloadIcon className="h-4 w-4 text-sky-500" />
+    },
+    {
+      label: '总流量',
+      value: formatBytes(stats.totalUpload + stats.totalDownload),
+      helper: '上传 + 下载',
+      icon: <ClockIcon className="h-4 w-4 text-violet-500" />
+    }
+  ];
+
   return (
-    <div className="space-y-4">
-      {/* 统计卡片 - 优化高度和布局 */}
-      <div className="grid grid-cols-4 gap-3">
-        <Card className="p-3 shadow-sm rounded-xl bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-gray-800 overflow-hidden relative">
-          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 dark:bg-blue-600"></div>
-          <div className="flex flex-col ml-2">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">活跃连接</span>
-            <div className="flex items-center">
-              <GlobeIcon className="h-3.5 w-3.5 mr-1.5 text-blue-500 dark:text-blue-400" />
-              <span className="text-xl font-bold text-gray-800 dark:text-gray-200">{stats.activeConnections}</span>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-3 shadow-sm rounded-xl bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-gray-800 overflow-hidden relative">
-          <div className="absolute top-0 left-0 w-1 h-full bg-green-500 dark:bg-green-600"></div>
-          <div className="flex flex-col ml-2">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">上传流量</span>
-            <div className="flex items-center">
-              <UploadIcon className="h-3.5 w-3.5 mr-1.5 text-green-500 dark:text-green-400" />
-              <span className="text-xl font-bold text-gray-800 dark:text-gray-200">{formatBytes(stats.totalUpload)}</span>
-            </div>
-            {stats.totalUpload > 0 && (
-              <Progress 
-                className="h-1 mt-1" 
-                value={stats.totalUpload / (stats.totalUpload + stats.totalDownload) * 100}
-                indicatorColor="green"
-              />
-            )}
-          </div>
-        </Card>
-        <Card className="p-3 shadow-sm rounded-xl bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-gray-800 overflow-hidden relative">
-          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 dark:bg-blue-600"></div>
-          <div className="flex flex-col ml-2">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">下载流量</span>
-            <div className="flex items-center">
-              <DownloadIcon className="h-3.5 w-3.5 mr-1.5 text-blue-500 dark:text-blue-400" />
-              <span className="text-xl font-bold text-gray-800 dark:text-gray-200">{formatBytes(stats.totalDownload)}</span>
-            </div>
-            {stats.totalDownload > 0 && (
-              <Progress 
-                className="h-1 mt-1" 
-                value={stats.totalDownload / (stats.totalUpload + stats.totalDownload) * 100}
-                indicatorColor="blue"
-              />
-            )}
-          </div>
-        </Card>
-        <Card className="p-3 shadow-sm rounded-xl bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-gray-800 overflow-hidden relative">
-          <div className="absolute top-0 left-0 w-1 h-full bg-purple-500 dark:bg-purple-600"></div>
-          <div className="flex flex-col ml-2">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">总流量</span>
-            <div className="flex items-center">
-              <ClockIcon className="h-3.5 w-3.5 mr-1.5 text-purple-500 dark:text-purple-400" />
-              <span className="text-xl font-bold text-gray-800 dark:text-gray-200">
-                {formatBytes(stats.totalUpload + stats.totalDownload)}
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <Card
+            key={metric.label}
+            className="rounded-3xl bg-white p-5 shadow-sm transition hover:shadow-md dark:bg-[#2a2a2a]"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {metric.label}
               </span>
+              {metric.icon}
             </div>
-            <div className="flex text-[10px] text-gray-500 dark:text-gray-400 mt-1">
-              {stats.totalUpload + stats.totalDownload > 0 && (
-                <>
-                  <span className="flex items-center">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 mr-1"></span>
-                    上传 {Math.round(stats.totalUpload / (stats.totalUpload + stats.totalDownload) * 100)}%
-                  </span>
-                  <span className="mx-1">|</span>
-                  <span className="flex items-center">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 mr-1"></span>
-                    下载 {Math.round(stats.totalDownload / (stats.totalUpload + stats.totalDownload) * 100)}%
-                  </span>
-                </>
+            <div className="mt-3 text-2xl font-semibold text-foreground">{metric.value}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{metric.helper}</div>
+          </Card>
+        ))}
+      </div>
+
+      <section className="space-y-4">
+        <Card className="space-y-4 rounded-3xl bg-white p-5 shadow-sm dark:bg-[#2a2a2a]">
+          <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="inline-flex rounded-full bg-white/70 p-1 text-xs shadow-sm dark:bg-[#222222]">
+              {FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setActiveTab(filter.value)}
+                  className={`rounded-full px-3 py-1 transition ${
+                    activeTab === filter.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative w-full sm:w-60">
+              <Input
+                placeholder="搜索连接..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-10 w-full rounded-2xl bg-white/80 pl-10 pr-10 text-sm text-foreground shadow-sm transition focus:outline-none focus:ring-2 focus:ring-primary/30 dark:bg-[#222222] dark:text-slate-100"
+              />
+              <MagnifyingGlassIcon className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              {filteredConnections.length > 0 ? (
+                <span>共显示 <strong>{filteredConnections.length}</strong> 个连接</span>
+              ) : (
+                <span>没有连接</span>
               )}
             </div>
+
+            <div className="flex w-full justify-end gap-2 sm:w-auto">
+              <Button
+                variant="outline"
+                onClick={fetchConnections}
+                className="h-8 rounded-full bg-white/70 px-3 text-xs dark:bg-[#222222]"
+                disabled={isLoading}
+                size="sm"
+              >
+                {isLoading ? (
+                  <ReloadIcon className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ReloadIcon className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                刷新
+              </Button>
+
+              <Button
+                variant="destructive"
+                onClick={closeAllConnections}
+                disabled={connections.length === 0 || isLoading}
+                size="sm"
+                className="h-8 rounded-full px-3 text-xs"
+              >
+                <Cross1Icon className="mr-1.5 h-3.5 w-3.5" />
+                断开所有连接
+              </Button>
+            </div>
           </div>
         </Card>
-      </div>
-      
-      {/* 主内容区 - 使用flex布局，固定高度 */}
-      <div className="bg-white dark:bg-[#1e1e1e] border border-gray-100 dark:border-gray-800 rounded-xl shadow-sm flex flex-col h-[calc(100vh-240px)]">
-        <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
-          {/* 标签栏和工具栏 */}
-          <div className="p-3 border-b border-gray-100 dark:border-gray-800">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-3">
-              <TabsList className="grid grid-cols-5 sm:w-[400px] bg-gray-100 dark:bg-[#282828] p-1 rounded-lg">
-                <TabsTrigger value="all" className="rounded-md data-[state=active]:bg-white dark:data-[state=active]:bg-[#333]">全部</TabsTrigger>
-                <TabsTrigger value="http" className="rounded-md data-[state=active]:bg-white dark:data-[state=active]:bg-[#333]">HTTP</TabsTrigger>
-                <TabsTrigger value="https" className="rounded-md data-[state=active]:bg-white dark:data-[state=active]:bg-[#333]">HTTPS</TabsTrigger>
-                <TabsTrigger value="tcp" className="rounded-md data-[state=active]:bg-white dark:data-[state=active]:bg-[#333]">TCP</TabsTrigger>
-                <TabsTrigger value="udp" className="rounded-md data-[state=active]:bg-white dark:data-[state=active]:bg-[#333]">UDP</TabsTrigger>
-              </TabsList>
-            
-              <div className="flex items-center w-full sm:w-auto">
-                <div className="relative w-full sm:w-56">
-                  <Input
-                    placeholder="搜索连接..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 py-1 h-8 bg-gray-100 dark:bg-[#282828] border-0"
-                  />
-                  <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-500" />
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex justify-between items-center">
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {filteredConnections.length > 0 ? (
-                  <span>共显示 <strong>{filteredConnections.length}</strong> 个连接</span>
-                ) : (
-                  <span>没有连接</span>
-                )}
-              </div>
-              
-              <div className="flex gap-2 w-full sm:w-auto justify-end">
-                <Button
-                  variant="outline"
-                  onClick={fetchConnections}
-                  className="border-gray-200 dark:border-gray-700 h-7 px-2 text-xs"
-                  disabled={isLoading}
-                  size="sm"
-                >
-                  {isLoading ? (
-                    <ReloadIcon className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                  ) : (
-                    <ReloadIcon className="h-3.5 w-3.5 mr-1.5" />
-                  )}
-                  刷新
-                </Button>
-                
-                <Button
-                  variant="destructive"
-                  onClick={() => closeAllConnections()}
-                  disabled={connections.length === 0 || isLoading}
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                >
-                  <Cross1Icon className="h-3.5 w-3.5 mr-1.5" />
-                  断开所有连接
-                </Button>
-              </div>
+
+        {error && (
+          <div className="rounded-3xl bg-rose-50 px-4 py-3 text-xs text-rose-600 shadow-sm dark:bg-rose-500/10 dark:text-rose-200">
+            <div className="flex items-center gap-2">
+              <Cross1Icon className="h-3.5 w-3.5" />
+              {error}
             </div>
           </div>
-        
-          {/* 错误提示 */}
-          {error && (
-            <div className="px-3 py-2 mx-3 my-2 text-red-700 bg-red-100/60 dark:bg-red-900/20 dark:text-red-400 rounded-lg border border-red-200 dark:border-red-900/30 text-xs">
-              <div className="flex items-center">
-                <Cross1Icon className="h-3.5 w-3.5 mr-1.5 text-red-500" />
-                {error}
-              </div>
-            </div>
-          )}
-          
-          {/* 连接表格 - 固定表头，使内容部分可滚动 */}
-          <div className="flex-1 flex flex-col min-h-0">
-            <div className="overflow-hidden flex-1">
-              <div className="h-full flex flex-col">
-                <div className="bg-gray-50 dark:bg-[#282828] text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr>
-                        <th 
-                          className="px-3 py-2 text-left cursor-pointer hover:bg-gray-100 dark:hover:bg-[#333] font-medium sticky top-0"
-                          onClick={() => requestSort('metadata')}
-                          style={{width: '25%'}}
-                        >
-                          <div className="flex items-center">
-                            主机/IP
-                            {sortConfig.key === 'metadata' && (
-                              <span className="ml-1">
-                                {sortConfig.direction === 'asc' 
-                                  ? <ChevronUpIcon className="h-3.5 w-3.5" /> 
-                                  : <ChevronDownIcon className="h-3.5 w-3.5" />}
-                              </span>
-                            )}
-                          </div>
-                        </th>
-                        <th className="px-3 py-2 text-left font-medium sticky top-0" style={{width: '10%'}}>类型</th>
-                        <th 
-                          className="px-3 py-2 text-left cursor-pointer hover:bg-gray-100 dark:hover:bg-[#333] font-medium sticky top-0"
-                          onClick={() => requestSort('upload')}
-                          style={{width: '12%'}}
-                        >
-                          <div className="flex items-center">
-                            上传
-                            {sortConfig.key === 'upload' && (
-                              <span className="ml-1">
-                                {sortConfig.direction === 'asc' 
-                                  ? <ChevronUpIcon className="h-3.5 w-3.5" /> 
-                                  : <ChevronDownIcon className="h-3.5 w-3.5" />}
-                              </span>
-                            )}
-                          </div>
-                        </th>
-                        <th 
-                          className="px-3 py-2 text-left cursor-pointer hover:bg-gray-100 dark:hover:bg-[#333] font-medium sticky top-0"
-                          onClick={() => requestSort('download')}
-                          style={{width: '12%'}}
-                        >
-                          <div className="flex items-center">
-                            下载
-                            {sortConfig.key === 'download' && (
-                              <span className="ml-1">
-                                {sortConfig.direction === 'asc' 
-                                  ? <ChevronUpIcon className="h-3.5 w-3.5" /> 
-                                  : <ChevronDownIcon className="h-3.5 w-3.5" />}
-                              </span>
-                            )}
-                          </div>
-                        </th>
-                        <th 
-                          className="px-3 py-2 text-left cursor-pointer hover:bg-gray-100 dark:hover:bg-[#333] font-medium sticky top-0"
-                          onClick={() => requestSort('duration')}
-                          style={{width: '12%'}}
-                        >
-                          <div className="flex items-center">
-                            连接时长
-                            {sortConfig.key === 'duration' && (
-                              <span className="ml-1">
-                                {sortConfig.direction === 'asc' 
-                                  ? <ChevronUpIcon className="h-3.5 w-3.5" /> 
-                                  : <ChevronDownIcon className="h-3.5 w-3.5" />}
-                              </span>
-                            )}
-                          </div>
-                        </th>
-                        <th className="px-3 py-2 text-left font-medium sticky top-0" style={{width: '20%'}}>代理链</th>
-                        <th className="px-3 py-2 text-right font-medium sticky top-0" style={{width: '9%'}}>操作</th>
-                      </tr>
-                    </thead>
-                  </table>
-                </div>
-                <div className="overflow-y-auto flex-1">
-                  <table className="w-full text-xs">
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {filteredConnections.length > 0 ? (
-                        filteredConnections.map((connection) => (
-                          <tr 
-                            key={connection.id} 
-                            className="hover:bg-gray-50 dark:hover:bg-[#282828] transition-colors"
-                          >
-                            <td className="px-3 py-2" style={{width: '25%'}}>
-                              <div className="flex flex-col">
-                                <span className="font-medium text-gray-800 dark:text-gray-200 truncate max-w-[200px]">
-                                  {connection.metadata.host || connection.metadata.destinationIP}
-                                </span>
-                                <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-                                  {connection.metadata.sourceIP}:{connection.metadata.sourcePort} 
-                                  <span className="mx-1 inline-block transform rotate-90">⟶</span>
-                                  {connection.metadata.destinationIP}:{connection.metadata.destinationPort}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-3 py-2" style={{width: '10%'}}>
-                              {renderTypeBadge(connection.metadata.type, connection.metadata.network)}
-                            </td>
-                            <td className="px-3 py-2" style={{width: '12%'}}>
-                              <div className="flex flex-col">
-                                <span className="text-green-600 dark:text-green-400 font-medium">
-                                  {formatBytes(connection.upload)}
-                                </span>
-                                {connection.upload > 0 && (
-                                  <div className="w-full mt-0.5">
-                                    <Progress 
-                                      className="h-1" 
-                                      value={connection.upload / (connection.upload + connection.download || 1) * 100}
-                                      indicatorColor="green"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2" style={{width: '12%'}}>
-                              <div className="flex flex-col">
-                                <span className="text-blue-600 dark:text-blue-400 font-medium">
-                                  {formatBytes(connection.download)}
-                                </span>
-                                {connection.download > 0 && (
-                                  <div className="w-full mt-0.5">
-                                    <Progress 
-                                      className="h-1" 
-                                      value={connection.download / (connection.upload + connection.download || 1) * 100}
-                                      indicatorColor="blue"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-gray-800 dark:text-gray-200" style={{width: '12%'}}>
-                              {formatConnectionDuration(connection.start)}
-                            </td>
-                            <td className="px-3 py-2" style={{width: '20%'}}>
-                              <div className="flex flex-col">
-                                <span className="font-medium text-gray-800 dark:text-gray-200 truncate">
-                                  {connection.chains?.join(' → ') || '-'}
-                                </span>
-                                <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 inline-flex items-center">
-                                  <Badge variant="outline" className="h-4 px-1 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 bg-transparent text-[10px]">
-                                    {connection.rule}
-                                  </Badge>
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-right" style={{width: '9%'}}>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => closeConnection(connection.id)}
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 h-6 w-6 p-0"
-                              >
-                                <Cross1Icon className="h-3.5 w-3.5" />
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={7} className="px-3 py-6 text-center text-gray-500 dark:text-gray-400">
-                            {isLoading ? (
-                              <div className="flex justify-center items-center">
-                                <ReloadIcon className="animate-spin h-4 w-4 mr-2" />
-                                加载中...
-                              </div>
-                            ) : error ? (
-                              <span>出错了，请尝试刷新</span>
-                            ) : (
-                              <div className="flex flex-col items-center">
-                                <ActivityLogIcon className="h-8 w-8 text-gray-300 dark:text-gray-600 mb-2" />
-                                <span>没有找到符合条件的连接</span>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
+        )}
+
+        <Card className="flex flex-col overflow-hidden rounded-3xl bg-white shadow-sm dark:bg-[#2a2a2a]">
+          <div className="border-b border-white/20 bg-white text-slate-600 dark:border-gray-700 dark:bg-[#2a2a2a] dark:text-slate-200 overflow-x-auto">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead>
+                <tr>
+                  <th
+                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    onClick={() => requestSort('metadata')}
+                    style={{ width: '25%' }}
+                  >
+                    <div className="flex items-center">
+                      主机/IP
+                      {sortConfig.key === 'metadata' && (
+                        <span className="ml-1">
+                          {sortConfig.direction === 'asc' ? (
+                            <ChevronUpIcon className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDownIcon className="h-3.5 w-3.5" />
+                          )}
+                        </span>
                       )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+                    </div>
+                  </th>
+                  <th className="sticky top-0 px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '10%' }}>
+                    类型
+                  </th>
+                  <th
+                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    onClick={() => requestSort('upload')}
+                    style={{ width: '12%' }}
+                  >
+                    <div className="flex items-center">
+                      上传
+                      {sortConfig.key === 'upload' && (
+                        <span className="ml-1">
+                          {sortConfig.direction === 'asc' ? (
+                            <ChevronUpIcon className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDownIcon className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    onClick={() => requestSort('download')}
+                    style={{ width: '12%' }}
+                  >
+                    <div className="flex items-center">
+                      下载
+                      {sortConfig.key === 'download' && (
+                        <span className="ml-1">
+                          {sortConfig.direction === 'asc' ? (
+                            <ChevronUpIcon className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDownIcon className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    onClick={() => requestSort('duration')}
+                    style={{ width: '12%' }}
+                  >
+                    <div className="flex items-center">
+                      连接时长
+                      {sortConfig.key === 'duration' && (
+                        <span className="ml-1">
+                          {sortConfig.direction === 'asc' ? (
+                            <ChevronUpIcon className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDownIcon className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th className="sticky top-0 px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '20%' }}>
+                    代理链
+                  </th>
+                  <th className="sticky top-0 px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '9%' }}>
+                    操作
+                  </th>
+                </tr>
+              </thead>
+            </table>
           </div>
-        </Tabs>
-      </div>
+
+          <div className="flex-1 overflow-x-auto overflow-y-auto">
+            <table className="w-full min-w-[720px] text-xs">
+              <tbody className="divide-y divide-white/20 dark:divide-white/15">
+                {filteredConnections.length > 0 ? (
+                  filteredConnections.map((connection) => (
+                    <tr key={connection.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-white/10">
+                      <td className="px-4 py-3" style={{ width: '25%' }}>
+                        <div className="flex flex-col">
+                          <span className="max-w-[220px] truncate font-medium text-slate-700 dark:text-slate-100">
+                            {connection.metadata.host || connection.metadata.destinationIP}
+                          </span>
+                          <span className="mt-1 text-[10px] text-slate-400 dark:text-slate-400">
+                            {connection.metadata.sourceIP}:{connection.metadata.sourcePort}
+                            <span className="mx-1 inline-block rotate-90">⟶</span>
+                            {connection.metadata.destinationIP}:{connection.metadata.destinationPort}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3" style={{ width: '10%' }}>
+                        {renderTypeBadge(connection.metadata.type, connection.metadata.network)}
+                      </td>
+                      <td className="px-4 py-3" style={{ width: '12%' }}>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-emerald-500 dark:text-emerald-300">
+                            {formatBytes(connection.upload)}
+                          </span>
+                          {connection.upload > 0 && (
+                            <div className="mt-0.5 w-full">
+                              <Progress
+                                className="h-1"
+                                value={(connection.upload / (connection.upload + connection.download || 1)) * 100}
+                                indicatorColor="green"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3" style={{ width: '12%' }}>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-sky-500 dark:text-sky-300">
+                            {formatBytes(connection.download)}
+                          </span>
+                          {connection.download > 0 && (
+                            <div className="mt-0.5 w-full">
+                              <Progress
+                                className="h-1"
+                                value={(connection.download / (connection.upload + connection.download || 1)) * 100}
+                                indicatorColor="blue"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-200" style={{ width: '12%' }}>
+                        {formatConnectionDuration(connection.start)}
+                      </td>
+                      <td className="px-4 py-3" style={{ width: '20%' }}>
+                        <div className="flex flex-col">
+                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">
+                            {connection.chains?.join(' → ') || '-'}
+                          </span>
+                          <span className="mt-0.5 inline-flex items-center text-[10px] text-slate-400 dark:text-slate-400">
+                            <Badge variant="outline" className="h-4 rounded-full bg-white/70 px-2 text-[10px] text-slate-500 dark:bg-[#222222] dark:text-slate-300">
+                              {connection.rule}
+                            </Badge>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right" style={{ width: '9%' }}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => closeConnection(connection.id)}
+                          className="h-7 w-7 rounded-full border-transparent bg-white/70 p-0 text-red-500 transition hover:bg-red-50 hover:text-red-600 dark:bg-[#222222] dark:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          <Cross1Icon className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-slate-400 dark:text-slate-400">
+                      {isLoading ? (
+                        <div className="flex items-center justify-center">
+                          <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
+                          加载中...
+                        </div>
+                      ) : error ? (
+                        <span>出错了，请尝试刷新</span>
+                      ) : (
+                        <div className="flex flex-col items-center">
+                          <ActivityLogIcon className="mb-2 h-8 w-8 text-slate-300 dark:text-slate-600" />
+                          <span>没有找到符合条件的连接</span>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </section>
     </div>
   );
-} 
+}

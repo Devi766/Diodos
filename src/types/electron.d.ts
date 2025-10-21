@@ -168,6 +168,9 @@ export interface ElectronAPI {
   getAutoLaunchState: () => Promise<boolean>;
   
   // 系统操作
+  minimizeWindow: () => Promise<{ success: boolean }>;
+  maximizeWindow: () => Promise<{ success: boolean; maximized?: boolean }>;
+  closeWindow: () => Promise<{ success: boolean }>;
   openExternal: (url: string) => Promise<{ success: boolean }>;
   openFile: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   openFileLocation: (filePath: string) => Promise<{ success: boolean, error?: string }>;

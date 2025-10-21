@@ -364,10 +364,9 @@ export default function Settings() {
   };
 
   return (
-    <div className="p-6">
+    <div>
       <Toast.Provider swipeDirection="right">
-        <h1 className="text-2xl font-bold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">系统设置</h1>
-        
+
         <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm p-6">
           <Tabs.Root defaultValue="general" className="w-full">
             <Tabs.List className="flex border-b border-gray-200 dark:border-gray-600 mb-6">
@@ -399,35 +398,35 @@ export default function Settings() {
                     <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动计算机时自动启动FlyClash</p>
                   </div>
                   <Switch.Root
-                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-indigo-500 outline-none cursor-default"
+                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
                     checked={startWithSystem}
                     onCheckedChange={setStartWithSystem}
                   >
                     <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                   </Switch.Root>
                 </div>
-                
+
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">最小化到托盘</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">关闭窗口时最小化到系统托盘</p>
                   </div>
                   <Switch.Root
-                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-indigo-500 outline-none cursor-default"
+                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
                     checked={minimizeToTray}
                     onCheckedChange={setMinimizeToTray}
                   >
                     <Switch.Thumb className="block w-[21px] h-[21px] bg-white rounded-full transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[19px]" />
                   </Switch.Root>
                 </div>
-                
+
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动检查更新</h3>
                     <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动时自动检查是否有新版本</p>
                   </div>
                   <Switch.Root
-                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-indigo-500 outline-none cursor-default"
+                    className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
                     checked={autoCheckUpdate}
                     onCheckedChange={setAutoCheckUpdate}
                   >
@@ -577,7 +576,7 @@ export default function Settings() {
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">允许局域网访问</h3>
                   <div className="flex items-center">
                     <Switch.Root
-                      className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-indigo-500 outline-none cursor-default"
+                      className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
                       checked={allowLan}
                       onCheckedChange={(checked) => {
                         console.log('允许局域网访问切换为:', checked, '类型:', typeof checked);
@@ -589,12 +588,12 @@ export default function Settings() {
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">允许其他设备通过局域网连接到本代理</span>
                   </div>
                 </div>
-                
+
                 <div className="mb-4">
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">IPv6支持</h3>
                   <div className="flex items-center">
                     <Switch.Root
-                      className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-indigo-500 outline-none cursor-default"
+                      className="w-[42px] h-[25px] bg-gray-300 dark:bg-gray-600 rounded-full relative focus:shadow-[0_0_0_2px] focus:shadow-black data-[state=checked]:bg-blue-500 outline-none cursor-default"
                       checked={enableIPv6}
                       onCheckedChange={(checked) => {
                         console.log('IPv6支持切换为:', checked);

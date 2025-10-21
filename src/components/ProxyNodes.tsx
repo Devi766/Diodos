@@ -3,6 +3,7 @@ import {
   CheckIcon, 
   ReloadIcon, 
   MagnifyingGlassIcon, 
+  GlobeIcon,
   StarIcon, 
   StarFilledIcon,
   ExclamationTriangleIcon,
@@ -43,6 +44,27 @@ type MihomoProxy = {
   history?: {delay: number}[];
   server?: string;
   port?: number;
+};
+
+const renderGroupIcon = (icon?: string | null) => {
+  if (!icon) return null;
+  const trimmed = icon.trim();
+  if (!trimmed) return null;
+  const isImageSource = /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/') || trimmed.startsWith('data:image');
+
+  if (isImageSource) {
+    return (
+      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/40">
+        <img src={trimmed} alt="" className="h-5 w-5 object-contain" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary text-sm font-semibold">
+      {trimmed.length > 2 ? trimmed.slice(0, 2) : trimmed}
+    </span>
+  );
 };
 
 // 节点组件
@@ -809,6 +831,23 @@ export default function ProxyNodes() {
     });
   };
 
+  const resetCollapsedGroups = () => {
+    setCollapsedGroups(new Set());
+
+    try {
+      localStorage.removeItem('collapsedGroups');
+      console.log('已清空折叠状态');
+    } catch (error) {
+      console.error('清空折叠状态失败:', error);
+    }
+
+    if (window.electronAPI?.saveCollapsedGroups) {
+      window.electronAPI.saveCollapsedGroups([]).catch((error: unknown) => {
+        console.error('同步清空持久化折叠状态失败:', error);
+      });
+    }
+  };
+
   // 根据节点名称长度计算最合适的列数
   const calculateOptimalColumns = (nodes: ProxyNode[]) => {
     if (nodes.length === 0) return 6; // 默认6列
@@ -862,11 +901,11 @@ export default function ProxyNodes() {
       const isFavorite = favoriteNodes.has(node.name);
       
       return (
-        <div 
-          className={`relative border rounded-lg overflow-hidden transition-all cursor-pointer p-3 ${
-            isSelected 
-              ? 'border-blue-500 bg-blue-50/70 dark:bg-[#2a2a2a]/90 shadow-sm dark:border-blue-600' 
-              : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-[#2a2a2a] hover:border-gray-300 dark:hover:border-gray-600'
+        <div
+          className={`relative rounded-lg overflow-hidden transition-all cursor-pointer p-3 ${
+            isSelected
+              ? 'bg-blue-50 dark:bg-blue-950 border border-blue-500 dark:border-blue-400'
+              : 'bg-white dark:bg-[#2a2a2a] border border-transparent'
           }`}
           onClick={() => handleNodeSelect(node.name, group.name)}
         >
@@ -1064,15 +1103,15 @@ export default function ProxyNodes() {
 
   // 渲染直连模式提示
   const DirectModeMessage = () => (
-    <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
+    <div className="rounded-2xl bg-slate-50 p-8 text-center shadow-sm dark:bg-slate-800/40">
       <div className="flex flex-col items-center justify-center space-y-3">
         <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="M8 12h8" />
           <path d="M12 8v8" />
         </svg>
-        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">直连模式已启用</h3>
-        <p className="text-gray-500 dark:text-gray-400 max-w-lg">
+        <h3 className="text-lg font-medium text-foreground">直连模式已启用</h3>
+        <p className="max-w-lg text-sm text-muted-foreground">
           在直连模式下，所有流量将直接访问目标，不通过任何代理节点。
           <br />
           此模式下不需要选择代理节点。
@@ -1254,20 +1293,25 @@ export default function ProxyNodes() {
     });
   };
 
+  const displayGroups = activeTab === 'favorites' ? favoriteFilteredGroups : filteredGroups;
+  const totalNodes = groups.reduce((acc, group) => acc + group.nodes.length, 0);
+  const visibleNodes = displayGroups.reduce((acc, group) => acc + group.nodes.length, 0);
+  const modeDisplay = currentMode === 'rule' ? '规则模式' : currentMode === 'global' ? '全局模式' : '直连模式';
+
   if (!mihomoRunning) {
     return (
-      <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8">
-        <div className="flex flex-col items-center justify-center text-center space-y-4">
-          <ExclamationTriangleIcon className="w-12 h-12 text-yellow-500" />
-          <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Mihomo服务未运行</h2>
-          <p className="text-gray-600 dark:text-gray-400 max-w-md">
-            请先启动Mihomo服务，然后刷新页面。确保Mihomo已正确配置并运行在端口9090上。
+      <div className="py-12 text-center">
+        <div className="mx-auto flex max-w-md flex-col items-center gap-4">
+          <ExclamationTriangleIcon className="h-12 w-12 text-amber-500" />
+          <h2 className="text-xl font-semibold text-foreground">Mihomo 服务未运行</h2>
+          <p className="text-sm text-muted-foreground">
+            请先启动 Mihomo 服务，然后刷新页面，确保内核正常工作。
           </p>
-          <button 
+          <button
             onClick={fetchProxies}
-            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors shadow-sm"
+            className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
           >
-            检查连接
+            <ReloadIcon className="h-4 w-4" /> 检查连接
           </button>
         </div>
       </div>
@@ -1275,366 +1319,231 @@ export default function ProxyNodes() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* 模式切换组件 */}
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-semibold text-[#3b82f6] dark:text-[#3b82f6]">节点管理</h2>
-        <Tabs value={currentMode} onValueChange={handleModeChange} className="w-auto">
-          <TabsList className="grid grid-cols-3 w-[300px]">
-            <TabsTrigger value="rule">规则模式</TabsTrigger>
-            <TabsTrigger value="global">全局模式</TabsTrigger>
-            <TabsTrigger value="direct">直连模式</TabsTrigger>
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                currentMode === 'rule'
+                  ? 'bg-sky-500'
+                  : currentMode === 'global'
+                  ? 'bg-violet-500'
+                  : 'bg-emerald-500'
+              }`}
+            ></span>
+            {modeDisplay}
+          </span>
+          {currentMode !== 'direct' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-slate-600 dark:bg-slate-800/70 dark:text-slate-200">
+              可用 {visibleNodes} / {totalNodes}
+            </span>
+          )}
+          {favoriteNodes.size > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-slate-600 dark:bg-slate-800/70 dark:text-slate-200">
+              收藏 {favoriteNodes.size}
+            </span>
+          )}
+          {selectedNode && currentMode !== 'direct' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+              当前节点 {selectedNode}
+            </span>
+          )}
+        </div>
+
+        <Tabs value={currentMode} onValueChange={handleModeChange} className="w-full md:w-auto">
+          <TabsList className="flex h-9 w-full items-center justify-between gap-2 rounded-full border border-slate-200 bg-transparent p-1 dark:border-slate-800 md:w-auto">
+            <TabsTrigger value="rule" className="flex-1 rounded-full text-xs font-medium data-[state=active]:text-sky-600">
+              规则模式
+            </TabsTrigger>
+            <TabsTrigger value="global" className="flex-1 rounded-full text-xs font-medium data-[state=active]:text-violet-600">
+              全局模式
+            </TabsTrigger>
+            <TabsTrigger value="direct" className="flex-1 rounded-full text-xs font-medium data-[state=active]:text-emerald-600">
+              直连模式
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
-      
-      {/* 错误/成功消息 */}
+
       {errorMessage && (
-        <div className="bg-red-100 border border-red-200 text-red-800 dark:bg-red-900/30 dark:border-red-800/50 dark:text-red-200 px-3 py-2 rounded-lg text-sm">
-          <ExclamationTriangleIcon className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+        <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600 shadow-sm dark:bg-rose-500/15 dark:text-rose-100">
+          <ExclamationTriangleIcon className="mr-2 inline-block h-4 w-4 align-middle" />
           {errorMessage}
         </div>
       )}
-      
+
       {successMessage && (
-        <div className="bg-green-100 border border-green-200 text-green-800 dark:bg-green-900/30 dark:border-green-800/50 dark:text-green-200 px-3 py-2 rounded-lg text-sm">
-          <CheckCircledIcon className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+        <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 shadow-sm dark:bg-emerald-500/15 dark:text-emerald-200">
+          <CheckCircledIcon className="mr-2 inline-block h-4 w-4 align-middle" />
           {successMessage}
         </div>
       )}
-      
-      {/* 搜索和操作栏 */}
+
       {currentMode !== 'direct' && (
-        <div className="flex justify-between items-center bg-white dark:bg-[#2a2a2a] p-3 rounded-lg shadow-sm border border-gray-200 dark:border-gray-800">
-          <div className="flex items-center gap-4 w-full">
-            <div className="relative flex-1 max-w-md">
+        <div className="rounded-2xl bg-white px-4 py-4 shadow-sm dark:bg-[#2a2a2a]">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="relative w-full max-w-md">
               <input
                 type="text"
-                className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 dark:bg-[#222222] border border-gray-200 dark:border-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-600 focus:border-transparent transition-all"
+                className="h-11 w-full rounded-full border border-transparent bg-slate-50 pl-10 pr-12 text-sm text-foreground transition focus:border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:ring-slate-700"
                 placeholder="搜索节点..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               {searchTerm && (
-              <button 
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-slate-200 text-slate-600 transition hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
                   onClick={() => setSearchTerm('')}
-              >
-                  <Cross1Icon className="w-3 h-3 text-gray-500 dark:text-gray-300" />
-              </button>
+                >
+                  <Cross1Icon className="h-3 w-3" />
+                </button>
               )}
             </div>
 
-            <div className="flex items-center">
-              <div className="border-r border-gray-200 dark:border-gray-700 pr-4 mr-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+              <div className="flex items-center gap-2 rounded-full bg-white px-1 py-1 text-xs font-medium dark:bg-[#222222]">
                 <button
+                  type="button"
                   onClick={() => setActiveTab('all')}
-                  className={`px-3 py-1 text-sm rounded-md mr-2 ${
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
                     activeTab === 'all'
-                      ? 'bg-blue-100 text-blue-700 dark:bg-[#2a2a2a] dark:text-blue-400' 
-                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
+                  title="所有节点"
                 >
-                  全部节点
+                  <GlobeIcon className="h-4 w-4" />
                 </button>
                 <button
-                  onClick={() => setActiveTab('favorite')}
-                  className={`px-3 py-1 text-sm rounded-md ${
-                    activeTab === 'favorite'
-                      ? 'bg-blue-100 text-blue-700 dark:bg-[#2a2a2a] dark:text-blue-400' 
-                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  type="button"
+                  onClick={() => setActiveTab('favorites')}
+                  className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
+                    activeTab === 'favorites'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
+                  title="收藏节点"
                 >
-                  <span className="flex items-center">
-                    <StarFilledIcon className="w-3 h-3 text-yellow-500 mr-1" />
-                    收藏节点
-                  </span>
+                  <StarIcon className="h-4 w-4" />
                 </button>
               </div>
-              
-              <button
-                className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
-                onClick={() => fetchProxies()}
-                title="刷新节点列表"
-              >
-                <ReloadIcon className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchProxies}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  title="刷新列表"
+                >
+                  <ReloadIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={resetCollapsedGroups}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
+                  title="重置折叠"
+                >
+                  <MixerHorizontalIcon className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
-      
-      {/* 节点列表内容 */}
-      <div className="flex-1 flex flex-col gap-3">
-        {isLoading ? (
-          <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
-            <div className="inline-block w-8 h-8 border-2 border-t-blue-500 border-blue-200 rounded-full animate-spin mb-2"></div>
-            <p className="text-gray-500 dark:text-gray-400">加载节点中...</p>
-          </div>
-        ) : !mihomoRunning ? (
-          <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8">
-            <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <ExclamationTriangleIcon className="w-12 h-12 text-yellow-500" />
-              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">核心未运行</h3>
-              <p className="text-gray-500 dark:text-gray-400 max-w-md">
-                Mihomo核心未运行，请先在控制面板启动服务。
-              </p>
-            </div>
-          </div>
-        ) : currentMode === 'direct' ? (
-          // 直连模式下显示专门的提示信息
+
+      <div className="space-y-3">
+        {currentMode === 'direct' ? (
           <DirectModeMessage />
-        ) : (
-          <div className="flex-1">
-            {activeTab === 'all' && (
-              <div className="space-y-3">
-                {filteredGroups.length === 0 ? (
-                  <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
-                    <div className="flex flex-col items-center justify-center space-y-2">
-                      <MagnifyingGlassIcon className="w-12 h-12 text-gray-300 dark:text-gray-600" />
-                      <p className="text-gray-500 dark:text-gray-400">
-                        没有找到匹配的节点，请尝试其他搜索条件
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  filteredGroups.map((group) => (
-                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden group-panel">
-                      <div 
-                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none group-header"
-                        onClick={() => toggleGroupCollapse(group.name)}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={!collapsedGroups.has(group.name)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleGroupCollapse(group.name);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center space-x-2">
-                          {group.icon && (
-                            <img
-                              src={group.icon}
-                              alt=""
-                              className="w-5 h-5 rounded object-cover"
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          )}
-                          <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                            <span>{group.name}</span>
-                            {group.now && (
-                              <span className="ml-2 text-xs px-1.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full">
-                                {group.now}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          {/* 批量测速按钮 - 简洁图标 */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation(); // 阻止事件冒泡
-                              handleBatchTest(group.name);
-                            }}
-                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                            title="批量测速"
-                          >
-                            <ReloadIcon className={`h-4 w-4 ${testingNodes.has(group.name) ? 'text-blue-500 animate-spin' : ''}`} />
-                          </button>
-                          <div>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                              {group.nodes.length} 个节点
-                            </span>
-                          </div>
-                          <div>
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="24"
-                              height="24"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className={`arrow-icon ${collapsedGroups.has(group.name) ? 'up' : ''}`}
-                            >
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </div>
-                        </div>
-                      </div>
-                      <div 
-                        ref={(el) => { getNodeRef.current[group.name] = el; }}
-                        className={`group-content ${collapsedGroups.has(group.name) ? 'collapsed' : 'expanded'}`}
-                      >
-                        <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                          <GroupNodes 
-                            group={group} 
-                            collapsedGroups={collapsedGroups} 
-                            handleTestNode={handleTestNode} 
-                            handleNodeSelect={handleNodeSelect} 
-                            handleToggleFavorite={handleToggleFavorite} 
-                            testingNodes={testingNodes} 
-                            favoriteNodes={favoriteNodes} 
-                          />
+        ) : displayGroups.length > 0 ? (
+          <div className="space-y-3">
+            {displayGroups.map((group) => {
+              const collapseKey = group.name;
+              const isCollapsed = collapsedGroups.has(collapseKey);
+              const effectiveCollapsed = new Set(collapsedGroups);
+              if (!isCollapsed) {
+                effectiveCollapsed.delete(collapseKey);
+              }
+
+              const groupStatus = group.type.toUpperCase();
+              const nodeCount = group.nodes.length;
+
+              return (
+                <div
+                  key={`${group.name}-${group.type}`}
+                  className="group-panel rounded-2xl bg-white px-4 py-3 shadow-sm transition dark:bg-[#2a2a2a]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleGroupCollapse(collapseKey)}
+                    className="group-header flex w-full items-center justify-between rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-100/60 dark:hover:bg-slate-800/40"
+                  >
+                    <div className="flex items-center gap-3">
+                      {renderGroupIcon(group.icon)}
+                      <div>
+                        <div className="text-sm font-semibold text-foreground">{group.name}</div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {groupStatus} · {nodeCount} 个节点
                         </div>
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
-            )}
-            
-            {activeTab === 'favorite' && (
-              <div className="space-y-3">
-                {favoriteFilteredGroups.length === 0 ? (
-                  <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-8 text-center">
-                    <div className="flex flex-col items-center justify-center space-y-3">
-                      <StarIcon className="w-12 h-12 text-gray-300 dark:text-gray-600" />
-                      <p className="text-gray-500 dark:text-gray-400">
-                        {searchTerm
-                          ? '没有匹配的收藏节点，请尝试其他搜索条件'
-                          : '暂无收藏节点，可以点击节点卡片上的星标添加收藏'}
-                      </p>
+                    <span className="text-xs text-muted-foreground">{isCollapsed ? '展开' : '收起'}</span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="border-t border-slate-100 pt-3 dark:border-slate-800/50">
+                      <GroupNodes
+                        group={group}
+                        collapsedGroups={effectiveCollapsed}
+                        handleTestNode={handleTestNode}
+                        handleNodeSelect={handleNodeSelect}
+                        handleToggleFavorite={handleToggleFavorite}
+                        testingNodes={testingNodes}
+                        favoriteNodes={favoriteNodes}
+                      />
                     </div>
-                  </div>
-                ) : (
-                  favoriteFilteredGroups.map((group) => (
-                    <div key={group.name} className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden group-panel">
-                      <div 
-                        className="py-2 px-3 flex items-center justify-between cursor-pointer select-none group-header"
-                        onClick={() => toggleGroupCollapse(`fav-${group.name}`)}
-                        role="button"
-                        tabIndex={0}
-                        aria-expanded={!collapsedGroups.has(`fav-${group.name}`)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            toggleGroupCollapse(`fav-${group.name}`);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center space-x-2">
-                          {group.icon && (
-                            <img
-                              src={group.icon}
-                              alt=""
-                              className="w-5 h-5 rounded object-cover"
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          )}
-                          <div className="font-medium text-gray-900 dark:text-gray-100 flex items-center">
-                            <span>{group.name}</span>
-                            {group.now && (
-                              <span className="ml-2 text-xs px-1.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 rounded-full">
-                                {group.now}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          {/* 批量测速按钮 - 简洁图标 */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation(); // 阻止事件冒泡
-                              handleBatchTest(group.name);
-                            }}
-                            className="p-1 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full transition-colors"
-                            title="批量测速"
-                          >
-                            <ReloadIcon className={`h-4 w-4 ${testingNodes.has(group.name) ? 'text-blue-500 animate-spin' : ''}`} />
-                          </button>
-                          <div>
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                              {group.nodes.length} 个收藏节点
-                            </span>
-                          </div>
-                          <div>
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="24"
-                              height="24"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className={`arrow-icon ${collapsedGroups.has(`fav-${group.name}`) ? 'up' : ''}`}
-                            >
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </div>
-                        </div>
-                      </div>
-                      <div 
-                        ref={(el) => { getNodeRef.current[`fav-${group.name}`] = el; }}
-                        className={`group-content ${collapsedGroups.has(`fav-${group.name}`) ? 'collapsed' : 'expanded'}`}
-                      >
-                        <div className="border-t border-gray-100 dark:border-gray-700/50 p-2">
-                          <GroupNodes 
-                            group={group} 
-                            collapsedGroups={collapsedGroups} 
-                            handleTestNode={handleTestNode} 
-                            handleNodeSelect={handleNodeSelect} 
-                            handleToggleFavorite={handleToggleFavorite} 
-                            testingNodes={testingNodes} 
-                            favoriteNodes={favoriteNodes} 
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              );
+            })}
           </div>
+        ) : (
+          <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">暂无匹配的节点</div>
         )}
       </div>
-      
-      {/* 底部状态栏 - 精简 */}
-      <div className="flex items-center justify-between px-3 py-2 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center">
-            <div className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-              currentMode === 'rule' ? 'bg-blue-500' : 
-              currentMode === 'global' ? 'bg-purple-500' : 'bg-green-500'
-            }`}></div>
-            <span className="font-medium">
-              {currentMode === 'rule' ? '规则模式' : 
-               currentMode === 'global' ? '全局模式' : '直连模式'}
-            </span>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground md:flex-row">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="flex items-center gap-2 text-foreground">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                currentMode === 'rule'
+                  ? 'bg-sky-500'
+                  : currentMode === 'global'
+                  ? 'bg-violet-500'
+                  : 'bg-emerald-500'
+              }`}
+            ></span>
+            {modeDisplay}
           </span>
-          <span>|</span>
           {currentMode !== 'direct' ? (
             <>
-              <span>{groups.reduce((acc, group) => acc + group.nodes.length, 0)} 个节点</span>
-              <span>{filteredGroups.reduce((acc, group) => acc + group.nodes.length, 0)} 个已过滤</span>
-              <span>{favoriteNodes.size} 个收藏</span>
+              <span>总计 {totalNodes} 个节点</span>
+              <span>当前筛选 {visibleNodes} 个</span>
+              <span>收藏 {favoriteNodes.size} 个</span>
             </>
           ) : (
-            <span>不使用代理节点</span>
+            <span>直连模式下所有流量均直接访问目标</span>
           )}
         </div>
         {selectedNode && currentMode !== 'direct' && (
-          <div className="flex items-center">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></div>
-            <span className="font-medium text-gray-700 dark:text-gray-300">{selectedNode}</span>
-          </div>
+          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-200">
+            当前节点 {selectedNode}
+          </span>
         )}
       </div>
-      
-      {/* 样式 */}
       <style jsx>{`
         .fancy-scrollbar::-webkit-scrollbar {
           width: 6px;
@@ -1655,8 +1564,7 @@ export default function ProxyNodes() {
         .dark .fancy-scrollbar::-webkit-scrollbar-thumb:hover {
           background: #4b5563;
         }
-        
-        /* 优化的折叠动画相关样式 */
+
         .group-content {
           height: auto;
           transition: all 0.3s ease;
@@ -1664,7 +1572,7 @@ export default function ProxyNodes() {
           transform: translateY(0);
           overflow: hidden;
         }
-        
+
         .group-content.collapsed {
           opacity: 0;
           transform: translateY(-10px);
@@ -1674,59 +1582,43 @@ export default function ProxyNodes() {
           transition: all 0.25s ease;
           pointer-events: none;
         }
-        
-        /* 箭头旋转动画 */
-        .arrow-icon {
-          transition: transform 0.3s ease;
-          transform: translateY(0);
-          color: #9CA3AF;
-        }
-        
-        .arrow-icon.up {
-          transform: rotate(180deg);
-        }
-        
-        /* 组面板样式 */
+
         .group-panel {
-          transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+          transition: background-color 0.2s ease;
         }
-        
-        /* 组标题样式 */
+
         .group-header {
           transition: background-color 0.2s ease-out;
         }
-        
+
         .group-header:hover {
-          background-color: rgba(0, 0, 0, 0.02);
+          background-color: rgba(15, 23, 42, 0.04);
         }
-        
+
         .dark .group-header:hover {
-          background-color: rgba(255, 255, 255, 0.03);
+          background-color: rgba(255, 255, 255, 0.04);
         }
-        
-        /* 节点容器样式 */
+
         .nodes-visible {
           opacity: 1;
           transform: translateY(0);
           transition: opacity 0.3s ease, transform 0.3s ease;
         }
-        
+
         .nodes-hidden {
           opacity: 0;
           height: 0;
           overflow: hidden;
         }
-        
-        /* 节点卡片容器 */
+
         .node-card-container {
-          transform: translateY(0);
           transition: transform 0.2s ease-out;
         }
-        
+
         .node-card-container:hover {
           transform: translateY(-2px);
         }
       `}</style>
     </div>
   );
-} 
+}

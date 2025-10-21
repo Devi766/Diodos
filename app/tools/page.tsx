@@ -476,15 +476,17 @@ export default function ToolsPage() {
 
   return (
     <Layout>
-      <div className="container py-6">
-        <h1 className="text-2xl font-bold mb-4 text-blue-500">实用工具</h1>
-        <p className="text-gray-600 dark:text-gray-400 mb-6">
-          这里提供了一些实用的系统工具，帮助你解决各种问题
-        </p>
-        
+      <div className="space-y-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">实用工具</h1>
+            <p className="mt-1 text-sm text-muted-foreground">运行测速、媒体解锁和其他辅助工具</p>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-          <Card className="overflow-hidden border border-gray-200 dark:border-gray-800 hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-gray-950 pb-6">
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <NetworkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 <CardTitle>EnableLoopback</CardTitle>
@@ -507,8 +509,8 @@ export default function ToolsPage() {
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden border border-gray-200 dark:border-gray-800 hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-gray-950 pb-6">
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <Gauge className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 <CardTitle>网络测速</CardTitle>
@@ -531,8 +533,8 @@ export default function ToolsPage() {
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden border border-gray-200 dark:border-gray-800 hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-gray-950 pb-6">
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <Play className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 <CardTitle>媒体服务检测</CardTitle>
@@ -555,8 +557,8 @@ export default function ToolsPage() {
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden border border-gray-200 dark:border-gray-800 hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-gray-950 pb-6">
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <ZapIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 <CardTitle>批量测速</CardTitle>
