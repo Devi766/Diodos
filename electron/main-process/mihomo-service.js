@@ -386,29 +386,29 @@ module.exports = function initMihomoService(context) {
 
   function sendReloadRequest(configPath, port) {
     try {
-      // Mihomo 有路径安全限制，只能重载工作目录内的文件
-      // 需要将绝对路径转换为相对于 mihomoDir 的相对路径
+      // Mihomo API 要求使用绝对路径
       const mihomoDir = path.join(userDataPath, 'mihomo');
-      let relativePath = configPath;
+      let absolutePath = configPath;
 
-      // 如果是绝对路径，转换为相对路径
-      if (path.isAbsolute(configPath)) {
-        // 检查文件是否在 mihomoDir 内
+      // 如果不是绝对路径，转换为绝对路径
+      if (!path.isAbsolute(configPath)) {
+        // 相对于 mihomoDir 的相对路径，转换为绝对路径
+        absolutePath = path.join(mihomoDir, configPath);
+        console.log(`[sendReloadRequest] 将相对路径 ${configPath} 转换为绝对路径: ${absolutePath}`);
+      } else {
+        // 已经是绝对路径，检查文件是否在 mihomoDir 内
         const normalizedConfigPath = path.normalize(configPath);
         const normalizedMihomoDir = path.normalize(mihomoDir);
 
-        if (normalizedConfigPath.startsWith(normalizedMihomoDir)) {
-          // 计算相对于 mihomoDir 的相对路径
-          relativePath = path.relative(mihomoDir, normalizedConfigPath);
-          console.log(`[sendReloadRequest] 将绝对路径 ${configPath} 转换为相对路径: ${relativePath}`);
-        } else {
+        if (!normalizedConfigPath.startsWith(normalizedMihomoDir)) {
           console.error(`[sendReloadRequest] 配置文件不在 mihomo 工作目录内: ${configPath}`);
           console.error(`[sendReloadRequest] mihomo 工作目录: ${mihomoDir}`);
           return false;
         }
+        console.log(`[sendReloadRequest] 使用绝对路径重载配置: ${absolutePath}`);
       }
 
-      const configData = JSON.stringify({ path: relativePath });
+      const configData = JSON.stringify({ path: absolutePath });
       const options = {
         path: '/configs',
         method: 'PUT',
@@ -447,7 +447,7 @@ module.exports = function initMihomoService(context) {
       req.write(configData);
       req.end();
 
-      console.log('已请求Mihomo重新加载配置（相对路径）:', relativePath);
+      console.log('已请求Mihomo重新加载配置（绝对路径）:', absolutePath);
       return true;
     } catch (error) {
       console.error('发送配置重载请求失败:', error);
@@ -694,10 +694,11 @@ module.exports = function initMihomoService(context) {
         return false;
       }
 
-      state.mihomoProcess = spawn(binPath, ['-f', overrideConfigPath], {
+      state.mihomoProcess = spawn(binPath, ['-d', mihomoDir, '-f', overrideConfigPath], {
         cwd: mihomoDir,
         env: {
           ...process.env,
+          MIHOMO_HOME_DIR: mihomoDir, // 设置 Mihomo 的 HOME 目录
           MIHOMO_CORE_PATH: mihomoDir
         },
         windowsHide: false,

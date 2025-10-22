@@ -552,6 +552,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 进程图标获取
   getIconDataURL: (processPath) => ipcRenderer.invoke('get-icon-dataurl', processPath),
+
+  // 内核配置
+  getKernelConfig: () => ipcRenderer.invoke('get-kernel-config'),
+  saveKernelConfig: (config) => ipcRenderer.invoke('save-kernel-config', config),
+
+  // DNS 配置
+  getDnsConfig: () => ipcRenderer.invoke('get-dns-config'),
+  saveDnsConfig: (config) => ipcRenderer.invoke('save-dns-config', config),
+
+  // Hosts 配置
+  saveHostsConfig: (hosts) => ipcRenderer.invoke('save-hosts-config', hosts),
 });
 
 // 移除重复的事件监听器

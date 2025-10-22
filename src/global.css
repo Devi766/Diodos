@@ -353,3 +353,76 @@
   to { opacity: 1; transform: scale(1); }
 }
  
+
+
+/* Dashboard card animations */
+@keyframes cardSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cardSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+}
+
+@keyframes cardShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+.card-enter {
+  animation: cardSlideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.card-exit {
+  animation: cardSlideOut 0.2s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.card-drag-active {
+  cursor: grabbing !important;
+  transform: scale(1.02);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* 拖拽时保持卡片尺寸稳定 */
+.grid > [class*="col-span"] {
+  min-height: fit-content;
+  contain: layout style;
+  will-change: transform;
+}
+
+/* 拖拽时禁用过渡动画，防止变形 */
+.grid > [class*="col-span"][style*="transform"] {
+  transition: none !important;
+}
+
+/* 确保卡片内容不会溢出 */
+[data-hoverable] {
+  overflow: hidden;
+  min-height: inherit;
+}
+
+/* 拖拽占位符保持原始高度 */
+.sortable-item-placeholder {
+  min-height: inherit;
+}
+
+/* 防止网格布局在拖拽时重新计算 */
+.grid[data-dragging="true"] {
+  grid-auto-flow: dense;
+}

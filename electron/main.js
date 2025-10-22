@@ -1915,6 +1915,147 @@ app.whenReady().then(() => {
     }
   });
 
+  // 获取内核配置
+  ipcMain.handle('get-kernel-config', () => {
+    try {
+      const configPath = path.join(userDataPath, 'config.yaml');
+      if (!fs.existsSync(configPath)) {
+        return { success: true, config: {} };
+      }
+
+      const configContent = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(configContent);
+
+      return {
+        success: true,
+        config: {
+          ipv6: config.ipv6,
+          'log-level': config['log-level'],
+          'mixed-port': config['mixed-port'],
+          'allow-lan': config['allow-lan'],
+          'lan-allowed-ips': config['lan-allowed-ips'],
+          'lan-disallowed-ips': config['lan-disallowed-ips'],
+          'external-controller': config['external-controller'],
+          secret: config.secret,
+          authentication: config.authentication,
+          'skip-auth-prefixes': config['skip-auth-prefixes'],
+          'unified-delay': config['unified-delay'],
+          'tcp-concurrent': config['tcp-concurrent'],
+          'disable-keep-alive': config['disable-keep-alive'],
+          'keep-alive-idle': config['keep-alive-idle'],
+          'keep-alive-interval': config['keep-alive-interval'],
+          'global-client-fingerprint': config['global-client-fingerprint'],
+          'find-process-mode': config['find-process-mode'],
+          'interface-name': config['interface-name'],
+          profile: config.profile
+        }
+      };
+    } catch (error) {
+      console.error('获取内核配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 保存内核配置
+  ipcMain.handle('save-kernel-config', (event, kernelConfig) => {
+    try {
+      const configPath = path.join(userDataPath, 'config.yaml');
+      let config = {};
+
+      if (fs.existsSync(configPath)) {
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        config = yaml.load(configContent);
+      }
+
+      // 更新配置
+      Object.assign(config, kernelConfig);
+
+      // 保存配置
+      fs.writeFileSync(configPath, yaml.dump(config), 'utf8');
+
+      return { success: true };
+    } catch (error) {
+      console.error('保存内核配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 获取 DNS 配置
+  ipcMain.handle('get-dns-config', () => {
+    try {
+      const configPath = path.join(userDataPath, 'config.yaml');
+      if (!fs.existsSync(configPath)) {
+        return { success: true, config: {}, hosts: {} };
+      }
+
+      const configContent = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(configContent);
+
+      return {
+        success: true,
+        config: config.dns || {},
+        hosts: config.hosts || {}
+      };
+    } catch (error) {
+      console.error('获取 DNS 配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 保存 DNS 配置
+  ipcMain.handle('save-dns-config', (event, dnsConfig) => {
+    try {
+      const configPath = path.join(userDataPath, 'config.yaml');
+      let config = {};
+
+      if (fs.existsSync(configPath)) {
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        config = yaml.load(configContent);
+      }
+
+      // 更新 DNS 配置
+      config.dns = dnsConfig;
+
+      // 保存配置
+      fs.writeFileSync(configPath, yaml.dump(config), 'utf8');
+
+      return { success: true };
+    } catch (error) {
+      console.error('保存 DNS 配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 保存 Hosts 配置
+  ipcMain.handle('save-hosts-config', (event, hosts) => {
+    try {
+      const configPath = path.join(userDataPath, 'config.yaml');
+      let config = {};
+
+      if (fs.existsSync(configPath)) {
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        config = yaml.load(configContent);
+      }
+
+      // 转换 hosts 数组为对象格式
+      const hostsObject = {};
+      hosts.forEach(({ domain, value }) => {
+        hostsObject[domain] = value;
+      });
+
+      // 更新 hosts 配置
+      config.hosts = hostsObject;
+
+      // 保存配置
+      fs.writeFileSync(configPath, yaml.dump(config), 'utf8');
+
+      return { success: true };
+    } catch (error) {
+      console.error('保存 Hosts 配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // 节点收藏管理
   ipcMain.handle('get-favorite-nodes', () => {
     try {

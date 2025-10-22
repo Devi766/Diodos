@@ -5,6 +5,9 @@ import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Switch } from './ui/switch';
+import KernelSettings, { KernelSettingsRef } from './KernelSettings';
+import DnsSettings, { DnsSettingsRef } from './DnsSettings';
+import { Button } from './ui/button';
 
 export default function Settings() {
   const [startWithSystem, setStartWithSystem] = useState(false);
@@ -19,6 +22,11 @@ export default function Settings() {
   const [kernelIsDefault, setKernelIsDefault] = useState(true);
   const [kernelExists, setKernelExists] = useState(true);
   const isFirstRender = useRef(true);
+
+  // Refs for override settings components
+  const kernelSettingsRef = useRef<KernelSettingsRef>(null);
+  const dnsSettingsRef = useRef<DnsSettingsRef>(null);
+  const [isSavingOverride, setIsSavingOverride] = useState(false);
   
   // 代理设置相关状态
   const [mixedPort, setMixedPort] = useState(7890);
@@ -437,20 +445,32 @@ export default function Settings() {
         <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm p-6">
           <Tabs.Root defaultValue="general" className="w-full">
             <Tabs.List className="flex border-b border-gray-200 dark:border-gray-600 mb-6">
-              <Tabs.Trigger 
+              <Tabs.Trigger
                 value="general"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
                 常规
               </Tabs.Trigger>
-              <Tabs.Trigger 
+              <Tabs.Trigger
                 value="proxy"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
                 代理
               </Tabs.Trigger>
-              <Tabs.Trigger 
-                value="about" 
+              <Tabs.Trigger
+                value="kernel"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+              >
+                内核
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                value="override"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+              >
+                覆写
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                value="about"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
                 关于
@@ -501,51 +521,6 @@ export default function Settings() {
                     checked={autoCheckUpdate}
                     onCheckedChange={setAutoCheckUpdate}
                   />
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Mihomo 内核</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-                    应用默认使用内置的内核文件，你也可以手动指定其他版本的 Mihomo 内核。
-                  </p>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <input
-                      type="text"
-                      className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
-                      value={kernelPath}
-                      readOnly
-                      spellCheck={false}
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors shadow-sm"
-                        onClick={handleSelectKernel}
-                      >
-                        选择文件
-                      </button>
-                      <button
-                        className={`py-1.5 px-3 text-sm rounded-lg transition-colors shadow-sm ${
-                          kernelIsDefault && kernelExists
-                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-[#2a2a2a] dark:text-gray-500'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:text-gray-200 dark:hover:bg-[#333333]'
-                        }`}
-                        onClick={handleResetKernel}
-                        disabled={kernelIsDefault && kernelExists}
-                      >
-                        恢复默认
-                      </button>
-                    </div>
-                  </div>
-                  {!kernelExists && (
-                    <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-                      无法找到当前配置的内核文件，请重新选择或恢复默认设置。
-                    </p>
-                  )}
-                  {kernelIsDefault && kernelExists && (
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      正在使用内置的默认内核文件。
-                    </p>
-                  )}
                 </div>
 
                 <div>
@@ -743,7 +718,82 @@ export default function Settings() {
                 </div>
               </div>
             </Tabs.Content>
-            
+
+            <Tabs.Content value="kernel" className="w-full">
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Mihomo 内核</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
+                    应用默认使用内置的内核文件，你也可以手动指定其他版本的 Mihomo 内核。
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                      value={kernelPath}
+                      readOnly
+                      spellCheck={false}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors shadow-sm"
+                        onClick={handleSelectKernel}
+                      >
+                        选择文件
+                      </button>
+                      <button
+                        className={`py-1.5 px-3 text-sm rounded-lg transition-colors shadow-sm ${
+                          kernelIsDefault && kernelExists
+                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-[#2a2a2a] dark:text-gray-500'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:text-gray-200 dark:hover:bg-[#333333]'
+                        }`}
+                        onClick={handleResetKernel}
+                        disabled={kernelIsDefault && kernelExists}
+                      >
+                        恢复默认
+                      </button>
+                    </div>
+                  </div>
+                  {!kernelExists && (
+                    <p className="text-xs text-red-500 dark:text-red-400 mt-2">
+                      无法找到当前配置的内核文件，请重新选择或恢复默认设置。
+                    </p>
+                  )}
+                  {kernelIsDefault && kernelExists && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      正在使用内置的默认内核文件。
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Tabs.Content>
+
+            <Tabs.Content value="override" className="w-full">
+              <div className="space-y-8">
+                <KernelSettings ref={kernelSettingsRef} />
+                <DnsSettings ref={dnsSettingsRef} />
+
+                {/* 统一保存按钮 */}
+                <div className="flex justify-end pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <Button
+                    onClick={async () => {
+                      setIsSavingOverride(true);
+                      try {
+                        await kernelSettingsRef.current?.saveConfig();
+                        await dnsSettingsRef.current?.saveConfig();
+                      } finally {
+                        setIsSavingOverride(false);
+                      }
+                    }}
+                    disabled={isSavingOverride}
+                    className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
+                  >
+                    {isSavingOverride ? '保存中...' : '保存所有配置'}
+                  </Button>
+                </div>
+              </div>
+            </Tabs.Content>
+
             <Tabs.Content value="about" className="w-full">
               <div className="flex flex-col items-center text-center py-8">
                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">FlyClash</h2>

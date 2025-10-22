@@ -3,6 +3,7 @@
 import "./globals.css";
 import { useEffect, useState } from "react";
 import { SpeedTestProvider } from "./contexts/SpeedTestContext";
+import { ToastContainer } from "@/components/ui/toast";
 
 export default function RootLayout({
   children,
@@ -81,6 +82,7 @@ export default function RootLayout({
         <SpeedTestProvider>
           {children}
         </SpeedTestProvider>
+        <ToastContainer />
       </body>
     </html>
   );

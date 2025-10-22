@@ -76,6 +76,11 @@ export default function ConnectionTable() {
     direction: 'desc'
   });
 
+  // 图标缓存和加载状态
+  const [iconMap, setIconMap] = useState<Record<string, string>>({});
+  const iconRequestQueueRef = React.useRef<Set<string>>(new Set());
+  const processingIconsRef = React.useRef<Set<string>>(new Set());
+
   const formatConnectionDuration = (startTimeISO: string) => {
     const startTime = new Date(startTimeISO).getTime();
     const now = Date.now();
@@ -142,6 +147,52 @@ export default function ConnectionTable() {
       return true;
     });
   }, [activeTab, searchTerm, sortedConnections]);
+
+  // 图标加载队列处理函数
+  const processIconQueue = useCallback(async () => {
+    if (processingIconsRef.current.size >= 5 || iconRequestQueueRef.current.size === 0) return;
+
+    const pathsToProcess = Array.from(iconRequestQueueRef.current).slice(0, 5);
+    pathsToProcess.forEach((path) => iconRequestQueueRef.current.delete(path));
+
+    const promises = pathsToProcess.map(async (path) => {
+      if (processingIconsRef.current.has(path)) return;
+      processingIconsRef.current.add(path);
+
+      try {
+        // 先检查 localStorage 缓存
+        const cached = localStorage.getItem(`icon:${path}`);
+        if (cached) {
+          setIconMap((prev) => ({ ...prev, [path]: cached }));
+          processingIconsRef.current.delete(path);
+          return;
+        }
+
+        // 调用 IPC 获取图标
+        const iconDataURL = await window.electronAPI?.getIconDataURL?.(path);
+        if (iconDataURL) {
+          // 缓存到 localStorage
+          try {
+            localStorage.setItem(`icon:${path}`, iconDataURL);
+          } catch (e) {
+            // localStorage 可能已满，忽略错误
+          }
+          setIconMap((prev) => ({ ...prev, [path]: iconDataURL }));
+        }
+      } catch (error) {
+        console.error(`获取图标失败 (${path}):`, error);
+      } finally {
+        processingIconsRef.current.delete(path);
+      }
+    });
+
+    await Promise.all(promises);
+
+    // 如果队列中还有待处理的图标，继续处理
+    if (iconRequestQueueRef.current.size > 0) {
+      setTimeout(processIconQueue, 50);
+    }
+  }, []);
 
   const fetchConnections = async () => {
     setIsLoading(true);
@@ -236,6 +287,28 @@ export default function ConnectionTable() {
     const intervalId = setInterval(fetchConnections, 5000);
     return () => clearInterval(intervalId);
   }, []);
+
+  // 图标加载 useEffect
+  useEffect(() => {
+    // 收集所有需要加载图标的进程路径
+    const visibleConnections = filteredConnections.slice(0, 20); // 只加载前20个可见连接的图标
+    const pathsToLoad = new Set<string>();
+
+    visibleConnections.forEach((conn) => {
+      const path = conn.metadata.processPath;
+      if (path && !iconMap[path] && !processingIconsRef.current.has(path)) {
+        pathsToLoad.add(path);
+      }
+    });
+
+    // 将路径添加到队列
+    pathsToLoad.forEach((path) => iconRequestQueueRef.current.add(path));
+
+    // 触发队列处理
+    if (iconRequestQueueRef.current.size > 0) {
+      processIconQueue();
+    }
+  }, [filteredConnections, iconMap, processIconQueue]);
 
   const renderTypeBadge = (type: string, network: string) => {
     let badgeClass = '';
@@ -487,15 +560,25 @@ export default function ConnectionTable() {
                   filteredConnections.map((connection) => (
                     <tr key={connection.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-white/10">
                       <td className="px-4 py-3" style={{ width: '25%' }}>
-                        <div className="flex flex-col">
-                          <span className="max-w-[220px] truncate font-medium text-slate-700 dark:text-slate-100">
-                            {connection.metadata.host || connection.metadata.destinationIP}
-                          </span>
-                          <span className="mt-1 text-[10px] text-slate-400 dark:text-slate-400">
-                            {connection.metadata.sourceIP}:{connection.metadata.sourcePort}
-                            <span className="mx-1 inline-block rotate-90">⟶</span>
-                            {connection.metadata.destinationIP}:{connection.metadata.destinationPort}
-                          </span>
+                        <div className="flex items-center gap-3">
+                          {/* 进程图标 */}
+                          {connection.metadata.processPath && iconMap[connection.metadata.processPath] && (
+                            <img
+                              src={iconMap[connection.metadata.processPath]}
+                              alt="进程图标"
+                              className="h-8 w-8 flex-shrink-0 rounded"
+                            />
+                          )}
+                          <div className="flex flex-col min-w-0">
+                            <span className="max-w-[220px] truncate font-medium text-slate-700 dark:text-slate-100">
+                              {connection.metadata.host || connection.metadata.destinationIP}
+                            </span>
+                            <span className="mt-1 text-[10px] text-slate-400 dark:text-slate-400">
+                              {connection.metadata.sourceIP}:{connection.metadata.sourcePort}
+                              <span className="mx-1 inline-block rotate-90">⟶</span>
+                              {connection.metadata.destinationIP}:{connection.metadata.destinationPort}
+                            </span>
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3" style={{ width: '10%' }}>

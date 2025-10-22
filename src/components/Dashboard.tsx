@@ -25,6 +25,8 @@ import {
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { CustomizableDashboard } from '@/components/CustomizableDashboard';
+import { Settings2, Plus, RotateCcw, Check } from 'lucide-react';
 
 type ProxyMode = 'rule' | 'global' | 'direct';
 
@@ -138,7 +140,9 @@ export default function Dashboard() {
   const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>([]);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [tunConfirmOpen, setTunConfirmOpen] = useState(false);
-  
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [showAddCardDialog, setShowAddCardDialog] = useState(false);
+
   const electron = useMemo(resolveElectron, []);
 
   const hydrateConnections = useCallback((snapshot: ConnectionsSnapshot | null | undefined) => {
@@ -719,15 +723,43 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="primary" onClick={handleStart} disabled={isServiceBusy || isRunning}>
-              <PlayIcon className="mr-1 h-3.5 w-3.5" /> 启动
-            </Button>
-            <Button size="sm" variant="outline" onClick={handleStop} disabled={isServiceBusy || !isRunning}>
-              <StopIcon className="mr-1 h-3.5 w-3.5" /> 停止
-            </Button>
-            <Button size="sm" variant="ghost" onClick={handleRestart} disabled={isServiceBusy || !isRunning}>
-              <ReloadIcon className="mr-1 h-3.5 w-3.5" /> 重启
-            </Button>
+            {!isEditMode ? (
+              <>
+                <Button size="sm" variant="primary" onClick={handleStart} disabled={isServiceBusy || isRunning}>
+                  <PlayIcon className="mr-1 h-3.5 w-3.5" /> 启动
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleStop} disabled={isServiceBusy || !isRunning}>
+                  <StopIcon className="mr-1 h-3.5 w-3.5" /> 停止
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleRestart} disabled={isServiceBusy || !isRunning}>
+                  <ReloadIcon className="mr-1 h-3.5 w-3.5" /> 重启
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setIsEditMode(true)}>
+                  <Settings2 className="mr-1 h-3.5 w-3.5" /> 自定义布局
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setShowAddCardDialog(true)}>
+                  <Plus className="mr-1 h-3.5 w-3.5" /> 添加卡片
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    if (confirm('确定要重置为默认布局吗？')) {
+                      localStorage.removeItem('flyClash-dashboard-config');
+                      window.location.reload();
+                    }
+                  }}
+                >
+                  <RotateCcw className="mr-1 h-3.5 w-3.5" /> 重置
+                </Button>
+                <Button size="sm" variant="primary" onClick={() => setIsEditMode(false)}>
+                  <Check className="mr-1 h-3.5 w-3.5" /> 完成
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -745,78 +777,33 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCardList metrics={metrics} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="space-y-4">
-          <Card data-hoverable="false" className="flex items-center justify-between rounded-3xl bg-white px-6 py-4 shadow-sm dark:bg-[#2a2a2a]">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">系统代理</p>
-              <p className="mt-1 text-sm text-muted-foreground">切换操作系统级代理开关</p>
-            </div>
-            <Switch
-              checked={proxyEnabled}
-              disabled={isProxyUpdating}
-              onCheckedChange={handleProxyToggle}
-            />
-          </Card>
-
-          <Card data-hoverable="false" className="flex items-center justify-between rounded-3xl bg-white px-6 py-4 shadow-sm dark:bg-[#2a2a2a]">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">TUN 模式</p>
-              <p className="mt-1 text-sm text-muted-foreground">增强路由模式，需管理员权限</p>
-            </div>
-            <Switch
-              checked={tunEnabled}
-              disabled={isTunUpdating || !electron?.toggleTunMode}
-              onCheckedChange={handleTunToggle}
-            />
-          </Card>
-        </div>
-
-        <Card data-hoverable="false" className="flex flex-col gap-4 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">代理模式</p>
-            <div className="flex items-center gap-2">
-              <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/20 dark:text-blue-100">
-                {proxyMode ? MODE_LABELS[proxyMode] : '读取中...'}
-              </span>
-              {isModeUpdating && <ReloadIcon className="h-3.5 w-3.5 animate-spin text-blue-500" />}
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-3">
-            {MODE_OPTIONS.map((option) => {
-              const isActive = proxyMode === option.key;
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => handleModeSwitch(option.key)}
-                  disabled={isModeUpdating || isActive}
-                  className={cn(
-                    'inline-flex h-10 w-full min-w-[0] items-center justify-center gap-2 rounded-xl border px-4 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 bg-white dark:bg-[#222222]',
-                    isActive
-                      ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-100'
-                      : 'border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50/40 dark:border-slate-700 dark:text-slate-200 dark:hover:border-blue-400/60 dark:hover:bg-blue-500/10'
-                  )}
-                >
-                  <span className={cn('flex items-center justify-center text-xs transition', isActive ? 'text-blue-500 dark:text-blue-100' : 'text-slate-400 dark:text-slate-400')}>
-                    {option.icon}
-                  </span>
-                  <span className="whitespace-nowrap">{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-      </div>
-
-      <div className="space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-        <TrafficChart samples={trafficSamples} />
-      </div>
+      {/* 可自定义的卡片布局 */}
+      <CustomizableDashboard
+        metrics={metrics}
+        proxyEnabled={proxyEnabled}
+        isProxyUpdating={isProxyUpdating}
+        onProxyToggle={handleProxyToggle}
+        tunEnabled={tunEnabled}
+        isTunUpdating={isTunUpdating}
+        tunAvailable={!!electron?.toggleTunMode}
+        onTunToggle={handleTunToggle}
+        proxyMode={proxyMode}
+        isModeUpdating={isModeUpdating}
+        onModeSwitch={handleModeSwitch}
+        trafficSamples={trafficSamples}
+        isEditMode={isEditMode}
+        onEditModeChange={setIsEditMode}
+        onAddCard={() => setShowAddCardDialog(true)}
+        onReset={() => {
+          if (confirm('确定要重置为默认布局吗？')) {
+            localStorage.removeItem('flyClash-dashboard-config');
+            window.location.reload();
+          }
+        }}
+        showAddDialog={showAddCardDialog}
+        onShowAddDialogChange={setShowAddCardDialog}
+        TrafficChart={TrafficChart}
+      />
 
       <Dialog open={tunConfirmOpen} onOpenChange={setTunConfirmOpen}>
         <DialogContent>
