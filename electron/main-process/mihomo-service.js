@@ -13,6 +13,9 @@ module.exports = function initMihomoService(context) {
     userDataPath
   } = context;
 
+  const { applyOverrides } = require('../ipc-handlers/overrides');
+  console.log('[mihomo-service] applyOverrides函数已导入:', typeof applyOverrides);
+
   const fetchWithFallback = (...args) => {
     if (typeof fetch === 'function') {
       return fetch(...args);
@@ -428,7 +431,10 @@ module.exports = function initMihomoService(context) {
     }
   }
 
-  function regenerateAndReloadConfig() {
+  async function regenerateAndReloadConfig() {
+    console.log('[regenerateAndReloadConfig] ========== 函数被调用 ==========');
+    console.log('[regenerateAndReloadConfig] state.configFilePath:', state.configFilePath);
+
     try {
       if (!state.configFilePath || !fs.existsSync(state.configFilePath)) {
         console.error('原始配置文件不可用，无法重新生成配置');
@@ -460,14 +466,43 @@ module.exports = function initMihomoService(context) {
 
       const configFilename = path.basename(state.configFilePath);
       const overrideConfigFilename = 'override-' + configFilename;
-      const overrideConfigPath = path.join(mihomoConfigDir, overrideConfigFilename);
+      const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
 
       try {
-        const mergedConfig = deepMergeConfig(config, userSettings);
+        let mergedConfig = deepMergeConfig(config, userSettings);
+
+        console.log('[regenerateAndReloadConfig] 准备应用覆写');
+        console.log('[regenerateAndReloadConfig] applyOverrides类型:', typeof applyOverrides);
+        console.log('[regenerateAndReloadConfig] state.configFilePath:', state.configFilePath);
+
+        if (applyOverrides && typeof applyOverrides === 'function') {
+          try {
+            console.log('[regenerateAndReloadConfig] 调用applyOverrides...');
+            const maybePromise = applyOverrides(context, mergedConfig, state.configFilePath);
+            if (maybePromise && typeof maybePromise.then === 'function') {
+              console.log('[regenerateAndReloadConfig] applyOverrides返回Promise，等待...');
+              mergedConfig = await maybePromise;
+              console.log('[regenerateAndReloadConfig] applyOverrides完成');
+            } else {
+              console.log('[regenerateAndReloadConfig] applyOverrides返回同步结果');
+              mergedConfig = maybePromise;
+            }
+          } catch (overrideError) {
+            console.error('应用配置覆盖失败:', overrideError);
+            return false;
+          }
+        } else {
+          console.log('[regenerateAndReloadConfig] applyOverrides不可用或不是函数');
+        }
+
         const validatedConfig = validateMergedConfig(mergedConfig);
         validatedConfig['external-controller'] = '0.0.0.0:9090';
         validatedConfig['secret'] = '';
-        const mergedConfigContent = yaml.dump(validatedConfig);
+        const mergedConfigContent = yaml.dump(validatedConfig, {
+          lineWidth: -1,
+          noRefs: true,
+          sortKeys: false
+        });
 
         try {
           fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
@@ -557,6 +592,9 @@ module.exports = function initMihomoService(context) {
       const configContent = fs.readFileSync(configPath, 'utf8');
       const config = yaml.load(configContent);
 
+      console.log('[startMihomo] 原始配置proxy-groups前3个:',
+        config['proxy-groups'] ? config['proxy-groups'].slice(0, 3).map(g => g.name) : []);
+
       const overrideConfigFilename = 'override-' + configFilename;
       const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
 
@@ -565,10 +603,29 @@ module.exports = function initMihomoService(context) {
 
       try {
         mergedConfig = deepMergeConfig(config, userSettings);
+        console.log('[startMihomo] deepMerge后proxy-groups前3个:',
+          mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
+
+        console.log('[startMihomo] 准备应用覆写');
+        console.log('[startMihomo] applyOverrides类型:', typeof applyOverrides);
+        console.log('[startMihomo] configPath:', configPath);
+
+        mergedConfig = await applyOverrides(context, mergedConfig, configPath);
+
+        console.log('[startMihomo] 覆写应用完成');
+        console.log('[startMihomo] 覆写后proxy-groups前3个:',
+          mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
+
         mergedConfig = validateMergedConfig(mergedConfig);
+        console.log('[startMihomo] validate后proxy-groups前3个:',
+          mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
         mergedConfig['external-controller'] = '0.0.0.0:9090';
         mergedConfig['secret'] = '';
-        mergedConfigContent = yaml.dump(mergedConfig);
+        mergedConfigContent = yaml.dump(mergedConfig, {
+          lineWidth: -1,
+          noRefs: true,
+          sortKeys: false
+        });
       } catch (error) {
         console.error('配置合并失败:', error);
 
@@ -583,7 +640,11 @@ module.exports = function initMihomoService(context) {
         };
 
         mergedConfig = safeConfig;
-        mergedConfigContent = yaml.dump(safeConfig);
+        mergedConfigContent = yaml.dump(safeConfig, {
+          lineWidth: -1,
+          noRefs: true,
+          sortKeys: false
+        });
         console.log('使用安全的回退配置');
       }
 

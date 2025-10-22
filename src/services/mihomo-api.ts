@@ -228,6 +228,21 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
   }
 
   /**
+   * 获取代理组延迟（测试组内所有节点）
+   */
+  const groupDelay = async (group: string, options?: MihomoDelayOptions) => {
+    return await makeRequest<Record<string, number>>(
+      `/group/${encodeURIComponent(group)}/delay`,
+      {
+        params: {
+          timeout: options?.timeout || 10000,
+          url: options?.url || 'http://www.gstatic.com/generate_204',
+        },
+      },
+    );
+  }
+
+  /**
    * 获取所有代理信息
    */
   const proxies = async () => {
@@ -259,14 +274,87 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
     return await makeRequest('/connections');
   }
 
+  /**
+   * 获取匹配规则列表
+   */
+  const matchRules = async () => {
+    return await makeRequest<{
+      rules: Array<{
+        type: string
+        payload: string
+        proxy: string
+        size?: number
+      }>
+    }>('/rules');
+  }
+
+  /**
+   * 获取代理提供者列表
+   */
+  const proxyProviders = async () => {
+    return await makeRequest<{
+      providers: Record<string, {
+        name: string
+        vehicleType: string
+        proxies?: Array<{ name: string; type: string }>
+        updatedAt?: string
+        subscriptionInfo?: {
+          Upload: number
+          Download: number
+          Total: number
+          Expire: number
+        }
+      }>
+    }>('/providers/proxies');
+  }
+
+  /**
+   * 更新代理提供者
+   */
+  const updateProxyProvider = async (providerName: string) => {
+    return await makeRequest(`/providers/proxies/${encodeURIComponent(providerName)}`, {
+      method: 'PUT'
+    });
+  }
+
+  /**
+   * 获取规则提供者列表
+   */
+  const ruleProviders = async () => {
+    return await makeRequest<{
+      providers: Record<string, {
+        name: string
+        vehicleType: string
+        ruleCount: number
+        updatedAt?: string
+        behavior?: string
+      }>
+    }>('/providers/rules');
+  }
+
+  /**
+   * 更新规则提供者
+   */
+  const updateRuleProvider = async (providerName: string) => {
+    return await makeRequest(`/providers/rules/${encodeURIComponent(providerName)}`, {
+      method: 'PUT'
+    });
+  }
+
   return {
     configs,
     patchConfigs,
     deleteConnections,
     version,
     proxiesDelay,
+    groupDelay,
     proxies,
     putProxies,
     connections,
+    matchRules,
+    proxyProviders,
+    updateProxyProvider,
+    ruleProviders,
+    updateRuleProvider,
   }
-} 
+}

@@ -11,6 +11,7 @@ const http = require('http');
 const serveStatic = require('serve-static');
 const finalhandler = require('finalhandler');
 const security = require('./security');
+const { enableAcrylic } = require('./windows/acrylic');
 
 // 导入媒体检测模块
 const { testMediaStreaming } = require('./mediatest');
@@ -285,6 +286,10 @@ require('./main-process/tray-manager')(context);
 require('./ipc-handlers/subscriptions')(context);
 require('./ipc-handlers/providers')(context);
 
+// 注册覆写处理器
+const { registerOverrideHandlers } = require('./ipc-handlers/overrides');
+registerOverrideHandlers(context);
+
 const {
   ensureUserSettingsFile,
   getUserSettings,
@@ -292,11 +297,46 @@ const {
 } = context;
 
 function applyWindowsBackdrop(win) {
-  if (!isWindows || !win) {
+  if (!isWindows || !win || win.isDestroyed?.()) {
     return;
   }
 
-  const backgroundMaterials = ['mica', 'mica-alt', 'tabbed', 'acrylic'];
+  const mode = state.appearanceMode || 'acrylic';
+  const isDark = nativeTheme.shouldUseDarkColors;
+
+  try {
+    win.setVibrancy(null);
+  } catch {}
+
+  try {
+    win.setBackgroundMaterial('none');
+  } catch {}
+
+  const applyTitleBarOverlay = () => {
+    const overlayOptions = win.getTitleBarOverlayHeight ? win.getTitleBarOverlayOptions?.() : undefined;
+    if (overlayOptions) {
+      try {
+        win.setTitleBarOverlay({
+          color: '#00000000',
+          symbolColor: isDark ? '#f3f4f6' : '#0f172a',
+          height: overlayOptions.height ?? 48,
+        });
+      } catch (error) {
+        console.warn('更新透明标题栏失败:', error?.message || error);
+      }
+    }
+  };
+
+  if (mode === 'solid') {
+    applyTitleBarOverlay();
+    win.setBackgroundColor(isDark ? '#cc0f172a' : '#e5ffffff');
+    return;
+  }
+
+  const backgroundMaterials = mode === 'acrylic'
+    ? ['acrylic', 'tabbed', 'mica', 'mica-alt']
+    : ['tabbed', 'mica', 'mica-alt'];
+
   let materialApplied = false;
   for (const material of backgroundMaterials) {
     try {
@@ -309,37 +349,112 @@ function applyWindowsBackdrop(win) {
     }
   }
 
-  const vibrancyModes = ['appearance-based', 'light', 'medium-light', 'ultra-dark', 'sidebar', 'popover'];
+  const vibrancyModes = mode === 'dynamic'
+    ? ['appearance-based', 'light', 'medium-light', 'ultra-dark', 'sidebar', 'popover']
+    : [];
   let vibrancyApplied = false;
-  for (const mode of vibrancyModes) {
+  for (const vMode of vibrancyModes) {
     try {
-      win.setVibrancy(mode);
+      win.setVibrancy(vMode);
       vibrancyApplied = true;
-      console.log(`已启用 Vibrancy 模式: ${mode}`);
+      console.log(`已启用 Vibrancy 模式: ${vMode}`);
       break;
     } catch (error) {
-      console.warn(`Vibrancy 模式 ${mode} 不可用:`, error?.message || error);
+      console.warn(`Vibrancy 模式 ${vMode} 不可用:`, error?.message || error);
     }
   }
 
-  if (isWindows) {
-    const overlayOptions = win.getTitleBarOverlayHeight ? win.getTitleBarOverlayOptions?.() : undefined;
-    if (overlayOptions) {
-      try {
-        win.setTitleBarOverlay({
-          color: '#00000000',
-          symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#0f172a',
-          height: overlayOptions.height ?? 48,
-        });
-      } catch (error) {
-        console.warn('更新透明标题栏失败:', error?.message || error);
-      }
-    }
-  }
+  applyTitleBarOverlay();
 
   if (!materialApplied && !vibrancyApplied) {
-    win.setBackgroundColor('#33000000');
+    win.setBackgroundColor(isDark ? '#220f172a' : '#f0ffffff');
   }
+
+  if (mode === 'acrylic') {
+    try {
+      const rgba = (alpha, r, g, b) => ((alpha & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff);
+      const tint = isDark
+        ? rgba(0xdc, 24, 32, 68)
+        : rgba(0x66, 255, 255, 255);
+      const success = enableAcrylic(win, { tintColor: tint, accentFlags: 2 });
+      if (success) {
+        console.log('已启用 Windows Acrylic 透明效果');
+      }
+    } catch (error) {
+      console.warn('启用 Acrylic 效果失败:', error?.message || error);
+    }
+  }
+}
+
+const BACKDROP_REFRESH_DELAYS = [0, 24, 120, 480];
+
+function forceWindowsBackdropRepaint(win) {
+  if (!isWindows || !win || win.isDestroyed?.()) {
+    return;
+  }
+
+  if (state.appearanceMode === 'solid') {
+    return;
+  }
+
+  const key = Symbol.for('flyclash.backdropNudgeCount');
+  win[key] = (win[key] || 0) + 1;
+  if (win[key] > 4) {
+    return;
+  }
+
+  let bounds;
+  try {
+    bounds = win.getBounds();
+  } catch (error) {
+    console.warn('获取窗口尺寸失败:', error?.message || error);
+    return;
+  }
+
+  const { x, y, width, height } = bounds;
+  if (typeof width !== 'number' || typeof height !== 'number') {
+    return;
+  }
+
+  try {
+    win.setBounds({ x, y, width: width + 4, height: height + 2 }, false);
+    setTimeout(() => {
+      if (!win.isDestroyed?.()) {
+        win.setBounds({ x, y, width, height }, false);
+      }
+    }, 40);
+  } catch (error) {
+    console.warn('触发窗口重绘失败:', error?.message || error);
+  }
+}
+
+function refreshWindowsBackdrop(win, attempt = 0) {
+  if (!isWindows || !win || win.isDestroyed?.()) {
+    return;
+  }
+
+  const delay = BACKDROP_REFRESH_DELAYS[Math.min(attempt, BACKDROP_REFRESH_DELAYS.length - 1)];
+  const timer = setTimeout(() => {
+    if (win.isDestroyed?.()) {
+      return;
+    }
+
+    try {
+      applyWindowsBackdrop(win);
+    } catch (error) {
+      console.warn('刷新 Windows 背景材质失败:', error?.message || error);
+    }
+
+    if (attempt + 1 < BACKDROP_REFRESH_DELAYS.length) {
+      refreshWindowsBackdrop(win, attempt + 1);
+    }
+
+    if (attempt >= 1) {
+      forceWindowsBackdropRepaint(win);
+    }
+  }, delay);
+
+  timer.unref?.();
 }
 
 function updateUserSettings(settings) {
@@ -413,7 +528,7 @@ function createWindow() {
   });
 
   state.mainWindow.setBackgroundColor('#00000000');
-  applyWindowsBackdrop(state.mainWindow);
+  refreshWindowsBackdrop(state.mainWindow, 0);
 
   if (!isWindows) {
     try {
@@ -430,7 +545,15 @@ function createWindow() {
   // 监听系统主题变化
   nativeTheme.on('updated', () => {
     if (isWindows) {
-      applyWindowsBackdrop(state.mainWindow);
+      refreshWindowsBackdrop(state.mainWindow, 0);
+      try {
+        const rgba = (alpha, r, g, b) => ((alpha & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff);
+        const isDark = nativeTheme.shouldUseDarkColors;
+        const tint = isDark
+          ? rgba(0xdc, 24, 32, 68)
+          : rgba(0x66, 255, 255, 255);
+        enableAcrylic(state.mainWindow, { tintColor: tint, accentFlags: 2 });
+      } catch {}
       return;
     }
 
@@ -454,8 +577,13 @@ function createWindow() {
     loadPageWithServer('');
   }
 
+  state.mainWindow.webContents.on('dom-ready', () => {
+    refreshWindowsBackdrop(state.mainWindow, 0);
+  });
+
   // 确保CSS加载正确
   state.mainWindow.webContents.on('did-finish-load', () => {
+    refreshWindowsBackdrop(state.mainWindow, 1);
     if (!isDev) {
       try {
         // 尝试注入正确的CSS路径
@@ -500,12 +628,11 @@ function createWindow() {
   }
 
   state.mainWindow.once('ready-to-show', () => {
-    applyWindowsBackdrop(state.mainWindow);
-
     // 检查是否启用静默启动
     const silentStart = dbManager.getSetting('silentStart', false);
     if (!silentStart) {
       state.mainWindow.show();
+      refreshWindowsBackdrop(state.mainWindow, 1);
     } else {
       console.log('静默启动模式: 窗口不显示');
     }
@@ -532,6 +659,14 @@ function createWindow() {
       event.preventDefault();
       state.mainWindow.hide();
     }
+  });
+
+  state.mainWindow.on('show', () => {
+    refreshWindowsBackdrop(state.mainWindow, 0);
+  });
+
+  state.mainWindow.on('focus', () => {
+    refreshWindowsBackdrop(state.mainWindow, 1);
   });
 
   // 添加窗口事件监听器
@@ -1302,6 +1437,17 @@ app.whenReady().then(() => {
     console.error('检查系统代理状态失败:', error);
   }
   
+  // 读取外观设置
+  try {
+    const storedAppearance = dbManager.getSetting('appearanceMode', 'acrylic');
+    if (storedAppearance) {
+      state.appearanceMode = storedAppearance;
+    }
+  } catch (error) {
+    console.warn('读取外观设置失败，将使用默认值:', error?.message || error);
+    state.appearanceMode = 'acrylic';
+  }
+
   // 检查TUN模式状态
   try {
     // 读取用户设置
@@ -1373,6 +1519,39 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('设置主题失败:', error);
       return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-appearance-mode', () => {
+    return {
+      success: true,
+      mode: state.appearanceMode || 'acrylic'
+    };
+  });
+
+  ipcMain.handle('set-appearance-mode', (event, mode) => {
+    try {
+      const allowedModes = ['acrylic', 'dynamic', 'solid'];
+      if (!allowedModes.includes(mode)) {
+        return { success: false, error: '不支持的外观模式' };
+      }
+
+      state.appearanceMode = mode;
+      dbManager.setSetting('appearanceMode', mode);
+
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+        state.mainWindow[Symbol.for('flyclash.backdropNudgeCount')] = 0;
+        applyWindowsBackdrop(state.mainWindow);
+        refreshWindowsBackdrop(state.mainWindow, 0);
+        try {
+          state.mainWindow.webContents.send('appearance-mode-changed', mode);
+        } catch {}
+      }
+
+      return { success: true, mode };
+    } catch (error) {
+      console.error('设置外观模式失败:', error);
+      return { success: false, error: error?.message || String(error) };
     }
   });
   
@@ -2460,6 +2639,7 @@ function sendReloadRequest(configPath, port) {
 
 // 重新生成合并配置并热重载
 function regenerateAndReloadConfig() {
+  console.log('[main.js] regenerateAndReloadConfig被调用');
   return context.mihomoService.regenerateAndReloadConfig();
 }
 

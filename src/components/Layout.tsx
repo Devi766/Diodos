@@ -13,7 +13,10 @@ import {
   Cross1Icon,
   BarChartIcon,
   RocketIcon,
-  MixerHorizontalIcon
+  MixerHorizontalIcon,
+  FileTextIcon,
+  LayersIcon,
+  CodeIcon
 } from '@radix-ui/react-icons';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
@@ -60,6 +63,20 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    const triggerResize = () => {
+      window.dispatchEvent(new Event('resize'));
+    };
+
+    const timers = [80, 220, 520].map((delay) => window.setTimeout(triggerResize, delay));
+
+    return () => {
+      timers.forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     const syncTheme = () => {
       const isDark = document.documentElement.classList.contains('dark');
       document.body.classList.toggle('theme-dark', isDark);
@@ -89,15 +106,18 @@ export default function Layout({ children }: LayoutProps) {
     const items = [
       { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
       { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
+      { name: '匹配规则', href: '/match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
+      { name: '配置覆写', href: '/overrides', icon: <MixerHorizontalIcon className="w-5 h-5" /> },
+      { name: '外部资源', href: '/external-resources', icon: <LayersIcon className="w-5 h-5" /> },
       { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
       { name: '配置管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
-      { name: '实用工具', href: '/tools', icon: <MixerHorizontalIcon className="w-5 h-5" /> },
+      { name: '实用工具', href: '/tools', icon: <GearIcon className="w-5 h-5" /> },
       { name: '日志', href: '/logs', icon: <InfoCircledIcon className="w-5 h-5" /> },
       { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
     ];
 
     if (hasProviders) {
-      items.splice(4, 0, { name: '提供者', href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
+      items.splice(7, 0, { name: '提供者', href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
     }
 
     return items;
@@ -146,6 +166,9 @@ export default function Layout({ children }: LayoutProps) {
     !pathname ||
     pathname === '/' ||
     pathname.startsWith('/nodes') ||
+    pathname.startsWith('/match-rules') ||
+    pathname.startsWith('/overrides') ||
+    pathname.startsWith('/external-resources') ||
     pathname.startsWith('/subscriptions') ||
     pathname.startsWith('/connections') ||
     pathname.startsWith('/tools') ||

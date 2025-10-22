@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 添加主题设置相关方法
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
   getTheme: () => ipcRenderer.invoke('get-theme'),
+  setAppearanceMode: (mode) => ipcRenderer.invoke('set-appearance-mode', mode),
+  getAppearanceMode: () => ipcRenderer.invoke('get-appearance-mode'),
 
   // 静默启动设置
   getSilentStart: () => ipcRenderer.invoke('get-silent-start'),
@@ -425,6 +427,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('theme-changed', handler);
     return () => ipcRenderer.removeListener('theme-changed', handler);
   },
+
+  onAppearanceModeChanged: (callback) => {
+    const handler = (_event, mode) => callback(mode);
+    ipcRenderer.on('appearance-mode-changed', handler);
+    return () => ipcRenderer.removeListener('appearance-mode-changed', handler);
+  },
   
   // 添加服务重启事件监听器
   onServiceRestarted: (callback) => {
@@ -517,6 +525,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRuleProviders: () => ipcRenderer.invoke('get-rule-providers'),
   updateRuleProvider: (providerName) => ipcRenderer.invoke('update-rule-provider', providerName),
   getRuntimeConfig: () => ipcRenderer.invoke('get-runtime-config'),
+
+  // 覆写管理
+  getOverrides: () => ipcRenderer.invoke('override:getItems'),
+  addOverride: (item) => ipcRenderer.invoke('override:addItem', item),
+  updateOverride: (id, updates) => ipcRenderer.invoke('override:updateItem', id, updates),
+  deleteOverride: (id) => ipcRenderer.invoke('override:deleteItem', id),
+  getOverrideFileContent: (id) => ipcRenderer.invoke('override:getFileContent', id),
+  updateOverrideFileContent: (id, content) => ipcRenderer.invoke('override:updateFileContent', id, content),
+  updateRemoteOverride: (id) => ipcRenderer.invoke('override:updateRemoteItem', id),
+  reorderOverrides: (itemIds) => ipcRenderer.invoke('override:reorderItems', itemIds),
+  getSubscriptionOverrides: (filePath) => ipcRenderer.invoke('get-subscription-overrides', filePath),
+  setSubscriptionOverrides: (filePath, overrides) => ipcRenderer.invoke('set-subscription-overrides', filePath, overrides),
 
   // 日志监听
   onMihomoLogs: (callback) => {

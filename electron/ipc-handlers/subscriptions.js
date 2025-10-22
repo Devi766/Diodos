@@ -10,6 +10,28 @@ module.exports = function registerSubscriptionHandlers(context) {
     dbManager
   } = context;
 
+  async function refreshRuntimeConfig() {
+    try {
+      const service = context?.mihomoService;
+      const refresh = typeof service?.regenerateAndReloadConfig === 'function'
+        ? service.regenerateAndReloadConfig.bind(service)
+        : typeof context?.regenerateAndReloadConfig === 'function'
+          ? context.regenerateAndReloadConfig
+          : null;
+
+      if (!refresh) {
+        return;
+      }
+
+      const result = refresh();
+      if (result && typeof result.then === 'function') {
+        await result;
+      }
+    } catch (error) {
+      console.error('刷新订阅覆写配置失败:', error);
+    }
+  }
+
   ipcMain.handle('save-subscription', async (event, url, content, customName, subscriptionInfo) => {
     try {
       console.log('保存订阅:', { url, customName });
@@ -469,4 +491,24 @@ module.exports = function registerSubscriptionHandlers(context) {
 
     return Math.floor(value * multiplier);
   }
+
+  ipcMain.handle('get-subscription-overrides', async (event, filePath) => {
+    try {
+      return dbManager.getSubscriptionOverrides(filePath);
+    } catch (error) {
+      console.error('获取订阅覆写失败:', error);
+      return [];
+    }
+  });
+
+  ipcMain.handle('set-subscription-overrides', async (event, filePath, overrides) => {
+    try {
+      dbManager.setSubscriptionOverrides(filePath, overrides);
+      await refreshRuntimeConfig();
+      return { success: true };
+    } catch (error) {
+      console.error('设置订阅覆写失败:', error);
+      throw error;
+    }
+  });
 };

@@ -5,10 +5,13 @@ import {
   ActivityLogIcon,
   BarChartIcon,
   DownloadIcon,
+  GlobeIcon,
+  MixerHorizontalIcon,
   PlayIcon,
   ReloadIcon,
   StopIcon,
-  UploadIcon
+  UploadIcon,
+  ExitIcon
 } from '@radix-ui/react-icons';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -22,6 +25,32 @@ import {
 } from '@/components/ui/dialog';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+
+type ProxyMode = 'rule' | 'global' | 'direct';
+
+const MODE_LABELS: Record<ProxyMode, string> = {
+  rule: '规则模式',
+  global: '全局模式',
+  direct: '直连模式'
+};
+
+const MODE_OPTIONS: Array<{ key: ProxyMode; label: string; icon: React.ReactNode }> = [
+  {
+    key: 'rule',
+    label: MODE_LABELS.rule,
+    icon: <MixerHorizontalIcon className="h-[14px] w-[14px]" />
+  },
+  {
+    key: 'global',
+    label: MODE_LABELS.global,
+    icon: <GlobeIcon className="h-[14px] w-[14px]" />
+  },
+  {
+    key: 'direct',
+    label: MODE_LABELS.direct,
+    icon: <ExitIcon className="h-[14px] w-[14px]" />
+  }
+];
 
 type TrafficStats = {
   up: number;
@@ -92,6 +121,8 @@ export default function Dashboard() {
   const [isRunning, setIsRunning] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [tunEnabled, setTunEnabled] = useState(false);
+  const [proxyMode, setProxyMode] = useState<ProxyMode | null>(null);
+  const [isModeUpdating, setIsModeUpdating] = useState(false);
   const [isProxyUpdating, setIsProxyUpdating] = useState(false);
   const [isTunUpdating, setIsTunUpdating] = useState(false);
   const [isServiceBusy, setIsServiceBusy] = useState(false);
@@ -182,6 +213,26 @@ export default function Dashboard() {
     } catch {}
   }, [electron, hydrateConnections, primaryProxyGroup]);
 
+  const fetchProxyMode = useCallback(async (): Promise<ProxyMode | null> => {
+    if (!electron?.requestMihomoAPI) return null;
+    try {
+      const response = await electron.requestMihomoAPI('/configs');
+      const payload: any = response?.data ?? response;
+      const modeValue = typeof payload?.mode === 'string' ? payload.mode.toLowerCase() : null;
+      if (modeValue === 'rule' || modeValue === 'global' || modeValue === 'direct') {
+        return modeValue as ProxyMode;
+      }
+    } catch {}
+    return null;
+  }, [electron]);
+
+  const syncProxyMode = useCallback(async () => {
+    const mode = await fetchProxyMode();
+    if (mode) {
+      setProxyMode(mode);
+    }
+  }, [fetchProxyMode]);
+
   const showBanner = (payload: BannerState | null) => {
     setBanner(payload);
   };
@@ -264,6 +315,13 @@ export default function Dashboard() {
           hydrateConnections(snapshot);
         }
       } catch {}
+
+      try {
+        const mode = await fetchProxyMode();
+        if (!cancelled && mode) {
+          setProxyMode(mode);
+        }
+      } catch {}
     };
 
     bootstrap();
@@ -271,7 +329,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [electron, hydrateConnections, syncCurrentNode]);
+  }, [electron, fetchProxyMode, hydrateConnections, syncCurrentNode]);
 
   useEffect(() => {
     if (!electron?.getTrafficStats) return;
@@ -377,7 +435,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!electron || !isRunning) return;
     syncCurrentNode();
-  }, [electron, isRunning, activeConfig, syncCurrentNode]);
+    syncProxyMode();
+  }, [electron, isRunning, activeConfig, syncCurrentNode, syncProxyMode]);
 
   const resolveConfigForLaunch = async () => {
     if (!electron) return null;
@@ -433,6 +492,7 @@ export default function Dashboard() {
         const snapshot = await electron.fetchConnectionsInfo?.();
         hydrateConnections(snapshot);
         await syncCurrentNode();
+        await syncProxyMode();
       } else {
         showBanner({ type: 'error', message: '启动服务失败' });
       }
@@ -561,6 +621,55 @@ export default function Dashboard() {
     runTunToggle(false);
   };
 
+  const handleModeSwitch = useCallback(
+    async (nextMode: ProxyMode) => {
+      if (!electron?.requestMihomoAPI) {
+        showBanner({ type: 'error', message: '当前环境不支持代理模式切换' });
+        return;
+      }
+      if (isModeUpdating || proxyMode === nextMode) {
+        return;
+      }
+      setIsModeUpdating(true);
+      showBanner(null);
+      try {
+        const response = await electron.requestMihomoAPI('/configs', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ mode: nextMode })
+        });
+
+        const success =
+          typeof response?.ok === 'boolean'
+            ? response.ok
+            : typeof response?.status === 'number'
+            ? response.status >= 200 && response.status < 300
+            : true;
+
+        if (!success) {
+          const errorDetail =
+            typeof response?.data === 'string'
+              ? response.data
+              : response?.data?.message || response?.statusText || '切换失败';
+          throw new Error(errorDetail);
+        }
+
+        setProxyMode(nextMode);
+        showBanner({ type: 'success', message: `已切换到${MODE_LABELS[nextMode]}` });
+        await syncCurrentNode();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        showBanner({ type: 'error', message: `切换代理模式失败: ${message}` });
+        await syncProxyMode();
+      } finally {
+        setIsModeUpdating(false);
+      }
+    },
+    [electron, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode]
+  );
+
   const metrics = [
     {
       label: '活跃连接',
@@ -640,29 +749,68 @@ export default function Dashboard() {
         <MetricCardList metrics={metrics} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card data-hoverable="false" className="flex items-center justify-between rounded-3xl bg-white px-6 py-4 shadow-sm dark:bg-[#2a2a2a]">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">系统代理</p>
-            <p className="mt-1 text-sm text-muted-foreground">切换操作系统级代理开关</p>
-          </div>
-          <Switch
-            checked={proxyEnabled}
-            disabled={isProxyUpdating}
-            onCheckedChange={handleProxyToggle}
-          />
-        </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="space-y-4">
+          <Card data-hoverable="false" className="flex items-center justify-between rounded-3xl bg-white px-6 py-4 shadow-sm dark:bg-[#2a2a2a]">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">系统代理</p>
+              <p className="mt-1 text-sm text-muted-foreground">切换操作系统级代理开关</p>
+            </div>
+            <Switch
+              checked={proxyEnabled}
+              disabled={isProxyUpdating}
+              onCheckedChange={handleProxyToggle}
+            />
+          </Card>
 
-        <Card data-hoverable="false" className="flex items-center justify-between rounded-3xl bg-white px-6 py-4 shadow-sm dark:bg-[#2a2a2a]">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">TUN 模式</p>
-            <p className="mt-1 text-sm text-muted-foreground">增强路由模式，需管理员权限</p>
+          <Card data-hoverable="false" className="flex items-center justify-between rounded-3xl bg-white px-6 py-4 shadow-sm dark:bg-[#2a2a2a]">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">TUN 模式</p>
+              <p className="mt-1 text-sm text-muted-foreground">增强路由模式，需管理员权限</p>
+            </div>
+            <Switch
+              checked={tunEnabled}
+              disabled={isTunUpdating || !electron?.toggleTunMode}
+              onCheckedChange={handleTunToggle}
+            />
+          </Card>
+        </div>
+
+        <Card data-hoverable="false" className="flex flex-col gap-4 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">代理模式</p>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/20 dark:text-blue-100">
+                {proxyMode ? MODE_LABELS[proxyMode] : '读取中...'}
+              </span>
+              {isModeUpdating && <ReloadIcon className="h-3.5 w-3.5 animate-spin text-blue-500" />}
+            </div>
           </div>
-          <Switch
-            checked={tunEnabled}
-            disabled={isTunUpdating || !electron?.toggleTunMode}
-            onCheckedChange={handleTunToggle}
-          />
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            {MODE_OPTIONS.map((option) => {
+              const isActive = proxyMode === option.key;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => handleModeSwitch(option.key)}
+                  disabled={isModeUpdating || isActive}
+                  className={cn(
+                    'inline-flex h-10 w-full min-w-[0] items-center justify-center gap-2 rounded-xl border px-4 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 bg-white dark:bg-[#222222]',
+                    isActive
+                      ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-100'
+                      : 'border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50/40 dark:border-slate-700 dark:text-slate-200 dark:hover:border-blue-400/60 dark:hover:bg-blue-500/10'
+                  )}
+                >
+                  <span className={cn('flex items-center justify-center text-xs transition', isActive ? 'text-blue-500 dark:text-blue-100' : 'text-slate-400 dark:text-slate-400')}>
+                    {option.icon}
+                  </span>
+                  <span className="whitespace-nowrap">{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </Card>
       </div>
 

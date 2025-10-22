@@ -38,5 +38,6 @@ module.exports = {
   },
   memoryMonitorInterval: null,
   logsWebSocket: null,
-  logsRetry: 10
+  logsRetry: 10,
+  appearanceMode: 'acrylic'
 };

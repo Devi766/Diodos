@@ -205,6 +205,8 @@ export default function SubscriptionManager() {
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingUrl, setEditingUrl] = useState('');
+  const [editingOverrides, setEditingOverrides] = useState<string[]>([]);
+  const [availableOverrides, setAvailableOverrides] = useState<any[]>([]);
 
   // 元素引用，用于滚动到视图中
   const draggedItemRef = useRef<HTMLDivElement | null>(null);
@@ -214,7 +216,8 @@ export default function SubscriptionManager() {
   useEffect(() => {
     loadSubscriptions();
     loadActiveConfig();
-    
+    loadAvailableOverrides();
+
     // 设置定期刷新活跃配置的计时器
     const intervalId = setInterval(loadActiveConfig, 5000);
     
@@ -618,6 +621,19 @@ export default function SubscriptionManager() {
     setContextMenuSub(null);
   };
 
+  // 加载可用的覆写列表
+  const loadAvailableOverrides = async () => {
+    if (!window.electronAPI?.getOverrides) return;
+
+    try {
+      const overrides = await window.electronAPI.getOverrides();
+      setAvailableOverrides(overrides || []);
+    } catch (error) {
+      console.error('加载覆写列表失败:', error);
+      setAvailableOverrides([]);
+    }
+  };
+
   // 打开编辑对话框
   const openEditDialog = async (sub: Subscription) => {
     setEditingSub(sub);
@@ -638,6 +654,15 @@ export default function SubscriptionManager() {
       setEditingUrl('');
     }
 
+    // 加载订阅的覆写设置
+    try {
+      const overrides = await window.electronAPI?.getSubscriptionOverrides?.(sub.path);
+      setEditingOverrides(overrides || []);
+    } catch (error) {
+      console.error('加载订阅覆写失败:', error);
+      setEditingOverrides([]);
+    }
+
     setIsEditDialogOpen(true);
     closeContextMenu();
   };
@@ -655,6 +680,13 @@ export default function SubscriptionManager() {
         newName: editingName,
         newUrl: editingUrl
       });
+
+      // 保存覆写设置
+      const newPath = editingSub.path.replace(/[^/\\]+\.yaml$/, `${editingName.replace(/[/\\?%*:|"<>]/g, '_')}.yaml`);
+      await window.electronAPI.setSubscriptionOverrides(
+        editingName !== editingSub.name ? newPath : editingSub.path,
+        editingOverrides
+      );
 
       showToast('成功', '配置已更新', 'success');
       setIsEditDialogOpen(false);
@@ -1442,6 +1474,62 @@ export default function SubscriptionManager() {
                   </p>
                 </div>
               )}
+
+              {/* 覆写选择 */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  应用覆写
+                </label>
+                <div className="max-h-48 overflow-y-auto rounded-md border border-slate-300 bg-white dark:border-slate-600 dark:bg-[#222222]">
+                  {availableOverrides.length === 0 ? (
+                    <div className="p-3 text-center text-sm text-slate-500 dark:text-slate-400">
+                      暂无可用覆写
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                      {availableOverrides.map((override) => (
+                        <label
+                          key={override.id}
+                          className="flex items-center gap-2 p-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={editingOverrides.includes(override.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setEditingOverrides([...editingOverrides, override.id]);
+                              } else {
+                                setEditingOverrides(editingOverrides.filter(id => id !== override.id));
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500 dark:border-slate-600"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                                {override.name}
+                              </span>
+                              {override.global && (
+                                <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                                  全局
+                                </span>
+                              )}
+                            </div>
+                            {override.url && (
+                              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                {override.url}
+                              </p>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  选择要应用到此配置的覆写（全局覆写会自动应用）
+                </p>
+              </div>
             </div>
 
             <div className="mt-6 flex justify-end gap-2">

@@ -12,6 +12,7 @@ export default function Settings() {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
+  const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid'>('acrylic');
   const [appVersion, setAppVersion] = useState('');
   const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty');
   const [kernelPath, setKernelPath] = useState('');
@@ -74,7 +75,12 @@ export default function Settings() {
           if (themeResult.success) {
             setTheme(themeResult.theme);
           }
-          
+
+          const appearanceResult = await window.electronAPI.getAppearanceMode?.();
+          if (appearanceResult?.success && appearanceResult.mode) {
+            setAppearanceMode(appearanceResult.mode as 'acrylic' | 'dynamic' | 'solid');
+          }
+
           // 获取应用版本号
           const version = await window.electronAPI.getAppVersion();
           setAppVersion(version);
@@ -131,15 +137,20 @@ export default function Settings() {
 
     // 添加事件监听器
     if (typeof window !== 'undefined' && window.electronAPI) {
-      window.electronAPI.onThemeChanged(handleThemeChanged);
-      window.electronAPI.onServiceRestarted(handleServiceRestarted);
+      const removeThemeListener = window.electronAPI.onThemeChanged(handleThemeChanged);
+      const removeServiceRestarted = window.electronAPI.onServiceRestarted(handleServiceRestarted);
+      const removeAppearanceListener = window.electronAPI.onAppearanceModeChanged
+        ? window.electronAPI.onAppearanceModeChanged((mode: 'acrylic' | 'dynamic' | 'solid') => {
+            setAppearanceMode(mode);
+          })
+        : undefined;
 
       // 清理函数
       return () => {
-        window.electronAPI?.removeThemeListener();
-        // 移除服务重启事件监听
-        const cleanupServiceRestarted = window.electronAPI?.onServiceRestarted(() => {});
-        if (cleanupServiceRestarted) cleanupServiceRestarted();
+        window.electronAPI?.removeThemeListener?.();
+        if (typeof removeThemeListener === 'function') removeThemeListener();
+        if (typeof removeServiceRestarted === 'function') removeServiceRestarted();
+        if (typeof removeAppearanceListener === 'function') removeAppearanceListener();
       };
     }
     return undefined;
@@ -221,6 +232,27 @@ export default function Settings() {
     }
   };
 
+  const handleAppearanceModeChange = async (mode: 'acrylic' | 'dynamic' | 'solid') => {
+    if (appearanceMode === mode) {
+      return;
+    }
+
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.setAppearanceMode) {
+        const result = await window.electronAPI.setAppearanceMode(mode);
+        if (result.success) {
+          setAppearanceMode(mode);
+          showToast('成功', '窗口背景效果已更新', 'success');
+        } else {
+          showToast('错误', result.error || '更新窗口背景失败', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('设置外观失败:', error);
+      showToast('错误', `设置窗口背景失败: ${error}`, 'error');
+    }
+  };
+
   // 获取用户设置
   useEffect(() => {
     const fetchUserSettings = async () => {
@@ -234,6 +266,9 @@ export default function Settings() {
             setAllowLan(Boolean(result.settings['allow-lan'] || false));
             setEnableIPv6(Boolean(result.settings['ipv6'] || false));
             setMihomoSecret(result.settings['secret'] || '');
+            if (result.settings['appearanceMode']) {
+              setAppearanceMode(result.settings['appearanceMode'] as 'acrylic' | 'dynamic' | 'solid');
+            }
             setConfigLoaded(true);
           } else {
             // 如果electronAPI失败，尝试从mihomo获取当前配置
@@ -580,6 +615,43 @@ export default function Settings() {
                       onClick={() => handleThemeChange('system')}
                     >
                       跟随系统
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">窗口背景效果</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">选择最适合你的桌面毛玻璃效果</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                        appearanceMode === 'acrylic'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                      }`}
+                      onClick={() => handleAppearanceModeChange('acrylic')}
+                    >
+                      Windows Acrylic
+                    </button>
+                    <button
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                        appearanceMode === 'dynamic'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                      }`}
+                      onClick={() => handleAppearanceModeChange('dynamic')}
+                    >
+                      动态模糊
+                    </button>
+                    <button
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                        appearanceMode === 'solid'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                      }`}
+                      onClick={() => handleAppearanceModeChange('solid')}
+                    >
+                      纯色背景
                     </button>
                   </div>
                 </div>

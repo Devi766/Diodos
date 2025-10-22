@@ -66,36 +66,25 @@ const MihomoLogs: React.FC = () => {
     setLogs([]);
   };
 
-  // 获取日志级别颜色
+  // 获取日志级别颜色和背景
   const getLogLevelColor = (level: LogLevel) => {
     switch (level) {
       case 'error':
-        return 'text-red-600 dark:text-red-400';
+        return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300';
       case 'warning':
-        return 'text-yellow-600 dark:text-yellow-400';
+        return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300';
       case 'info':
-        return 'text-blue-600 dark:text-blue-400';
+        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300';
       case 'debug':
-        return 'text-slate-600 dark:text-slate-400';
+        return 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300';
       default:
-        return 'text-foreground';
+        return 'bg-slate-100 dark:bg-slate-800 text-foreground';
     }
   };
 
-  // 获取日志级别背景色
-  const getLogLevelBg = (level: LogLevel) => {
-    switch (level) {
-      case 'error':
-        return 'bg-red-50 dark:bg-red-900/10';
-      case 'warning':
-        return 'bg-yellow-50 dark:bg-yellow-900/10';
-      case 'info':
-        return 'bg-blue-50 dark:bg-blue-900/10';
-      case 'debug':
-        return 'bg-slate-50 dark:bg-slate-900/10';
-      default:
-        return 'bg-muted/30';
-    }
+  // 获取日志级别背景色 - 统一使用浅色背景
+  const getLogLevelBg = () => {
+    return 'bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-900/50';
   };
 
   return (
@@ -161,10 +150,10 @@ const MihomoLogs: React.FC = () => {
             filteredLogs.map((log, index) => (
               <div
                 key={index}
-                className={`p-3 rounded-lg ${getLogLevelBg(log.type)} transition-colors`}
+                className={`p-3 rounded-lg ${getLogLevelBg()} transition-colors`}
               >
                 <div className="flex items-center gap-3 mb-1">
-                  <span className={`text-xs font-bold uppercase ${getLogLevelColor(log.type)}`}>
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium uppercase ${getLogLevelColor(log.type)}`}>
                     {log.type}
                   </span>
                   <span className="text-xs text-muted-foreground">{log.time}</span>

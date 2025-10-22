@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  CheckIcon, 
-  ReloadIcon, 
-  MagnifyingGlassIcon, 
+import {
+  CheckIcon,
+  ReloadIcon,
+  MagnifyingGlassIcon,
   GlobeIcon,
-  StarIcon, 
+  StarIcon,
   StarFilledIcon,
   ExclamationTriangleIcon,
   Cross1Icon,
   MixerHorizontalIcon,
   PlusIcon,
-  CheckCircledIcon
+  CheckCircledIcon,
+  ChevronRightIcon
 } from '@radix-ui/react-icons';
 import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
@@ -75,6 +76,7 @@ export default function ProxyNodes() {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('all');
   const [testingNodes, setTestingNodes] = useState<Set<string>>(new Set());
+  const [testingGroups, setTestingGroups] = useState<Set<string>>(new Set());
   const [favoriteNodes, setFavoriteNodes] = useState<Set<string>>(new Set());
   const [mihomoRunning, setMihomoRunning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -659,30 +661,84 @@ export default function ProxyNodes() {
     }
   };
 
+  // 测试代理组延迟（并发测速，实时更新）
+  const handleTestGroup = async (groupName: string) => {
+    if (!mihomoRunning) {
+      showError("测试失败: Mihomo服务未运行");
+      return;
+    }
+
+    if (testingGroups.has(groupName)) return;
+
+    // 获取该代理组的所有节点
+    const group = groups.find(g => g.name === groupName);
+    if (!group) return;
+
+    // 添加到测试中的代理组
+    setTestingGroups(prev => {
+      const newSet = new Set(prev);
+      newSet.add(groupName);
+      return newSet;
+    });
+
+    try {
+      console.log(`开始并发测试代理组: ${groupName}，共 ${group.nodes.length} 个节点`);
+
+      // 并发测试所有节点，每个节点测完立即更新
+      const testPromises = group.nodes.map(async (node) => {
+        try {
+          await handleTestNode(node.name);
+          return { success: true, nodeName: node.name };
+        } catch (error) {
+          console.error(`测试节点 ${node.name} 失败:`, error);
+          return { success: false, nodeName: node.name };
+        }
+      });
+
+      // 等待所有测试完成
+      const results = await Promise.all(testPromises);
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      showSuccess(`代理组 ${groupName} 测速完成：成功 ${successCount}，失败 ${failCount}`);
+    } catch (error: any) {
+      console.error(`测试代理组 ${groupName} 失败:`, error);
+      showError(`测试代理组失败: ${error.message || '未知错误'}`);
+    } finally {
+      // 从测试集合中移除代理组
+      setTestingGroups(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(groupName);
+        return newSet;
+      });
+    }
+  };
+
   // 使用useCallback包装handleBatchTest函数，避免循环依赖
   const handleBatchTest = useCallback(async (groupName: string) => {
     if (!mihomoRunning) {
       showError("测试失败: Mihomo服务未运行");
       return;
     }
-    
+
     const group = groups.find(g => g.name === groupName);
     if (!group) return;
-    
+
     // 一次最多测试5个节点，避免过载
     const batchSize = 5;
     const nodes = [...group.nodes];
-    
+
     for (let i = 0; i < nodes.length; i += batchSize) {
       const batch = nodes.slice(i, i + batchSize);
-      
+
       // 将所有节点添加到测试集合
       setTestingNodes(prev => {
         const newSet = new Set(prev);
         batch.forEach(node => newSet.add(node.name));
         return newSet;
       });
-      
+
       // 并行测试这批节点
       await Promise.all(
         batch.map(async node => {
@@ -921,10 +977,10 @@ export default function ProxyNodes() {
       
       return (
         <div
-          className={`relative rounded-lg overflow-hidden transition-all cursor-pointer p-3 ${
+          className={`relative rounded-lg overflow-hidden transition-all cursor-pointer p-3 border ${
             isSelected
-              ? 'bg-blue-50 dark:bg-blue-950 border border-blue-500 dark:border-blue-400'
-              : 'bg-white dark:bg-[#2a2a2a] border border-transparent'
+              ? 'border-blue-300 dark:border-blue-500 bg-blue-100/90 dark:bg-blue-500/15 shadow-[0_24px_40px_-28px_rgba(37,99,235,0.55)]'
+              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a]'
           }`}
           onClick={() => handleNodeSelect(node.name, group.name)}
         >
@@ -1372,14 +1428,23 @@ export default function ProxyNodes() {
         </div>
 
         <Tabs value={currentMode} onValueChange={handleModeChange} className="w-full md:w-auto">
-          <TabsList className="flex h-9 w-full items-center justify-between gap-2 rounded-full border border-slate-200 bg-transparent p-1 dark:border-slate-800 md:w-auto">
-            <TabsTrigger value="rule" className="flex-1 rounded-full text-xs font-medium data-[state=active]:text-sky-600">
+          <TabsList className="flex h-9 w-full items-center justify-between gap-2 rounded-full border border-blue-200 bg-blue-50/80 p-1 transition dark:border-blue-500/40 dark:bg-blue-500/10 md:w-auto">
+            <TabsTrigger
+              value="rule"
+              className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
+            >
               规则模式
             </TabsTrigger>
-            <TabsTrigger value="global" className="flex-1 rounded-full text-xs font-medium data-[state=active]:text-violet-600">
+            <TabsTrigger
+              value="global"
+              className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
+            >
               全局模式
             </TabsTrigger>
-            <TabsTrigger value="direct" className="flex-1 rounded-full text-xs font-medium data-[state=active]:text-emerald-600">
+            <TabsTrigger
+              value="direct"
+              className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
+            >
               直连模式
             </TabsTrigger>
           </TabsList>
@@ -1406,7 +1471,7 @@ export default function ProxyNodes() {
             <div className="relative w-full max-w-md">
               <input
                 type="text"
-                className="h-11 w-full rounded-full border border-transparent bg-slate-50 pl-10 pr-12 text-sm text-foreground transition focus:border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:bg-slate-800/80 dark:text-slate-100 dark:focus:ring-slate-700"
+                className="h-11 w-full rounded-full border border-slate-200/70 bg-slate-50 pl-10 pr-12 text-sm text-foreground transition focus:border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700/60 dark:bg-[#3a3a3a] dark:text-slate-100 dark:focus:border-slate-600 dark:focus:ring-slate-600"
                 placeholder="搜索节点..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -1455,7 +1520,7 @@ export default function ProxyNodes() {
                 <button
                   type="button"
                   onClick={fetchProxies}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
                   title="刷新列表"
                 >
                   <ReloadIcon className="h-4 w-4" />
@@ -1463,7 +1528,7 @@ export default function ProxyNodes() {
                 <button
                   type="button"
                   onClick={toggleAllGroups}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
                   title={collapsedGroups.size > 0 ? "展开所有代理组" : "收起所有代理组"}
                 >
                   <MixerHorizontalIcon className="h-4 w-4" />
@@ -1489,28 +1554,52 @@ export default function ProxyNodes() {
 
               const groupStatus = group.type.toUpperCase();
               const nodeCount = group.nodes.length;
+              const isTestingGroup = testingGroups.has(group.name);
 
               return (
                 <div
                   key={`${group.name}-${group.type}`}
                   className="group-panel rounded-2xl bg-white px-4 py-3 shadow-sm transition dark:bg-[#2a2a2a] overflow-hidden"
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleGroupCollapse(collapseKey)}
-                    className="group-header flex w-full items-center justify-between rounded-xl px-2 py-1.5 text-left transition hover:bg-slate-100/60 dark:hover:bg-slate-800/40"
-                  >
-                    <div className="flex items-center gap-3">
-                      {renderGroupIcon(group.icon)}
-                      <div>
-                        <div className="text-sm font-semibold text-foreground">{group.name}</div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">
-                          {groupStatus} · {nodeCount} 个节点
+                  <div className="group-header flex w-full items-center justify-between rounded-xl px-2 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupCollapse(collapseKey)}
+                      className="flex items-center gap-3 flex-1 text-left transition hover:bg-slate-100/60 dark:hover:bg-slate-800/40 rounded-xl px-2 py-1"
+                    >
+                      <div className="flex items-center gap-3">
+                        {renderGroupIcon(group.icon)}
+                        <div>
+                          <div className="text-sm font-semibold text-foreground">{group.name}</div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {groupStatus} · {nodeCount} 个节点
+                          </div>
                         </div>
                       </div>
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      {!isCollapsed && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleTestGroup(group.name);
+                          }}
+                          disabled={isTestingGroup}
+                          className="inline-flex items-center justify-center text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="测试代理组所有节点"
+                        >
+                          <ReloadIcon className={`h-4 w-4 ${isTestingGroup ? 'animate-spin' : ''}`} />
+                        </button>
+                      )}
+                      <ChevronRightIcon
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
+                          isCollapsed ? '' : 'rotate-90'
+                        }`}
+                      />
                     </div>
-                    <span className="text-xs text-muted-foreground">{isCollapsed ? '展开' : '收起'}</span>
-                  </button>
+                  </div>
 
                   <div
                     className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-300 ease-in-out overflow-hidden ${

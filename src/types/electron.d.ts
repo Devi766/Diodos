@@ -123,6 +123,9 @@ export interface ElectronAPI {
   getTheme: () => Promise<{ success: boolean, theme: string, error?: string }>;
   onThemeChanged: (callback: (event: any, theme: string) => void) => void;
   removeThemeListener: () => void;
+  setAppearanceMode: (mode: 'acrylic' | 'dynamic' | 'solid') => Promise<{ success: boolean; mode?: string; error?: string }>;
+  getAppearanceMode: () => Promise<{ success: boolean; mode: string; error?: string }>;
+  onAppearanceModeChanged?: (callback: (mode: 'acrylic' | 'dynamic' | 'solid') => void) => (() => void);
 
   // 静默启动设置
   getSilentStart: () => Promise<{ success: boolean, silentStart: boolean, error?: string }>;
@@ -298,6 +301,18 @@ export interface ElectronAPI {
   getRuleProviders: () => Promise<{ success: boolean, data?: any, error?: string }>;
   updateRuleProvider: (providerName: string) => Promise<{ success: boolean, error?: string }>;
   getRuntimeConfig: () => Promise<{ success: boolean, data?: any, error?: string }>;
+
+  // 覆写管理
+  getOverrides: () => Promise<any[]>;
+  addOverride: (item: any) => Promise<any>;
+  updateOverride: (id: string, updates: any) => Promise<any>;
+  deleteOverride: (id: string) => Promise<void>;
+  getOverrideFileContent: (id: string) => Promise<string>;
+  updateOverrideFileContent: (id: string, content: string) => Promise<void>;
+  updateRemoteOverride: (id: string) => Promise<any>;
+  reorderOverrides: (itemIds: string[]) => Promise<void>;
+  getSubscriptionOverrides: (filePath: string) => Promise<string[]>;
+  setSubscriptionOverrides: (filePath: string, overrides: string[]) => Promise<{ success: boolean }>;
 
   // 事件监听
   onMihomoLog: (callback: (log: string) => void) => void;

@@ -11,6 +11,8 @@ const buttonVariants = cva(
           "bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 text-white shadow-[0_20px_42px_-22px_rgba(56,189,248,0.7)] hover:brightness-105 hover:shadow-[0_24px_52px_-20px_rgba(56,189,248,0.75)]",
         primary:
           "bg-primary text-primary-foreground shadow-[0_18px_34px_-18px_rgba(59,130,246,0.55)] hover:brightness-[1.05] hover:shadow-[0_22px_42px_-18px_rgba(59,130,246,0.65)]",
+        solid:
+          "bg-blue-500 text-white shadow-[0_18px_34px_-18px_rgba(59,130,246,0.55)] hover:bg-blue-600 hover:shadow-[0_22px_42px_-18px_rgba(59,130,246,0.65)]",
         destructive:
           "bg-gradient-to-r from-rose-500 to-red-500 text-white shadow-[0_20px_42px_-22px_rgba(244,63,94,0.55)] hover:shadow-[0_24px_52px_-20px_rgba(248,113,113,0.6)]",
         outline:

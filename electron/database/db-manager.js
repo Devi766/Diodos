@@ -76,6 +76,14 @@ class DatabaseManager {
     // 创建索引
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_file_path ON subscriptions(file_path)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscription_info_subscription_id ON subscription_info(subscription_id)`);
+
+    try {
+      this.db.exec(`ALTER TABLE subscriptions ADD COLUMN overrides TEXT DEFAULT '[]'`);
+    } catch (error) {
+      if (!error.message.includes('duplicate column name')) {
+        console.error('添加overrides列失败:', error);
+      }
+    }
   }
 
   /**
@@ -317,6 +325,35 @@ class DatabaseManager {
     } else {
       return { serialized: JSON.stringify(value), type: 'json' };
     }
+  }
+
+  /**
+   * 获取订阅的覆写列表
+   */
+  getSubscriptionOverrides(filePath) {
+    const stmt = this.db.prepare(`
+      SELECT overrides FROM subscriptions WHERE file_path = ?
+    `);
+    const row = stmt.get(filePath);
+    if (row && row.overrides) {
+      try {
+        return JSON.parse(row.overrides);
+      } catch (error) {
+        console.error('解析覆写列表失败:', error);
+        return [];
+      }
+    }
+    return [];
+  }
+
+  /**
+   * 设置订阅的覆写列表
+   */
+  setSubscriptionOverrides(filePath, overrides) {
+    const stmt = this.db.prepare(`
+      UPDATE subscriptions SET overrides = ? WHERE file_path = ?
+    `);
+    stmt.run(JSON.stringify(overrides), filePath);
   }
 
   /**
