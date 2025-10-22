@@ -20,6 +20,7 @@ export default function ExternalResources() {
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // GeoData配置
   const [geoxUrl, setGeoxUrl] = useState<GeoDataConfig>({
@@ -44,12 +45,21 @@ export default function ExternalResources() {
 
     try {
       const config = await mihomoAPI.configs();
-      const geoxUrlConfig = (config as any)['geox-url'] || geoxUrl;
-      setGeoxUrl(geoxUrlConfig);
-      setGeoipInput(geoxUrlConfig.geoip);
-      setGeositeInput(geoxUrlConfig.geosite);
-      setMmdbInput(geoxUrlConfig.mmdb);
-      setAsnInput(geoxUrlConfig.asn);
+      const geoxUrlConfig = (config as any)['geox-url'] || {};
+
+      // 确保每个字段都有默认值
+      const mergedGeoxUrl = {
+        geoip: geoxUrlConfig.geoip || geoxUrl.geoip,
+        geosite: geoxUrlConfig.geosite || geoxUrl.geosite,
+        mmdb: geoxUrlConfig.mmdb || geoxUrl.mmdb,
+        asn: geoxUrlConfig.asn || geoxUrl.asn
+      };
+
+      setGeoxUrl(mergedGeoxUrl);
+      setGeoipInput(mergedGeoxUrl.geoip);
+      setGeositeInput(mergedGeoxUrl.geosite);
+      setMmdbInput(mergedGeoxUrl.mmdb);
+      setAsnInput(mergedGeoxUrl.asn);
 
       setGeoMode((config as any)['geodata-mode'] ? 'dat' : 'db');
       setGeoAutoUpdate((config as any)['geo-auto-update'] || false);
@@ -64,13 +74,16 @@ export default function ExternalResources() {
 
   const handleUpdateGeoData = async () => {
     setIsUpdating(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
     try {
-      // 这里需要调用更新GeoData的API
-      // 暂时使用alert提示
-      alert('GeoData更新功能需要后端API支持');
+      await mihomoAPI.upgradeGeo();
+      setSuccessMessage('GeoData 更新成功！');
+      // 3秒后自动清除成功消息
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error('更新GeoData失败:', error);
-      alert(`更新失败: ${error.message || '未知错误'}`);
+      setErrorMessage(`更新失败: ${error.message || '未知错误'}`);
     } finally {
       setIsUpdating(false);
     }
@@ -145,6 +158,13 @@ export default function ExternalResources() {
       {errorMessage && (
         <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg text-sm">
           {errorMessage}
+        </div>
+      )}
+
+      {/* 成功提示 */}
+      {successMessage && (
+        <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg text-sm">
+          {successMessage}
         </div>
       )}
 

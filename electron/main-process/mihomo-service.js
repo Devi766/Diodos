@@ -386,7 +386,29 @@ module.exports = function initMihomoService(context) {
 
   function sendReloadRequest(configPath, port) {
     try {
-      const configData = JSON.stringify({ path: configPath });
+      // Mihomo 有路径安全限制，只能重载工作目录内的文件
+      // 需要将绝对路径转换为相对于 mihomoDir 的相对路径
+      const mihomoDir = path.join(userDataPath, 'mihomo');
+      let relativePath = configPath;
+
+      // 如果是绝对路径，转换为相对路径
+      if (path.isAbsolute(configPath)) {
+        // 检查文件是否在 mihomoDir 内
+        const normalizedConfigPath = path.normalize(configPath);
+        const normalizedMihomoDir = path.normalize(mihomoDir);
+
+        if (normalizedConfigPath.startsWith(normalizedMihomoDir)) {
+          // 计算相对于 mihomoDir 的相对路径
+          relativePath = path.relative(mihomoDir, normalizedConfigPath);
+          console.log(`[sendReloadRequest] 将绝对路径 ${configPath} 转换为相对路径: ${relativePath}`);
+        } else {
+          console.error(`[sendReloadRequest] 配置文件不在 mihomo 工作目录内: ${configPath}`);
+          console.error(`[sendReloadRequest] mihomo 工作目录: ${mihomoDir}`);
+          return false;
+        }
+      }
+
+      const configData = JSON.stringify({ path: relativePath });
       const options = {
         path: '/configs',
         method: 'PUT',
@@ -425,9 +447,11 @@ module.exports = function initMihomoService(context) {
       req.write(configData);
       req.end();
 
-      console.log('已请求Mihomo重新加载配置:', configPath);
+      console.log('已请求Mihomo重新加载配置（相对路径）:', relativePath);
+      return true;
     } catch (error) {
       console.error('发送配置重载请求失败:', error);
+      return false;
     }
   }
 

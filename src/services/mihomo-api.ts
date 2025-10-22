@@ -341,6 +341,15 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
     });
   }
 
+  /**
+   * 更新 GeoData 数据库
+   */
+  const upgradeGeo = async () => {
+    return await makeRequest('/configs/geo', {
+      method: 'POST'
+    });
+  }
+
   return {
     configs,
     patchConfigs,
@@ -356,5 +365,6 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
     updateProxyProvider,
     ruleProviders,
     updateRuleProvider,
+    upgradeGeo,
   }
 }

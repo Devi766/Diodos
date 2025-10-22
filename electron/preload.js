@@ -241,7 +241,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchSubscription: (subUrl) => ipcRenderer.invoke('fetch-subscription', subUrl),
   updateSubscription: (filePath, configData, subUrl, subscriptionInfo) => ipcRenderer.invoke('update-subscription', filePath, configData, subUrl, subscriptionInfo),
   refreshSubscription: (filePath) => ipcRenderer.invoke('refresh-subscription', filePath),
-  
+
+  // 订阅自动更新间隔设置
+  setSubscriptionUpdateInterval: (filePath, intervalMinutes) => ipcRenderer.invoke('set-subscription-update-interval', filePath, intervalMinutes),
+  getSubscriptionUpdateInterval: (filePath) => ipcRenderer.invoke('get-subscription-update-interval', filePath),
+
   // 添加订阅导入事件监听
   onImportSubscription: (callback) => {
     const handler = (_, url) => {
@@ -545,6 +549,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('mihomo-logs', listener);
   },
   offMihomoLogs: () => ipcRenderer.removeAllListeners('mihomo-logs'),
+
+  // 进程图标获取
+  getIconDataURL: (processPath) => ipcRenderer.invoke('get-icon-dataurl', processPath),
 });
 
 // 移除重复的事件监听器

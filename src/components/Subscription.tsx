@@ -207,6 +207,7 @@ export default function SubscriptionManager() {
   const [editingUrl, setEditingUrl] = useState('');
   const [editingOverrides, setEditingOverrides] = useState<string[]>([]);
   const [availableOverrides, setAvailableOverrides] = useState<any[]>([]);
+  const [editingUpdateInterval, setEditingUpdateInterval] = useState<number>(0);
 
   // 元素引用，用于滚动到视图中
   const draggedItemRef = useRef<HTMLDivElement | null>(null);
@@ -663,6 +664,15 @@ export default function SubscriptionManager() {
       setEditingOverrides([]);
     }
 
+    // 加载订阅的自动更新间隔
+    try {
+      const result = await window.electronAPI?.getSubscriptionUpdateInterval?.(sub.path);
+      setEditingUpdateInterval(result?.interval || 0);
+    } catch (error) {
+      console.error('加载订阅更新间隔失败:', error);
+      setEditingUpdateInterval(0);
+    }
+
     setIsEditDialogOpen(true);
     closeContextMenu();
   };
@@ -686,6 +696,12 @@ export default function SubscriptionManager() {
       await window.electronAPI.setSubscriptionOverrides(
         editingName !== editingSub.name ? newPath : editingSub.path,
         editingOverrides
+      );
+
+      // 保存自动更新间隔
+      await window.electronAPI.setSubscriptionUpdateInterval(
+        editingName !== editingSub.name ? newPath : editingSub.path,
+        editingUpdateInterval
       );
 
       showToast('成功', '配置已更新', 'success');
@@ -1458,21 +1474,94 @@ export default function SubscriptionManager() {
 
               {/* 订阅URL - 仅URL类型配置显示 */}
               {editingSub && (editingSub.usedTraffic || editingSub.remainingTraffic || editingSub.expiryDate) && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    订阅URL
-                  </label>
-                  <input
-                    type="text"
-                    value={editingUrl}
-                    onChange={(e) => setEditingUrl(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
-                    placeholder="请输入订阅URL"
-                  />
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    {editingUrl ? '当前URL已加载' : 'URL记录为空,请输入订阅URL'}
-                  </p>
-                </div>
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      订阅URL
+                    </label>
+                    <input
+                      type="text"
+                      value={editingUrl}
+                      onChange={(e) => setEditingUrl(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
+                      placeholder="请输入订阅URL"
+                    />
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {editingUrl ? '当前URL已加载' : 'URL记录为空,请输入订阅URL'}
+                    </p>
+                  </div>
+
+                  {/* 自动更新间隔 */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      自动更新间隔
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={editingUpdateInterval}
+                        onChange={(e) => {
+                          const value = parseInt(e.target.value) || 0;
+                          setEditingUpdateInterval(value < 0 ? 0 : value);
+                        }}
+                        className="w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
+                        placeholder="0"
+                      />
+                      <span className="text-sm text-slate-600 dark:text-slate-400">分钟</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditingUpdateInterval(0)}
+                        className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      >
+                        禁用
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      {editingUpdateInterval === 0
+                        ? '设置为0将禁用自动更新'
+                        : `订阅将每 ${editingUpdateInterval} 分钟自动更新一次`}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingUpdateInterval(60)}
+                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      >
+                        1小时
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingUpdateInterval(120)}
+                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      >
+                        2小时
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingUpdateInterval(360)}
+                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      >
+                        6小时
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingUpdateInterval(720)}
+                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      >
+                        12小时
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingUpdateInterval(1440)}
+                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                      >
+                        24小时
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* 覆写选择 */}

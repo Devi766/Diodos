@@ -55,14 +55,14 @@ const renderGroupIcon = (icon?: string | null) => {
 
   if (isImageSource) {
     return (
-      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/40">
-        <img src={trimmed} alt="" className="h-5 w-5 object-contain" />
+      <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-muted/40">
+        <img src={trimmed} alt="" className="h-10 w-10 object-contain" />
       </span>
     );
   }
 
   return (
-    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary text-sm font-semibold">
+    <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary text-lg font-semibold">
       {trimmed.length > 2 ? trimmed.slice(0, 2) : trimmed}
     </span>
   );
@@ -1001,24 +1001,24 @@ export default function ProxyNodes() {
                     handleTestNode(node.name);
                   }}
                   disabled={isTesting}
-                  className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400 disabled:opacity-50"
+                  className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400 disabled:opacity-50"
                   title="测试延迟"
                 >
-                  <ReloadIcon className={`h-3 w-3 ${isTesting ? 'text-blue-500 animate-spin' : ''}`} />
+                  <ReloadIcon className={`h-4 w-4 ${isTesting ? 'text-blue-500 animate-spin' : ''}`} />
                 </button>
-                
+
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleToggleFavorite(node.name);
                   }}
-                  className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                   title={isFavorite ? "取消收藏" : "添加到收藏"}
                 >
                   {isFavorite ? (
-                    <StarFilledIcon className="h-3 w-3 text-yellow-500" />
+                    <StarFilledIcon className="h-4 w-4 text-yellow-500" />
                   ) : (
-                    <StarIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" />
+                    <StarIcon className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                   )}
                 </button>
               </div>
@@ -1453,14 +1453,14 @@ export default function ProxyNodes() {
 
       {errorMessage && (
         <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600 shadow-sm dark:bg-rose-500/15 dark:text-rose-100">
-          <ExclamationTriangleIcon className="mr-2 inline-block h-4 w-4 align-middle" />
+          <ExclamationTriangleIcon className="mr-2 inline-block h-5 w-5 align-middle" />
           {errorMessage}
         </div>
       )}
 
       {successMessage && (
         <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 shadow-sm dark:bg-emerald-500/15 dark:text-emerald-200">
-          <CheckCircledIcon className="mr-2 inline-block h-4 w-4 align-middle" />
+          <CheckCircledIcon className="mr-2 inline-block h-5 w-5 align-middle" />
           {successMessage}
         </div>
       )}
@@ -1476,14 +1476,14 @@ export default function ProxyNodes() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
               {searchTerm && (
                 <button
                   type="button"
                   className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-slate-200 text-slate-600 transition hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
                   onClick={() => setSearchTerm('')}
                 >
-                  <Cross1Icon className="h-3 w-3" />
+                  <Cross1Icon className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -1493,26 +1493,26 @@ export default function ProxyNodes() {
                 <button
                   type="button"
                   onClick={() => setActiveTab('all')}
-                  className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
                     activeTab === 'all'
                       ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
                   title="所有节点"
                 >
-                  <GlobeIcon className="h-4 w-4" />
+                  <GlobeIcon className="h-5 w-5" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab('favorites')}
-                  className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
                     activeTab === 'favorites'
                       ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
                   title="收藏节点"
                 >
-                  <StarIcon className="h-4 w-4" />
+                  <StarIcon className="h-5 w-5" />
                 </button>
               </div>
 
@@ -1520,18 +1520,18 @@ export default function ProxyNodes() {
                 <button
                   type="button"
                   onClick={fetchProxies}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
                   title="刷新列表"
                 >
-                  <ReloadIcon className="h-4 w-4" />
+                  <ReloadIcon className="h-5 w-5" />
                 </button>
                 <button
                   type="button"
                   onClick={toggleAllGroups}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
                   title={collapsedGroups.size > 0 ? "展开所有代理组" : "收起所有代理组"}
                 >
-                  <MixerHorizontalIcon className="h-4 w-4" />
+                  <MixerHorizontalIcon className="h-5 w-5" />
                 </button>
               </div>
             </div>
@@ -1561,11 +1561,11 @@ export default function ProxyNodes() {
                   key={`${group.name}-${group.type}`}
                   className="group-panel rounded-2xl bg-white px-4 py-3 shadow-sm transition dark:bg-[#2a2a2a] overflow-hidden"
                 >
-                  <div className="group-header flex w-full items-center justify-between rounded-xl px-2 py-1.5">
+                  <div className="group-header flex w-full items-center justify-between rounded-xl py-1.5">
                     <button
                       type="button"
                       onClick={() => toggleGroupCollapse(collapseKey)}
-                      className="flex items-center gap-3 flex-1 text-left transition hover:bg-slate-100/60 dark:hover:bg-slate-800/40 rounded-xl px-2 py-1"
+                      className="flex items-center gap-3 flex-1 text-left transition hover:bg-slate-100/60 dark:hover:bg-slate-800/40 rounded-xl px-3 py-1"
                     >
                       <div className="flex items-center gap-3">
                         {renderGroupIcon(group.icon)}
@@ -1578,7 +1578,7 @@ export default function ProxyNodes() {
                       </div>
                     </button>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 pr-3">
                       {!isCollapsed && (
                         <button
                           type="button"
@@ -1590,11 +1590,11 @@ export default function ProxyNodes() {
                           className="inline-flex items-center justify-center text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
                           title="测试代理组所有节点"
                         >
-                          <ReloadIcon className={`h-4 w-4 ${isTestingGroup ? 'animate-spin' : ''}`} />
+                          <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
                         </button>
                       )}
                       <ChevronRightIcon
-                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
+                        className={`h-5 w-5 text-muted-foreground transition-transform duration-200 ${
                           isCollapsed ? '' : 'rotate-90'
                         }`}
                       />

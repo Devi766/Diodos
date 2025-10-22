@@ -32,6 +32,194 @@ module.exports = function registerSubscriptionHandlers(context) {
     }
   }
 
+  // 刷新订阅的核心逻辑（可供调度器使用）
+  async function refreshSubscription(filePath) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        throw new Error('订阅文件不存在');
+      }
+
+      const getSubscriptionUrlHandler = async (configPath) => {
+        const subscription = dbManager.getSubscriptionByPath(configPath);
+        if (!subscription) {
+          return { success: false, error: '未找到订阅信息' };
+        }
+
+        if (!subscription.url) {
+          return { success: false, error: '该订阅没有URL' };
+        }
+
+        return { success: true, url: subscription.url };
+      };
+
+      const urlResult = await getSubscriptionUrlHandler(filePath);
+      if (!urlResult.success || !urlResult.url) {
+        return { success: false, error: urlResult.error || '无法获取订阅URL' };
+      }
+
+      const subUrl = urlResult.url;
+      console.log(`准备刷新订阅: ${filePath}, URL: ${subUrl}`);
+
+      const isLocalFile = subUrl.startsWith('local:');
+      if (isLocalFile) {
+        console.log('本地导入的配置文件不需要刷新');
+        return { success: true, message: '本地导入的配置文件不需要刷新' };
+      }
+
+      let validUrl = subUrl.trim();
+      if (!validUrl.match(/^https?:\/\//i)) {
+        console.log('URL缺少协议前缀，自动添加https://');
+        validUrl = 'https://' + validUrl;
+      }
+
+      new URL(validUrl);
+
+      const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
+
+      const userSettings = getUserSettings();
+      const userAgent = context.security?.getSafeUserAgent
+        ? context.security.getSafeUserAgent(userSettings['subscription-ua'], context.APP_VERSION)
+        : userSettings['subscription-ua'] || 'FlyClash';
+
+      console.log(`使用User-Agent: ${userAgent}`);
+      console.log(`开始请求订阅内容: ${validUrl}`);
+
+      context.security?.logSecurityEvent?.(
+        'subscription-refresh',
+        {
+          url: validUrl,
+          filePath,
+          userAgent
+        },
+        path.join(context.userDataPath, 'security.log')
+      );
+
+      const response = await fetch(validUrl, {
+        headers: {
+          'User-Agent': userAgent
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`获取订阅失败: ${response.statusText}`);
+      }
+
+      const subscriptionInfo = {
+        usedTraffic: response.headers.get('subscription-userinfo-upload')
+          ? formatTraffic(parseInt(response.headers.get('subscription-userinfo-upload') || '0'))
+          : null,
+        remainingTraffic: response.headers.get('subscription-userinfo-total')
+          ? formatTraffic(
+              parseInt(response.headers.get('subscription-userinfo-total') || '0') -
+                parseInt(response.headers.get('subscription-userinfo-download') || '0') -
+                parseInt(response.headers.get('subscription-userinfo-upload') || '0')
+            )
+          : null,
+        expiryDate: response.headers.get('subscription-userinfo-expire')
+          ? new Date(parseInt(response.headers.get('subscription-userinfo-expire') || '0') * 1000).toLocaleDateString()
+          : null
+      };
+
+      const subUserInfo = response.headers.get('subscription-userinfo');
+      if (subUserInfo) {
+        const parts = subUserInfo.split(';').map((part) => part.trim());
+        const info = {};
+        for (const part of parts) {
+          const [key, value] = part.split('=');
+          if (!key || !value) continue;
+          info[key] = parseInt(value, 10);
+        }
+
+        const upload = info.upload || 0;
+        const download = info.download || 0;
+        const total = info.total || 0;
+        const expire = info.expire || 0;
+
+        if (!subscriptionInfo.usedTraffic) {
+          subscriptionInfo.usedTraffic = formatTraffic(upload + download);
+        }
+        if (!subscriptionInfo.remainingTraffic) {
+          subscriptionInfo.remainingTraffic = formatTraffic(Math.max(0, total - upload - download));
+        }
+        if (!subscriptionInfo.expiryDate && expire) {
+          subscriptionInfo.expiryDate = new Date(expire * 1000).toLocaleDateString();
+        }
+      }
+
+      console.log('订阅流量信息:', subscriptionInfo);
+
+      const content = await response.text();
+      console.log('成功获取订阅内容，长度:', content.length);
+
+      const backupPath = filePath + '.bak';
+      fs.copyFileSync(filePath, backupPath);
+
+      fs.writeFileSync(filePath, content, 'utf8');
+      console.log('已保存订阅内容到:', filePath);
+
+      dbManager.updateSubscriptionByPath(filePath, {});
+
+      if (subscriptionInfo.usedTraffic || subscriptionInfo.remainingTraffic || subscriptionInfo.expiryDate) {
+        const subscription = dbManager.getSubscriptionByPath(filePath);
+        if (subscription) {
+          try {
+            const usedTrafficBytes = parseTraffic(subscriptionInfo.usedTraffic);
+            const remainingTrafficBytes = parseTraffic(subscriptionInfo.remainingTraffic);
+
+            let totalTrafficBytes = null;
+            if (usedTrafficBytes !== null && remainingTrafficBytes !== null) {
+              totalTrafficBytes = usedTrafficBytes + remainingTrafficBytes;
+            } else if (usedTrafficBytes !== null) {
+              totalTrafficBytes = usedTrafficBytes;
+            } else if (remainingTrafficBytes !== null) {
+              totalTrafficBytes = remainingTrafficBytes;
+            }
+
+            const expiryTimestamp = subscriptionInfo.expiryDate ?
+              new Date(subscriptionInfo.expiryDate).getTime() : null;
+
+            dbManager.setSubscriptionInfo(
+              subscription.id,
+              usedTrafficBytes,
+              totalTrafficBytes,
+              expiryTimestamp
+            );
+          } catch (error) {
+            console.warn('保存订阅信息失败:', error);
+          }
+        }
+      }
+
+      const isActive = context.state?.configFilePath === filePath;
+      if (isActive) {
+        console.log('刷新的订阅是当前激活的配置，需要刷新运行时配置');
+        await refreshRuntimeConfig();
+      }
+
+      if (fs.existsSync(backupPath)) {
+        fs.unlinkSync(backupPath);
+      }
+
+      return { success: true, subscriptionInfo };
+    } catch (error) {
+      console.error('刷新订阅失败:', error);
+      const backupPath = filePath + '.bak';
+      if (fs.existsSync(backupPath)) {
+        try {
+          fs.copyFileSync(backupPath, filePath);
+          console.log('已从备份恢复原始文件');
+        } catch (restoreError) {
+          console.error('从备份恢复失败:', restoreError);
+        }
+      }
+
+      return { success: false, error: error.message };
+    }
+  }
+
+  // 导出给调度器使用
+  context.set('refreshSubscription', refreshSubscription);
+
   ipcMain.handle('save-subscription', async (event, url, content, customName, subscriptionInfo) => {
     try {
       console.log('保存订阅:', { url, customName });
@@ -290,173 +478,9 @@ module.exports = function registerSubscriptionHandlers(context) {
     }
   });
 
+  // 刷新订阅IPC处理器 - 调用共享的refreshSubscription函数
   ipcMain.handle('refresh-subscription', async (event, filePath) => {
-    try {
-      if (!fs.existsSync(filePath)) {
-        throw new Error('订阅文件不存在');
-      }
-
-      const getSubscriptionUrlHandler = async (targetPath) => {
-        try {
-          const sub = dbManager.getSubscriptionByPath(targetPath);
-          if (!sub || !sub.url) {
-            return { success: false, error: '未找到对应的订阅URL。请尝试删除并重新添加订阅。' };
-          }
-          return { success: true, url: sub.url };
-        } catch (error) {
-          console.error('获取订阅URL失败:', error);
-          return { success: false, error: error.message };
-        }
-      };
-
-      const urlResult = await getSubscriptionUrlHandler(filePath);
-      if (!urlResult.success || !urlResult.url) {
-        return { success: false, error: urlResult.error || '无法获取订阅URL' };
-      }
-
-      const subUrl = urlResult.url;
-      console.log(`准备刷新订阅: ${filePath}, URL: ${subUrl}`);
-
-      const isLocalFile = subUrl.startsWith('local:');
-      if (isLocalFile) {
-        console.log('本地导入的配置文件不需要刷新');
-        return { success: true, message: '本地导入的配置文件不需要刷新' };
-      }
-
-      let validUrl = subUrl.trim();
-      if (!validUrl.match(/^https?:\/\//i)) {
-        console.log('URL缺少协议前缀，自动添加https://');
-        validUrl = 'https://' + validUrl;
-      }
-
-      new URL(validUrl);
-
-      const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
-
-      const userSettings = getUserSettings();
-      const userAgent = context.security?.getSafeUserAgent
-        ? context.security.getSafeUserAgent(userSettings['subscription-ua'], context.APP_VERSION)
-        : userSettings['subscription-ua'] || 'FlyClash';
-
-      console.log(`使用User-Agent: ${userAgent}`);
-      console.log(`开始请求订阅内容: ${validUrl}`);
-
-      context.security?.logSecurityEvent?.(
-        'subscription-refresh',
-        {
-          url: validUrl,
-          filePath,
-          userAgent
-        },
-        path.join(context.userDataPath, 'security.log')
-      );
-
-      const response = await fetch(validUrl, {
-        headers: {
-          'User-Agent': userAgent
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`获取订阅失败: ${response.statusText}`);
-      }
-
-      const subscriptionInfo = {
-        usedTraffic: response.headers.get('subscription-userinfo-upload')
-          ? formatTraffic(parseInt(response.headers.get('subscription-userinfo-upload') || '0'))
-          : null,
-        remainingTraffic: response.headers.get('subscription-userinfo-total')
-          ? formatTraffic(
-              parseInt(response.headers.get('subscription-userinfo-total') || '0') -
-                parseInt(response.headers.get('subscription-userinfo-download') || '0') -
-                parseInt(response.headers.get('subscription-userinfo-upload') || '0')
-            )
-          : null,
-        expiryDate: response.headers.get('subscription-userinfo-expire')
-          ? new Date(parseInt(response.headers.get('subscription-userinfo-expire') || '0') * 1000).toLocaleDateString()
-          : null
-      };
-
-      const subUserInfo = response.headers.get('subscription-userinfo');
-      if (subUserInfo) {
-        const parts = subUserInfo.split(';').map((part) => part.trim());
-        const info = {};
-        for (const part of parts) {
-          const [key, value] = part.split('=' );
-          if (!key || !value) continue;
-          info[key] = parseInt(value, 10);
-        }
-
-        const upload = info.upload || 0;
-        const download = info.download || 0;
-        const total = info.total || 0;
-        const expire = info.expire || 0;
-
-        if (!subscriptionInfo.usedTraffic) {
-          subscriptionInfo.usedTraffic = formatTraffic(upload + download);
-        }
-        if (!subscriptionInfo.remainingTraffic) {
-          subscriptionInfo.remainingTraffic = formatTraffic(Math.max(0, total - upload - download));
-        }
-        if (!subscriptionInfo.expiryDate && expire) {
-          subscriptionInfo.expiryDate = new Date(expire * 1000).toLocaleDateString();
-        }
-      }
-
-      console.log('订阅流量信息:', subscriptionInfo);
-
-      const content = await response.text();
-
-      const backupPath = `${filePath}.bak`;
-      fs.copyFileSync(filePath, backupPath);
-
-      fs.writeFileSync(filePath, content, 'utf8');
-      console.log('订阅刷新成功:', filePath);
-
-      // 保存订阅信息到数据库
-      try {
-        const usedTrafficBytes = parseTraffic(subscriptionInfo.usedTraffic);
-        const remainingTrafficBytes = parseTraffic(subscriptionInfo.remainingTraffic);
-
-        // 计算总流量 = 已用流量 + 剩余流量
-        let totalTrafficBytes = null;
-        if (usedTrafficBytes !== null && remainingTrafficBytes !== null) {
-          totalTrafficBytes = usedTrafficBytes + remainingTrafficBytes;
-        } else if (usedTrafficBytes !== null) {
-          totalTrafficBytes = usedTrafficBytes;
-        } else if (remainingTrafficBytes !== null) {
-          totalTrafficBytes = remainingTrafficBytes;
-        }
-
-        const expiryTimestamp = subscriptionInfo.expiryDate ?
-          new Date(subscriptionInfo.expiryDate).getTime() : null;
-
-        dbManager.setSubscriptionInfoByPath(
-          filePath,
-          usedTrafficBytes,
-          totalTrafficBytes,
-          expiryTimestamp
-        );
-      } catch (error) {
-        console.warn('保存订阅信息失败:', error);
-      }
-
-      return { success: true, filePath, subscriptionInfo };
-    } catch (error) {
-      console.error('刷新订阅失败:', error);
-
-      const backupPath = `${filePath}.bak`;
-      if (fs.existsSync(backupPath)) {
-        try {
-          fs.copyFileSync(backupPath, filePath);
-          console.log('已从备份恢复原始文件');
-        } catch (restoreError) {
-          console.error('从备份恢复失败:', restoreError);
-        }
-      }
-
-      return { success: false, error: error.message };
-    }
+    return await refreshSubscription(filePath);
   });
 
   /**
@@ -509,6 +533,35 @@ module.exports = function registerSubscriptionHandlers(context) {
     } catch (error) {
       console.error('设置订阅覆写失败:', error);
       throw error;
+    }
+  });
+
+  // 设置订阅更新间隔
+  ipcMain.handle('set-subscription-update-interval', async (event, filePath, intervalMinutes) => {
+    try {
+      dbManager.setSubscriptionUpdateInterval(filePath, intervalMinutes);
+
+      // 刷新订阅调度器
+      const scheduler = context.get('subscriptionScheduler');
+      if (scheduler) {
+        scheduler.refresh();
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('设置更新间隔失败:', error);
+      throw error;
+    }
+  });
+
+  // 获取订阅更新间隔
+  ipcMain.handle('get-subscription-update-interval', async (event, filePath) => {
+    try {
+      const interval = dbManager.getSubscriptionUpdateInterval(filePath);
+      return { success: true, interval };
+    } catch (error) {
+      console.error('获取更新间隔失败:', error);
+      return { success: false, interval: 0 };
     }
   });
 };

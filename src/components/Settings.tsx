@@ -12,7 +12,7 @@ export default function Settings() {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
-  const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid'>('acrylic');
+  const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid'>('dynamic');
   const [appVersion, setAppVersion] = useState('');
   const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty');
   const [kernelPath, setKernelPath] = useState('');
@@ -625,16 +625,6 @@ export default function Settings() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                        appearanceMode === 'acrylic'
-                          ? 'bg-blue-500 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                      }`}
-                      onClick={() => handleAppearanceModeChange('acrylic')}
-                    >
-                      Windows Acrylic
-                    </button>
-                    <button
-                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
                         appearanceMode === 'dynamic'
                           ? 'bg-blue-500 text-white shadow-sm'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
@@ -642,6 +632,16 @@ export default function Settings() {
                       onClick={() => handleAppearanceModeChange('dynamic')}
                     >
                       动态模糊
+                    </button>
+                    <button
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                        appearanceMode === 'acrylic'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                      }`}
+                      onClick={() => handleAppearanceModeChange('acrylic')}
+                    >
+                      Windows Acrylic
                     </button>
                     <button
                       className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${

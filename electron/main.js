@@ -16,6 +16,9 @@ const { enableAcrylic } = require('./windows/acrylic');
 // 导入媒体检测模块
 const { testMediaStreaming } = require('./mediatest');
 
+// 导入图标提取模块
+const { getIconDataURL } = require('./icon');
+
 // 应用版本号 - 统一管理所有界面显示的版本
 const APP_VERSION = '0.1.4';
 const isWindows = process.platform === 'win32';
@@ -69,6 +72,11 @@ const dbManager = new DatabaseManager(dbPath);
 dbManager.initialize();
 
 context.set('dbManager', dbManager);
+
+// 初始化订阅调度器
+const SubscriptionScheduler = require('./core/subscription-scheduler');
+const subscriptionScheduler = new SubscriptionScheduler(context);
+context.set('subscriptionScheduler', subscriptionScheduler);
 
 // 检查并执行数据迁移
 const migrationManager = new MigrationManager(configDir, dbManager);
@@ -301,15 +309,21 @@ function applyWindowsBackdrop(win) {
     return;
   }
 
-  const mode = state.appearanceMode || 'acrylic';
+  const mode = state.appearanceMode || 'dynamic';
   const isDark = nativeTheme.shouldUseDarkColors;
 
+  // 清除所有效果，确保可以正确切换
   try {
     win.setVibrancy(null);
   } catch {}
 
   try {
     win.setBackgroundMaterial('none');
+  } catch {}
+
+  // 清除背景颜色，设置为透明，这样才能正确应用毛玻璃效果
+  try {
+    win.setBackgroundColor('#00000000');
   } catch {}
 
   const applyTitleBarOverlay = () => {
@@ -329,7 +343,8 @@ function applyWindowsBackdrop(win) {
 
   if (mode === 'solid') {
     applyTitleBarOverlay();
-    win.setBackgroundColor(isDark ? '#cc0f172a' : '#e5ffffff');
+    // 纯色背景：浅色模式使用浅灰色，深色模式使用深黑灰色
+    win.setBackgroundColor(isDark ? '#1a1a1a' : '#e5e7eb');
     return;
   }
 
@@ -1454,13 +1469,13 @@ app.whenReady().then(() => {
   
   // 读取外观设置
   try {
-    const storedAppearance = dbManager.getSetting('appearanceMode', 'acrylic');
+    const storedAppearance = dbManager.getSetting('appearanceMode', 'dynamic');
     if (storedAppearance) {
       state.appearanceMode = storedAppearance;
     }
   } catch (error) {
     console.warn('读取外观设置失败，将使用默认值:', error?.message || error);
-    state.appearanceMode = 'acrylic';
+    state.appearanceMode = 'dynamic';
   }
 
   // 检查TUN模式状态
@@ -1483,7 +1498,10 @@ app.whenReady().then(() => {
     .catch((error) => {
       console.error('初始化托盘失败:', error);
     });
-  
+
+  // 启动订阅调度器
+  subscriptionScheduler.start();
+
   // 注册API: 获取当前代理设置
   ipcMain.handle('get-proxy-settings', async () => {
     try {
@@ -1885,7 +1903,18 @@ app.whenReady().then(() => {
   ipcMain.handle('get-auto-start', () => {
     return state.autoStartEnabled;
   });
-  
+
+  // 获取进程图标
+  ipcMain.handle('get-icon-dataurl', async (event, processPath) => {
+    try {
+      const iconDataURL = await getIconDataURL(processPath);
+      return iconDataURL;
+    } catch (error) {
+      console.error('获取进程图标失败:', error);
+      return '';
+    }
+  });
+
   // 节点收藏管理
   ipcMain.handle('get-favorite-nodes', () => {
     try {
@@ -3136,6 +3165,11 @@ app.on('will-quit', () => {
   if (state.memoryMonitorInterval) {
     clearInterval(state.memoryMonitorInterval);
     state.memoryMonitorInterval = null;
+  }
+
+  // 停止订阅调度器
+  if (subscriptionScheduler) {
+    subscriptionScheduler.stop();
   }
 
   // 关闭数据库连接

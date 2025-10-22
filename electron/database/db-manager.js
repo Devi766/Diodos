@@ -48,7 +48,8 @@ class DatabaseManager {
         file_path TEXT NOT NULL UNIQUE,
         url TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        update_interval INTEGER DEFAULT 0
       )
     `);
 
@@ -77,11 +78,21 @@ class DatabaseManager {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_file_path ON subscriptions(file_path)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscription_info_subscription_id ON subscription_info(subscription_id)`);
 
+    // 添加 overrides 列（兼容已有数据库）
     try {
       this.db.exec(`ALTER TABLE subscriptions ADD COLUMN overrides TEXT DEFAULT '[]'`);
     } catch (error) {
       if (!error.message.includes('duplicate column name')) {
         console.error('添加overrides列失败:', error);
+      }
+    }
+
+    // 添加 update_interval 列（兼容已有数据库）
+    try {
+      this.db.exec(`ALTER TABLE subscriptions ADD COLUMN update_interval INTEGER DEFAULT 0`);
+    } catch (error) {
+      if (!error.message.includes('duplicate column name')) {
+        console.error('添加update_interval列失败:', error);
       }
     }
   }
@@ -354,6 +365,39 @@ class DatabaseManager {
       UPDATE subscriptions SET overrides = ? WHERE file_path = ?
     `);
     stmt.run(JSON.stringify(overrides), filePath);
+  }
+
+  /**
+   * 设置订阅更新间隔（分钟）
+   */
+  setSubscriptionUpdateInterval(filePath, intervalMinutes) {
+    const stmt = this.db.prepare(`
+      UPDATE subscriptions SET update_interval = ? WHERE file_path = ?
+    `);
+    stmt.run(intervalMinutes, filePath);
+  }
+
+  /**
+   * 获取订阅更新间隔（分钟）
+   */
+  getSubscriptionUpdateInterval(filePath) {
+    const stmt = this.db.prepare(`
+      SELECT update_interval FROM subscriptions WHERE file_path = ?
+    `);
+    const row = stmt.get(filePath);
+    return row ? row.update_interval : 0;
+  }
+
+  /**
+   * 获取所有需要自动更新的订阅
+   */
+  getAutoUpdateSubscriptions() {
+    const stmt = this.db.prepare(`
+      SELECT * FROM subscriptions
+      WHERE url IS NOT NULL AND update_interval > 0
+      ORDER BY updated_at ASC
+    `);
+    return stmt.all();
   }
 
   /**
