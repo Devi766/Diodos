@@ -36,22 +36,24 @@ class OverrideManager {
   async refreshRuntimeConfig() {
     try {
       const service = this.context?.mihomoService;
-      const refresh = typeof service?.regenerateAndReloadConfig === 'function'
-        ? service.regenerateAndReloadConfig.bind(service)
-        : typeof this.context?.regenerateAndReloadConfig === 'function'
-          ? this.context.regenerateAndReloadConfig
-          : null;
 
-      if (!refresh) {
-        return;
+      // 使用重启 Mihomo 服务而不是热重载配置
+      // 因为 Mihomo 的配置重载 API 有路径限制
+      if (service && typeof service.restartMihomoService === 'function') {
+        console.log('[refreshRuntimeConfig] 重启 Mihomo 服务以应用覆写变更');
+        const result = service.restartMihomoService();
+        if (result && typeof result.then === 'function') {
+          await result;
+        }
+        console.log('[refreshRuntimeConfig] Mihomo 服务重启完成');
+        return true;
       }
 
-      const result = refresh();
-      if (result && typeof result.then === 'function') {
-        await result;
-      }
+      console.warn('[refreshRuntimeConfig] 未找到 restartMihomoService 方法');
+      return false;
     } catch (error) {
       console.error('刷新覆写后的配置失败:', error);
+      return false;
     }
   }
 
@@ -397,6 +399,8 @@ async function applyOverrides(manager, config, configFilePath) {
   console.log('配置文件路径:', configFilePath);
   console.log('原始配置proxies数量:', config.proxies ? config.proxies.length : 0);
   console.log('原始配置proxy-groups数量:', config['proxy-groups'] ? config['proxy-groups'].length : 0);
+  console.log('[applyOverrides] 传入的config的proxy-groups前5个:',
+    config['proxy-groups'] ? config['proxy-groups'].slice(0, 5).map(g => g.name) : []);
 
   try {
     const configData = await manager.loadConfig();

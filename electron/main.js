@@ -729,21 +729,36 @@ ipcMain.handle('get-config-order', async (event) => {
   try {
     // 如果Mihomo未运行，没有活跃的配置文件
     if (!state.configFilePath) {
-            return {
+      return {
         success: false,
         error: 'Mihomo未运行，没有活跃的配置文件'
       };
     }
-    
+
+    // 使用覆写后的配置文件路径（override-xxx.yaml）
+    const path = require('path');
+    const configFilename = path.basename(state.configFilePath);
+    const overrideConfigFilename = 'override-' + configFilename;
+    const mihomoDir = path.join(context.get('userDataPath'), 'mihomo');
+    const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+
+    // 检查覆写后的配置文件是否存在
+    const fs = require('fs');
+    const configPathToUse = fs.existsSync(overrideConfigPath) ? overrideConfigPath : state.configFilePath;
+
+    console.log('[get-config-order] 原始配置路径:', state.configFilePath);
+    console.log('[get-config-order] 覆写配置路径:', overrideConfigPath);
+    console.log('[get-config-order] 实际使用路径:', configPathToUse);
+
     // 解析配置文件
-    const configData = parseConfigFile(state.configFilePath);
+    const configData = parseConfigFile(configPathToUse);
     if (!configData) {
       return {
         success: false,
         error: '解析配置文件失败'
       };
     }
-    
+
     return {
       success: true,
       data: configData
