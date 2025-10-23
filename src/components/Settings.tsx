@@ -5,8 +5,7 @@ import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Switch } from './ui/switch';
-import KernelSettings, { KernelSettingsRef } from './KernelSettings';
-import DnsSettings, { DnsSettingsRef } from './DnsSettings';
+import OverrideSettings, { OverrideSettingsRef } from './OverrideSettings';
 import { Button } from './ui/button';
 
 export default function Settings() {
@@ -24,17 +23,8 @@ export default function Settings() {
   const isFirstRender = useRef(true);
 
   // Refs for override settings components
-  const kernelSettingsRef = useRef<KernelSettingsRef>(null);
-  const dnsSettingsRef = useRef<DnsSettingsRef>(null);
+  const overrideSettingsRef = useRef<OverrideSettingsRef>(null);
   const [isSavingOverride, setIsSavingOverride] = useState(false);
-  
-  // 代理设置相关状态
-  const [mixedPort, setMixedPort] = useState(7890);
-  const [allowLan, setAllowLan] = useState(false);
-  const [enableIPv6, setEnableIPv6] = useState(false);
-  const [mihomoSecret, setMihomoSecret] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [configLoaded, setConfigLoaded] = useState(false);
   
   // Toast提示相关状态
   const [toastOpen, setToastOpen] = useState(false);
@@ -270,47 +260,19 @@ export default function Settings() {
           
           if (result.success && result.settings) {
             console.log('获取到的设置:', result.settings);
-            setMixedPort(result.settings['mixed-port'] || 7890);
-            setAllowLan(Boolean(result.settings['allow-lan'] || false));
-            setEnableIPv6(Boolean(result.settings['ipv6'] || false));
-            setMihomoSecret(result.settings['secret'] || '');
             if (result.settings['appearanceMode']) {
               setAppearanceMode(result.settings['appearanceMode'] as 'acrylic' | 'dynamic' | 'solid');
             }
-            setConfigLoaded(true);
-          } else {
-            // 如果electronAPI失败，尝试从mihomo获取当前配置
-            await fetchMihomoConfig();
           }
-        } else {
-          // 如果electronAPI不可用，尝试从mihomo获取当前配置
-          await fetchMihomoConfig();
         }
       } catch (error) {
         console.error('获取用户设置失败:', error);
-        // 出错时尝试从mihomo获取当前配置
-        await fetchMihomoConfig();
-      }
-    };
-
-    const fetchMihomoConfig = async () => {
-      try {
-        const config = await mihomoAPI.configs();
-        if (config) {
-          setMixedPort(config['mixed-port'] || 7890);
-          setAllowLan(config['allow-lan'] || false);
-          setEnableIPv6(config['ipv6'] || false);
-          setMihomoSecret(config['secret'] || '');
-          setConfigLoaded(true);
-        }
-      } catch (error) {
-        console.error('获取mihomo配置失败:', error);
       }
     };
 
     fetchUserSettings();
     refreshKernelPath();
-  }, [refreshKernelPath]);
+  }, []);
 
   // 显示Toast提示
   const showToast = (title: string, description: string, type: 'success' | 'error') => {
@@ -365,62 +327,6 @@ export default function Settings() {
     }
   };
 
-  // 保存代理设置
-  const saveProxySettings = async () => {
-    try {
-      setIsSaving(true);
-      
-      // 确保数值类型正确
-      const portValue = parseInt(mixedPort.toString(), 10);
-      if (isNaN(portValue) || portValue < 1024 || portValue > 65535) {
-        showToast('错误', '端口号必须是1024-65535之间的有效数字', 'error');
-        setIsSaving(false);
-        return;
-      }
-      
-      // 确保布尔值类型正确
-      const lanAccess = allowLan === true;
-      const ipv6Enabled = enableIPv6 === true;
-      
-      // 更新所有相关配置项，包括订阅UA和密钥
-      const configUpdate = {
-        'mixed-port': portValue,
-        'allow-lan': lanAccess,
-        'ipv6': ipv6Enabled,
-        'secret': mihomoSecret,
-        'subscription-ua': subscriptionUA
-      };
-      
-      console.log('提交配置更新:', configUpdate);
-      
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        // 使用新的API保存设置
-        const result = await window.electronAPI.saveProxySettings(configUpdate);
-        if (result.success) {
-          showToast('成功', result.message || '设置已保存', 'success');
-        } else {
-          showToast('错误', `保存设置失败: ${result.error}`, 'error');
-        }
-      } else {
-        // 兼容旧方法：直接使用mihomo API
-        await mihomoAPI.patchConfigs(configUpdate);
-        if (typeof window !== 'undefined' && window.electronAPI) {
-          const result = await window.electronAPI.restartService();
-          if (result.success) {
-            showToast('成功', '设置已保存，服务已重启', 'success');
-          } else {
-            showToast('错误', `保存设置成功，但重启服务失败: ${result.message}`, 'error');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('保存代理设置失败:', error);
-      showToast('错误', `保存设置失败: ${error}`, 'error');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   // 保存主题设置
   const saveThemeSettings = async () => {
     if (typeof window !== 'undefined' && window.electronAPI) {
@@ -450,12 +356,6 @@ export default function Settings() {
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
                 常规
-              </Tabs.Trigger>
-              <Tabs.Trigger
-                value="proxy"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
-              >
-                代理
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="kernel"
@@ -632,92 +532,6 @@ export default function Settings() {
                 </div>
               </div>
             </Tabs.Content>
-            
-            <Tabs.Content value="proxy" className="w-full">
-              <div className="space-y-6">
-                <div className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">代理端口设置</h3>
-                  <div>
-                    <label className="block text-xs text-gray-500 dark:text-gray-300 mb-1">代理端口 (HTTP/SOCKS5)</label>
-                    <input
-                      type="number"
-                      className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
-                      value={mixedPort}
-                      onChange={(e) => setMixedPort(Number(e.target.value))}
-                      min="1024"
-                      max="65535"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      当前Mihomo已将HTTP与SOCKS5端口统一为混合端口，设置后两种协议将使用相同端口
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">允许局域网访问</h3>
-                  <div className="flex items-center">
-                    <Switch
-                      checked={allowLan}
-                      onCheckedChange={(checked) => {
-                        console.log('允许局域网访问切换为:', checked, '类型:', typeof checked);
-                        setAllowLan(Boolean(checked));
-                      }}
-                    />
-                    <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">允许其他设备通过局域网连接到本代理</span>
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">IPv6支持</h3>
-                  <div className="flex items-center">
-                    <Switch
-                      checked={enableIPv6}
-                      onCheckedChange={(checked) => {
-                        console.log('IPv6支持切换为:', checked);
-                        setEnableIPv6(Boolean(checked));
-                      }}
-                    />
-                    <span className="ml-2 text-sm text-gray-700 dark:text-gray-200">启用IPv6支持（需要重启代理）</span>
-                  </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-12">
-                    启用后可支持IPv6连接，如果您的网络不支持IPv6可能会导致连接问题
-                  </p>
-                </div>
-                
-                <div className="mb-4">
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Mihomo API密钥</h3>
-                  <div>
-                    <input
-                      type="text"
-                      className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
-                      value={mihomoSecret}
-                      onChange={(e) => setMihomoSecret(e.target.value)}
-                      placeholder="留空表示不使用密钥"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      设置后将在与Mihomo内核通信时使用此密钥进行身份验证，增强安全性
-                    </p>
-                  </div>
-                </div>
-                
-                <div>
-                  <button 
-                    className={`flex items-center justify-center rounded-lg transition-all duration-300 ${
-                      isSaving 
-                        ? 'bg-gray-500 cursor-not-allowed' 
-                        : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700'
-                    } text-white py-2 px-4 transform hover:scale-105 ${isSaving ? '' : 'hover:shadow-lg'}`}
-                    onClick={saveProxySettings}
-                    disabled={isSaving || !configLoaded}
-                  >
-                    {isSaving ? '保存中...' : '保存设置'}
-                  </button>
-                  {!configLoaded && (
-                    <p className="text-xs text-yellow-500 mt-2">正在加载配置...</p>
-                  )}
-                </div>
-              </div>
-            </Tabs.Content>
 
             <Tabs.Content value="kernel" className="w-full">
               <div className="space-y-6">
@@ -770,8 +584,7 @@ export default function Settings() {
 
             <Tabs.Content value="override" className="w-full">
               <div className="space-y-8">
-                <KernelSettings ref={kernelSettingsRef} />
-                <DnsSettings ref={dnsSettingsRef} />
+                <OverrideSettings ref={overrideSettingsRef} />
 
                 {/* 统一保存按钮 */}
                 <div className="flex justify-end pt-4 border-t border-gray-200 dark:border-gray-700">
@@ -779,8 +592,11 @@ export default function Settings() {
                     onClick={async () => {
                       setIsSavingOverride(true);
                       try {
-                        await kernelSettingsRef.current?.saveConfig();
-                        await dnsSettingsRef.current?.saveConfig();
+                        await overrideSettingsRef.current?.saveConfig();
+                        showToast('成功', '所有配置已保存并应用', 'success');
+                      } catch (error) {
+                        console.error('保存配置时出错:', error);
+                        showToast('错误', '保存配置时出错: ' + error, 'error');
                       } finally {
                         setIsSavingOverride(false);
                       }

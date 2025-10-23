@@ -15,7 +15,7 @@ module.exports = function initSystemIntegration(context) {
 
   function toggleSystemProxy(menuItem) {
     if (!state.mihomoProcess) {
-      dialog.showErrorBox('错误', '请先启动代理服务');
+      console.warn('[toggleSystemProxy] Mihomo 服务未运行');
       return;
     }
 
@@ -131,7 +131,7 @@ module.exports = function initSystemIntegration(context) {
 
   function toggleTunMode(menuItem) {
     if (!state.mihomoProcess) {
-      dialog.showErrorBox('错误', '请先启动代理服务');
+      console.warn('[toggleTunMode] Mihomo 服务未运行');
       return;
     }
 

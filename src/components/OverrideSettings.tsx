@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { showToast } from './ui/toast';
 import { Badge } from './ui/badge';
 
-export interface KernelSettingsRef {
+export interface OverrideSettingsRef {
   saveConfig: () => Promise<void>;
 }
 
@@ -39,15 +39,38 @@ interface KernelConfig {
   };
 }
 
-const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
+interface DnsConfig {
+  enable?: boolean;
+  ipv6?: boolean;
+  'enhanced-mode'?: 'normal' | 'fake-ip' | 'redir-host';
+  'fake-ip-range'?: string;
+  'fake-ip-filter'?: string[];
+  'use-hosts'?: boolean;
+  'use-system-hosts'?: boolean;
+  'respect-rules'?: boolean;
+  'default-nameserver'?: string[];
+  nameserver?: string[];
+  'proxy-server-nameserver'?: string[];
+  'direct-nameserver'?: string[];
+  'nameserver-policy'?: Record<string, string | string[]>;
+}
+
+interface HostsConfig {
+  hosts?: Array<{ domain: string; value: string | string[] }>;
+}
+
+const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   const [config, setConfig] = useState<KernelConfig>({});
+  const [dnsConfig, setDnsConfig] = useState<DnsConfig>({});
+  const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'basic' | 'port' | 'controller' | 'advanced'>('basic');
+  const [activeTab, setActiveTab] = useState<'basic' | 'port' | 'controller' | 'dns' | 'advanced'>('basic');
 
   // 加载配置
   useEffect(() => {
     loadConfig();
+    loadDnsConfig();
   }, []);
 
   const loadConfig = async () => {
@@ -66,20 +89,62 @@ const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
     }
   };
 
-  const saveConfig = async () => {
+  const loadDnsConfig = async () => {
     try {
-      setSaving(true);
-      if (window.electronAPI?.saveKernelConfig) {
-        const result = await window.electronAPI.saveKernelConfig(config);
+      if (window.electronAPI?.getDnsConfig) {
+        const result = await window.electronAPI.getDnsConfig();
         if (result.success) {
-          showToast({ message: '保存成功，需要重启内核才能生效', type: 'success' });
-        } else {
-          showToast({ message: '保存失败: ' + result.error, type: 'error' });
+          setDnsConfig(result.config || {});
+
+          if (result.hosts) {
+            const hostsArray = Object.entries(result.hosts).map(([domain, value]) => ({
+              domain,
+              value
+            }));
+            setHostsConfig({ hosts: hostsArray });
+          }
         }
       }
     } catch (error) {
-      console.error('保存内核配置失败:', error);
-      showToast({ message: '保存失败: ' + error, type: 'error' });
+      console.error('加载DNS配置失败:', error);
+    }
+  };
+
+  const saveConfig = async () => {
+    try {
+      setSaving(true);
+
+      // 保存内核配置
+      if (window.electronAPI?.saveKernelConfig) {
+        const kernelResult = await window.electronAPI.saveKernelConfig(config);
+        if (!kernelResult.success) {
+          const errorMsg = '内核配置保存失败: ' + kernelResult.error;
+          showToast({ message: errorMsg, type: 'error' });
+          throw new Error(errorMsg);
+        }
+      }
+
+      // 保存DNS配置
+      if (window.electronAPI?.saveDnsConfig) {
+        const dnsResult = await window.electronAPI.saveDnsConfig(dnsConfig);
+        if (!dnsResult.success) {
+          const errorMsg = 'DNS配置保存失败: ' + dnsResult.error;
+          showToast({ message: errorMsg, type: 'error' });
+          throw new Error(errorMsg);
+        }
+
+        // 保存Hosts配置
+        if (dnsConfig['use-hosts'] && window.electronAPI?.saveHostsConfig) {
+          await window.electronAPI.saveHostsConfig(hostsConfig.hosts || []);
+        }
+      }
+
+      showToast({ message: '所有配置保存成功，内核已自动重启', type: 'success' });
+    } catch (error) {
+      console.error('保存配置失败:', error);
+      const errorMsg = '保存配置失败: ' + error;
+      showToast({ message: errorMsg, type: 'error' });
+      throw error;
     } finally {
       setSaving(false);
     }
@@ -97,6 +162,15 @@ const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
         [key]: value
       }
     }));
+  };
+
+  const updateDnsConfig = (key: keyof DnsConfig, value: any) => {
+    setDnsConfig(prev => ({ ...prev, [key]: value }));
+  };
+
+  const updateArrayDnsConfig = (key: keyof DnsConfig, value: string) => {
+    const items = value.split('\n').filter(item => item.trim());
+    setDnsConfig(prev => ({ ...prev, [key]: items }));
   };
 
   // 暴露 saveConfig 方法给父组件
@@ -145,6 +219,16 @@ const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
           onClick={() => setActiveTab('controller')}
         >
           控制器设置
+        </button>
+        <button
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'dns'
+              ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+          }`}
+          onClick={() => setActiveTab('dns')}
+        >
+          DNS设置
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -336,11 +420,11 @@ const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
             {/* External Controller */}
             <div>
               <label className="text-sm font-medium text-gray-700 dark:text-gray-200">外部控制器地址</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">RESTful API 监听地址</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">RESTful API 监听地址 (留空则不启动外部控制器)</p>
               <Input
                 type="text"
                 className="text-gray-900 dark:text-gray-100"
-                placeholder="127.0.0.1:9090"
+                placeholder="留空不启动,例如: 127.0.0.1:9090"
                 value={config['external-controller'] || ''}
                 onChange={(e) => updateConfig('external-controller', e.target.value)}
               />
@@ -372,6 +456,216 @@ const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
                 onChange={(e) => updateConfig('secret', e.target.value)}
               />
             </div>
+        </div>
+      )}
+
+      {/* DNS设置 */}
+      {activeTab === 'dns' && (
+        <div className="space-y-4">
+          {/* 启用 DNS */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">启用 DNS</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">启用内置 DNS 服务器</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={dnsConfig.enable !== false}
+                onChange={(e) => updateDnsConfig('enable', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* IPv6 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">IPv6</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">解析 IPv6 地址</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={dnsConfig.ipv6 || false}
+                onChange={(e) => updateDnsConfig('ipv6', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* 增强模式 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">增强模式</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">DNS 增强模式</p>
+            </div>
+            <select
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+              value={dnsConfig['enhanced-mode'] || 'fake-ip'}
+              onChange={(e) => updateDnsConfig('enhanced-mode', e.target.value)}
+            >
+              <option value="normal">普通</option>
+              <option value="fake-ip">Fake-IP</option>
+              <option value="redir-host">Redir-Host</option>
+            </select>
+          </div>
+
+          {/* Fake-IP 范围 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Fake-IP 范围</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Fake-IP 模式的 IP 范围</p>
+            <Input
+              type="text"
+              className="text-gray-900 dark:text-gray-100"
+              placeholder="198.18.0.1/16"
+              value={dnsConfig['fake-ip-range'] || ''}
+              onChange={(e) => updateDnsConfig('fake-ip-range', e.target.value)}
+            />
+          </div>
+
+          {/* Fake-IP 过滤 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Fake-IP 过滤</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">排除在 Fake-IP 之外的域名（每行一个）</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={4}
+              value={(dnsConfig['fake-ip-filter'] || []).join('\n')}
+              onChange={(e) => updateArrayDnsConfig('fake-ip-filter', e.target.value)}
+              placeholder="*.lan&#10;localhost.ptlogin2.qq.com"
+            />
+          </div>
+
+          {/* 遵守规则 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">遵守规则</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">使用基于规则的 DNS 解析</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={dnsConfig['respect-rules'] || false}
+                onChange={(e) => updateDnsConfig('respect-rules', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* 使用系统 Hosts */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">使用系统 Hosts</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">使用系统 hosts 文件</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={dnsConfig['use-system-hosts'] !== false}
+                onChange={(e) => updateDnsConfig('use-system-hosts', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* 默认域名服务器 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">默认域名服务器</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">引导 DNS 服务器（每行一个）</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={3}
+              value={(dnsConfig['default-nameserver'] || []).join('\n')}
+              onChange={(e) => updateArrayDnsConfig('default-nameserver', e.target.value)}
+              placeholder="114.114.114.114&#10;8.8.8.8"
+            />
+          </div>
+
+          {/* 域名服务器 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">域名服务器</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">主 DNS 服务器（每行一个）</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={4}
+              value={(dnsConfig.nameserver || []).join('\n')}
+              onChange={(e) => updateArrayDnsConfig('nameserver', e.target.value)}
+              placeholder="https://doh.pub/dns-query&#10;https://dns.alidns.com/dns-query"
+            />
+          </div>
+
+          {/* 代理服务器域名服务器 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">代理服务器域名服务器</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">代理服务器的 DNS（每行一个）</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={3}
+              value={(dnsConfig['proxy-server-nameserver'] || []).join('\n')}
+              onChange={(e) => updateArrayDnsConfig('proxy-server-nameserver', e.target.value)}
+              placeholder="https://doh.pub/dns-query"
+            />
+          </div>
+
+          {/* 直连域名服务器 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">直连域名服务器</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">直连连接的 DNS（每行一个）</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={3}
+              value={(dnsConfig['direct-nameserver'] || []).join('\n')}
+              onChange={(e) => updateArrayDnsConfig('direct-nameserver', e.target.value)}
+              placeholder="https://doh.pub/dns-query"
+            />
+          </div>
+
+          {/* 自定义 Hosts */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">自定义 Hosts</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">启用自定义 hosts 映射</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={dnsConfig['use-hosts'] || false}
+                onChange={(e) => updateDnsConfig('use-hosts', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* Hosts 映射 */}
+          {dnsConfig['use-hosts'] && (
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Hosts 映射</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">格式：域名=IP（每行一个）</p>
+              <textarea
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+                rows={6}
+                value={(hostsConfig.hosts || []).map(h => `${h.domain}=${Array.isArray(h.value) ? h.value.join(',') : h.value}`).join('\n')}
+                onChange={(e) => {
+                  const lines = e.target.value.split('\n').filter(line => line.trim());
+                  const hosts = lines.map(line => {
+                    const [domain, value] = line.split('=');
+                    return {
+                      domain: domain?.trim() || '',
+                      value: value?.includes(',') ? value.split(',').map(v => v.trim()) : value?.trim() || ''
+                    };
+                  }).filter(h => h.domain && h.value);
+                  setHostsConfig({ hosts });
+                }}
+                placeholder="example.com=127.0.0.1&#10;*.example.com=192.168.1.1"
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -551,6 +845,6 @@ const KernelSettings = forwardRef<KernelSettingsRef>((props, ref) => {
   );
 });
 
-KernelSettings.displayName = 'KernelSettings';
+OverrideSettings.displayName = 'OverrideSettings';
 
-export default KernelSettings;
+export default OverrideSettings;

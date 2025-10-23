@@ -78,17 +78,9 @@ module.exports = function initTrayManager(context) {
                 return;
               }
 
-              const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
-              const apiUrl = `http://${state.activeApiConfig.controllerHost}:${state.activeApiConfig.controllerPort}/connections`;
-              const headers = {};
-
-              if (state.activeApiConfig.secret) {
-                headers.Authorization = `Bearer ${state.activeApiConfig.secret}`;
-              }
-
-              const response = await fetch(apiUrl, {
-                method: 'DELETE',
-                headers
+              // Socket 模式: 使用 fetchMihomoAPI
+              const response = await context.fetchMihomoAPI('/connections', {
+                method: 'DELETE'
               });
 
               if (response.ok) {
@@ -109,15 +101,8 @@ module.exports = function initTrayManager(context) {
       try {
         const isServiceRunning = await context.checkMihomoService();
         if (isServiceRunning && state.activeApiConfig) {
-          const fetch = (...args) => import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
-          const apiUrl = `http://${state.activeApiConfig.controllerHost}:${state.activeApiConfig.controllerPort}/proxies`;
-          const headers = {};
-
-          if (state.activeApiConfig.secret) {
-            headers.Authorization = `Bearer ${state.activeApiConfig.secret}`;
-          }
-
-          const response = await fetch(apiUrl, { headers });
+          // Socket 模式: 使用 fetchMihomoAPI
+          const response = await context.fetchMihomoAPI('/proxies');
           if (response.ok) {
             const data = await response.json();
             const proxyGroups = [];
@@ -180,15 +165,10 @@ module.exports = function initTrayManager(context) {
                           return;
                         }
 
-                        const apiUrl = `http://${state.activeApiConfig.controllerHost}:${state.activeApiConfig.controllerPort}/proxies/${encodeURIComponent(group.name)}`;
-                        const headers = { 'Content-Type': 'application/json' };
-                        if (state.activeApiConfig.secret) {
-                          headers.Authorization = `Bearer ${state.activeApiConfig.secret}`;
-                        }
-
-                        const switchResponse = await fetch(apiUrl, {
+                        // Socket 模式: 使用 fetchMihomoAPI
+                        const switchResponse = await context.fetchMihomoAPI(`/proxies/${encodeURIComponent(group.name)}`, {
                           method: 'PUT',
-                          headers,
+                          headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ name: nodeName })
                         });
 

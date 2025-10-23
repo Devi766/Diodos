@@ -80,122 +80,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 媒体服务检测
   testMediaStreaming: (serviceName, checkUrl) => ipcRenderer.invoke('test-media-streaming', serviceName, checkUrl),
   
-  // 添加一个辅助函数用于发送mihomo API请求（自动处理密钥认证）
+  // Socket 模式: 通过 IPC 调用 main process 的 fetchMihomoAPI
+  // 前端无法直接访问 Unix Socket / Named Pipe,必须通过 main process
   requestMihomoAPI: async (endpoint, options = {}) => {
     try {
-      console.log(`[调试] preload.js - 开始发送API请求: ${endpoint}`);
-      
-      // 获取API配置
-      const apiConfig = await ipcRenderer.invoke('get-api-config');
-      console.log(`[调试] preload.js - API配置获取结果:`, apiConfig);
-      
-      if (!apiConfig.success) {
-        console.error(`[调试] preload.js - 获取API配置失败:`, apiConfig.error);
-        throw new Error(`无法获取API配置: ${apiConfig.error || '未知错误'}`);
-      }
-      
-      // 构建请求URL
-      const host = apiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : apiConfig.controllerHost;
-      const port = apiConfig.controllerPort;
-      const url = endpoint.startsWith('http') ? endpoint : `http://${host}:${port}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
-      console.log(`[调试] preload.js - 构建完整URL: ${url}`);
-      
-      // 准备请求头
-      const headers = options.headers || {};
-      
-      // 显式检查和记录请求头中是否已有Authorization
-      if (headers['Authorization']) {
-        console.log('[调试] preload.js - 请求已包含Authorization头');
-      } else {
-        // 如果请求头中没有Authorization，并且有密钥，添加认证头
-        if (apiConfig.secret) {
-          headers['Authorization'] = `Bearer ${apiConfig.secret}`;
-          console.log('[调试] preload.js - 添加了密钥认证头');
-        } else {
-          console.warn('[警告] preload.js - 密钥为空，API请求可能被拒绝');
-        }
-      }
-      
-      console.log(`[调试] preload.js - 请求头:`, Object.keys(headers).join(', '));
-      
-      try {
-        // 发送请求
-        console.log(`[调试] preload.js - 发送${options.method || 'GET'}请求到: ${url}`);
-        const response = await fetch(url, {
-          ...options,
-          headers
-        });
-        
-        console.log(`[调试] preload.js - 请求响应状态: ${response.status} ${response.statusText}`);
-        
-        // 详细记录401错误
-        if (response.status === 401) {
-          console.error('[错误] preload.js - 授权失败 (401)，密钥可能不正确');
-          console.log('[调试] preload.js - 尝试的密钥:', apiConfig.secret ? '已设置但可能不正确' : '未设置');
-          
-          // 尝试读取错误响应内容
-          try {
-            const errorText = await response.text();
-            console.error('[调试] preload.js - 401错误详情:', errorText);
-          } catch (e) {
-            console.error('[调试] preload.js - 无法读取401错误详情');
-          }
-        }
-        
-        // 创建一个简单的对象返回，而不是Response对象
-        const result = {
-          ok: response.ok,
-          status: response.status,
-          statusText: response.statusText,
-          headers: {},
-          data: null
-        };
+      console.log(`[Socket] preload.js - 开始发送API请求: ${endpoint}`);
 
-        // 尝试填充headers (只发送可序列化的部分)
-        response.headers.forEach((value, key) => {
-          result.headers[key] = value;
-        });
+      // 直接通过 IPC 调用 main process 的 API 函数
+      // main process 会返回 { ok, status, data } 格式的对象
+      const response = await ipcRenderer.invoke('request-mihomo-api', endpoint, options);
 
-        try {
-          if (response.ok && response.status !== 204) { // 204 No Content
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-              result.data = await response.json();
-            } else {
-              result.data = await response.text();
-            }
-          } else if (!response.ok) {
-            // 对于错误响应，也尝试读取文本内容作为data
-            result.data = await response.text(); 
-          }
-        } catch (e) {
-          console.warn('[调试] preload.js - 解析响应体失败:', e);
-          // 如果解析失败，data将保持为null，但status等信息仍然可用
-          if (!response.ok && !result.data) { // 如果是错误且没有data，尝试用statusText
-             result.data = response.statusText || `请求失败，状态码: ${response.status}`;
-          }
-        }
+      console.log(`[Socket] preload.js - 请求响应:`, response.ok ? '成功' : '失败');
 
-        // 使用上面创建的普通对象
-        return result;
-      } catch (fetchError) {
-        console.error('[调试] preload.js - fetch请求失败:', fetchError);
-        
-        // 创建自定义错误响应，确保mihomo-api.ts可以正确处理
-        if (fetchError.name === 'AbortError') {
-          // 请求被中止
-          throw new Error('请求被中止');
-        } else if (fetchError.name === 'TypeError' && fetchError.message.includes('Failed to fetch')) {
-          // 连接错误 - 可能是服务未运行或网络问题
-          console.error('[调试] preload.js - 连接失败，服务可能未运行', fetchError);
-          throw new Error('连接失败，服务可能未运行');
-        } else {
-          // 其他错误
-          throw new Error(`请求失败: ${fetchError.message}`);
-        }
-      }
+      // 包装成兼容旧代码的格式
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.ok ? 'OK' : 'Error',
+        headers: {},
+        data: response.data,
+        // 兼容旧代码的 json() 和 text() 方法
+        json: async () => response.data,
+        text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+      };
     } catch (error) {
-      console.error('[调试] preload.js - Mihomo API请求失败:', error);
+      console.error('[Socket] preload.js - Mihomo API请求失败:', error);
       throw error;
     }
   },
@@ -364,6 +273,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('mihomo-error', subscription);
     return () => {
       ipcRenderer.removeListener('mihomo-error', subscription);
+    };
+  },
+  onMihomoStartFailed: (callback) => {
+    const subscription = (event, ...args) => callback(...args);
+    ipcRenderer.on('mihomo-start-failed', subscription);
+    return () => {
+      ipcRenderer.removeListener('mihomo-start-failed', subscription);
     };
   },
   onMihomoStopped: (callback) => {

@@ -12,6 +12,7 @@ const serveStatic = require('serve-static');
 const finalhandler = require('finalhandler');
 const security = require('./security');
 const { enableAcrylic } = require('./windows/acrylic');
+const axios = require('axios');
 
 // 导入媒体检测模块
 const { testMediaStreaming } = require('./mediatest');
@@ -137,31 +138,85 @@ function verifyAuthToken(token) {
   return token === activeAuthToken;
 }
 
-async function fetchMihomoAPI(endpoint, options = {}) {
-  const { controllerHost, controllerPort, secret } = state.activeApiConfig || {};
+// 创建 axios 实例用于 socket 通讯
+let axiosInstance = null;
 
-  if (!controllerHost || !controllerPort) {
-    throw new Error('Mihomo API 未初始化');
+async function getAxiosInstance(force = false) {
+  const { socketPath } = state.activeApiConfig || {};
+
+  if (!socketPath) {
+    throw new Error('Mihomo Socket 路径未初始化');
   }
 
-  const host = controllerHost === '0.0.0.0' ? '127.0.0.1' : controllerHost;
-  const normalizedPath = endpoint.startsWith('/') || endpoint.startsWith('http')
-    ? endpoint
-    : `/${endpoint}`;
-  const url = normalizedPath.startsWith('http')
-    ? normalizedPath
-    : `http://${host}:${controllerPort}${normalizedPath}`;
-
-  const headers = { ...(options.headers || {}) };
-  if (secret && !headers.Authorization) {
-    headers.Authorization = `Bearer ${secret}`;
+  // 如果 socket 路径改变,强制重新创建实例
+  if (axiosInstance && axiosInstance.defaults.socketPath !== socketPath) {
+    force = true;
   }
 
-  const fetchFn = await resolveFetchFn();
-  const requestInit = { ...options, headers };
-  return fetchFn(url, requestInit);
+  if (axiosInstance && !force) {
+    return axiosInstance;
+  }
+
+  console.log('[Socket] 创建 axios 实例,socket 路径:', socketPath);
+
+  axiosInstance = axios.create({
+    baseURL: 'http://localhost',
+    socketPath: socketPath,
+    timeout: 15000
+  });
+
+  // 响应拦截器
+  axiosInstance.interceptors.response.use(
+    (response) => {
+      return response.data;
+    },
+    (error) => {
+      if (error.response && error.response.data) {
+        return Promise.reject(error.response.data);
+      }
+      return Promise.reject(error);
+    }
+  );
+
+  return axiosInstance;
 }
 
+async function fetchMihomoAPI(endpoint, options = {}) {
+  try {
+    const instance = await getAxiosInstance();
+
+    // 标准化路径
+    const normalizedPath = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+    // 构建 axios 请求配置
+    const axiosConfig = {
+      method: options.method || 'GET',
+      url: normalizedPath,
+      headers: options.headers || {},
+      ...options
+    };
+
+    // 如果有 body,设置为 data
+    if (options.body) {
+      axiosConfig.data = options.body;
+    }
+
+    console.log('[Socket] 发送 API 请求:', normalizedPath);
+    const response = await instance.request(axiosConfig);
+
+    return {
+      ok: true,
+      status: 200,
+      json: async () => response,
+      text: async () => JSON.stringify(response)
+    };
+  } catch (error) {
+    console.error('[Socket] API 请求失败:', error.message);
+    throw error;
+  }
+}
+
+context.set('getAxiosInstance', getAxiosInstance);
 context.set('fetchMihomoAPI', fetchMihomoAPI);
 context.set('ensureAuthToken', ensureAuthToken);
 context.set('verifyAuthToken', verifyAuthToken);
@@ -664,8 +719,12 @@ function createWindow() {
     }
 
     // 自动启动Mihomo
+    console.log('[main.js] ready-to-show: state.autoStartEnabled =', state.autoStartEnabled);
     if (state.autoStartEnabled) {
+      console.log('[main.js] ready-to-show: 将在 1 秒后调用 autoStartMihomo');
       setTimeout(autoStartMihomo, 1000);
+    } else {
+      console.log('[main.js] ready-to-show: 自动启动已禁用');
     }
   });
 
@@ -721,6 +780,9 @@ context.toggleTunMode = toggleTunMode;
 // 更新系统代理设置（当端口变更时调用）
 // 自动启动Mihomo功能
 async function autoStartMihomo() {
+  console.log('[main.js] autoStartMihomo 被调用');
+  console.log('[main.js] context.mihomoService:', typeof context.mihomoService);
+  console.log('[main.js] context.mihomoService.autoStartMihomo:', typeof context.mihomoService?.autoStartMihomo);
   return context.mihomoService.autoStartMihomo();
 }
 
@@ -806,26 +868,21 @@ function updateTrafficStats() {
       return;
     }
 
-    // 确保使用127.0.0.1作为客户端连接地址
-    const host = state.activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : state.activeApiConfig.controllerHost;
-    
-    // 使用解析的WebSocket地址
-    const wsUrl = `ws://${host}:${state.activeApiConfig.controllerPort}/traffic`;
-    
-    console.log(`[调试] 连接到流量统计WebSocket: ${wsUrl}`);
-    
-    // 创建流量统计WebSocket
-    state.trafficWebSocket = new WebSocket(wsUrl);
+    // 使用 Unix Socket / Named Pipe 连接
+    const { socketPath } = state.activeApiConfig || {};
 
-    // 如果有secret密钥，添加到请求头或认证消息
-    if (state.activeApiConfig.secret) {
-      state.trafficWebSocket.on('open', () => {
-        state.trafficWebSocket.send(JSON.stringify({
-          type: 'auth',
-          payload: state.activeApiConfig.secret
-        }));
-      });
+    if (!socketPath) {
+      throw new Error('Socket 路径未初始化');
     }
+
+    // WebSocket over Unix Socket 格式: ws+unix:<socket_path>:<endpoint>
+    // 注意: 不要使用 // 因为会被解析为 URL host
+    const wsUrl = `ws+unix:${socketPath}:/traffic`;
+
+    console.log(`[Socket] 连接到流量统计 WebSocket: ${wsUrl}`);
+
+    // 创建流量统计WebSocket (不需要密钥认证)
+    state.trafficWebSocket = new WebSocket(wsUrl);
 
     state.trafficWebSocket.on('open', () => {
       console.log('[调试] 流量统计WebSocket连接已建立');
@@ -961,16 +1018,20 @@ function startMihomoLogs() {
       return;
     }
 
-    // 确保使用127.0.0.1作为客户端连接地址
-    const host = state.activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : state.activeApiConfig.controllerHost;
+    // 使用 Unix Socket / Named Pipe 连接
+    const { socketPath } = state.activeApiConfig || {};
+
+    if (!socketPath) {
+      throw new Error('Socket 路径未初始化');
+    }
 
     // 获取日志级别，默认为info
     const logLevel = 'info';
-    const wsUrl = `ws://${host}:${state.activeApiConfig.controllerPort}/logs?level=${logLevel}`;
+    const wsUrl = `ws+unix:${socketPath}:/logs?level=${logLevel}`;
 
-    console.log(`[调试] 连接到日志WebSocket: ${wsUrl}`);
+    console.log(`[Socket] 连接到日志 WebSocket: ${wsUrl}`);
 
-    // 创建日志WebSocket
+    // 创建日志WebSocket (不需要密钥认证)
     state.logsWebSocket = new WebSocket(wsUrl);
 
     state.logsWebSocket.on('open', () => {
@@ -1049,24 +1110,18 @@ async function startConnectionsWebSocket() {
       throw new Error('API配置不可用');
     }
 
-    // 确保使用127.0.0.1作为客户端连接地址
-    const host = state.activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : state.activeApiConfig.controllerHost;
+    // 使用 Unix Socket / Named Pipe 连接
+    const { socketPath } = state.activeApiConfig || {};
 
-    // 创建新的WebSocket连接，使用state.activeApiConfig中的参数
-    const wsUrl = `ws://${host}:${state.activeApiConfig.controllerPort}/connections/${state.currentNode}`;
-    console.log(`[调试] 连接到节点WebSocket: ${wsUrl}`);
-    
-    state.connectionsWebSocket = new WebSocket(wsUrl);
-    
-    // 如果有secret密钥，添加到认证消息
-    if (state.activeApiConfig.secret) {
-      state.connectionsWebSocket.on('open', () => {
-        state.connectionsWebSocket.send(JSON.stringify({
-          type: 'auth',
-          payload: state.activeApiConfig.secret
-        }));
-      });
+    if (!socketPath) {
+      throw new Error('Socket 路径未初始化');
     }
+
+    // 创建新的WebSocket连接，使用 Unix Socket
+    const wsUrl = `ws+unix:${socketPath}:/connections/${state.currentNode}`;
+    console.log(`[Socket] 连接到节点 WebSocket: ${wsUrl}`);
+
+    state.connectionsWebSocket = new WebSocket(wsUrl);
     
     // 设置连接超时
     const connectionTimeout = setTimeout(() => {
@@ -1113,21 +1168,10 @@ async function updateCurrentNodeInfo() {
       return;
     }
 
-    // 确保使用127.0.0.1作为客户端连接地址
-    const host = state.activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : state.activeApiConfig.controllerHost;
+    // Socket 模式: 使用 fetchMihomoAPI
+    console.log(`[调试] 请求节点信息: /proxies/PROXY`);
 
-    // 使用正确的API端点获取PROXY组信息
-    const apiUrl = `http://${host}:${state.activeApiConfig.controllerPort}/proxies/PROXY`;
-    const headers = {};
-    
-    // 如果有secret，添加到请求头
-    if (state.activeApiConfig.secret) {
-      headers['Authorization'] = `Bearer ${state.activeApiConfig.secret}`;
-    }
-    
-    console.log(`[调试] 请求节点信息: ${apiUrl}`);
-    
-    const response = await fetch(apiUrl, { headers });
+    const response = await fetchMihomoAPI('/proxies/PROXY');
     if (response.ok) {
       const data = await response.json();
       console.log('[调试] 获取到PROXY组信息:', data);
@@ -1701,16 +1745,9 @@ app.whenReady().then(() => {
         console.error('无法获取代理节点: API配置不可用');
         return;
       }
-      
-      const apiUrl = `http://${state.activeApiConfig.controllerHost}:${state.activeApiConfig.controllerPort}/proxies`;
-      const headers = {};
-      
-      // 如果有secret，添加到请求头
-      if (state.activeApiConfig.secret) {
-        headers['Authorization'] = `Bearer ${state.activeApiConfig.secret}`;
-      }
-      
-      const response = await fetch(apiUrl, { headers });
+
+      // Socket 模式: 使用 fetchMihomoAPI
+      const response = await fetchMihomoAPI('/proxies');
       if (response.ok) {
         const data = await response.json();
         
@@ -1918,36 +1955,32 @@ app.whenReady().then(() => {
   // 获取内核配置
   ipcMain.handle('get-kernel-config', () => {
     try {
-      const configPath = path.join(userDataPath, 'config.yaml');
-      if (!fs.existsSync(configPath)) {
-        return { success: true, config: {} };
-      }
-
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      const config = yaml.load(configContent);
+      // 从用户设置中读取配置
+      const userSettings = context.getUserSettings ? context.getUserSettings() : {};
+      console.log('[get-kernel-config] 从用户设置读取配置:', userSettings);
 
       return {
         success: true,
         config: {
-          ipv6: config.ipv6,
-          'log-level': config['log-level'],
-          'mixed-port': config['mixed-port'],
-          'allow-lan': config['allow-lan'],
-          'lan-allowed-ips': config['lan-allowed-ips'],
-          'lan-disallowed-ips': config['lan-disallowed-ips'],
-          'external-controller': config['external-controller'],
-          secret: config.secret,
-          authentication: config.authentication,
-          'skip-auth-prefixes': config['skip-auth-prefixes'],
-          'unified-delay': config['unified-delay'],
-          'tcp-concurrent': config['tcp-concurrent'],
-          'disable-keep-alive': config['disable-keep-alive'],
-          'keep-alive-idle': config['keep-alive-idle'],
-          'keep-alive-interval': config['keep-alive-interval'],
-          'global-client-fingerprint': config['global-client-fingerprint'],
-          'find-process-mode': config['find-process-mode'],
-          'interface-name': config['interface-name'],
-          profile: config.profile
+          ipv6: userSettings.ipv6,
+          'log-level': userSettings['log-level'],
+          'mixed-port': userSettings['mixed-port'],
+          'allow-lan': userSettings['allow-lan'],
+          'lan-allowed-ips': userSettings['lan-allowed-ips'],
+          'lan-disallowed-ips': userSettings['lan-disallowed-ips'],
+          'external-controller': userSettings['external-controller'],
+          secret: userSettings.secret,
+          authentication: userSettings.authentication,
+          'skip-auth-prefixes': userSettings['skip-auth-prefixes'],
+          'unified-delay': userSettings['unified-delay'],
+          'tcp-concurrent': userSettings['tcp-concurrent'],
+          'disable-keep-alive': userSettings['disable-keep-alive'],
+          'keep-alive-idle': userSettings['keep-alive-idle'],
+          'keep-alive-interval': userSettings['keep-alive-interval'],
+          'global-client-fingerprint': userSettings['global-client-fingerprint'],
+          'find-process-mode': userSettings['find-process-mode'],
+          'interface-name': userSettings['interface-name'],
+          profile: userSettings.profile
         }
       };
     } catch (error) {
@@ -1957,25 +1990,77 @@ app.whenReady().then(() => {
   });
 
   // 保存内核配置
-  ipcMain.handle('save-kernel-config', (event, kernelConfig) => {
+  ipcMain.handle('save-kernel-config', async (event, kernelConfig) => {
     try {
-      const configPath = path.join(userDataPath, 'config.yaml');
-      let config = {};
+      console.log('[save-kernel-config] ========== 开始保存内核配置 ==========');
+      console.log('[save-kernel-config] 接收到配置:', JSON.stringify(kernelConfig, null, 2));
 
-      if (fs.existsSync(configPath)) {
-        const configContent = fs.readFileSync(configPath, 'utf8');
-        config = yaml.load(configContent);
+      // 获取当前用户设置
+      console.log('[save-kernel-config] 正在获取当前用户设置...');
+      const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
+      console.log('[save-kernel-config] 当前用户设置:', JSON.stringify(currentSettings, null, 2));
+
+      // 过滤掉空字符串的 external-controller (留空表示不启动外部控制器)
+      const filteredConfig = { ...kernelConfig };
+      if (filteredConfig['external-controller'] === '') {
+        delete filteredConfig['external-controller'];
+        console.log('[save-kernel-config] external-controller 为空,已删除');
       }
 
-      // 更新配置
-      Object.assign(config, kernelConfig);
+      // 合并新配置
+      const newSettings = { ...currentSettings, ...filteredConfig };
+      console.log('[save-kernel-config] 合并后的设置:', JSON.stringify(newSettings, null, 2));
 
-      // 保存配置
-      fs.writeFileSync(configPath, yaml.dump(config), 'utf8');
+      // 保存到用户设置（会同时保存到数据库和 user-settings.yaml）
+      console.log('[save-kernel-config] 正在保存到用户设置...');
+      if (context.updateUserSettingsRaw) {
+        try {
+          await context.updateUserSettingsRaw(newSettings);
+          console.log('[save-kernel-config] 用户设置保存成功');
+        } catch (saveError) {
+          console.error('[save-kernel-config] 保存用户设置失败:', saveError);
+          throw new Error('保存用户设置失败: ' + saveError.message);
+        }
+      } else {
+        console.error('[save-kernel-config] updateUserSettingsRaw 函数不可用');
+        throw new Error('updateUserSettingsRaw 函数不可用');
+      }
 
-      return { success: true };
+      // 保存成功后，重启 Mihomo 服务以应用新配置
+      console.log('[save-kernel-config] 配置已保存到用户设置，准备重启服务');
+      if (context.mihomoService && typeof context.mihomoService.restartMihomoService === 'function') {
+        try {
+          console.log('[save-kernel-config] 正在重启服务...');
+          const restartResult = await context.mihomoService.restartMihomoService();
+          console.log('[save-kernel-config] 服务重启结果:', restartResult);
+          console.log('[save-kernel-config] ========== 内核配置保存完成 ==========');
+          return {
+            success: true,
+            restarted: restartResult.success,
+            message: restartResult.success ? '配置已保存并应用' : '配置已保存，但重启失败'
+          };
+        } catch (restartError) {
+          console.error('[save-kernel-config] 重启服务失败:', restartError);
+          console.error('[save-kernel-config] 错误堆栈:', restartError.stack);
+          return {
+            success: true,
+            restarted: false,
+            message: '配置已保存，但重启失败: ' + restartError.message
+          };
+        }
+      } else {
+        console.warn('[save-kernel-config] mihomoService 不可用，无法重启');
+        console.warn('[save-kernel-config] context.mihomoService:', context.mihomoService);
+        return {
+          success: true,
+          restarted: false,
+          message: '配置已保存，但需要手动重启服务'
+        };
+      }
     } catch (error) {
-      console.error('保存内核配置失败:', error);
+      console.error('[save-kernel-config] ========== 内核配置保存失败 ==========');
+      console.error('[save-kernel-config] 错误:', error);
+      console.error('[save-kernel-config] 错误堆栈:', error.stack);
       return { success: false, error: error.message };
     }
   });
@@ -1983,18 +2068,14 @@ app.whenReady().then(() => {
   // 获取 DNS 配置
   ipcMain.handle('get-dns-config', () => {
     try {
-      const configPath = path.join(userDataPath, 'config.yaml');
-      if (!fs.existsSync(configPath)) {
-        return { success: true, config: {}, hosts: {} };
-      }
-
-      const configContent = fs.readFileSync(configPath, 'utf8');
-      const config = yaml.load(configContent);
+      // 从用户设置中读取 DNS 配置
+      const userSettings = context.getUserSettings ? context.getUserSettings() : {};
+      console.log('[get-dns-config] 从用户设置读取DNS配置:', userSettings.dns);
 
       return {
         success: true,
-        config: config.dns || {},
-        hosts: config.hosts || {}
+        config: userSettings.dns || {},
+        hosts: userSettings.hosts || {}
       };
     } catch (error) {
       console.error('获取 DNS 配置失败:', error);
@@ -2003,25 +2084,70 @@ app.whenReady().then(() => {
   });
 
   // 保存 DNS 配置
-  ipcMain.handle('save-dns-config', (event, dnsConfig) => {
+  ipcMain.handle('save-dns-config', async (event, dnsConfig) => {
     try {
-      const configPath = path.join(userDataPath, 'config.yaml');
-      let config = {};
+      console.log('[save-dns-config] ========== 开始保存DNS配置 ==========');
+      console.log('[save-dns-config] 接收到DNS配置:', JSON.stringify(dnsConfig, null, 2));
 
-      if (fs.existsSync(configPath)) {
-        const configContent = fs.readFileSync(configPath, 'utf8');
-        config = yaml.load(configContent);
+      // 获取当前用户设置
+      console.log('[save-dns-config] 正在获取当前用户设置...');
+      const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
+      console.log('[save-dns-config] 当前用户设置:', JSON.stringify(currentSettings, null, 2));
+
+      // 合并新的 DNS 配置
+      const newSettings = { ...currentSettings, dns: dnsConfig };
+      console.log('[save-dns-config] 合并后的设置:', JSON.stringify(newSettings, null, 2));
+
+      // 保存到用户设置（会同时保存到数据库和 user-settings.yaml）
+      console.log('[save-dns-config] 正在保存到用户设置...');
+      if (context.updateUserSettingsRaw) {
+        try {
+          await context.updateUserSettingsRaw(newSettings);
+          console.log('[save-dns-config] 用户设置保存成功');
+        } catch (saveError) {
+          console.error('[save-dns-config] 保存用户设置失败:', saveError);
+          throw new Error('保存用户设置失败: ' + saveError.message);
+        }
+      } else {
+        console.error('[save-dns-config] updateUserSettingsRaw 函数不可用');
+        throw new Error('updateUserSettingsRaw 函数不可用');
       }
 
-      // 更新 DNS 配置
-      config.dns = dnsConfig;
-
-      // 保存配置
-      fs.writeFileSync(configPath, yaml.dump(config), 'utf8');
-
-      return { success: true };
+      // 保存成功后，重启 Mihomo 服务以应用新配置
+      console.log('[save-dns-config] DNS配置已保存到用户设置，准备重启服务');
+      if (context.mihomoService && typeof context.mihomoService.restartMihomoService === 'function') {
+        try {
+          console.log('[save-dns-config] 正在重启服务...');
+          const restartResult = await context.mihomoService.restartMihomoService();
+          console.log('[save-dns-config] 服务重启结果:', restartResult);
+          console.log('[save-dns-config] ========== DNS配置保存完成 ==========');
+          return {
+            success: true,
+            restarted: restartResult.success,
+            message: restartResult.success ? 'DNS配置已保存并应用' : 'DNS配置已保存，但重启失败'
+          };
+        } catch (restartError) {
+          console.error('[save-dns-config] 重启服务失败:', restartError);
+          console.error('[save-dns-config] 错误堆栈:', restartError.stack);
+          return {
+            success: true,
+            restarted: false,
+            message: 'DNS配置已保存，但重启失败: ' + restartError.message
+          };
+        }
+      } else {
+        console.warn('[save-dns-config] mihomoService 不可用，无法重启');
+        console.warn('[save-dns-config] context.mihomoService:', context.mihomoService);
+        return {
+          success: true,
+          restarted: false,
+          message: 'DNS配置已保存，但需要手动重启服务'
+        };
+      }
     } catch (error) {
-      console.error('保存 DNS 配置失败:', error);
+      console.error('[save-dns-config] ========== DNS配置保存失败 ==========');
+      console.error('[save-dns-config] 错误:', error);
+      console.error('[save-dns-config] 错误堆栈:', error.stack);
       return { success: false, error: error.message };
     }
   });
@@ -2561,26 +2687,17 @@ async function switchNode(nodeName) {
       return;
     }
 
-    // 准备请求参数
-    const apiUrl = `http://${state.activeApiConfig.controllerHost}:${state.activeApiConfig.controllerPort}/proxies/PROXY`;
-    const headers = {
-      'Content-Type': 'application/json'
-    };
-    
-    // 如果有secret，添加到请求头
-    if (state.activeApiConfig.secret) {
-      headers['Authorization'] = `Bearer ${state.activeApiConfig.secret}`;
-    }
-    
-    // 切换节点
-    const response = await fetch(apiUrl, {
+    // Socket 模式: 使用 fetchMihomoAPI
+    const response = await fetchMihomoAPI('/proxies/PROXY', {
       method: 'PUT',
-      headers: headers,
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({ name: nodeName })
     });
-    
+
     if (!response.ok) {
-      throw new Error(`切换节点请求失败: ${response.status} ${response.statusText}`);
+      throw new Error(`切换节点请求失败: ${response.status}`);
     }
     
     // 更新当前节点
@@ -2631,20 +2748,9 @@ async function fetchConnectionsInfo() {
       return;
     }
 
-    // 确保使用127.0.0.1作为客户端连接地址
-    const host = state.activeApiConfig.controllerHost === '0.0.0.0' ? '127.0.0.1' : state.activeApiConfig.controllerHost;
-
-    // 使用正确的API端点获取连接信息
-    const apiUrl = `http://${host}:${state.activeApiConfig.controllerPort}/connections`;
-    const headers = {};
-    
-    // 如果有secret，添加到请求头
-    if (state.activeApiConfig.secret) {
-      headers['Authorization'] = `Bearer ${state.activeApiConfig.secret}`;
-    }
-    
+    // Socket 模式: 使用 fetchMihomoAPI
     try {
-      const response = await fetch(apiUrl, { headers });
+      const response = await fetchMihomoAPI('/connections');
       if (response.ok) {
         const data = await response.json();
         
@@ -3256,19 +3362,63 @@ ipcMain.handle('run-speedtest-direct', async (event) => {
 });
 
 // 添加新的IPC处理程序 - 获取API配置信息
+// Socket 模式下不需要返回 host/port/secret
 ipcMain.handle('get-api-config', (event) => {
   try {
     return {
       success: true,
-      controllerHost: state.activeApiConfig.controllerHost,
-      controllerPort: state.activeApiConfig.controllerPort,
-      secret: state.activeApiConfig.secret
+      socketPath: state.activeApiConfig.socketPath,
+      // 保留这些字段以兼容旧代码,但设为 null
+      controllerHost: null,
+      controllerPort: null,
+      secret: ''  // socket 模式不需要密钥
     };
   } catch (error) {
     console.error('获取API配置信息失败:', error);
     return {
       success: false,
       error: '获取API配置信息失败: ' + error.message
+    };
+  }
+});
+
+// 添加新的IPC处理程序 - 通过 Socket 发送 Mihomo API 请求
+// 前端无法直接访问 Unix Socket / Named Pipe,必须通过 main process
+ipcMain.handle('request-mihomo-api', async (event, endpoint, options = {}) => {
+  try {
+    console.log(`[Socket] IPC handler - 收到API请求: ${endpoint}`);
+
+    // 调用 fetchMihomoAPI 函数
+    const response = await fetchMihomoAPI(endpoint, options);
+
+    console.log(`[Socket] IPC handler - API请求成功`);
+
+    // 解析响应数据
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (e) {
+      try {
+        data = await response.text();
+      } catch (e2) {
+        data = null;
+      }
+    }
+
+    // 返回可序列化的对象
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data
+    };
+  } catch (error) {
+    console.error(`[Socket] IPC handler - API请求失败:`, error);
+
+    // 返回可序列化的错误响应
+    return {
+      ok: false,
+      status: 500,
+      data: { error: error.message || '请求失败' }
     };
   }
 });

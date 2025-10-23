@@ -10,10 +10,12 @@ module.exports = function initMihomoService(context) {
     state,
     isDev,
     getUserSettings,
-    userDataPath
+    userDataPath,
+    dbManager
   } = context;
 
   const { applyOverrides } = require('../ipc-handlers/overrides');
+  const { getMihomoSocketPath, getMihomoControllerArg, getMihomoControllerParam, cleanupSocketFile } = require('../utils/socket-path');
   console.log('[mihomo-service] applyOverrides函数已导入:', typeof applyOverrides);
 
   const fetchWithFallback = (...args) => {
@@ -253,9 +255,19 @@ module.exports = function initMihomoService(context) {
     const result = { ...target };
 
     for (const key in source) {
-      const mustOverrideFields = ['mixed-port', 'allow-lan', 'ipv6', 'log-level', 'external-controller', 'secret'];
+      const mustOverrideFields = ['mixed-port', 'allow-lan', 'ipv6', 'log-level'];
 
-      if (mustOverrideFields.includes(key)) {
+      // external-controller 和 secret 特殊处理:
+      // - 如果用户设置中有值(非空字符串),则覆盖
+      // - 如果用户设置中是空字符串或 undefined,则删除该字段(不启动外部控制器)
+      if (key === 'external-controller' || key === 'secret') {
+        if (source[key] && source[key] !== '') {
+          result[key] = source[key];
+        } else {
+          // 删除该字段,不启动外部控制器
+          delete result[key];
+        }
+      } else if (mustOverrideFields.includes(key)) {
         result[key] = source[key];
       } else if (isObject(source[key])) {
         if (key in result) {
@@ -314,21 +326,12 @@ module.exports = function initMihomoService(context) {
       validatedConfig.tun = { enable: false };
     }
 
-    validatedConfig['external-controller'] = '0.0.0.0:9090';
-    validatedConfig['secret'] = '';
+    // 不再强制设置 external-controller 和 secret
+    // 使用用户设置或配置文件中的值
 
-    const requiredArrayFields = ['proxies', 'proxy-groups'];
-    for (const field of requiredArrayFields) {
-      if (!validatedConfig[field] || !Array.isArray(validatedConfig[field])) {
-        if (field === 'proxies' && (!validatedConfig.proxies || !Array.isArray(validatedConfig.proxies))) {
-          throw new Error(`无效的配置：缺少 ${field} 数组`);
-        }
-        if (!validatedConfig[field]) {
-          validatedConfig[field] = [];
-          console.log(`创建空的 ${field} 数组作为默认值`);
-        }
-      }
-    }
+    // 不再强制要求 proxies 和 proxy-groups 必须存在
+    // Mihomo 内核会自行验证配置文件的有效性
+    // 如果配置无效,内核启动时会报错
 
     return validatedConfig;
   }
@@ -564,12 +567,21 @@ module.exports = function initMihomoService(context) {
         console.log('已解析配置文件，包含代理节点：', configData.proxies.length);
       }
 
+      // 清理旧的 socket 文件
+      await cleanupSocketFile();
+
+      // 获取 socket 路径
+      const socketPath = getMihomoSocketPath();
+      console.log('[Socket] 使用 socket 路径:', socketPath);
+
+      // 设置 API 配置为 socket 模式
       state.activeApiConfig = {
-        controllerHost: '127.0.0.1',
-        controllerPort: '9090',
-        secret: ''
+        socketPath: socketPath,
+        controllerHost: null,  // socket 模式不使用 HTTP
+        controllerPort: null,
+        secret: ''  // socket 模式不需要密钥
       };
-      console.log('已设置API配置为固定值:', state.activeApiConfig);
+      console.log('已设置API配置为 socket 模式:', state.activeApiConfig);
 
       if (state.mihomoProcess) {
         state.mihomoProcess.kill();
@@ -611,6 +623,8 @@ module.exports = function initMihomoService(context) {
 
       const userSettings = getUserSettings();
       console.log('已读取用户设置:', userSettings);
+      console.log('[调试] userSettings["external-controller"]:', userSettings['external-controller']);
+      console.log('[调试] userSettings["external-controller"] 类型:', typeof userSettings['external-controller']);
 
       const configFilename = path.basename(configPath);
       const configContent = fs.readFileSync(configPath, 'utf8');
@@ -626,7 +640,10 @@ module.exports = function initMihomoService(context) {
       let mergedConfigContent;
 
       try {
+        console.log('[调试] deepMerge 前 config["external-controller"]:', config['external-controller']);
+        console.log('[调试] deepMerge 前 userSettings["external-controller"]:', userSettings['external-controller']);
         mergedConfig = deepMergeConfig(config, userSettings);
+        console.log('[调试] deepMerge 后 mergedConfig["external-controller"]:', mergedConfig['external-controller']);
         console.log('[startMihomo] deepMerge后proxy-groups前3个:',
           mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
 
@@ -643,8 +660,15 @@ module.exports = function initMihomoService(context) {
         mergedConfig = validateMergedConfig(mergedConfig);
         console.log('[startMihomo] validate后proxy-groups前3个:',
           mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
-        mergedConfig['external-controller'] = '0.0.0.0:9090';
-        mergedConfig['secret'] = '';
+
+        // 不再强制设置 external-controller,使用用户设置或留空
+        // 现在使用 Socket 通信,不需要 HTTP 外部控制器
+        if (mergedConfig['external-controller']) {
+          console.log('[startMihomo] 使用用户设置的 external-controller:', mergedConfig['external-controller']);
+        } else {
+          console.log('[startMihomo] 未设置 external-controller,不启动 HTTP API');
+        }
+
         mergedConfigContent = yaml.dump(mergedConfig, {
           lineWidth: -1,
           noRefs: true,
@@ -658,9 +682,8 @@ module.exports = function initMihomoService(context) {
           'mixed-port': userSettings['mixed-port'] || 7890,
           'allow-lan': !!userSettings['allow-lan'],
           'ipv6': !!userSettings['ipv6'],
-          'log-level': userSettings['log-level'] || 'info',
-          'external-controller': '0.0.0.0:9090',
-          secret: ''
+          'log-level': userSettings['log-level'] || 'info'
+          // 不再强制设置 external-controller
         };
 
         mergedConfig = safeConfig;
@@ -678,23 +701,20 @@ module.exports = function initMihomoService(context) {
       console.log(`启动Mihomo: ${binPath} -f ${overrideConfigPath}`);
       console.log(`工作目录: ${mihomoDir}`);
 
-      try {
-        if (!mergedConfig.proxies || !Array.isArray(mergedConfig.proxies)) {
-          dialog.showErrorBox('配置错误', '配置文件缺少必要的proxies字段');
-          return false;
-        }
+      // 不再在启动前检查 proxies 和 proxy-groups
+      // Mihomo 内核会自行验证配置文件的有效性
+      // 如果配置无效,内核启动时会报错
 
-        if (!mergedConfig['proxy-groups'] || !Array.isArray(mergedConfig['proxy-groups'])) {
-          dialog.showErrorBox('配置错误', '配置文件缺少必要的proxy-groups字段');
-          return false;
-        }
-      } catch (error) {
-        console.error('配置文件验证失败:', error);
-        dialog.showErrorBox('配置文件错误', `解析配置文件失败: ${error.message}`);
-        return false;
-      }
+      // 使用 -ext-ctl-pipe (Windows) 或 -ext-ctl-unix (Unix) 参数指定 Socket 路径
+      const controllerParam = getMihomoControllerParam();
+      const controllerArg = getMihomoControllerArg();
+      console.log('[Socket] Mihomo 启动参数:', controllerParam, controllerArg);
 
-      state.mihomoProcess = spawn(binPath, ['-d', mihomoDir, '-f', overrideConfigPath], {
+      state.mihomoProcess = spawn(binPath, [
+        '-d', mihomoDir,
+        '-f', overrideConfigPath,
+        controllerParam, controllerArg  // 使用 socket 而不是 HTTP 端口
+      ], {
         cwd: mihomoDir,
         env: {
           ...process.env,
@@ -705,9 +725,32 @@ module.exports = function initMihomoService(context) {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
+      // 收集 stdout 和 stderr 输出用于错误提示
+      let stdoutOutput = '';
+      let stderrOutput = '';
+      let fatalErrorDetected = false;
+
       state.mihomoProcess.stdout.on('data', (data) => {
         const logContent = data.toString();
+        stdoutOutput += logContent;  // 收集 stdout 输出
         console.log(`mihomo stdout: ${logContent}`);
+
+        // 检测 fatal 错误
+        if (!fatalErrorDetected && logContent.includes('level=fatal')) {
+          fatalErrorDetected = true;
+          const fatalMatch = logContent.match(/level=fatal msg="([^"]+)"/);
+          if (fatalMatch) {
+            const errorMessage = `内核启动失败\n\n错误详情:\n${fatalMatch[1]}`;
+            console.error(`[startMihomo] 检测到 fatal 错误: ${fatalMatch[1]}`);
+
+            // 立即发送错误信息到前端
+            if (state.mainWindow) {
+              state.mainWindow.webContents.send('mihomo-start-failed', {
+                error: errorMessage
+              });
+            }
+          }
+        }
 
         if (state.mainWindow) {
           state.mainWindow.webContents.send('mihomo-log', logContent);
@@ -717,9 +760,11 @@ module.exports = function initMihomoService(context) {
       });
 
       state.mihomoProcess.stderr.on('data', (data) => {
-        console.error(`mihomo stderr: ${data}`);
+        const errorText = data.toString();
+        stderrOutput += errorText;  // 收集 stderr 输出
+        console.error(`mihomo stderr: ${errorText}`);
         if (state.mainWindow) {
-          state.mainWindow.webContents.send('mihomo-error', data.toString());
+          state.mainWindow.webContents.send('mihomo-error', errorText);
         }
         process.stderr.write(data);
       });
@@ -731,11 +776,100 @@ module.exports = function initMihomoService(context) {
         }
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      if (state.mihomoProcess && state.mihomoProcess.exitCode !== null) {
-        console.error(`Mihomo立即退出，退出代码: ${state.mihomoProcess.exitCode}`);
-        dialog.showErrorBox('启动失败', `Mihomo启动后立即退出，退出代码: ${state.mihomoProcess.exitCode}`);
-        return false;
+      // 等待内核完全启动并验证 API 可访问
+      console.log('[startMihomo] 等待内核启动...');
+      const maxRetries = 30;
+      const retryInterval = 500;
+      let coreReady = false;
+
+      for (let i = 0; i < maxRetries; i++) {
+        // 首先检查进程是否已退出
+        if (state.mihomoProcess && state.mihomoProcess.exitCode !== null) {
+          console.error(`Mihomo在启动过程中退出，退出代码: ${state.mihomoProcess.exitCode}`);
+
+          // 构建详细的错误信息
+          let errorMessage = `内核启动失败，退出代码: ${state.mihomoProcess.exitCode}`;
+
+          // 从 stdout 中提取 fatal 错误信息
+          const fatalMatch = stdoutOutput.match(/level=fatal msg="([^"]+)"/);
+          if (fatalMatch) {
+            errorMessage += `\n\n错误详情:\n${fatalMatch[1]}`;
+          } else if (stderrOutput.trim()) {
+            errorMessage += `\n\n错误详情:\n${stderrOutput.trim()}`;
+          } else if (stdoutOutput.trim()) {
+            // 如果没有 fatal 信息,显示最后几行 stdout
+            const lines = stdoutOutput.trim().split('\n');
+            const lastLines = lines.slice(-5).join('\n');
+            errorMessage += `\n\n最后的输出:\n${lastLines}`;
+          }
+
+          // 发送错误信息到前端,使用 Toast 显示
+          if (state.mainWindow) {
+            state.mainWindow.webContents.send('mihomo-start-failed', {
+              error: errorMessage,
+              exitCode: state.mihomoProcess.exitCode
+            });
+          }
+
+          return { success: false, error: errorMessage };
+        }
+
+        // 尝试连接内核 API
+        try {
+          const axios = await context.getAxiosInstance(true);
+          await axios.get('/');
+          console.log(`[startMihomo] 内核已就绪,尝试次数: ${i + 1},耗时: ${(i + 1) * retryInterval}ms`);
+          coreReady = true;
+          break;
+        } catch (error) {
+          if (i === 0) {
+            console.log('[startMihomo] 等待内核 API 就绪...');
+          }
+
+          if (i === maxRetries - 1) {
+            console.warn(`[startMihomo] 内核 API 在 ${maxRetries} 次尝试后仍未就绪`);
+
+            // 构建详细的错误信息
+            let errorMessage = `内核启动超时: 无法连接到内核 API (尝试了 ${maxRetries} 次,共 ${(maxRetries * retryInterval) / 1000} 秒)`;
+
+            // 从 stdout 中提取 fatal 错误信息
+            const fatalMatch = stdoutOutput.match(/level=fatal msg="([^"]+)"/);
+            if (fatalMatch) {
+              errorMessage += `\n\n错误详情:\n${fatalMatch[1]}`;
+            } else if (stderrOutput.trim()) {
+              errorMessage += `\n\n内核错误输出:\n${stderrOutput.trim()}`;
+            } else if (stdoutOutput.trim()) {
+              // 如果没有 fatal 信息,显示最后几行 stdout
+              const lines = stdoutOutput.trim().split('\n');
+              const lastLines = lines.slice(-5).join('\n');
+              errorMessage += `\n\n最后的输出:\n${lastLines}`;
+            } else {
+              errorMessage += `\n\n可能原因:\n- 内核未成功创建 Socket/Named Pipe\n- 配置文件有误\n- 端口被占用`;
+            }
+
+            // 发送错误信息到前端
+            if (state.mainWindow) {
+              state.mainWindow.webContents.send('mihomo-start-failed', {
+                error: errorMessage
+              });
+            }
+
+            // 停止内核进程
+            if (state.mihomoProcess) {
+              state.mihomoProcess.kill();
+              state.mihomoProcess = null;
+            }
+
+            return { success: false, error: errorMessage };
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, retryInterval));
+        }
+      }
+
+      if (!coreReady) {
+        const errorMessage = '内核启动失败: 未知错误';
+        return { success: false, error: errorMessage };
       }
 
       try {
@@ -755,11 +889,20 @@ module.exports = function initMihomoService(context) {
         }
       }
 
-      return true;
+      return { success: true };
     } catch (error) {
       console.error('启动Mihomo时出错:', error);
-      dialog.showErrorBox('启动失败', `无法启动Mihomo: ${error.message}`);
-      return false;
+
+      const errorMessage = `无法启动Mihomo: ${error.message}`;
+
+      // 发送错误信息到前端,使用 Toast 显示
+      if (state.mainWindow) {
+        state.mainWindow.webContents.send('mihomo-start-failed', {
+          error: errorMessage
+        });
+      }
+
+      return { success: false, error: errorMessage };
     }
   }
 

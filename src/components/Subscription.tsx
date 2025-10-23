@@ -300,11 +300,11 @@ export default function SubscriptionManager() {
       
       // 启动新的服务
       const result = await window.electronAPI.startMihomo(configPath);
-      
-      if (result) {
+
+      if (result && result.success) {
         showToast('成功', '成功切换配置文件', 'success');
         setActiveConfig(configPath);
-        
+
         // 关键修改：等待服务完全启动后获取节点信息
         setTimeout(async () => {
           try {
@@ -316,10 +316,10 @@ export default function SubscriptionManager() {
                 // 找到当前选中的节点
                 const selectedNode = Object.values(proxies.proxies || {})
                   .find((proxy: any) => proxy.selected) as any;
-                
+
                 if (selectedNode?.name) {
                   console.log('当前节点已更新为:', selectedNode.name);
-                  
+
                   // 通知其他组件配置已切换 - 使用已有的notifyNodeChanged方法
                   await window.electronAPI.notifyNodeChanged(selectedNode.name);
                 }
@@ -330,7 +330,8 @@ export default function SubscriptionManager() {
           }
         }, 2000); // 等待2秒让服务完全启动
       } else {
-        showToast('错误', '切换配置文件失败', 'error');
+        const errorMsg = result?.error || '切换配置文件失败';
+        showToast('错误', errorMsg, 'error');
       }
     } catch (error) {
       console.error('切换配置文件失败:', error);

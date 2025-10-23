@@ -72,14 +72,22 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
           if (config['use-hosts'] && window.electronAPI?.saveHostsConfig) {
             await window.electronAPI.saveHostsConfig(hostsConfig.hosts || []);
           }
-          showToast({ message: '保存成功，需要重启内核才能生效', type: 'success' });
+          if (result.restarted) {
+            showToast({ message: 'DNS配置保存成功，内核已自动重启', type: 'success' });
+          } else {
+            showToast({ message: result.message || 'DNS配置保存成功，但需要手动重启内核', type: 'warning' });
+          }
         } else {
-          showToast({ message: '保存失败: ' + result.error, type: 'error' });
+          const errorMsg = 'DNS配置保存失败: ' + result.error;
+          showToast({ message: errorMsg, type: 'error' });
+          throw new Error(errorMsg);
         }
       }
     } catch (error) {
       console.error('保存 DNS 配置失败:', error);
-      showToast({ message: '保存失败: ' + error, type: 'error' });
+      const errorMsg = 'DNS配置保存失败: ' + error;
+      showToast({ message: errorMsg, type: 'error' });
+      throw error;
     } finally {
       setSaving(false);
     }
