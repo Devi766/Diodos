@@ -130,7 +130,7 @@
 
   /* macOS 深色模式下的卡片和菜单背景使用半透明 */
   body.platform-darwin:not(.appearance-solid).theme-dark .dark\:bg-\[\#2a2a2a\] {
-    background-color: rgba(42, 42, 42, 0.65) !important;
+    background-color: rgb(1 1 1 / 18%) !important;
   }
 
   /* macOS 下为弹框和下拉菜单添加高斯模糊 */
