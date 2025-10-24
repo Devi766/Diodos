@@ -26,11 +26,12 @@ export default function ToolsPage() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mediaTestDialogOpen, setMediaTestDialogOpen] = useState(false);
   const [batchTestDialogOpen, setBatchTestDialogOpen] = useState(false);
-  
+  const [isMacOS, setIsMacOS] = useState(false);
+
   // 获取后台测速状态
-  const { 
-    isBackgroundTesting, 
-    currentNodeName: bgTestNodeName, 
+  const {
+    isBackgroundTesting,
+    currentNodeName: bgTestNodeName,
     progress: bgTestProgress,
     testingPhase: bgTestPhase,
     navigateToTest,
@@ -180,9 +181,15 @@ export default function ToolsPage() {
     }
   };
 
-  // 在组件加载时获取当前节点信息
+  // 在组件加载时获取当前节点信息和检测平台
   useEffect(() => {
     fetchCurrentNode();
+
+    // 检测平台
+    if (typeof navigator !== 'undefined') {
+      const platform = navigator.platform.toLowerCase();
+      setIsMacOS(platform.includes('mac'));
+    }
   }, []);
 
   // 在组件卸载时移除事件监听
@@ -485,53 +492,59 @@ export default function ToolsPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
-              <div className="flex items-center space-x-3 mb-2">
-                <NetworkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                <CardTitle>EnableLoopback</CardTitle>
-              </div>
-              <CardDescription className="text-gray-500 dark:text-gray-400">
-                解决 Windows UWP 应用网络回环问题
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                此工具可以为UWP应用启用网络回环功能，让UWP应用能够连接到本地代理服务器。
-              </p>
-              <Button 
-                onClick={openEnableLoopbackTool}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-                variant="default"
-              >
-                启动工具
-              </Button>
-            </CardContent>
-          </Card>
+          {/* EnableLoopback 工具 - 仅在 Windows 上显示 */}
+          {!isMacOS && (
+            <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+              <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
+                <div className="flex items-center space-x-3 mb-2">
+                  <NetworkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                  <CardTitle>EnableLoopback</CardTitle>
+                </div>
+                <CardDescription className="text-gray-500 dark:text-gray-400">
+                  解决 Windows UWP 应用网络回环问题
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  此工具可以为UWP应用启用网络回环功能，让UWP应用能够连接到本地代理服务器。
+                </p>
+                <Button
+                  onClick={openEnableLoopbackTool}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                  variant="default"
+                >
+                  启动工具
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
-          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
-              <div className="flex items-center space-x-3 mb-2">
-                <Gauge className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                <CardTitle>网络测速</CardTitle>
-              </div>
-              <CardDescription className="text-gray-500 dark:text-gray-400">
-                测试网络连接速度和延迟
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                使用Speedtest CLI测试您的网络下载和上传速度以及延迟。
-              </p>
-              <Button 
-                onClick={openSpeedtestDialog}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-                variant="default"
-              >
-                开始测速
-              </Button>
-            </CardContent>
-          </Card>
+          {/* 网络测速工具 - 仅在 Windows 上显示 */}
+          {!isMacOS && (
+            <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+              <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
+                <div className="flex items-center space-x-3 mb-2">
+                  <Gauge className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                  <CardTitle>网络测速</CardTitle>
+                </div>
+                <CardDescription className="text-gray-500 dark:text-gray-400">
+                  测试网络连接速度和延迟
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  使用Speedtest CLI测试您的网络下载和上传速度以及延迟。
+                </p>
+                <Button
+                  onClick={openSpeedtestDialog}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                  variant="default"
+                >
+                  开始测速
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="overflow-hidden hover:shadow-sm transition-shadow">
             <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
