@@ -104,8 +104,17 @@
     overflow: hidden;
   }
 
-  /* macOS 默认使用透明背景（acrylic 和 dynamic 模式），让 Electron vibrancy 生效 */
+  /* macOS 默认使用半透明背景（acrylic 模式），配合 vibrancy 模糊效果 */
   body.platform-darwin {
+    background: rgba(240, 242, 245, 0.75) !important;
+  }
+
+  body.platform-darwin.theme-dark {
+    background: rgba(20, 22, 28, 0.75) !important;
+  }
+
+  /* macOS dynamic 模式使用完全透明背景，让毛玻璃效果完全显示 */
+  body.platform-darwin.appearance-dynamic {
     background: transparent !important;
   }
 
