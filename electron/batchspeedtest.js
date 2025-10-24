@@ -465,8 +465,7 @@ function determineUdpType(results, successCount) {
   
   // 如果只有部分服务器响应，则可能是限制型NAT
   if (successCount > 0 && successCount < results.length) {
-    // 分析响应模式，确定是端口限制型还是对称型
-    // TODO: 更精确的NAT类型分析需要更复杂的逻辑
+    // 根据响应模式确定NAT类型
     if (successCount >= results.length / 2) {
       return 'PortRestrictedCone';
     } else {

@@ -11,7 +11,9 @@ import {
   MixerHorizontalIcon,
   PlusIcon,
   CheckCircledIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  ViewVerticalIcon,
+  ViewHorizontalIcon
 } from '@radix-ui/react-icons';
 import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
@@ -139,6 +141,14 @@ export default function ProxyNodes() {
   }
   
   const [currentMode, setCurrentMode] = useState<string>('rule');
+  const [layoutMode, setLayoutMode] = useState<'single' | 'double'>(() => {
+    try {
+      const saved = localStorage.getItem('proxyGroupsLayoutMode');
+      return (saved === 'double' ? 'double' : 'single') as 'single' | 'double';
+    } catch {
+      return 'single';
+    }
+  });
   let mihomoAPI = useMihomoAPI();
 
   // 获取节点的动画高度，用于折叠/展开动画
@@ -203,41 +213,22 @@ export default function ProxyNodes() {
 
   // 过滤节点组
   const filteredGroups = groups.map(group => {
-    // 保持原始顺序，只过滤不排序
-    const filteredNodes = group.nodes.filter(node => 
+    const filteredNodes = group.nodes.filter(node =>
       node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       node.server.toLowerCase().includes(searchTerm.toLowerCase())
     );
     return { ...group, nodes: filteredNodes };
   }).filter(group => group.nodes.length > 0);
-  
-  // 注意：这里的groups已经是按配置文件顺序排列的，因为在fetchProxies中设置了groupsData的顺序
 
-  // 收藏的节点，同样保持原始顺序
-  const favoriteFilteredGroups = (() => {
-    // 1. 检查哪些收藏的节点当前已经不存在
-    const existingNodes = new Set<string>();
-    groups.forEach(group => {
-      group.nodes.forEach(node => {
-        existingNodes.add(node.name);
-      });
-    });
-    
-    // 2. 生成已下架的收藏节点列表，但不输出警告信息
-    const missingFavorites = Array.from(favoriteNodes).filter(name => !existingNodes.has(name));
-    // 删除控制台警告，避免频繁的日志输出
-    // 保留这些节点而不进行任何操作，因为它们可能是临时性的网络问题
-    
-    // 3. 按原来的逻辑过滤实际存在的节点
-    return groups.map(group => {
-    const favoriteNodesList = group.nodes.filter(node => 
+  // 收藏的节点过滤
+  const favoriteFilteredGroups = groups.map(group => {
+    const favoriteNodesList = group.nodes.filter(node =>
       (favoriteNodes.has(node.name)) &&
       (node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
        node.server.toLowerCase().includes(searchTerm.toLowerCase()))
     );
     return { ...group, nodes: favoriteNodesList };
   }).filter(group => group.nodes.length > 0);
-  })();
 
   // 获取节点列表
   const fetchProxies = async () => {
@@ -862,11 +853,6 @@ export default function ProxyNodes() {
     setCollapsedGroups(prev => {
       const newSet = new Set(prev);
       
-      // 检查是否是收藏节点组（以"fav-"开头）
-      const isFavGroup = groupName.startsWith('fav-');
-      // 如果是收藏节点组，获取真实的组名（移除"fav-"前缀）
-      const baseGroupName = isFavGroup ? groupName.substring(4) : groupName;
-      
       if (newSet.has(groupName)) {
         newSet.delete(groupName);
         console.log(`展开节点组: ${groupName}`);
@@ -924,14 +910,23 @@ export default function ProxyNodes() {
   };
 
   // 根据节点名称长度计算最合适的列数
-  const calculateOptimalColumns = (nodes: ProxyNode[]) => {
-    if (nodes.length === 0) return 6; // 默认6列
-    
+  const calculateOptimalColumns = (nodes: ProxyNode[], isDoubleLayout: boolean = false) => {
+    if (nodes.length === 0) return isDoubleLayout ? 3 : 6; // 双列模式默认3列,单列模式默认6列
+
     // 计算节点名称的平均长度
     const totalLength = nodes.reduce((sum, node) => sum + node.name.length, 0);
     const averageLength = totalLength / nodes.length;
-    
-    // 根据平均长度设置列数
+
+    // 双列模式下减少列数
+    if (isDoubleLayout) {
+      if (averageLength > 25) return 1; // 超长节点名
+      if (averageLength > 20) return 2; // 长节点名
+      if (averageLength > 15) return 2; // 中等长度节点名
+      if (averageLength > 10) return 3; // 短节点名
+      return 3; // 很短的节点名
+    }
+
+    // 单列模式保持原有逻辑
     if (averageLength > 25) return 2; // 超长节点名
     if (averageLength > 20) return 3; // 长节点名
     if (averageLength > 15) return 4; // 中等长度节点名
@@ -941,33 +936,33 @@ export default function ProxyNodes() {
 
   // 重构GroupNodes组件，简化渲染逻辑
   const GroupNodes: React.FC<{
-    group: ProxyGroup; 
+    group: ProxyGroup;
     collapsedGroups: Set<string>;
     handleTestNode: (nodeName: string) => Promise<void>;
     handleNodeSelect: (nodeName: string, groupName: string) => Promise<void>;
     handleToggleFavorite: (nodeName: string) => void;
     testingNodes: Set<string>;
     favoriteNodes: Set<string>;
-  }> = ({ 
-    group, 
-    collapsedGroups, 
-    handleTestNode, 
-    handleNodeSelect, 
+    layoutMode: 'single' | 'double';
+  }> = ({
+    group,
+    collapsedGroups,
+    handleTestNode,
+    handleNodeSelect,
     handleToggleFavorite,
     testingNodes,
-    favoriteNodes 
+    favoriteNodes,
+    layoutMode
   }) => {
-    // 简化状态管理，设置为true表示始终加载内容，确保内容可见
-    const [contentLoaded, setContentLoaded] = useState(true);
     const isCollapsed = collapsedGroups.has(group.name);
-    
+
     // 添加监听折叠状态的useEffect
     useEffect(() => {
       console.log(`组 ${group.name} 折叠状态更新: ${isCollapsed ? '已折叠' : '已展开'}`);
     }, [group.name, isCollapsed]);
-    
-    // 根据节点名称长度计算最佳列数
-    const optimalColumns = calculateOptimalColumns(group.nodes);
+
+    // 根据节点名称长度计算最佳列数,传入布局模式
+    const optimalColumns = calculateOptimalColumns(group.nodes, layoutMode === 'double');
     
     // 内部节点卡片组件 - 使用useCallback记忆化以避免不必要的重新渲染
     const NodeCardInner = useCallback(({ node, group }: { node: ProxyNode, group: ProxyGroup }) => {
@@ -979,7 +974,7 @@ export default function ProxyNodes() {
         <div
           className={`relative rounded-lg overflow-hidden transition-all cursor-pointer p-3 border ${
             isSelected
-              ? 'border-blue-300 dark:border-blue-500 bg-blue-100/90 dark:bg-blue-500/15 shadow-[0_24px_40px_-28px_rgba(37,99,235,0.55)]'
+              ? 'border-blue-300 dark:border-blue-500 bg-blue-100/90 dark:bg-blue-500/15'
               : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a]'
           }`}
           onClick={() => handleNodeSelect(node.name, group.name)}
@@ -1054,7 +1049,7 @@ export default function ProxyNodes() {
         return (
           <div style={{ height: 'auto', width: '100%', minHeight: '400px' }}>
             <AutoSizer>
-              {({ height, width }: { height: number, width: number }) => {
+              {({ width }: { height: number, width: number }) => {
                 // 计算每个单元格的宽度和高度
                 const columnCount = Math.min(optimalColumns, 6);
                 const columnWidth = width / columnCount;
@@ -1100,23 +1095,41 @@ export default function ProxyNodes() {
       
       // 对于少量节点使用传统的网格布局
       let gridClass = "";
-      switch(optimalColumns) {
-        case 2:
-          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
-          break;
-        case 3:
-          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2 mt-3";
-          break;
-        case 4:
-          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
-          break;
-        case 5:
-          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mt-3";
-          break;
-        case 6:
-        default:
-          gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2 mt-3";
-          break;
+
+      // 双列布局模式下使用更少的列数
+      if (layoutMode === 'double') {
+        switch(optimalColumns) {
+          case 1:
+            gridClass = "grid grid-cols-1 gap-2 mt-3";
+            break;
+          case 2:
+            gridClass = "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
+            break;
+          case 3:
+          default:
+            gridClass = "grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-2 mt-3";
+            break;
+        }
+      } else {
+        // 单列布局模式保持原有逻辑
+        switch(optimalColumns) {
+          case 2:
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
+            break;
+          case 3:
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2 mt-3";
+            break;
+          case 4:
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
+            break;
+          case 5:
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mt-3";
+            break;
+          case 6:
+          default:
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2 mt-3";
+            break;
+        }
       }
       
       return (
@@ -1428,7 +1441,7 @@ export default function ProxyNodes() {
         </div>
 
         <Tabs value={currentMode} onValueChange={handleModeChange} className="w-full md:w-auto">
-          <TabsList className="flex h-9 w-full items-center justify-between gap-2 rounded-full border border-blue-200 bg-blue-50/80 p-1 transition dark:border-blue-500/40 dark:bg-blue-500/10 md:w-auto">
+          <TabsList className="flex h-9 w-full items-center justify-between gap-2 rounded-full border border-slate-200 bg-slate-50/80 p-1 transition dark:border-slate-700/40 dark:bg-slate-800/10 md:w-auto">
             <TabsTrigger
               value="rule"
               className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
@@ -1495,7 +1508,7 @@ export default function ProxyNodes() {
                   onClick={() => setActiveTab('all')}
                   className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
                     activeTab === 'all'
-                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      ? 'bg-slate-200 text-slate-700 shadow-sm dark:bg-slate-700 dark:text-slate-200'
                       : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
                   title="所有节点"
@@ -1507,7 +1520,7 @@ export default function ProxyNodes() {
                   onClick={() => setActiveTab('favorites')}
                   className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:focus:ring-slate-700/50 ${
                     activeTab === 'favorites'
-                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      ? 'bg-slate-200 text-slate-700 shadow-sm dark:bg-slate-700 dark:text-slate-200'
                       : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
                   title="收藏节点"
@@ -1519,8 +1532,24 @@ export default function ProxyNodes() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => {
+                    const newMode = layoutMode === 'single' ? 'double' : 'single';
+                    setLayoutMode(newMode);
+                    try {
+                      localStorage.setItem('proxyGroupsLayoutMode', newMode);
+                    } catch (error) {
+                      console.error('保存布局模式失败:', error);
+                    }
+                  }}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
+                  title={layoutMode === 'single' ? "切换到双列布局" : "切换到单列布局"}
+                >
+                  {layoutMode === 'single' ? <ViewHorizontalIcon className="h-5 w-5" /> : <ViewVerticalIcon className="h-5 w-5" />}
+                </button>
+                <button
+                  type="button"
                   onClick={fetchProxies}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
                   title="刷新列表"
                 >
                   <ReloadIcon className="h-5 w-5" />
@@ -1539,18 +1568,14 @@ export default function ProxyNodes() {
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className={layoutMode === 'double' ? 'columns-2 gap-2' : 'space-y-2'}>
         {currentMode === 'direct' ? (
           <DirectModeMessage />
         ) : displayGroups.length > 0 ? (
-          <div className="space-y-3">
+          <>
             {displayGroups.map((group) => {
               const collapseKey = group.name;
               const isCollapsed = collapsedGroups.has(collapseKey);
-              const effectiveCollapsed = new Set(collapsedGroups);
-              if (!isCollapsed) {
-                effectiveCollapsed.delete(collapseKey);
-              }
 
               const groupStatus = group.type.toUpperCase();
               const nodeCount = group.nodes.length;
@@ -1559,7 +1584,7 @@ export default function ProxyNodes() {
               return (
                 <div
                   key={`${group.name}-${group.type}`}
-                  className="group-panel rounded-2xl bg-white px-4 py-3 shadow-sm transition dark:bg-[#2a2a2a] overflow-hidden"
+                  className={`group-panel rounded-2xl bg-white px-4 py-2 shadow-sm transition dark:bg-[#2a2a2a] overflow-hidden ${layoutMode === 'double' ? 'break-inside-avoid mb-2' : ''}`}
                 >
                   <div className="group-header flex w-full items-center justify-between rounded-xl py-1.5">
                     <button
@@ -1602,24 +1627,26 @@ export default function ProxyNodes() {
                   </div>
 
                   <div
-                    className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-300 ease-in-out overflow-hidden ${
-                      isCollapsed ? 'max-h-0 opacity-0 pt-0' : 'max-h-[10000px] opacity-100 pt-3'
+                    className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-150 ease-out overflow-hidden ${
+                      isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[1500px] opacity-100 pt-3'
                     }`}
+                    style={{ willChange: isCollapsed ? 'auto' : 'max-height, opacity' }}
                   >
                     <GroupNodes
                       group={group}
-                      collapsedGroups={effectiveCollapsed}
+                      collapsedGroups={collapsedGroups}
                       handleTestNode={handleTestNode}
                       handleNodeSelect={handleNodeSelect}
                       handleToggleFavorite={handleToggleFavorite}
                       testingNodes={testingNodes}
                       favoriteNodes={favoriteNodes}
+                      layoutMode={layoutMode}
                     />
                   </div>
                 </div>
               );
             })}
-          </div>
+          </>
         ) : (
           <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">暂无匹配的节点</div>
         )}

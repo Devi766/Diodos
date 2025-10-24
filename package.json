@@ -9,11 +9,13 @@
     "start": "next start",
     "lint": "next lint",
     "postinstall": "electron-builder install-app-deps",
+    "prepare": "node scripts/prepare.mjs",
+    "prebuild": "node clean.js",
     "electron:dev": "concurrently \"cross-env npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron . --js-flags='--expose-gc'\"",
     "electron": "electron . --js-flags='--expose-gc'",
-    "electron:build": "next build --no-lint && electron-builder",
-    "electron:build:ignore-ts": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_IGNORE_TYPE_ERROR=1 && next build && electron-builder",
-    "electron:build:prod": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder",
+    "electron:build": "node clean.js && next build --no-lint && electron-builder",
+    "electron:build:ignore-ts": "node clean.js && set NEXT_TELEMETRY_DISABLED=1 && set NEXT_IGNORE_TYPE_ERROR=1 && next build && electron-builder",
+    "electron:build:prod": "node clean.js && set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder",
     "clean": "node clean.js",
     "clean:build": "node clean.js && next build --no-lint && electron-builder",
     "clean:build:prod": "node clean.js && set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder"
@@ -79,49 +81,19 @@
     "@types/react-dom": "^19",
     "@types/react-virtualized-auto-sizer": "^1.0.4",
     "@types/react-window": "^1.8.8",
+    "adm-zip": "^0.5.10",
     "autoprefixer": "^10.4.15",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^35.1.4",
     "electron-builder": "^26.0.12",
     "electron-rebuild": "^3.2.9",
-    "ref-napi": "^3.0.3",
-    "ref-struct-di": "^1.1.0",
     "file-loader": "^6.2.0",
     "postcss": "^8.4.31",
+    "ref-napi": "^3.0.3",
+    "ref-struct-di": "^1.1.0",
     "tailwindcss": "^3.3.0",
     "typescript": "^5",
     "wait-on": "^8.0.3"
-  },
-  "build": {
-    "appId": "com.flyclash.app",
-    "productName": "FlyClash",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "electron/**/*",
-      "out/**/*",
-      "node_modules/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "cores",
-        "to": "cores"
-      },
-      {
-        "from": "public",
-        "to": "public"
-      },
-      {
-        "from": "tools",
-        "to": "tools"
-      }
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "public/logo.png"
-    }
   }
 }

@@ -209,7 +209,7 @@ export default function Layout({ children }: LayoutProps) {
         {/* Sidebar - Desktop */}
         <aside
           className={classNames(
-            'hidden md:flex h-full flex-col shrink-0 border-r border-white/15 px-0 transition-[width] duration-300 ease-out backdrop-blur-xl dark:border-white/10',
+            'hidden md:flex h-full flex-col shrink-0 px-0 transition-[width] duration-300 ease-out',
             sidebarCollapsed ? 'w-[70px]' : 'w-[220px]'
           )}
         >

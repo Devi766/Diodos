@@ -74,9 +74,22 @@ class DatabaseManager {
       )
     `);
 
+    // 流量历史表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS traffic_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL UNIQUE,
+        upload INTEGER NOT NULL DEFAULT 0,
+        download INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
     // 创建索引
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_file_path ON subscriptions(file_path)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_subscription_info_subscription_id ON subscription_info(subscription_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_traffic_history_date ON traffic_history(date)`);
 
     // 添加 overrides 列（兼容已有数据库）
     try {
@@ -416,6 +429,93 @@ class DatabaseManager {
       default:
         return serialized;
     }
+  }
+
+  /**
+   * 更新今日流量数据
+   * @param {number} upload - 上传流量(字节)
+   * @param {number} download - 下载流量(字节)
+   */
+  updateTodayTraffic(upload, download) {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const now = Date.now();
+
+    const stmt = this.db.prepare(`
+      INSERT INTO traffic_history (date, upload, download, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(date) DO UPDATE SET
+        upload = upload + excluded.upload,
+        download = download + excluded.download,
+        updated_at = excluded.updated_at
+    `);
+
+    stmt.run(today, upload, download, now, now);
+  }
+
+  /**
+   * 获取指定日期的流量数据
+   * @param {string} date - 日期 (YYYY-MM-DD)
+   */
+  getTrafficByDate(date) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM traffic_history WHERE date = ?
+    `);
+    return stmt.get(date);
+  }
+
+  /**
+   * 获取指定月份的流量数据
+   * @param {string} yearMonth - 年月 (YYYY-MM)
+   */
+  getTrafficByMonth(yearMonth) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM traffic_history
+      WHERE date LIKE ?
+      ORDER BY date ASC
+    `);
+    return stmt.all(`${yearMonth}%`);
+  }
+
+  /**
+   * 获取指定年份的流量数据(按月汇总)
+   * @param {string} year - 年份 (YYYY)
+   */
+  getTrafficByYear(year) {
+    const stmt = this.db.prepare(`
+      SELECT
+        substr(date, 1, 7) as month,
+        SUM(upload) as upload,
+        SUM(download) as download
+      FROM traffic_history
+      WHERE date LIKE ?
+      GROUP BY month
+      ORDER BY month ASC
+    `);
+    return stmt.all(`${year}%`);
+  }
+
+  /**
+   * 获取今日流量数据
+   */
+  getTodayTraffic() {
+    const today = new Date().toISOString().split('T')[0];
+    return this.getTrafficByDate(today) || { upload: 0, download: 0 };
+  }
+
+  /**
+   * 获取本月流量数据
+   */
+  getThisMonthTraffic() {
+    const yearMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+    return this.getTrafficByMonth(yearMonth);
+  }
+
+  /**
+   * 获取本年流量数据
+   */
+  getThisYearTraffic() {
+    const year = new Date().getFullYear().toString();
+    return this.getTrafficByYear(year);
   }
 }
 

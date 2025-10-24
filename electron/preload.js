@@ -479,6 +479,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Hosts 配置
   saveHostsConfig: (hosts) => ipcRenderer.invoke('save-hosts-config', hosts),
+
+  // 流量历史
+  getTrafficToday: () => ipcRenderer.invoke('traffic-history:get-today'),
+  getTrafficMonth: (yearMonth) => ipcRenderer.invoke('traffic-history:get-month', yearMonth),
+  getTrafficYear: (year) => ipcRenderer.invoke('traffic-history:get-year', year),
+  getTrafficByDate: (date) => ipcRenderer.invoke('traffic-history:get-by-date', date),
 });
 
 // 移除重复的事件监听器

@@ -1115,12 +1115,7 @@ export default function SubscriptionManager() {
                   }}
                   onContextMenu={(e) => handleContextMenu(e, sub)}
                 >
-                  {/* 活跃标志 - 更简洁的设计 */}
-                  {activeConfig === sub.path && (
-                    <div className="absolute -top-2 -right-2 bg-blue-500 text-white p-1 rounded-full shadow-sm">
-                      <CheckIcon className="w-3 h-3" />
-                    </div>
-                  )}
+                  {/* 活跃标志 - 移除,使用文字标签代替 */}
 
                   {/* 操作按钮 - 正常状态半透明，悬浮时完全显示 */}
                   <div className="absolute top-2 right-2.5 flex gap-0 opacity-70 group-hover:opacity-100 transition-opacity">

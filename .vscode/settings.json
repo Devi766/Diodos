@@ -1,0 +1,22 @@
+{
+  "files.watcherExclude": {
+    "**/dist/**": true,
+    "**/release/**": true,
+    "**/out/**": true,
+    "**/node_modules/**": true,
+    "**/.next/**": true
+  },
+  "files.exclude": {
+    "**/dist": false,
+    "**/release": false,
+    "**/out": false
+  },
+  "search.exclude": {
+    "**/dist": true,
+    "**/release": true,
+    "**/out": true,
+    "**/node_modules": true,
+    "**/.next": true
+  }
+}
+

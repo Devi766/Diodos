@@ -1,0 +1,107 @@
+appId: com.flyclash.app
+productName: FlyClash
+directories:
+  output: dist
+files:
+  - electron/**/*
+  - out/**/*
+  - '!out/cache/**/*'
+  - '!out/trace/**/*'
+  - node_modules/**/*
+  - '!node_modules/.cache/**/*'
+  - '!node_modules/@types/**/*'
+  - '!node_modules/puppeteer/.local-chromium/**/*'
+  - '!node_modules/puppeteer/.local-firefox/**/*'
+  - '!node_modules/@puppeteer/browsers/**/*'
+  - '!node_modules/electron/**/*'
+  - '!node_modules/electron-builder/**/*'
+  - '!node_modules/electron-rebuild/**/*'
+  - '!node_modules/@electron/rebuild/**/*'
+  - '!node_modules/concurrently/**/*'
+  - '!node_modules/wait-on/**/*'
+  - '!node_modules/cross-env/**/*'
+  - '!node_modules/autoprefixer/**/*'
+  - '!node_modules/postcss/**/*'
+  - '!node_modules/tailwindcss/**/*'
+  - '!node_modules/@tailwindcss/**/*'
+  - '!node_modules/typescript/**/*'
+  - '!node_modules/file-loader/**/*'
+  - '!node_modules/next/dist/compiled/**/*.wasm'
+  - '!node_modules/next/dist/compiled/webpack/**/*'
+  - '!node_modules/next/dist/compiled/babel/**/*'
+  - '!node_modules/next/dist/compiled/terser/**/*'
+  - '!node_modules/next/dist/build/**/*'
+  - '!node_modules/next/dist/cli/**/*'
+  - '!node_modules/next/dist/telemetry/**/*'
+  - '!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme,LICENSE,license}'
+  - '!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples,docs,doc}'
+  - '!**/node_modules/*.d.ts'
+  - '!**/node_modules/.bin'
+  - '!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}'
+  - '!**/*.{ts,tsx,jsx}'
+  - '!**/*.map'
+  - '!.editorconfig'
+  - '!**/._*'
+  - '!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}'
+  - '!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}'
+  - '!**/{appveyor.yml,.travis.yml,circle.yml}'
+  - '!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}'
+  - '!**/{tsconfig.json,package-lock.json}'
+  - package.json
+extraResources:
+  - from: cores
+    to: cores
+    filter:
+      - '**/*'
+  - from: public
+    to: public
+    filter:
+      - '*.png'
+      - '*.ico'
+      - '*.svg'
+      - '!node-v*.msi'
+  - from: tools
+    to: tools
+    filter:
+      - '**/*'
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+compression: maximum
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
+        - arm64
+    - target: 7z
+      arch:
+        - x64
+        - ia32
+        - arm64
+  icon: public/logo.png
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+linux:
+  target:
+    - deb
+    - rpm
+    - AppImage
+  category: Network
+  icon: public/logo.png
+  artifactName: ${productName}-${version}-${arch}.${ext}
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.utilities
+  icon: public/logo.png
+  artifactName: ${productName}-${version}-${arch}.${ext}
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+

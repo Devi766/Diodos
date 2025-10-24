@@ -35,17 +35,26 @@ export function useDashboardCards() {
   // 更新卡片顺序
   const reorderCards = useCallback(
     (startIndex: number, endIndex: number) => {
-      const result = Array.from(cards);
+      // 只对已启用的卡片进行排序
+      const enabledCardsList = cards
+        .filter((card) => card.enabled)
+        .sort((a, b) => a.order - b.order);
+
+      const result = Array.from(enabledCardsList);
       const [removed] = result.splice(startIndex, 1);
       result.splice(endIndex, 0, removed);
 
       // 更新order字段
-      const reorderedCards = result.map((card, index) => ({
+      const reorderedEnabledCards = result.map((card, index) => ({
         ...card,
         order: index,
       }));
 
-      saveCards(reorderedCards);
+      // 合并未启用的卡片
+      const disabledCards = cards.filter((card) => !card.enabled);
+      const allCards = [...reorderedEnabledCards, ...disabledCards];
+
+      saveCards(allCards);
     },
     [cards, saveCards],
   );
@@ -65,7 +74,7 @@ export function useDashboardCards() {
   const addCard = useCallback(
     (card: DashboardCard) => {
       const maxOrder = Math.max(...cards.map((c) => c.order), -1);
-      const newCard = { ...card, order: maxOrder + 1 };
+      const newCard = { ...card, enabled: true, order: maxOrder + 1 };
       saveCards([...cards, newCard]);
     },
     [cards, saveCards],

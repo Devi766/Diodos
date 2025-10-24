@@ -26,6 +26,8 @@ import { cn } from '@/lib/utils';
 
 // 卡片组件导入
 import { SystemProxyCard, TunModeCard, ProxyModeCard } from '@/components/dashboard-cards/ControlCards';
+import { TrafficRankingCard } from '@/components/dashboard-cards/TrafficRankingCard';
+import { TrafficStatisticsCard } from '@/components/dashboard-cards/TrafficStatisticsCard';
 
 interface CustomizableDashboardProps {
   // Metrics卡片数据
@@ -59,6 +61,30 @@ interface CustomizableDashboardProps {
     downSpeed: number;
   }>;
 
+  // 连接数据 (用于流量排行和流量统计)
+  connections: Array<{
+    id: string;
+    metadata: {
+      network: string;
+      type: string;
+      sourceIP: string;
+      destinationIP: string;
+      sourcePort: string;
+      destinationPort: string;
+      host: string;
+      process: string;
+      processPath: string;
+    };
+    upload: number;
+    download: number;
+    start: string;
+    chains: string[];
+    rule: string;
+    rulePayload: string;
+  }>;
+  uploadTotal: number;
+  downloadTotal: number;
+
   // 编辑模式
   isEditMode: boolean;
   onEditModeChange: (enabled: boolean) => void;
@@ -86,6 +112,9 @@ export function CustomizableDashboard({
   isModeUpdating,
   onModeSwitch,
   trafficSamples,
+  connections,
+  uploadTotal,
+  downloadTotal,
   isEditMode,
   onEditModeChange,
   onAddCard,
@@ -205,10 +234,18 @@ export function CustomizableDashboard({
 
       case 'traffic-chart':
         return (
-          <div className="space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+          <div className="flex h-[260px] flex-col space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
             <TrafficChart samples={trafficSamples} />
           </div>
         );
+
+      case 'traffic-ranking':
+        return (
+          <TrafficRankingCard connections={connections} />
+        );
+
+      case 'traffic-statistics':
+        return <TrafficStatisticsCard />;
 
       default:
         return null;
@@ -231,6 +268,14 @@ export function CustomizableDashboard({
     }
     // 流量图表：占一半宽度
     if (type === 'traffic-chart') {
+      return 'md:col-span-1 xl:col-span-2';
+    }
+    // 流量排行：占一半宽度
+    if (type === 'traffic-ranking') {
+      return 'md:col-span-1 xl:col-span-2';
+    }
+    // 流量统计：占一半宽度
+    if (type === 'traffic-statistics') {
       return 'md:col-span-1 xl:col-span-2';
     }
     return '';
@@ -293,6 +338,7 @@ export function CustomizableDashboard({
           addCard(card);
           onShowAddDialogChange(false);
         }}
+        renderCardPreview={renderCardContent}
       />
     </>
   );

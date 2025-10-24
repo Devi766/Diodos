@@ -7,7 +7,9 @@ export type DashboardCardType =
   | 'system-proxy' // 系统代理
   | 'tun-mode' // TUN模式
   | 'proxy-mode' // 代理模式
-  | 'traffic-chart'; // 流量图表
+  | 'traffic-chart' // 流量图表
+  | 'traffic-ranking' // 流量排行
+  | 'traffic-statistics'; // 流量统计
 
 // 卡片配置项
 export interface DashboardCard {
@@ -84,6 +86,22 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
     description: '实时流量监控图表',
     enabled: true,
     order: 7,
+  },
+  {
+    id: 'traffic-ranking-card',
+    type: 'traffic-ranking',
+    title: '流量排行',
+    description: '按进程/域名/策略统计流量排行',
+    enabled: false,
+    order: 8,
+  },
+  {
+    id: 'traffic-statistics-card',
+    type: 'traffic-statistics',
+    title: '流量统计',
+    description: '总流量和连接统计信息',
+    enabled: false,
+    order: 9,
   },
 ];
 

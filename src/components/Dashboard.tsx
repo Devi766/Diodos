@@ -142,6 +142,9 @@ export default function Dashboard() {
   const [tunConfirmOpen, setTunConfirmOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showAddCardDialog, setShowAddCardDialog] = useState(false);
+  const [connections, setConnections] = useState<any[]>([]);
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const [downloadTotal, setDownloadTotal] = useState(0);
 
   const electron = useMemo(resolveElectron, []);
 
@@ -152,9 +155,11 @@ export default function Dashboard() {
     }
     if (typeof snapshot.downloadTotal === 'number') {
       setTotalDownload(snapshot.downloadTotal);
+      setDownloadTotal(snapshot.downloadTotal);
     }
     if (typeof snapshot.uploadTotal === 'number') {
       setTotalUpload(snapshot.uploadTotal);
+      setUploadTotal(snapshot.uploadTotal);
     }
     if (snapshot.currentNode) {
       setCurrentNode(snapshot.currentNode);
@@ -441,6 +446,40 @@ export default function Dashboard() {
     syncCurrentNode();
     syncProxyMode();
   }, [electron, isRunning, activeConfig, syncCurrentNode, syncProxyMode]);
+
+  // 获取连接列表
+  useEffect(() => {
+    if (!electron?.requestMihomoAPI || !isRunning) return;
+    let disposed = false;
+
+    const fetchConnections = async () => {
+      try {
+        const response = await electron.requestMihomoAPI('/connections');
+        if (!disposed && response?.data) {
+          const data = response.data;
+          if (data.connections && Array.isArray(data.connections)) {
+            setConnections(data.connections);
+          }
+          if (typeof data.uploadTotal === 'number') {
+            setUploadTotal(data.uploadTotal);
+          }
+          if (typeof data.downloadTotal === 'number') {
+            setDownloadTotal(data.downloadTotal);
+          }
+        }
+      } catch (error) {
+        console.error('获取连接列表失败:', error);
+      }
+    };
+
+    fetchConnections();
+    const timer = window.setInterval(fetchConnections, 2000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [electron, isRunning]);
 
   const resolveConfigForLaunch = async () => {
     if (!electron) return null;
@@ -791,6 +830,9 @@ export default function Dashboard() {
         isModeUpdating={isModeUpdating}
         onModeSwitch={handleModeSwitch}
         trafficSamples={trafficSamples}
+        connections={connections}
+        uploadTotal={uploadTotal}
+        downloadTotal={downloadTotal}
         isEditMode={isEditMode}
         onEditModeChange={setIsEditMode}
         onAddCard={() => setShowAddCardDialog(true)}

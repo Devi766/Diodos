@@ -353,6 +353,10 @@ require('./ipc-handlers/providers')(context);
 const { registerOverrideHandlers } = require('./ipc-handlers/overrides');
 registerOverrideHandlers(context);
 
+// 注册流量历史处理器
+const { registerTrafficHistoryHandlers } = require('./ipc-handlers/traffic-history');
+registerTrafficHistoryHandlers(context);
+
 const {
   ensureUserSettingsFile,
   getUserSettings,
@@ -437,15 +441,15 @@ function applyWindowsBackdrop(win) {
   applyTitleBarOverlay();
 
   if (!materialApplied && !vibrancyApplied) {
-    win.setBackgroundColor(isDark ? '#220f172a' : '#f0ffffff');
+    win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
   }
 
   if (mode === 'acrylic') {
     try {
       const rgba = (alpha, r, g, b) => ((alpha & 0xff) << 24) | ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff);
       const tint = isDark
-        ? rgba(0xdc, 24, 32, 68)
-        : rgba(0x66, 255, 255, 255);
+        ? rgba(0xf0, 24, 32, 68)
+        : rgba(0x99, 255, 255, 255);
       const success = enableAcrylic(win, { tintColor: tint, accentFlags: 2 });
       if (success) {
         console.log('已启用 Windows Acrylic 透明效果');
@@ -892,7 +896,7 @@ function updateTrafficStats() {
     state.trafficWebSocket.on('message', (data) => {
       try {
         const json = JSON.parse(data);
-        
+
         // 确保数据格式正确
         if (!json || typeof json.up !== 'number' || typeof json.down !== 'number') {
           console.error('[调试] 无效的流量数据格式');
@@ -909,13 +913,35 @@ function updateTrafficStats() {
         };
 
         state.lastTrafficStats = stats;
-        
+
         // 添加到历史记录并限制大小
         state.trafficHistory.push(stats);
         if (state.trafficHistory.length > MAX_TRAFFIC_HISTORY) {
           state.trafficHistory.shift(); // 移除最旧的记录
         }
-        
+
+        // 累加流量数据用于持久化
+        if (!state.trafficAccumulator) {
+          state.trafficAccumulator = { upload: 0, download: 0, lastSaveTime: Date.now() };
+        }
+        state.trafficAccumulator.upload += json.up;
+        state.trafficAccumulator.download += json.down;
+
+        // 每10秒保存一次到数据库
+        const now = Date.now();
+        if (now - state.trafficAccumulator.lastSaveTime >= 10000) {
+          try {
+            context.dbManager.updateTodayTraffic(
+              state.trafficAccumulator.upload,
+              state.trafficAccumulator.download
+            );
+            // 重置累加器
+            state.trafficAccumulator = { upload: 0, download: 0, lastSaveTime: now };
+          } catch (error) {
+            console.error('[流量] 保存流量数据失败:', error);
+          }
+        }
+
         // 发送更新到主窗口
         if (state.mainWindow) {
           state.mainWindow.webContents.send('traffic-update', stats);

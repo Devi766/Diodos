@@ -16,6 +16,7 @@ interface AddCardDialogProps {
   onOpenChange: (open: boolean) => void;
   availableCards: DashboardCard[];
   onAddCard: (card: DashboardCard) => void;
+  renderCardPreview: (type: DashboardCardType) => React.ReactNode;
 }
 
 // 卡片图标映射
@@ -28,6 +29,8 @@ const CARD_ICONS: Record<DashboardCardType, React.ReactNode> = {
   'tun-mode': <Shield className="h-6 w-6" />,
   'proxy-mode': <BarChart3 className="h-6 w-6" />,
   'traffic-chart': <BarChart3 className="h-6 w-6" />,
+  'traffic-ranking': <BarChart3 className="h-6 w-6" />,
+  'traffic-statistics': <Activity className="h-6 w-6" />,
 };
 
 export function AddCardDialog({
@@ -35,6 +38,7 @@ export function AddCardDialog({
   onOpenChange,
   availableCards,
   onAddCard,
+  renderCardPreview,
 }: AddCardDialogProps) {
   const handleAddCard = (card: DashboardCard) => {
     onAddCard(card);
@@ -43,7 +47,7 @@ export function AddCardDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto custom-scrollbar">
         <DialogHeader>
           <DialogTitle>添加卡片</DialogTitle>
           <DialogDescription>
@@ -51,7 +55,7 @@ export function AddCardDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3 py-4 md:grid-cols-2">
+        <div className="grid gap-4 py-4 md:grid-cols-2">
           {availableCards.length === 0 ? (
             <div className="col-span-2 rounded-lg border border-dashed p-8 text-center">
               <p className="text-sm text-muted-foreground">
@@ -60,29 +64,25 @@ export function AddCardDialog({
             </div>
           ) : (
             availableCards.map((card) => (
-              <button
+              <div
                 key={card.id}
+                className="group relative cursor-pointer transition-all hover:scale-[1.02]"
                 onClick={() => handleAddCard(card)}
-                className={cn(
-                  'group relative flex items-start gap-4 rounded-xl border bg-white p-4 text-left transition-all hover:border-blue-500 hover:shadow-md dark:bg-[#2a2a2a]',
-                )}
               >
-                {/* 图标 */}
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600 transition-colors group-hover:bg-blue-500 group-hover:text-white dark:bg-blue-900/30 dark:text-blue-400 dark:group-hover:bg-blue-500">
-                  {CARD_ICONS[card.type]}
+                {/* 卡片标题和描述 - 悬浮在卡片上方 */}
+                <div className="absolute -top-2 left-2 z-10 flex items-center gap-2 rounded-full bg-white px-3 py-1.5 shadow-md dark:bg-[#2a2a2a]">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                    {CARD_ICONS[card.type]}
+                  </div>
+                  <span className="text-sm font-medium">{card.title}</span>
+                  <Plus className="h-4 w-4 text-gray-400 transition-colors group-hover:text-blue-500" />
                 </div>
 
-                {/* 内容 */}
-                <div className="flex-1 space-y-1">
-                  <h3 className="font-medium">{card.title}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {card.description}
-                  </p>
+                {/* 真实卡片预览 */}
+                <div className="pointer-events-none mt-4 transition-all group-hover:shadow-lg">
+                  {renderCardPreview(card.type)}
                 </div>
-
-                {/* 添加图标 */}
-                <Plus className="h-5 w-5 shrink-0 text-gray-400 transition-colors group-hover:text-blue-500" />
-              </button>
+              </div>
             ))
           )}
         </div>

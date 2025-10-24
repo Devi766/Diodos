@@ -506,7 +506,7 @@ export default function Settings() {
                       }`}
                       onClick={() => handleAppearanceModeChange('dynamic')}
                     >
-                      动态模糊
+                      默认
                     </button>
                     <button
                       className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
@@ -516,7 +516,7 @@ export default function Settings() {
                       }`}
                       onClick={() => handleAppearanceModeChange('acrylic')}
                     >
-                      Windows Acrylic
+                      动态模糊
                     </button>
                     <button
                       className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
@@ -536,9 +536,9 @@ export default function Settings() {
             <Tabs.Content value="kernel" className="w-full">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Mihomo 内核</h3>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Clash 内核</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-                    应用默认使用内置的内核文件，你也可以手动指定其他版本的 Mihomo 内核。
+                    应用默认使用内置的内核文件，你也可以手动指定其他版本的 Clash 内核。
                   </p>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input
