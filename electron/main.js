@@ -634,7 +634,7 @@ function createWindow() {
     transparent: true,
     backgroundColor: '#00000000',
     backgroundMaterial: isWindows ? 'mica' : undefined,
-    vibrancy: isMac ? 'under-window' : undefined,
+    // vibrancy 由 applyMacOSBackdrop 函数根据模式动态设置
     visualEffectState: isMac ? 'active' : undefined,
     titleBarOverlay: isMac
       ? {
