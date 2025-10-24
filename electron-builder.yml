@@ -1,5 +1,6 @@
 appId: com.flyclash.app
 productName: FlyClash
+publish: null
 directories:
   output: dist
 files:
