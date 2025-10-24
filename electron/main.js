@@ -387,15 +387,16 @@ function applyMacOSBackdrop(win) {
     return;
   }
 
-  // 默认模式：浅色使用标准模糊，深色使用动态模糊
+  // 默认模式：使用 macOS 毛玻璃效果
   win.setBackgroundColor('#00000000');
-  const vibrancyMode = isDark ? 'ultra-dark' : 'light';
+  // 使用 'under-window' 模式获得最佳毛玻璃效果
+  const vibrancyMode = 'under-window';
 
   try {
     win.setVibrancy(vibrancyMode);
-    console.log(`[macOS] 已启用模糊效果: ${vibrancyMode}`);
+    console.log(`[macOS] 已启用毛玻璃效果: ${vibrancyMode}`);
   } catch (error) {
-    console.warn(`[macOS] 模糊效果 ${vibrancyMode} 不可用:`, error?.message || error);
+    console.warn(`[macOS] 毛玻璃效果 ${vibrancyMode} 不可用:`, error?.message || error);
     win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
   }
 }

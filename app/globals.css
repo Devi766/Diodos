@@ -104,13 +104,9 @@
     overflow: hidden;
   }
 
-  /* macOS 默认模式：浅色和深色都使用半透明背景配合 vibrancy 模糊效果 */
+  /* macOS 默认模式：使用透明背景让 vibrancy 毛玻璃效果显示 */
   body.platform-darwin:not(.appearance-solid) {
-    background: rgba(240, 242, 245, 0.75) !important;
-  }
-
-  body.platform-darwin.theme-dark:not(.appearance-solid) {
-    background: rgba(20, 22, 28, 0.85) !important;
+    background: transparent !important;
   }
 
   /* macOS solid 模式使用纯色背景 */
