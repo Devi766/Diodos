@@ -1370,7 +1370,7 @@ export default function SubscriptionManager() {
             onClick={closeContextMenu}
           />
           <div
-            className="fixed z-50 min-w-[180px] rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-[#2a2a2a]"
+            className="fixed z-50 min-w-[180px] rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-[#2a2a2a] backdrop-blur-[40px] backdrop-saturate-[180%]"
             style={{
               left: `${contextMenuPosition.x}px`,
               top: `${contextMenuPosition.y}px`,

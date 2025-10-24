@@ -1690,11 +1690,18 @@ export default function ProxyNodes() {
                           <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
                         </button>
                       )}
-                      <ChevronRightIcon
-                        className={`h-5 w-5 text-muted-foreground transition-transform duration-200 ${
-                          isCollapsed ? '' : 'rotate-90'
-                        }`}
-                      />
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupCollapse(collapseKey)}
+                        className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition p-1"
+                        title={isCollapsed ? "展开" : "收起"}
+                      >
+                        <ChevronRightIcon
+                          className={`h-5 w-5 transition-transform duration-200 ${
+                            isCollapsed ? '' : 'rotate-90'
+                          }`}
+                        />
+                      </button>
                     </div>
                   </div>
 
