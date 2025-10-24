@@ -13,6 +13,18 @@ export default function RootLayout({
   const [theme, setTheme] = useState<string>('light');
 
   useEffect(() => {
+    // 检测平台并添加平台类
+    if (typeof window !== 'undefined') {
+      const platform = navigator.platform.toLowerCase();
+      if (platform.includes('mac')) {
+        document.body.classList.add('platform-darwin');
+      } else if (platform.includes('win')) {
+        document.body.classList.add('platform-windows');
+      } else if (platform.includes('linux')) {
+        document.body.classList.add('platform-linux');
+      }
+    }
+
     // 在客户端渲染时获取主题设置
     const initTheme = async () => {
       try {
@@ -21,22 +33,26 @@ export default function RootLayout({
           const result = await window.electronAPI.getTheme();
           if (result.success) {
             const themeName = result.theme;
-            
+
             // 根据主题名称设置类名
             let actualTheme = themeName;
             if (themeName === 'system') {
               // 跟随系统设置
               actualTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
             }
-            
+
             setTheme(actualTheme);
             // 使用 classList 来添加/移除主题类，而不是替换整个 className
             if (actualTheme === 'dark') {
               document.documentElement.classList.add('dark');
               document.documentElement.classList.remove('light');
+              document.body.classList.add('theme-dark');
+              document.body.classList.remove('theme-light');
             } else {
               document.documentElement.classList.add('light');
               document.documentElement.classList.remove('dark');
+              document.body.classList.add('theme-light');
+              document.body.classList.remove('theme-dark');
             }
 
             // 监听主题变化事件
@@ -48,18 +64,26 @@ export default function RootLayout({
                 if (systemTheme === 'dark') {
                   document.documentElement.classList.add('dark');
                   document.documentElement.classList.remove('light');
+                  document.body.classList.add('theme-dark');
+                  document.body.classList.remove('theme-light');
                 } else {
                   document.documentElement.classList.add('light');
                   document.documentElement.classList.remove('dark');
+                  document.body.classList.add('theme-light');
+                  document.body.classList.remove('theme-dark');
                 }
               } else {
                 setTheme(newTheme);
                 if (newTheme === 'dark') {
                   document.documentElement.classList.add('dark');
                   document.documentElement.classList.remove('light');
+                  document.body.classList.add('theme-dark');
+                  document.body.classList.remove('theme-light');
                 } else {
                   document.documentElement.classList.add('light');
                   document.documentElement.classList.remove('dark');
+                  document.body.classList.add('theme-light');
+                  document.body.classList.remove('theme-dark');
                 }
               }
 
@@ -77,9 +101,13 @@ export default function RootLayout({
         if (systemTheme === 'dark') {
           document.documentElement.classList.add('dark');
           document.documentElement.classList.remove('light');
+          document.body.classList.add('theme-dark');
+          document.body.classList.remove('theme-light');
         } else {
           document.documentElement.classList.add('light');
           document.documentElement.classList.remove('dark');
+          document.body.classList.add('theme-light');
+          document.body.classList.remove('theme-dark');
         }
       } catch (error) {
         console.error('初始化主题失败:', error);
@@ -87,6 +115,8 @@ export default function RootLayout({
         setTheme('light');
         document.documentElement.classList.add('light');
         document.documentElement.classList.remove('dark');
+        document.body.classList.add('theme-light');
+        document.body.classList.remove('theme-dark');
       }
     };
     

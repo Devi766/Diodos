@@ -104,14 +104,20 @@
     overflow: hidden;
   }
 
-  body:not(.platform-windows) {
+  /* macOS 使用透明背景，让 Electron vibrancy 生效 */
+  body.platform-darwin {
+    background: transparent !important;
+  }
+
+  /* 其他非 Windows 平台使用渐变背景 */
+  body:not(.platform-windows):not(.platform-darwin) {
     background: radial-gradient(140% 120% at 25% 0%, rgba(164, 194, 255, 0.15), transparent 70%),
       radial-gradient(120% 110% at 100% -10%, rgba(216, 226, 255, 0.4), transparent 70%),
       linear-gradient(180deg, rgba(239, 243, 250, 0.92), rgba(226, 234, 246, 0.94));
   }
 
-  body:not(.platform-windows).theme-dark,
-  body.theme-dark:not(.platform-windows) {
+  body:not(.platform-windows):not(.platform-darwin).theme-dark,
+  body.theme-dark:not(.platform-windows):not(.platform-darwin) {
     background:
       radial-gradient(140% 120% at 15% -10%, rgba(68, 109, 190, 0.35), transparent 70%),
       radial-gradient(120% 120% at 90% -15%, rgba(114, 66, 183, 0.3), transparent 65%),
