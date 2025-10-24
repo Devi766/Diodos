@@ -153,8 +153,10 @@ jobs:
         env:
           npm_config_arch: ${{ matrix.arch }}
           npm_config_target_arch: ${{ matrix.arch }}
-        run: npm install
-      
+        run: |
+          npm install
+          npm install --no-save dmg-license
+
       - name: Prepare (Download Mihomo Core)
         run: node scripts/prepare.mjs --${{ matrix.arch }}
       
