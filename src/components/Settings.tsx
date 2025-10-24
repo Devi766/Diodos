@@ -508,36 +508,64 @@ export default function Settings() {
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">窗口背景效果</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">选择最适合你的桌面毛玻璃效果</p>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                        appearanceMode === 'dynamic'
-                          ? 'bg-blue-500 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                      }`}
-                      onClick={() => handleAppearanceModeChange('dynamic')}
-                    >
-                      默认
-                    </button>
-                    <button
-                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                        appearanceMode === 'acrylic'
-                          ? 'bg-blue-500 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                      }`}
-                      onClick={() => handleAppearanceModeChange('acrylic')}
-                    >
-                      动态模糊
-                    </button>
-                    <button
-                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                        appearanceMode === 'solid'
-                          ? 'bg-blue-500 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                      }`}
-                      onClick={() => handleAppearanceModeChange('solid')}
-                    >
-                      纯色背景
-                    </button>
+                    {/* macOS 只显示默认和纯色背景 */}
+                    {typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac') ? (
+                      <>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'dynamic' || appearanceMode === 'acrylic'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('dynamic')}
+                        >
+                          默认
+                        </button>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'solid'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('solid')}
+                        >
+                          纯色背景
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'dynamic'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('dynamic')}
+                        >
+                          默认
+                        </button>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'acrylic'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('acrylic')}
+                        >
+                          动态模糊
+                        </button>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'solid'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('solid')}
+                        >
+                          纯色背景
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
