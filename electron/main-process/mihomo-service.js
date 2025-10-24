@@ -38,26 +38,71 @@ module.exports = function initMihomoService(context) {
       return resolvedDefault;
     }
 
+    const isWin = process.platform === 'win32';
+    const isMac = process.platform === 'darwin';
+    const isLinux = process.platform === 'linux';
+
     if (isDev) {
       const devDirPath = process.cwd();
-      const parentDir = path.join(devDirPath, '..');
+      const coresDir = path.join(devDirPath, 'cores');
 
       try {
-        const files = fs.readdirSync(parentDir);
-        const mihomoExeFiles = files.filter(
-          (file) => file.toLowerCase().includes('mihomo') && file.endsWith('.exe')
-        );
+        if (fs.existsSync(coresDir)) {
+          const files = fs.readdirSync(coresDir);
 
-        if (mihomoExeFiles.length > 0) {
-          binPath = path.join(parentDir, mihomoExeFiles[0]);
-          console.log('开发环境找到mihomo内核:', binPath);
+          // 根据平台过滤文件
+          let mihomoFiles = files.filter((file) => {
+            const lower = file.toLowerCase();
+            if (!lower.includes('mihomo')) return false;
+
+            if (isWin) return file.endsWith('.exe');
+            if (isMac) return lower.includes('darwin');
+            if (isLinux) return lower.includes('linux');
+            return false;
+          });
+
+          // 进一步根据架构过滤
+          if (mihomoFiles.length > 1) {
+            const arch = process.arch;
+            const archFiles = mihomoFiles.filter((file) => {
+              const lower = file.toLowerCase();
+              if (arch === 'x64' || arch === 'amd64') {
+                return lower.includes('amd64') || lower.includes('x64');
+              }
+              if (arch === 'arm64') {
+                return lower.includes('arm64');
+              }
+              if (arch === 'ia32' || arch === 'x86') {
+                return lower.includes('386') || lower.includes('ia32') || lower.includes('x86');
+              }
+              return false;
+            });
+
+            if (archFiles.length > 0) {
+              mihomoFiles = archFiles;
+            }
+          }
+
+          if (mihomoFiles.length > 0) {
+            binPath = path.join(coresDir, mihomoFiles[0]);
+            console.log('开发环境找到mihomo内核:', binPath);
+          }
         }
       } catch (error) {
         console.error('搜索开发环境内核文件失败:', error);
       }
 
       if (!binPath) {
-        binPath = path.join(parentDir, 'mihomo-windows-amd64.exe');
+        // 默认路径
+        if (isWin) {
+          binPath = path.join(coresDir, 'mihomo.exe');
+        } else if (isMac) {
+          const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+          binPath = path.join(coresDir, `mihomo-darwin-${arch}`);
+        } else if (isLinux) {
+          const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+          binPath = path.join(coresDir, `mihomo-linux-${arch}`);
+        }
       }
     } else {
       const coresDir = path.join(process.resourcesPath, 'cores');
@@ -65,18 +110,43 @@ module.exports = function initMihomoService(context) {
       try {
         if (fs.existsSync(coresDir)) {
           const files = fs.readdirSync(coresDir);
-          const exeFiles = files.filter((file) => file.endsWith('.exe'));
 
-          if (exeFiles.length > 0) {
-            const mihomoExe = exeFiles.find((file) => file.toLowerCase().includes('mihomo'));
+          // 根据平台过滤文件
+          let mihomoFiles = files.filter((file) => {
+            const lower = file.toLowerCase();
+            if (!lower.includes('mihomo')) return false;
 
-            if (mihomoExe) {
-              binPath = path.join(coresDir, mihomoExe);
-              console.log('发现mihomo内核:', binPath);
-            } else {
-              binPath = path.join(coresDir, exeFiles[0]);
-              console.log('使用默认内核文件:', binPath);
+            if (isWin) return file.endsWith('.exe');
+            if (isMac) return lower.includes('darwin');
+            if (isLinux) return lower.includes('linux');
+            return false;
+          });
+
+          // 进一步根据架构过滤
+          if (mihomoFiles.length > 1) {
+            const arch = process.arch;
+            const archFiles = mihomoFiles.filter((file) => {
+              const lower = file.toLowerCase();
+              if (arch === 'x64' || arch === 'amd64') {
+                return lower.includes('amd64') || lower.includes('x64');
+              }
+              if (arch === 'arm64') {
+                return lower.includes('arm64');
+              }
+              if (arch === 'ia32' || arch === 'x86') {
+                return lower.includes('386') || lower.includes('ia32') || lower.includes('x86');
+              }
+              return false;
+            });
+
+            if (archFiles.length > 0) {
+              mihomoFiles = archFiles;
             }
+          }
+
+          if (mihomoFiles.length > 0) {
+            binPath = path.join(coresDir, mihomoFiles[0]);
+            console.log('发现mihomo内核:', binPath);
           }
         }
       } catch (error) {
@@ -84,7 +154,16 @@ module.exports = function initMihomoService(context) {
       }
 
       if (!binPath) {
-        binPath = path.join(process.resourcesPath, 'cores/mihomo-windows-amd64.exe');
+        // 默认路径
+        if (isWin) {
+          binPath = path.join(process.resourcesPath, 'cores/mihomo.exe');
+        } else if (isMac) {
+          const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+          binPath = path.join(process.resourcesPath, `cores/mihomo-darwin-${arch}`);
+        } else if (isLinux) {
+          const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+          binPath = path.join(process.resourcesPath, `cores/mihomo-linux-${arch}`);
+        }
       }
     }
 

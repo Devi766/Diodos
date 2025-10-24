@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MinusIcon, Cross2Icon } from '@radix-ui/react-icons';
 import { Square } from 'lucide-react';
 
@@ -12,6 +12,12 @@ const resolveElectron = () => {
 export default function TitleBar() {
   const electron = useMemo(resolveElectron, []);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [isMacOS, setIsMacOS] = useState(false);
+
+  useEffect(() => {
+    // 检测是否是 macOS
+    setIsMacOS(navigator.platform.toLowerCase().includes('mac'));
+  }, []);
 
   const runMinimize = useCallback(async () => {
     try {
@@ -35,6 +41,16 @@ export default function TitleBar() {
       await electron?.closeWindow?.();
     } catch {}
   }, [electron]);
+
+  // macOS 上隐藏窗口控制按钮（使用原生红绿灯按钮）
+  if (isMacOS) {
+    return (
+      <div
+        className="glass-titlebar fixed top-0 left-0 right-0 z-50 flex h-12 items-center justify-end px-2"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      />
+    );
+  }
 
   return (
     <div

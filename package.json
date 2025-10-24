@@ -10,6 +10,9 @@
     "lint": "next lint",
     "postinstall": "electron-builder install-app-deps",
     "prepare": "node scripts/prepare.mjs",
+    "prepare:mac": "node scripts/prepare.mjs",
+    "prepare:mac:x64": "node scripts/prepare.mjs --x64",
+    "prepare:mac:arm64": "node scripts/prepare.mjs --arm64",
 
     "electron:dev": "concurrently \"cross-env npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron . --js-flags='--expose-gc'\"",
     "electron": "electron . --js-flags='--expose-gc'",
@@ -17,6 +20,10 @@
     "electron:build:ci": "next build --no-lint && electron-builder",
     "electron:build:ignore-ts": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_IGNORE_TYPE_ERROR=1 && next build && electron-builder --config electron-builder.local.yml",
     "electron:build:prod": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder --config electron-builder.local.yml",
+    "electron:build:mac": "npm run prepare:mac && next build --no-lint && electron-builder --mac --config electron-builder.local.yml",
+    "electron:build:mac:x64": "npm run prepare:mac:x64 && next build --no-lint && electron-builder --mac --x64 --config electron-builder.local.yml",
+    "electron:build:mac:arm64": "npm run prepare:mac:arm64 && next build --no-lint && electron-builder --mac --arm64 --config electron-builder.local.yml",
+    "electron:build:mac:universal": "next build --no-lint && npm run prepare:mac:x64 && npm run prepare:mac:arm64 && electron-builder --mac --x64 --arm64 --config electron-builder.local.yml",
     "clean": "node clean.js"
   },
   "dependencies": {

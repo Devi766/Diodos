@@ -62,9 +62,12 @@ function mihomo() {
   const exeFile = `${name}${isWin ? '.exe' : ''}`
   const zipFile = `${name}-${MIHOMO_VERSION}.${urlExt}`
 
+  // 保留完整的文件名（包含平台和架构信息），以支持多架构构建
+  const targetFile = `${name}-${MIHOMO_VERSION.replace(/^v/, '')}${isWin ? '.exe' : ''}`
+
   return {
     name: 'mihomo',
-    targetFile: `mihomo${isWin ? '.exe' : ''}`,
+    targetFile,
     exeFile,
     zipFile,
     downloadURL
@@ -81,9 +84,13 @@ async function resolveSidecar(binInfo) {
   const sidecarPath = path.join(sidecarDir, targetFile)
 
   fs.mkdirSync(sidecarDir, { recursive: true })
+
+  // 如果文件已存在，跳过下载
   if (fs.existsSync(sidecarPath)) {
-    fs.rmSync(sidecarPath)
+    console.log(`[INFO]: "${targetFile}" already exists, skipping download`)
+    return
   }
+
   const tempDir = path.join(TEMP_DIR, name)
   const tempZip = path.join(tempDir, zipFile)
   const tempExe = path.join(tempDir, exeFile)
@@ -123,12 +130,39 @@ async function resolveSidecar(binInfo) {
           .on('error', onError)
       })
     }
+
+    // 创建一个通用的符号链接或副本，方便开发环境使用
+    const isWin = platform === 'win32'
+    const genericName = `mihomo${isWin ? '.exe' : ''}`
+    const genericPath = path.join(sidecarDir, genericName)
+
+    try {
+      // 如果通用文件已存在，先删除
+      if (fs.existsSync(genericPath)) {
+        fs.rmSync(genericPath)
+      }
+
+      // Windows 上创建副本，Unix 上创建符号链接
+      if (isWin) {
+        fs.copyFileSync(sidecarPath, genericPath)
+        console.log(`[INFO]: Created copy "${genericName}" -> "${targetFile}"`)
+      } else {
+        fs.symlinkSync(targetFile, genericPath)
+        console.log(`[INFO]: Created symlink "${genericName}" -> "${targetFile}"`)
+      }
+    } catch (err) {
+      console.warn(`[WARN]: Failed to create generic link:`, err.message)
+    }
   } catch (err) {
     // 需要删除文件
-    fs.rmSync(sidecarPath)
+    if (fs.existsSync(sidecarPath)) {
+      fs.rmSync(sidecarPath)
+    }
     throw err
   } finally {
-    fs.rmSync(tempDir, { recursive: true })
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true })
+    }
   }
 }
 
