@@ -369,7 +369,7 @@ function applyMacOSBackdrop(win) {
     return;
   }
 
-  const mode = state.appearanceMode || 'dynamic';
+  const mode = state.appearanceMode || 'acrylic';
   const isDark = nativeTheme.shouldUseDarkColors;
 
   console.log(`[macOS] 应用背景效果，模式: ${mode}, 深色模式: ${isDark}`);
@@ -387,22 +387,30 @@ function applyMacOSBackdrop(win) {
     return;
   }
 
-  if (mode === 'acrylic') {
-    // acrylic 模式 - 使用 CSS 渐变背景，不使用 vibrancy
+  if (mode === 'dynamic') {
+    // dynamic 模式 - 使用 macOS 官方毛玻璃窗口效果（更强的模糊）
     win.setBackgroundColor('#00000000');
-    console.log(`[macOS] 已应用 acrylic 背景（CSS 渐变）`);
+    const vibrancyMode = isDark ? 'ultra-dark' : 'under-window';
+
+    try {
+      win.setVibrancy(vibrancyMode);
+      console.log(`[macOS] 已启用官方毛玻璃效果: ${vibrancyMode}`);
+    } catch (error) {
+      console.warn(`[macOS] 毛玻璃效果 ${vibrancyMode} 不可用:`, error?.message || error);
+      win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
+    }
     return;
   }
 
-  // dynamic 模式（默认）- 使用 macOS 原生 vibrancy
+  // acrylic 模式（默认）- 使用标准 vibrancy 模糊效果
   win.setBackgroundColor('#00000000');
   const vibrancyMode = isDark ? 'dark' : 'light';
 
   try {
     win.setVibrancy(vibrancyMode);
-    console.log(`[macOS] 已启用 Vibrancy 模式: ${vibrancyMode}`);
+    console.log(`[macOS] 已启用标准模糊效果: ${vibrancyMode}`);
   } catch (error) {
-    console.warn(`[macOS] Vibrancy 模式 ${vibrancyMode} 不可用:`, error?.message || error);
+    console.warn(`[macOS] 标准模糊效果 ${vibrancyMode} 不可用:`, error?.message || error);
     win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
   }
 }

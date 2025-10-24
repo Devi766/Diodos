@@ -104,22 +104,9 @@
     overflow: hidden;
   }
 
-  /* macOS 默认使用透明背景（dynamic 模式），让 Electron vibrancy 生效 */
+  /* macOS 默认使用透明背景（acrylic 和 dynamic 模式），让 Electron vibrancy 生效 */
   body.platform-darwin {
     background: transparent !important;
-  }
-
-  /* macOS acrylic 模式使用渐变背景 */
-  body.platform-darwin.appearance-acrylic {
-    background: radial-gradient(140% 120% at 25% 0%, rgba(164, 194, 255, 0.15), transparent 70%),
-      radial-gradient(120% 110% at 100% -10%, rgba(216, 226, 255, 0.4), transparent 70%),
-      linear-gradient(180deg, rgba(239, 243, 250, 0.92), rgba(226, 234, 246, 0.94)) !important;
-  }
-
-  body.platform-darwin.appearance-acrylic.theme-dark {
-    background: radial-gradient(140% 120% at 15% -10%, rgba(68, 109, 190, 0.35), transparent 70%),
-      radial-gradient(120% 120% at 90% -15%, rgba(114, 66, 183, 0.3), transparent 65%),
-      linear-gradient(180deg, rgba(7, 13, 26, 0.96), rgba(10, 19, 33, 0.93)) !important;
   }
 
   /* macOS solid 模式使用纯色背景 */
