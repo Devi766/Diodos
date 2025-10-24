@@ -124,6 +124,23 @@
     background-color: rgb(1 1 1 / 18%) !important;
   }
 
+  /* macOS 下的弹框和下拉菜单使用半透明背景以支持毛玻璃效果 */
+  body.platform-darwin:not(.appearance-solid) {
+    --popover: 0 0% 100% / 0.75;
+  }
+
+  body.platform-darwin:not(.appearance-solid).theme-dark {
+    --popover: 0 0% 14% / 0.65;
+    --card: 0 0% 16% / 0.75;
+  }
+
+  /* macOS 下为弹框和下拉菜单添加高斯模糊 */
+  body.platform-darwin:not(.appearance-solid) [role="dialog"],
+  body.platform-darwin:not(.appearance-solid) [role="menu"] {
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+  }
+
   /* 其他非 Windows 平台使用渐变背景 */
   body:not(.platform-windows):not(.platform-darwin) {
     background: radial-gradient(140% 120% at 25% 0%, rgba(164, 194, 255, 0.15), transparent 70%),
