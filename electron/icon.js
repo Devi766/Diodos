@@ -1,6 +1,8 @@
 const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
+const os = require('os');
 
 /**
  * 在 macOS 上查找最佳的 .app 路径
@@ -69,8 +71,74 @@ async function getIconDataURL(processPath) {
     return '';
   }
 
-  console.log(`[getIconDataURL] 文件存在,准备调用 app.getFileIcon: ${processPath}`);
+  console.log(`[getIconDataURL] 文件存在,准备获取图标: ${processPath}`);
 
+  // macOS 上使用原生命令行工具获取图标
+  if (process.platform === 'darwin') {
+    try {
+      console.log(`[macOS] 使用原生命令获取图标`);
+
+      // 1. 从 Info.plist 获取图标文件名
+      const plistPath = path.join(processPath, 'Contents', 'Info.plist');
+      if (!fs.existsSync(plistPath)) {
+        console.warn(`[macOS] Info.plist 不存在: ${plistPath}`);
+        return '';
+      }
+
+      // 使用 plutil 读取 CFBundleIconFile
+      const iconFileName = execSync(
+        `plutil -extract CFBundleIconFile raw -o - "${plistPath}"`,
+        { encoding: 'utf8' }
+      ).trim();
+
+      if (!iconFileName) {
+        console.warn(`[macOS] 未找到 CFBundleIconFile`);
+        return '';
+      }
+
+      console.log(`[macOS] 图标文件名: ${iconFileName}`);
+
+      // 2. 查找 .icns 文件
+      let icnsPath = path.join(processPath, 'Contents', 'Resources', iconFileName);
+      if (!icnsPath.endsWith('.icns')) {
+        icnsPath += '.icns';
+      }
+
+      if (!fs.existsSync(icnsPath)) {
+        console.warn(`[macOS] icns 文件不存在: ${icnsPath}`);
+        return '';
+      }
+
+      console.log(`[macOS] 找到 icns 文件: ${icnsPath}`);
+
+      // 3. 创建临时 PNG 文件
+      const tempPngPath = path.join(os.tmpdir(), `icon-${Date.now()}.png`);
+
+      // 4. 使用 sips 转换 icns 到 png
+      execSync(
+        `sips -s format png "${icnsPath}" --out "${tempPngPath}" --resampleWidth 128`,
+        { stdio: 'pipe' }
+      );
+
+      console.log(`[macOS] 成功转换为 PNG: ${tempPngPath}`);
+
+      // 5. 读取 PNG 文件并转换为 Data URL
+      const pngBuffer = fs.readFileSync(tempPngPath);
+      const dataURL = `data:image/png;base64,${pngBuffer.toString('base64')}`;
+
+      // 6. 删除临时文件
+      fs.unlinkSync(tempPngPath);
+
+      console.log(`[macOS] 成功获取图标, Data URL 长度: ${dataURL.length}`);
+      return dataURL;
+
+    } catch (error) {
+      console.error(`[macOS] 获取图标失败:`, error.message);
+      return '';
+    }
+  }
+
+  // Windows 使用 app.getFileIcon
   try {
     // 使用 Electron 内置 API 获取文件图标
     // size 选项: 'small' (16x16), 'normal' (32x32), 'large' (48x48 on Windows, 128x128 on macOS)
