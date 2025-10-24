@@ -104,18 +104,13 @@
     overflow: hidden;
   }
 
-  /* macOS dynamic 模式使用完全透明背景，让毛玻璃效果完全显示 */
-  body.platform-darwin.appearance-dynamic {
-    background: transparent !important;
-  }
-
-  /* macOS 默认使用半透明背景（acrylic 模式），配合 vibrancy 模糊效果 */
-  body.platform-darwin:not(.appearance-dynamic):not(.appearance-solid) {
+  /* macOS 默认模式：浅色使用半透明背景，深色使用完全透明（动态模糊效果） */
+  body.platform-darwin:not(.appearance-solid) {
     background: rgba(240, 242, 245, 0.75) !important;
   }
 
-  body.platform-darwin.theme-dark:not(.appearance-dynamic):not(.appearance-solid) {
-    background: rgba(20, 22, 28, 0.75) !important;
+  body.platform-darwin.theme-dark:not(.appearance-solid) {
+    background: transparent !important;
   }
 
   /* macOS solid 模式使用纯色背景 */

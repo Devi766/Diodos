@@ -387,31 +387,15 @@ function applyMacOSBackdrop(win) {
     return;
   }
 
-  if (mode === 'dynamic') {
-    // dynamic 模式 - 使用 macOS 官方毛玻璃窗口效果（更强的模糊）
-    win.setBackgroundColor('#00000000');
-    const vibrancyMode = isDark ? 'ultra-dark' : 'under-window';
-
-    try {
-      win.setVibrancy(vibrancyMode);
-      console.log(`[macOS] 已启用官方毛玻璃效果: ${vibrancyMode}`);
-    } catch (error) {
-      console.warn(`[macOS] 毛玻璃效果 ${vibrancyMode} 不可用:`, error?.message || error);
-      win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
-    }
-    return;
-  }
-
-  // acrylic 模式（默认）- 使用标准 vibrancy 模糊效果
+  // 默认模式 - 浅色使用标准模糊，深色使用动态模糊效果
   win.setBackgroundColor('#00000000');
-  // 深色模式使用 medium-light 或 under-window 以获得更好的可见度
-  const vibrancyMode = isDark ? 'under-window' : 'light';
+  const vibrancyMode = isDark ? 'ultra-dark' : 'light';
 
   try {
     win.setVibrancy(vibrancyMode);
-    console.log(`[macOS] 已启用标准模糊效果: ${vibrancyMode}`);
+    console.log(`[macOS] 已启用模糊效果: ${vibrancyMode}`);
   } catch (error) {
-    console.warn(`[macOS] 标准模糊效果 ${vibrancyMode} 不可用:`, error?.message || error);
+    console.warn(`[macOS] 模糊效果 ${vibrancyMode} 不可用:`, error?.message || error);
     win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
   }
 }

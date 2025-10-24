@@ -24,36 +24,6 @@ export default function RootLayout({
         document.body.classList.add('platform-linux');
       }
 
-      // 获取并应用外观模式
-      const initAppearance = async () => {
-        try {
-          // macOS 默认先设置为 acrylic（标准模糊）
-          document.body.classList.add('appearance-acrylic');
-
-          if (window.electronAPI) {
-            const result = await window.electronAPI.getAppearanceMode();
-            if (result.success) {
-              const mode = result.mode || 'acrylic';
-              console.log('[外观模式] 初始化:', mode);
-              document.body.classList.remove('appearance-acrylic', 'appearance-dynamic', 'appearance-solid');
-              document.body.classList.add(`appearance-${mode}`);
-            }
-
-            // 监听外观模式变化
-            window.electronAPI.onAppearanceModeChanged?.((_, mode) => {
-              console.log('[外观模式] 变化:', mode);
-              document.body.classList.remove('appearance-acrylic', 'appearance-dynamic', 'appearance-solid');
-              document.body.classList.add(`appearance-${mode}`);
-            });
-          }
-        } catch (error) {
-          console.error('初始化外观模式失败:', error);
-          // 出错时确保有默认类（macOS 默认 acrylic）
-          document.body.classList.add('appearance-acrylic');
-        }
-      };
-
-      initAppearance();
     }
 
     // 在客户端渲染时获取主题设置
