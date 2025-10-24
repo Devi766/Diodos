@@ -80,14 +80,16 @@ function mihomo() {
 async function resolveSidecar(binInfo) {
   const { name, targetFile, zipFile, exeFile, downloadURL } = binInfo
 
-  const sidecarDir = path.join(cwd, 'cores')
-  const sidecarPath = path.join(sidecarDir, targetFile)
+  const sidecarDir = path.join(cwd, 'extra', 'sidecar')
+  const isWin = platform === 'win32'
+  const genericName = `mihomo${isWin ? '.exe' : ''}`
+  const sidecarPath = path.join(sidecarDir, genericName)
 
   fs.mkdirSync(sidecarDir, { recursive: true })
 
   // 如果文件已存在，跳过下载
   if (fs.existsSync(sidecarPath)) {
-    console.log(`[INFO]: "${targetFile}" already exists, skipping download`)
+    console.log(`[INFO]: "${genericName}" already exists, skipping download`)
     return
   }
 
@@ -131,28 +133,7 @@ async function resolveSidecar(binInfo) {
       })
     }
 
-    // 创建一个通用的符号链接或副本，方便开发环境使用
-    const isWin = platform === 'win32'
-    const genericName = `mihomo${isWin ? '.exe' : ''}`
-    const genericPath = path.join(sidecarDir, genericName)
-
-    try {
-      // 如果通用文件已存在，先删除
-      if (fs.existsSync(genericPath)) {
-        fs.rmSync(genericPath)
-      }
-
-      // Windows 上创建副本，Unix 上创建符号链接
-      if (isWin) {
-        fs.copyFileSync(sidecarPath, genericPath)
-        console.log(`[INFO]: Created copy "${genericName}" -> "${targetFile}"`)
-      } else {
-        fs.symlinkSync(targetFile, genericPath)
-        console.log(`[INFO]: Created symlink "${genericName}" -> "${targetFile}"`)
-      }
-    } catch (err) {
-      console.warn(`[WARN]: Failed to create generic link:`, err.message)
-    }
+    console.log(`[INFO]: Created "${genericName}" from "${targetFile}"`)
   } catch (err) {
     // 需要删除文件
     if (fs.existsSync(sidecarPath)) {

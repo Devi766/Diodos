@@ -11,6 +11,7 @@
 !.yarn/versions
 
 /cores/mihomo-windows-amd64.exe
+/extra
 /release
 /dist
 

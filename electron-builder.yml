@@ -49,10 +49,8 @@ files:
   - '!**/{tsconfig.json,package-lock.json}'
   - package.json
 extraResources:
-  - from: cores
-    to: cores
-    filter:
-      - '**/*'
+  - from: './extra/'
+    to: ''
   - from: public
     to: public
     filter:
