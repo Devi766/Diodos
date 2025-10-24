@@ -404,7 +404,8 @@ function applyMacOSBackdrop(win) {
 
   // acrylic 模式（默认）- 使用标准 vibrancy 模糊效果
   win.setBackgroundColor('#00000000');
-  const vibrancyMode = isDark ? 'dark' : 'light';
+  // 深色模式使用 medium-light 或 under-window 以获得更好的可见度
+  const vibrancyMode = isDark ? 'under-window' : 'light';
 
   try {
     win.setVibrancy(vibrancyMode);
