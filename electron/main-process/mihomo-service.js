@@ -496,23 +496,23 @@ module.exports = function initMihomoService(context) {
       const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
 
       try {
-        let mergedConfig = deepMergeConfig(config, userSettings);
-
+        // 先应用覆写到原始配置
         console.log('[regenerateAndReloadConfig] 准备应用覆写');
         console.log('[regenerateAndReloadConfig] applyOverrides类型:', typeof applyOverrides);
         console.log('[regenerateAndReloadConfig] state.configFilePath:', state.configFilePath);
 
+        let configWithOverrides = config;
         if (applyOverrides && typeof applyOverrides === 'function') {
           try {
             console.log('[regenerateAndReloadConfig] 调用applyOverrides...');
-            const maybePromise = applyOverrides(context, mergedConfig, state.configFilePath);
+            const maybePromise = applyOverrides(context, config, state.configFilePath);
             if (maybePromise && typeof maybePromise.then === 'function') {
               console.log('[regenerateAndReloadConfig] applyOverrides返回Promise，等待...');
-              mergedConfig = await maybePromise;
+              configWithOverrides = await maybePromise;
               console.log('[regenerateAndReloadConfig] applyOverrides完成');
             } else {
               console.log('[regenerateAndReloadConfig] applyOverrides返回同步结果');
-              mergedConfig = maybePromise;
+              configWithOverrides = maybePromise;
             }
           } catch (overrideError) {
             console.error('应用配置覆盖失败:', overrideError);
@@ -521,6 +521,9 @@ module.exports = function initMihomoService(context) {
         } else {
           console.log('[regenerateAndReloadConfig] applyOverrides不可用或不是函数');
         }
+
+        // 然后应用用户设置(优先级最高)
+        let mergedConfig = deepMergeConfig(configWithOverrides, userSettings);
 
         const validatedConfig = validateMergedConfig(mergedConfig);
         validatedConfig['external-controller'] = '0.0.0.0:9090';
@@ -640,21 +643,23 @@ module.exports = function initMihomoService(context) {
       let mergedConfigContent;
 
       try {
-        console.log('[调试] deepMerge 前 config["external-controller"]:', config['external-controller']);
-        console.log('[调试] deepMerge 前 userSettings["external-controller"]:', userSettings['external-controller']);
-        mergedConfig = deepMergeConfig(config, userSettings);
-        console.log('[调试] deepMerge 后 mergedConfig["external-controller"]:', mergedConfig['external-controller']);
-        console.log('[startMihomo] deepMerge后proxy-groups前3个:',
-          mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
-
+        // 先应用覆写到原始配置
         console.log('[startMihomo] 准备应用覆写');
         console.log('[startMihomo] applyOverrides类型:', typeof applyOverrides);
         console.log('[startMihomo] configPath:', configPath);
 
-        mergedConfig = await applyOverrides(context, mergedConfig, configPath);
+        let configWithOverrides = await applyOverrides(context, config, configPath);
 
         console.log('[startMihomo] 覆写应用完成');
         console.log('[startMihomo] 覆写后proxy-groups前3个:',
+          configWithOverrides['proxy-groups'] ? configWithOverrides['proxy-groups'].slice(0, 3).map(g => g.name) : []);
+
+        // 然后应用用户设置(优先级最高)
+        console.log('[调试] deepMerge 前 configWithOverrides["external-controller"]:', configWithOverrides['external-controller']);
+        console.log('[调试] deepMerge 前 userSettings["external-controller"]:', userSettings['external-controller']);
+        mergedConfig = deepMergeConfig(configWithOverrides, userSettings);
+        console.log('[调试] deepMerge 后 mergedConfig["external-controller"]:', mergedConfig['external-controller']);
+        console.log('[startMihomo] 应用用户设置后proxy-groups前3个:',
           mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
 
         mergedConfig = validateMergedConfig(mergedConfig);
