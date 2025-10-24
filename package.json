@@ -20,10 +20,10 @@
     "electron:build:ci": "next build --no-lint && electron-builder",
     "electron:build:ignore-ts": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_IGNORE_TYPE_ERROR=1 && next build && electron-builder --config electron-builder.local.yml",
     "electron:build:prod": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder --config electron-builder.local.yml",
-    "electron:build:mac": "npm run prepare:mac && next build --no-lint && electron-builder --mac --config electron-builder.local.yml",
-    "electron:build:mac:x64": "npm run prepare:mac:x64 && next build --no-lint && electron-builder --mac --x64 --config electron-builder.local.yml",
-    "electron:build:mac:arm64": "npm run prepare:mac:arm64 && next build --no-lint && electron-builder --mac --arm64 --config electron-builder.local.yml",
-    "electron:build:mac:universal": "next build --no-lint && npm run prepare:mac:x64 && npm run prepare:mac:arm64 && electron-builder --mac --x64 --arm64 --config electron-builder.local.yml",
+    "electron:build:mac": "npm run prepare:mac && next build --no-lint && electron-builder --mac",
+    "electron:build:mac:x64": "npm run prepare:mac:x64 && next build --no-lint && electron-builder --mac --x64",
+    "electron:build:mac:arm64": "npm run prepare:mac:arm64 && next build --no-lint && electron-builder --mac --arm64",
+    "electron:build:mac:universal": "next build --no-lint && npm run prepare:mac:x64 && npm run prepare:mac:arm64 && electron-builder --mac --x64 --arm64",
     "clean": "node clean.js"
   },
   "dependencies": {

@@ -13,7 +13,6 @@ files:
   - '!node_modules/@types/**/*'
   - '!node_modules/puppeteer/.local-chromium/**/*'
   - '!node_modules/puppeteer/.local-firefox/**/*'
-  - '!node_modules/@puppeteer/browsers/**/*'
   - '!node_modules/electron/**/*'
   - '!node_modules/electron-builder/**/*'
   - '!node_modules/electron-rebuild/**/*'
