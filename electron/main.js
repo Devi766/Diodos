@@ -374,39 +374,35 @@ function applyMacOSBackdrop(win) {
 
   console.log(`[macOS] 应用背景效果，模式: ${mode}, 深色模式: ${isDark}`);
 
-  if (mode === 'solid') {
-    // 纯色背景 - 先清除 vibrancy
-    try {
-      win.setVibrancy(null);
-    } catch {}
+  // 清除现有 vibrancy
+  try {
+    win.setVibrancy(null);
+  } catch {}
 
-    // 设置纯色背景
+  if (mode === 'solid') {
+    // 纯色背景
     const bgColor = isDark ? '#1a1a1a' : '#e5e7eb';
     win.setBackgroundColor(bgColor);
     console.log(`[macOS] 已应用纯色背景: ${bgColor}`);
     return;
   }
 
-  // 动态模糊效果 - 使用 macOS 原生 vibrancy
-  // 先设置透明背景，这样 vibrancy 才能生效
-  win.setBackgroundColor('#00000000');
-
-  // 根据模式选择不同的 vibrancy 类型
-  let vibrancyMode;
   if (mode === 'acrylic') {
-    // acrylic 模式使用更强的模糊效果
-    vibrancyMode = isDark ? 'ultra-dark' : 'light';
-  } else {
-    // dynamic 模式使用标准的模糊效果
-    vibrancyMode = isDark ? 'dark' : 'light';
+    // acrylic 模式 - 使用 CSS 渐变背景，不使用 vibrancy
+    win.setBackgroundColor('#00000000');
+    console.log(`[macOS] 已应用 acrylic 背景（CSS 渐变）`);
+    return;
   }
+
+  // dynamic 模式（默认）- 使用 macOS 原生 vibrancy
+  win.setBackgroundColor('#00000000');
+  const vibrancyMode = isDark ? 'dark' : 'light';
 
   try {
     win.setVibrancy(vibrancyMode);
     console.log(`[macOS] 已启用 Vibrancy 模式: ${vibrancyMode}`);
   } catch (error) {
     console.warn(`[macOS] Vibrancy 模式 ${vibrancyMode} 不可用:`, error?.message || error);
-    // 降级到半透明背景
     win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
   }
 }

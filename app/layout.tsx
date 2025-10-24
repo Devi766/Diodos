@@ -23,6 +23,37 @@ export default function RootLayout({
       } else if (platform.includes('linux')) {
         document.body.classList.add('platform-linux');
       }
+
+      // 获取并应用外观模式
+      const initAppearance = async () => {
+        try {
+          // macOS 默认先设置为 dynamic（动态模糊）
+          document.body.classList.add('appearance-dynamic');
+
+          if (window.electronAPI) {
+            const result = await window.electronAPI.getAppearanceMode();
+            if (result.success) {
+              const mode = result.mode || 'dynamic';
+              console.log('[外观模式] 初始化:', mode);
+              document.body.classList.remove('appearance-acrylic', 'appearance-dynamic', 'appearance-solid');
+              document.body.classList.add(`appearance-${mode}`);
+            }
+
+            // 监听外观模式变化
+            window.electronAPI.onAppearanceModeChanged?.((_, mode) => {
+              console.log('[外观模式] 变化:', mode);
+              document.body.classList.remove('appearance-acrylic', 'appearance-dynamic', 'appearance-solid');
+              document.body.classList.add(`appearance-${mode}`);
+            });
+          }
+        } catch (error) {
+          console.error('初始化外观模式失败:', error);
+          // 出错时确保有默认类（macOS 默认 dynamic）
+          document.body.classList.add('appearance-dynamic');
+        }
+      };
+
+      initAppearance();
     }
 
     // 在客户端渲染时获取主题设置
