@@ -363,6 +363,53 @@ const {
   updateUserSettingsRaw
 } = context;
 
+// macOS 背景效果应用函数
+function applyMacOSBackdrop(win) {
+  if (!isMac || !win || win.isDestroyed?.()) {
+    return;
+  }
+
+  const mode = state.appearanceMode || 'dynamic';
+  const isDark = nativeTheme.shouldUseDarkColors;
+
+  console.log(`[macOS] 应用背景效果，模式: ${mode}, 深色模式: ${isDark}`);
+
+  // 清除现有效果
+  try {
+    win.setVibrancy(null);
+  } catch {}
+
+  // 更新标题栏外观
+  try {
+    win.setTitleBarOverlay({
+      color: mode === 'solid' ? (isDark ? '#1a1a1a' : '#e5e7eb') : '#00000000',
+      symbolColor: isDark ? '#f3f4f6' : '#0f172a',
+      height: 48,
+    });
+  } catch (error) {
+    console.warn('[macOS] 更新标题栏外观失败:', error?.message || error);
+  }
+
+  if (mode === 'solid') {
+    // 纯色背景
+    win.setBackgroundColor(isDark ? '#1a1a1a' : '#e5e7eb');
+    console.log(`[macOS] 已应用纯色背景: ${isDark ? '#1a1a1a' : '#e5e7eb'}`);
+    return;
+  }
+
+  // 动态模糊效果 - 使用 macOS 原生 vibrancy
+  const vibrancyMode = isDark ? 'under-window' : 'under-window';
+  try {
+    win.setVibrancy(vibrancyMode);
+    win.setBackgroundColor('#00000000'); // 透明背景
+    console.log(`[macOS] 已启用 Vibrancy 模式: ${vibrancyMode}`);
+  } catch (error) {
+    console.warn(`[macOS] Vibrancy 模式 ${vibrancyMode} 不可用:`, error?.message || error);
+    // 降级到半透明背景
+    win.setBackgroundColor(isDark ? '#e60f172a' : '#fcffffff');
+  }
+}
+
 function applyWindowsBackdrop(win) {
   if (!isWindows || !win || win.isDestroyed?.()) {
     return;
@@ -602,22 +649,21 @@ function createWindow() {
   });
 
   state.mainWindow.setBackgroundColor('#00000000');
-  refreshWindowsBackdrop(state.mainWindow, 0);
 
-  if (!isWindows) {
-    try {
-      state.mainWindow.setTitleBarOverlay({
-        color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
-        symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
-        height: 48
-      });
-    } catch (error) {
-      console.warn('初始化标题栏外观失败:', error?.message || error);
-    }
+  // 应用平台特定的背景效果
+  if (isMac) {
+    applyMacOSBackdrop(state.mainWindow);
+  } else if (isWindows) {
+    refreshWindowsBackdrop(state.mainWindow, 0);
   }
 
   // 监听系统主题变化
   nativeTheme.on('updated', () => {
+    // 处理 macOS 平台的背景效果
+    if (isMac) {
+      applyMacOSBackdrop(state.mainWindow);
+    }
+
     // 处理 Windows 平台的背景效果
     if (isWindows) {
       refreshWindowsBackdrop(state.mainWindow, 0);
@@ -629,19 +675,6 @@ function createWindow() {
           : rgba(0x66, 255, 255, 255);
         enableAcrylic(state.mainWindow, { tintColor: tint, accentFlags: 2 });
       } catch {}
-    }
-
-    // 更新标题栏颜色（macOS 和其他平台）
-    if (!isWindows) {
-      try {
-        state.mainWindow.setTitleBarOverlay({
-          color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
-          symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
-          height: 48
-        });
-      } catch (error) {
-        console.warn('更新标题栏外观失败:', error?.message || error);
-      }
     }
 
     // 如果用户设置为跟随系统，通知前端更新主题
@@ -663,12 +696,20 @@ function createWindow() {
   }
 
   state.mainWindow.webContents.on('dom-ready', () => {
-    refreshWindowsBackdrop(state.mainWindow, 0);
+    if (isMac) {
+      applyMacOSBackdrop(state.mainWindow);
+    } else if (isWindows) {
+      refreshWindowsBackdrop(state.mainWindow, 0);
+    }
   });
 
   // 确保CSS加载正确
   state.mainWindow.webContents.on('did-finish-load', () => {
-    refreshWindowsBackdrop(state.mainWindow, 1);
+    if (isMac) {
+      applyMacOSBackdrop(state.mainWindow);
+    } else if (isWindows) {
+      refreshWindowsBackdrop(state.mainWindow, 1);
+    }
     if (!isDev) {
       try {
         // 尝试注入正确的CSS路径
@@ -1661,9 +1702,15 @@ app.whenReady().then(() => {
       dbManager.setSetting('appearanceMode', mode);
 
       if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-        state.mainWindow[Symbol.for('flyclash.backdropNudgeCount')] = 0;
-        applyWindowsBackdrop(state.mainWindow);
-        refreshWindowsBackdrop(state.mainWindow, 0);
+        if (isMac) {
+          // macOS 使用专用函数
+          applyMacOSBackdrop(state.mainWindow);
+        } else if (isWindows) {
+          // Windows 使用原有逻辑
+          state.mainWindow[Symbol.for('flyclash.backdropNudgeCount')] = 0;
+          applyWindowsBackdrop(state.mainWindow);
+          refreshWindowsBackdrop(state.mainWindow, 0);
+        }
         try {
           state.mainWindow.webContents.send('appearance-mode-changed', mode);
         } catch {}
