@@ -92,7 +92,7 @@ class OverrideManager {
       name: item.name || 'Untitled',
       type: item.type || 'local',
       ext: item.ext || 'yaml',
-      enabled: item.enabled !== false,
+      enabled: item.enabled === true, // 默认禁用，除非明确指定为 true
       global: item.global || false,
       createdAt: now,
       updatedAt: now,
@@ -113,10 +113,13 @@ class OverrideManager {
     config.items.push(newItem);
     await this.saveConfig(config);
 
-    try {
-      await this.refreshRuntimeConfig();
-    } catch (error) {
-      console.error('新增覆写后刷新配置失败:', error);
+    // 只有在启用状态时才重启内核
+    if (newItem.enabled) {
+      try {
+        await this.refreshRuntimeConfig();
+      } catch (error) {
+        console.error('新增覆写后刷新配置失败:', error);
+      }
     }
 
     return newItem;

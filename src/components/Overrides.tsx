@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ReloadIcon, PlusIcon, TrashIcon, Pencil1Icon, FileTextIcon, DotsVerticalIcon, DragHandleDots2Icon } from '@radix-ui/react-icons';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
@@ -79,6 +79,19 @@ function SortableOverrideCard({
   };
 
   const [showMenu, setShowMenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  const handleMenuClick = () => {
+    if (!showMenu && menuButtonRef.current) {
+      const rect = menuButtonRef.current.getBoundingClientRect();
+      setMenuPosition({
+        top: rect.bottom + 4,
+        right: window.innerWidth - rect.right,
+      });
+    }
+    setShowMenu(!showMenu);
+  };
 
   return (
     <div ref={setNodeRef} style={style}>
@@ -143,58 +156,66 @@ function SortableOverrideCard({
             {/* 更多菜单 */}
             <div className="relative">
               <Button
+                ref={menuButtonRef}
                 size="sm"
                 variant="ghost"
-                onClick={() => setShowMenu(!showMenu)}
+                onClick={handleMenuClick}
               >
                 <DotsVerticalIcon className="w-4 h-4" />
               </Button>
-
-              {showMenu && (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setShowMenu(false)}
-                  />
-                  <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 z-20">
-                    <button
-                      onClick={() => {
-                        onEdit(item);
-                        setShowMenu(false);
-                      }}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
-                    >
-                      <Pencil1Icon className="w-4 h-4" />
-                      编辑信息
-                    </button>
-                    <button
-                      onClick={() => {
-                        onEditFile(item);
-                        setShowMenu(false);
-                      }}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
-                    >
-                      <FileTextIcon className="w-4 h-4" />
-                      编辑文件
-                    </button>
-                    <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
-                    <button
-                      onClick={() => {
-                        onDelete(item.id);
-                        setShowMenu(false);
-                      }}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2"
-                    >
-                      <TrashIcon className="w-4 h-4" />
-                      删除
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
           </div>
         </div>
       </Card>
+
+      {/* 菜单使用 fixed 定位，渲染在卡片外部 */}
+      {showMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-[100]"
+            onClick={() => setShowMenu(false)}
+          />
+          <div
+            className="fixed w-40 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 z-[101]"
+            style={{
+              top: `${menuPosition.top}px`,
+              right: `${menuPosition.right}px`,
+            }}
+          >
+            <button
+              onClick={() => {
+                onEdit(item);
+                setShowMenu(false);
+              }}
+              className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+            >
+              <Pencil1Icon className="w-4 h-4" />
+              编辑信息
+            </button>
+            <button
+              onClick={() => {
+                onEditFile(item);
+                setShowMenu(false);
+              }}
+              className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+            >
+              <FileTextIcon className="w-4 h-4" />
+              编辑文件
+            </button>
+            <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
+            <button
+              onClick={() => {
+                onDelete(item.id);
+                setShowMenu(false);
+              }}
+              className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2"
+            >
+              <TrashIcon className="w-4 h-4" />
+              删除
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -439,6 +460,7 @@ export default function Overrides() {
         </div>
         <Button
           size="sm"
+          variant="solid"
           onClick={handleImport}
           disabled={!url || importing}
         >
@@ -459,10 +481,10 @@ export default function Overrides() {
           {showAddMenu && (
             <>
               <div
-                className="fixed inset-0 z-10"
+                className="fixed inset-0 z-[100]"
                 onClick={() => setShowAddMenu(false)}
               />
-              <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 z-20">
+              <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 z-[101]">
                 <button
                   onClick={async () => {
                     const input = document.createElement('input');

@@ -21,7 +21,14 @@ function formatBytes(bytes: number): string {
 }
 
 export function TrafficStatisticsCard() {
-  const [viewMode, setViewMode] = useState<ViewMode>('day');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const saved = localStorage.getItem('trafficStatisticsViewMode');
+      return (saved === 'month' ? 'month' : 'day') as ViewMode;
+    } catch {
+      return 'day';
+    }
+  });
   const [todayData, setTodayData] = useState<TrafficData>({ upload: 0, download: 0 });
   const [monthData, setMonthData] = useState<DayTrafficData[]>([]);
   const monthChartRef = React.useRef<HTMLDivElement>(null);
@@ -105,7 +112,14 @@ export function TrafficStatisticsCard() {
         </p>
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
           <button
-            onClick={() => setViewMode('day')}
+            onClick={() => {
+              setViewMode('day');
+              try {
+                localStorage.setItem('trafficStatisticsViewMode', 'day');
+              } catch (error) {
+                console.error('保存视图模式失败:', error);
+              }
+            }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'day'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'
@@ -116,7 +130,14 @@ export function TrafficStatisticsCard() {
             日
           </button>
           <button
-            onClick={() => setViewMode('month')}
+            onClick={() => {
+              setViewMode('month');
+              try {
+                localStorage.setItem('trafficStatisticsViewMode', 'month');
+              } catch (error) {
+                console.error('保存视图模式失败:', error);
+              }
+            }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'month'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'

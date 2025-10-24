@@ -13,6 +13,9 @@
 /cores/mihomo-windows-amd64.exe
 /release
 /dist
+
+# local build config
+electron-builder.local.yml
 # testing
 /coverage
 

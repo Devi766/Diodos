@@ -608,6 +608,17 @@ module.exports = function initMihomoService(context) {
 
       console.log('使用内核文件:', binPath);
 
+      // 在 Unix 系统上确保内核文件有执行权限
+      if (process.platform !== 'win32') {
+        try {
+          fs.chmodSync(binPath, 0o755);
+          console.log('[startMihomo] 已设置内核文件执行权限:', binPath);
+        } catch (error) {
+          console.error('[startMihomo] 设置执行权限失败:', error);
+          // 继续尝试启动,可能已经有权限了
+        }
+      }
+
       const mihomoDir = path.join(userDataPath, 'mihomo');
       if (!fs.existsSync(mihomoDir)) {
         fs.mkdirSync(mihomoDir, { recursive: true });
@@ -786,6 +797,21 @@ module.exports = function initMihomoService(context) {
       const maxRetries = 30;
       const retryInterval = 500;
       let coreReady = false;
+
+      // 在 Unix 系统上，先等待 socket 文件被创建
+      if (process.platform !== 'win32') {
+        console.log('[startMihomo] 等待 socket 文件创建:', socketPath);
+        for (let i = 0; i < 20; i++) {
+          if (fs.existsSync(socketPath)) {
+            console.log(`[startMihomo] Socket 文件已创建,耗时: ${(i + 1) * 100}ms`);
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+          if (i === 19) {
+            console.warn('[startMihomo] Socket 文件未在预期时间内创建');
+          }
+        }
+      }
 
       for (let i = 0; i < maxRetries; i++) {
         // 首先检查进程是否已退出

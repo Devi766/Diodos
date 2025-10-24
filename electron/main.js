@@ -618,6 +618,7 @@ function createWindow() {
 
   // 监听系统主题变化
   nativeTheme.on('updated', () => {
+    // 处理 Windows 平台的背景效果
     if (isWindows) {
       refreshWindowsBackdrop(state.mainWindow, 0);
       try {
@@ -628,17 +629,27 @@ function createWindow() {
           : rgba(0x66, 255, 255, 255);
         enableAcrylic(state.mainWindow, { tintColor: tint, accentFlags: 2 });
       } catch {}
-      return;
     }
 
-    try {
-      state.mainWindow.setTitleBarOverlay({
-        color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
-        symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
-        height: 48
-      });
-    } catch (error) {
-      console.warn('更新标题栏外观失败:', error?.message || error);
+    // 更新标题栏颜色（macOS 和其他平台）
+    if (!isWindows) {
+      try {
+        state.mainWindow.setTitleBarOverlay({
+          color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
+          symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
+          height: 48
+        });
+      } catch (error) {
+        console.warn('更新标题栏外观失败:', error?.message || error);
+      }
+    }
+
+    // 如果用户设置为跟随系统，通知前端更新主题
+    const currentTheme = dbManager.getSetting('theme', 'system');
+    if (currentTheme === 'system' && state.mainWindow && !state.mainWindow.isDestroyed()) {
+      const actualTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+      console.log('系统主题已变化，当前为:', actualTheme);
+      state.mainWindow.webContents.send('theme-changed', actualTheme);
     }
   });
 
@@ -1611,12 +1622,19 @@ app.whenReady().then(() => {
           break;
       }
 
-      // 更新标题栏颜色
-      state.mainWindow.setTitleBarOverlay({
-        color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
-        symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
-        height: 48
-      });
+      // 更新标题栏颜色（仅在启用了标题栏覆盖时）
+      try {
+        if (state.mainWindow.setTitleBarOverlay) {
+          state.mainWindow.setTitleBarOverlay({
+            color: nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#f9f9f9',
+            symbolColor: nativeTheme.shouldUseDarkColors ? '#f3f4f6' : '#000000',
+            height: 48
+          });
+        }
+      } catch (overlayError) {
+        // 忽略标题栏覆盖错误，不影响主题设置
+        console.log('标题栏覆盖更新失败（可能未启用）:', overlayError.message);
+      }
 
       return { success: true, theme };
     } catch (error) {

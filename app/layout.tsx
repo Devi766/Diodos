@@ -30,19 +30,41 @@ export default function RootLayout({
             }
             
             setTheme(actualTheme);
-            document.documentElement.className = actualTheme;
-            
+            // 使用 classList 来添加/移除主题类，而不是替换整个 className
+            if (actualTheme === 'dark') {
+              document.documentElement.classList.add('dark');
+              document.documentElement.classList.remove('light');
+            } else {
+              document.documentElement.classList.add('light');
+              document.documentElement.classList.remove('dark');
+            }
+
             // 监听主题变化事件
             window.electronAPI.onThemeChanged((_, newTheme) => {
               if (newTheme === 'system') {
                 // 跟随系统设置
                 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
                 setTheme(systemTheme);
-                document.documentElement.className = systemTheme;
+                if (systemTheme === 'dark') {
+                  document.documentElement.classList.add('dark');
+                  document.documentElement.classList.remove('light');
+                } else {
+                  document.documentElement.classList.add('light');
+                  document.documentElement.classList.remove('dark');
+                }
               } else {
                 setTheme(newTheme);
-                document.documentElement.className = newTheme;
+                if (newTheme === 'dark') {
+                  document.documentElement.classList.add('dark');
+                  document.documentElement.classList.remove('light');
+                } else {
+                  document.documentElement.classList.add('light');
+                  document.documentElement.classList.remove('dark');
+                }
               }
+
+              // 强制触发重新渲染
+              window.dispatchEvent(new Event('storage'));
             });
             
             return;
@@ -52,12 +74,19 @@ export default function RootLayout({
         // 默认情况下跟随系统设置
         const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         setTheme(systemTheme);
-        document.documentElement.className = systemTheme;
+        if (systemTheme === 'dark') {
+          document.documentElement.classList.add('dark');
+          document.documentElement.classList.remove('light');
+        } else {
+          document.documentElement.classList.add('light');
+          document.documentElement.classList.remove('dark');
+        }
       } catch (error) {
         console.error('初始化主题失败:', error);
         // 出错时默认使用浅色主题
         setTheme('light');
-        document.documentElement.className = 'light';
+        document.documentElement.classList.add('light');
+        document.documentElement.classList.remove('dark');
       }
     };
     

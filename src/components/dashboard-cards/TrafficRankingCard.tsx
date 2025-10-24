@@ -81,7 +81,14 @@ function getProcessIcon(processName: string): React.ReactNode {
 }
 
 export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('process');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const saved = localStorage.getItem('trafficRankingViewMode');
+      return (saved === 'domain' || saved === 'rule' ? saved : 'process') as ViewMode;
+    } catch {
+      return 'process';
+    }
+  });
   const [iconMap, setIconMap] = useState<Record<string, string>>({});
 
   const rankings = useMemo(() => {
@@ -179,7 +186,14 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
         </p>
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
           <button
-            onClick={() => setViewMode('process')}
+            onClick={() => {
+              setViewMode('process');
+              try {
+                localStorage.setItem('trafficRankingViewMode', 'process');
+              } catch (error) {
+                console.error('保存视图模式失败:', error);
+              }
+            }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'process'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'
@@ -190,7 +204,14 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             进程
           </button>
           <button
-            onClick={() => setViewMode('domain')}
+            onClick={() => {
+              setViewMode('domain');
+              try {
+                localStorage.setItem('trafficRankingViewMode', 'domain');
+              } catch (error) {
+                console.error('保存视图模式失败:', error);
+              }
+            }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'domain'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'
@@ -201,7 +222,14 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             域名
           </button>
           <button
-            onClick={() => setViewMode('rule')}
+            onClick={() => {
+              setViewMode('rule');
+              try {
+                localStorage.setItem('trafficRankingViewMode', 'rule');
+              } catch (error) {
+                console.error('保存视图模式失败:', error);
+              }
+            }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'rule'
                 ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'

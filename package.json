@@ -10,15 +10,14 @@
     "lint": "next lint",
     "postinstall": "electron-builder install-app-deps",
     "prepare": "node scripts/prepare.mjs",
-    "prebuild": "node clean.js",
+
     "electron:dev": "concurrently \"cross-env npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron . --js-flags='--expose-gc'\"",
     "electron": "electron . --js-flags='--expose-gc'",
-    "electron:build": "node clean.js && next build --no-lint && electron-builder",
-    "electron:build:ignore-ts": "node clean.js && set NEXT_TELEMETRY_DISABLED=1 && set NEXT_IGNORE_TYPE_ERROR=1 && next build && electron-builder",
-    "electron:build:prod": "node clean.js && set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder",
-    "clean": "node clean.js",
-    "clean:build": "node clean.js && next build --no-lint && electron-builder",
-    "clean:build:prod": "node clean.js && set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder"
+    "electron:build": "next build --no-lint && electron-builder --config electron-builder.local.yml",
+    "electron:build:ci": "next build --no-lint && electron-builder",
+    "electron:build:ignore-ts": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_IGNORE_TYPE_ERROR=1 && next build && electron-builder --config electron-builder.local.yml",
+    "electron:build:prod": "set NEXT_TELEMETRY_DISABLED=1 && set NEXT_PUBLIC_BASE_PATH=./ && next build && electron-builder --config electron-builder.local.yml",
+    "clean": "node clean.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

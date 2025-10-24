@@ -149,6 +149,15 @@ export default function ProxyNodes() {
       return 'single';
     }
   });
+  const [sortMode, setSortMode] = useState<'default' | 'latency'>(() => {
+    try {
+      const saved = localStorage.getItem('nodesSortMode');
+      return (saved === 'latency' ? 'latency' : 'default') as 'default' | 'latency';
+    } catch {
+      return 'default';
+    }
+  });
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   let mihomoAPI = useMihomoAPI();
 
   // 获取节点的动画高度，用于折叠/展开动画
@@ -873,41 +882,7 @@ export default function ProxyNodes() {
     });
   };
 
-  const toggleAllGroups = () => {
-    // 检查是否所有组都已收起
-    const hasAnyCollapsed = collapsedGroups.size > 0;
 
-    if (hasAnyCollapsed) {
-      // 如果有任何组被收起,则全部展开
-      setCollapsedGroups(new Set());
-      try {
-        localStorage.removeItem('collapsedGroups');
-        console.log('已展开所有代理组');
-      } catch (error) {
-        console.error('展开所有代理组失败:', error);
-      }
-      if (window.electronAPI?.saveCollapsedGroups) {
-        window.electronAPI.saveCollapsedGroups([]).catch((error: unknown) => {
-          console.error('同步清空持久化折叠状态失败:', error);
-        });
-      }
-    } else {
-      // 如果所有组都已展开,则全部收起
-      const allGroupNames = new Set(displayGroups.map(g => g.name));
-      setCollapsedGroups(allGroupNames);
-      try {
-        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(allGroupNames)));
-        console.log('已收起所有代理组');
-      } catch (error) {
-        console.error('收起所有代理组失败:', error);
-      }
-      if (window.electronAPI?.saveCollapsedGroups) {
-        window.electronAPI.saveCollapsedGroups(Array.from(allGroupNames)).catch((error: unknown) => {
-          console.error('同步持久化折叠状态失败:', error);
-        });
-      }
-    }
-  };
 
   // 根据节点名称长度计算最合适的列数
   const calculateOptimalColumns = (nodes: ProxyNode[], isDoubleLayout: boolean = false) => {
@@ -944,6 +919,7 @@ export default function ProxyNodes() {
     testingNodes: Set<string>;
     favoriteNodes: Set<string>;
     layoutMode: 'single' | 'double';
+    sortMode: 'default' | 'latency';
   }> = ({
     group,
     collapsedGroups,
@@ -952,9 +928,24 @@ export default function ProxyNodes() {
     handleToggleFavorite,
     testingNodes,
     favoriteNodes,
-    layoutMode
+    layoutMode,
+    sortMode
   }) => {
     const isCollapsed = collapsedGroups.has(group.name);
+
+    // 根据排序模式对节点进行排序
+    const sortedNodes = React.useMemo(() => {
+      if (sortMode === 'latency') {
+        return [...group.nodes].sort((a, b) => {
+          // 没有延迟的节点排在最后
+          if (!a.delay && !b.delay) return 0;
+          if (!a.delay) return 1;
+          if (!b.delay) return -1;
+          return a.delay - b.delay;
+        });
+      }
+      return group.nodes;
+    }, [group.nodes, sortMode]);
 
     // 添加监听折叠状态的useEffect
     useEffect(() => {
@@ -1134,7 +1125,7 @@ export default function ProxyNodes() {
       
       return (
         <div className={gridClass}>
-          {group.nodes.map(node => (
+          {sortedNodes.map(node => (
             <div key={node.name} className="node-card-container">
               <NodeCardInner key={node.name} node={node} group={group} />
             </div>
@@ -1554,24 +1545,105 @@ export default function ProxyNodes() {
                 >
                   <ReloadIcon className="h-5 w-5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={toggleAllGroups}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
-                  title={collapsedGroups.size > 0 ? "展开所有代理组" : "收起所有代理组"}
-                >
-                  <MixerHorizontalIcon className="h-5 w-5" />
-                </button>
+                {/* 选项菜单 */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
+                    title="选项"
+                  >
+                    <MixerHorizontalIcon className="h-5 w-5" />
+                  </button>
+
+                  {showOptionsMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-[100]"
+                        onClick={() => setShowOptionsMenu(false)}
+                      />
+                      <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-[#2a2a2a] rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 z-[101]">
+                        <button
+                          onClick={() => {
+                            const hasAnyCollapsed = collapsedGroups.size > 0;
+                            if (hasAnyCollapsed) {
+                              // 展开所有
+                              setCollapsedGroups(new Set());
+                              try {
+                                localStorage.removeItem('collapsedGroups');
+                              } catch (error) {
+                                console.error('展开所有代理组失败:', error);
+                              }
+                            } else {
+                              // 收起所有
+                              const allGroupNames = new Set(displayGroups.map(g => g.name));
+                              setCollapsedGroups(allGroupNames);
+                              try {
+                                localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(allGroupNames)));
+                              } catch (error) {
+                                console.error('收起所有代理组失败:', error);
+                              }
+                            }
+                            setShowOptionsMenu(false);
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        >
+                          {collapsedGroups.size > 0 ? '展开所有代理组' : '收起所有代理组'}
+                        </button>
+                        <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
+                        <button
+                          onClick={() => {
+                            setSortMode('default');
+                            try {
+                              localStorage.setItem('nodesSortMode', 'default');
+                            } catch (error) {
+                              console.error('保存排序模式失败:', error);
+                            }
+                            setShowOptionsMenu(false);
+                          }}
+                          className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center ${
+                            sortMode === 'default' ? 'text-blue-600 dark:text-blue-400' : ''
+                          }`}
+                        >
+                          <div className="w-4 h-4 flex items-center justify-center mr-2">
+                            {sortMode === 'default' && <CheckCircledIcon className="w-4 h-4" />}
+                          </div>
+                          <span>默认排序</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSortMode('latency');
+                            try {
+                              localStorage.setItem('nodesSortMode', 'latency');
+                            } catch (error) {
+                              console.error('保存排序模式失败:', error);
+                            }
+                            setShowOptionsMenu(false);
+                          }}
+                          className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center ${
+                            sortMode === 'latency' ? 'text-blue-600 dark:text-blue-400' : ''
+                          }`}
+                        >
+                          <div className="w-4 h-4 flex items-center justify-center mr-2">
+                            {sortMode === 'latency' && <CheckCircledIcon className="w-4 h-4" />}
+                          </div>
+                          <span>按延迟排序</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <div className={layoutMode === 'double' ? 'columns-2 gap-2' : 'space-y-2'}>
-        {currentMode === 'direct' ? (
-          <DirectModeMessage />
-        ) : displayGroups.length > 0 ? (
+      {currentMode === 'direct' ? (
+        <DirectModeMessage />
+      ) : (
+        <div className={layoutMode === 'double' ? 'columns-2 gap-2' : 'space-y-2'}>
+          {displayGroups.length > 0 ? (
           <>
             {displayGroups.map((group) => {
               const collapseKey = group.name;
@@ -1641,16 +1713,18 @@ export default function ProxyNodes() {
                       testingNodes={testingNodes}
                       favoriteNodes={favoriteNodes}
                       layoutMode={layoutMode}
+                      sortMode={sortMode}
                     />
                   </div>
                 </div>
               );
             })}
           </>
-        ) : (
-          <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">暂无匹配的节点</div>
-        )}
-      </div>
+          ) : (
+            <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">暂无匹配的节点</div>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground md:flex-row">
         <div className="flex flex-wrap items-center gap-3">

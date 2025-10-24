@@ -109,10 +109,15 @@ export default function Settings() {
     fetchData();
 
     // 监听主题变更事件
-    const handleThemeChanged = (_event: any, newTheme: string) => {
-      setTheme(newTheme);
-      
-      // 更新文档的类名来应用主题
+    const handleThemeChanged = async (_event: any, newTheme: string) => {
+      // 获取当前保存的主题设置
+      const themeResult = await window.electronAPI.getTheme();
+      if (themeResult.success) {
+        // 更新 theme state 为保存的设置值（可能是 'system'）
+        setTheme(themeResult.theme);
+      }
+
+      // 更新文档的类名来应用实际主题
       if (newTheme === 'dark') {
         document.documentElement.classList.add('dark');
         document.documentElement.classList.remove('light');
@@ -214,9 +219,14 @@ export default function Settings() {
         const result = await window.electronAPI.setTheme(newTheme);
         if (result.success) {
           setTheme(newTheme);
-          
+
           // 直接更新文档的类名来立即应用主题
-          if (result.theme === 'dark' || (result.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          let actualTheme = newTheme;
+          if (newTheme === 'system') {
+            actualTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+
+          if (actualTheme === 'dark') {
             document.documentElement.classList.add('dark');
             document.documentElement.classList.remove('light');
           } else {
