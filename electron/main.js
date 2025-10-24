@@ -357,6 +357,31 @@ registerOverrideHandlers(context);
 const { registerTrafficHistoryHandlers } = require('./ipc-handlers/traffic-history');
 registerTrafficHistoryHandlers(context);
 
+// 导入批量测速模块
+const {
+  initBatchSpeedtest,
+  runProxySpeedtest,
+  testUdpConnectivity,
+  saveSpeedtestReport,
+  getSpeedtestReports,
+  getSpeedtestReport,
+  generateSpeedtestReportWithPuppeteer,
+  copySpeedtestReportWithPuppeteer,
+  cancelBatchSpeedtest
+} = require('./batchspeedtest');
+
+// 初始化批量测速模块
+// 注意：这里传递的是函数引用和 state 对象，而不是具体的值
+// 这样可以确保在调用时获取最新的 state.activeApiConfig
+initBatchSpeedtest({
+  switchNode: switchNode,
+  fetchMihomoAPI: fetchMihomoAPI,
+  get activeApiConfig() {
+    return state.activeApiConfig;
+  }
+});
+console.log('[启动] 批量测速模块已初始化');
+
 const {
   ensureUserSettingsFile,
   getUserSettings,
@@ -1615,6 +1640,79 @@ app.whenReady().then(() => {
   // 启动订阅调度器
   subscriptionScheduler.start();
 
+  // 注册批量测速相关的 IPC handlers
+  ipcMain.handle('run-proxy-speedtest', async (event, options) => {
+    try {
+      return await runProxySpeedtest(options);
+    } catch (error) {
+      console.error('代理测速失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('test-udp-connectivity', async (event, options) => {
+    try {
+      return await testUdpConnectivity(options);
+    } catch (error) {
+      console.error('UDP连通性测试失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-speedtest-report', async (event, reportData) => {
+    try {
+      return await saveSpeedtestReport(reportData);
+    } catch (error) {
+      console.error('保存测速报告失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-speedtest-reports', async () => {
+    try {
+      return await getSpeedtestReports();
+    } catch (error) {
+      console.error('获取测速报告列表失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-speedtest-report', async (event, reportId) => {
+    try {
+      return await getSpeedtestReport(reportId);
+    } catch (error) {
+      console.error('获取测速报告失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('generate-speedtest-report-pdf', async (event, reportData) => {
+    try {
+      return await generateSpeedtestReportWithPuppeteer(reportData);
+    } catch (error) {
+      console.error('生成测速报告PDF失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('copy-speedtest-report', async (event, reportData) => {
+    try {
+      return await copySpeedtestReportWithPuppeteer(reportData);
+    } catch (error) {
+      console.error('复制测速报告失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('cancel-batch-speedtest', async () => {
+    try {
+      return cancelBatchSpeedtest();
+    } catch (error) {
+      console.error('取消测速失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // 注册API: 获取当前代理设置
   ipcMain.handle('get-proxy-settings', async () => {
     try {
@@ -2762,7 +2860,7 @@ app.on('before-quit', () => {
   }
 }); 
 
-async function switchNode(nodeName) {
+async function switchNode(nodeName, proxyGroup = 'PROXY') {
   try {
     if (!state.activeApiConfig) {
       console.error('无法切换节点: API配置不可用');
@@ -2770,7 +2868,9 @@ async function switchNode(nodeName) {
     }
 
     // Socket 模式: 使用 fetchMihomoAPI
-    const response = await fetchMihomoAPI('/proxies/PROXY', {
+    // 如果指定了代理组，使用指定的组；否则使用默认的 PROXY 组
+    const targetGroup = proxyGroup || 'PROXY';
+    const response = await fetchMihomoAPI(`/proxies/${encodeURIComponent(targetGroup)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json'
