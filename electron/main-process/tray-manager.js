@@ -51,16 +51,21 @@ module.exports = function initTrayManager(context) {
         console.log(`[macOS] 文件存在: ${fs.existsSync(iconPath)}`);
 
         if (fs.existsSync(iconPath)) {
-          const icon = nativeImage.createFromPath(iconPath);
-          if (!icon.isEmpty()) {
-            const size = icon.getSize();
+          trayIcon = nativeImage.createFromPath(iconPath);
+          if (!trayIcon.isEmpty()) {
+            const size = trayIcon.getSize();
             console.log(`[macOS] 原始图标尺寸: ${size.width}x${size.height}`);
 
-            // 不要 resize，直接使用原始图标
-            // macOS 会自动调整到合适的尺寸
-            trayIcon = icon;
+            // macOS 托盘图标标准尺寸：22x22 (Retina 屏幕会自动使用 @2x)
+            const targetSize = 22;
+            if (size.width !== targetSize || size.height !== targetSize) {
+              trayIcon = trayIcon.resize({ width: targetSize, height: targetSize });
+              console.log(`[macOS] 图标已调整为: ${targetSize}x${targetSize}`);
+            }
+
+            // 设置为模板图标（必须在创建 Tray 之前设置）
             trayIcon.setTemplateImage(true);
-            console.log('[macOS] 托盘图标设置成功: 使用原始尺寸, Template 模式');
+            console.log('[macOS] 托盘图标设置成功: Template 模式');
           } else {
             console.warn('[macOS] 图标加载为空');
             trayIcon = nativeImage.createEmpty();
