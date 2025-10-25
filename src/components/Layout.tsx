@@ -22,12 +22,14 @@ import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 import TitleBar from '@/components/TitleBar';
 import { showToast } from '@/components/ui/toast';
+import { useTranslation } from 'react-i18next';
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 export default function Layout({ children }: LayoutProps) {
+  const { t } = useTranslation();
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
@@ -105,28 +107,28 @@ export default function Layout({ children }: LayoutProps) {
   
   const menuItems = useMemo(() => {
     const items = [
-      { name: '仪表盘', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
-      { name: '代理组', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
-      { name: '配置管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
-      { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
-      { name: '匹配规则', href: '/match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
-      { name: '配置覆写', href: '/overrides', icon: <CodeIcon className="w-5 h-5" /> },
-      { name: '外部资源', href: '/external-resources', icon: <LayersIcon className="w-5 h-5" /> },
-      { name: '实用工具', href: '/tools', icon: (
+      { name: t('nav.dashboard'), href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
+      { name: t('nav.nodes'), href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
+      { name: t('nav.subscriptions'), href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
+      { name: t('nav.connections'), href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
+      { name: t('nav.matchRules'), href: '/match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
+      { name: t('nav.overrides'), href: '/overrides', icon: <CodeIcon className="w-5 h-5" /> },
+      { name: t('nav.externalResources'), href: '/external-resources', icon: <LayersIcon className="w-5 h-5" /> },
+      { name: t('nav.tools'), href: '/tools', icon: (
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M21.71 20.29L20.29 21.71A1 1 0 0 1 18.88 21.71L7 9.85A3.81 3.81 0 0 1 6 10A4 4 0 0 1 2.22 4.7L4.76 7.24L5.29 6.71L6.71 5.29L7.24 4.76L4.7 2.22A4 4 0 0 1 10 6A3.81 3.81 0 0 1 9.85 7L21.71 18.88A1 1 0 0 1 21.71 20.29M2.29 18.88A1 1 0 0 0 2.29 20.29L3.71 21.71A1 1 0 0 0 5.12 21.71L10.59 16.25L7.76 13.42M20 2L16 4V6L13.83 8.17L15.83 10.17L18 8H20L22 4Z" />
         </svg>
       ) },
-      { name: '内核日志', href: '/logs', icon: <InfoCircledIcon className="w-5 h-5" /> },
-      { name: '系统设置', href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
+      { name: t('nav.logs'), href: '/logs', icon: <InfoCircledIcon className="w-5 h-5" /> },
+      { name: t('nav.settings'), href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
     ];
 
     if (hasProviders) {
-      items.splice(7, 0, { name: '提供者', href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
+      items.splice(7, 0, { name: t('nav.providers'), href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
     }
 
     return items;
-  }, [hasProviders]);
+  }, [hasProviders, t]);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -157,6 +159,417 @@ export default function Layout({ children }: LayoutProps) {
     };
 
     const cleanup = window.electronAPI.onMihomoStartFailed?.(handleMihomoStartFailed);
+
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, []);
+
+  // 监听并应用自定义背景
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI) return;
+
+    const applyCustomBackground = (config: { imageData?: string; imagePath?: string; opacity: number; blur: number }) => {
+      console.log('[Layout] 应用自定义背景配置:', { ...config, imageData: config.imageData ? '(base64 data)' : undefined });
+
+      const { imageData, imagePath, opacity, blur } = config;
+
+      // 确定使用哪种图片源
+      let imageUrl: string;
+      if (imageData) {
+        // 使用base64数据
+        imageUrl = imageData;
+      } else if (imagePath) {
+        // 备用方案：使用file://路径
+        imageUrl = `file:///${imagePath.replace(/\\/g, '/')}`;
+      } else {
+        console.error('[Layout] 没有提供图片数据或路径');
+        return;
+      }
+
+      // 查找或创建样式元素
+      let styleElement = document.getElementById('custom-background-style');
+      if (!styleElement) {
+        styleElement = document.createElement('style');
+        styleElement.id = 'custom-background-style';
+        document.head.appendChild(styleElement);
+      }
+
+      // 根据是否有模糊和透明度需求，选择不同的渲染策略
+      const needsOpacityLayer = opacity < 100;
+      const hasBlur = blur > 0;
+
+      if (hasBlur && needsOpacityLayer) {
+        // 有模糊且需要透明度：使用双层结构
+        styleElement.innerHTML = `
+          body {
+            position: relative;
+          }
+          body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw;
+            height: 100vh;
+            background-image: url('${imageUrl}');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            filter: blur(${blur}px);
+            transform: scale(1.1);
+            z-index: -9999;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+          }
+          body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(255, 255, 255, ${1 - opacity / 100});
+            z-index: -9998;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+          }
+        `;
+      } else if (hasBlur && !needsOpacityLayer) {
+        // 只有模糊，没有透明度
+        styleElement.innerHTML = `
+          body {
+            position: relative;
+          }
+          body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw;
+            height: 100vh;
+            background-image: url('${imageUrl}');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            filter: blur(${blur}px);
+            transform: scale(1.1);
+            z-index: -9999;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+          }
+        `;
+      } else {
+        // 没有模糊：使用单层结构（可能有透明度）
+        styleElement.innerHTML = `
+          body {
+            position: relative;
+          }
+          body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw;
+            height: 100vh;
+            background-image: url('${imageUrl}');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            opacity: ${opacity / 100};
+            z-index: -9999;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+          }
+        `;
+      }
+
+      console.log('[Layout] 自定义背景已应用');
+    };
+
+    // 页面加载时检查并应用已保存的自定义背景
+    const loadSavedBackground = async () => {
+      // 检查是否已经有背景样式（避免重复加载）
+      const existingStyle = document.getElementById('custom-background-style');
+      if (existingStyle) {
+        console.log('[Layout] 背景样式已存在，跳过加载');
+        return;
+      }
+
+      try {
+        const appearanceResult = await window.electronAPI.getAppearanceMode();
+        if (appearanceResult.success && appearanceResult.mode === 'custom') {
+          console.log('[Layout] 检测到自定义背景模式，触发应用');
+          // 触发主进程重新发送背景数据
+          await window.electronAPI.setAppearanceMode('custom');
+        }
+      } catch (error) {
+        console.error('[Layout] 加载自定义背景失败:', error);
+      }
+    };
+
+    loadSavedBackground();
+
+    // 清除背景的函数
+    const clearBackground = () => {
+      console.log('[Layout] 清除自定义背景');
+      const styleElement = document.getElementById('custom-background-style');
+      if (styleElement) {
+        styleElement.remove();
+      }
+    };
+
+    // 监听背景配置变化
+    const cleanup = window.electronAPI.onCustomBackgroundApply?.(applyCustomBackground);
+    const clearCleanup = window.electronAPI.onClearCustomBackground?.(clearBackground);
+
+    return () => {
+      if (cleanup) cleanup();
+      if (clearCleanup) clearCleanup();
+
+      // 组件卸载时不清理背景样式，让它保持在DOM中
+      // clearBackground();
+    };
+  }, []);
+
+  // 监听并应用主题色
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI) return;
+
+    const applyThemeColor = (color: string) => {
+      console.log('[Layout] 应用主题色:', color);
+
+      // 创建或更新CSS变量
+      const root = document.documentElement;
+
+      // 将十六进制颜色转换为RGB值
+      const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+          r: parseInt(result[1], 16),
+          g: parseInt(result[2], 16),
+          b: parseInt(result[3], 16)
+        } : null;
+      };
+
+      const rgb = hexToRgb(color);
+      if (rgb) {
+        // 设置CSS变量（用于Tailwind和自定义样式）
+        root.style.setProperty('--theme-color', color);
+        root.style.setProperty('--theme-color-rgb', `${rgb.r}, ${rgb.g}, ${rgb.b}`);
+
+        // 更新Tailwind的primary颜色
+        // 注意：这需要覆盖Tailwind的默认primary颜色
+        const styleElement = document.getElementById('theme-color-override') || document.createElement('style');
+        styleElement.id = 'theme-color-override';
+
+        // 计算悬停时稍微深一点的颜色
+        const darkenColor = (hexColor: string, percent: number): string => {
+          const num = parseInt(hexColor.slice(1), 16);
+          const r = Math.max(0, Math.min(255, Math.floor((num >> 16) * (1 - percent))));
+          const g = Math.max(0, Math.min(255, Math.floor(((num >> 8) & 0x00FF) * (1 - percent))));
+          const b = Math.max(0, Math.min(255, Math.floor((num & 0x0000FF) * (1 - percent))));
+          return `#${(0x1000000 + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+        };
+
+        // 计算浅色版本（用于悬停背景等）
+        const lightenColor = (hexColor: string, percent: number): string => {
+          const num = parseInt(hexColor.slice(1), 16);
+          const r = Math.min(255, Math.floor((num >> 16) + (255 - (num >> 16)) * percent));
+          const g = Math.min(255, Math.floor(((num >> 8) & 0x00FF) + (255 - ((num >> 8) & 0x00FF)) * percent));
+          const b = Math.min(255, Math.floor((num & 0x0000FF) + (255 - (num & 0x0000FF)) * percent));
+          return `#${(0x1000000 + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+        };
+
+        const hoverColor = darkenColor(color, 0.15);
+        const lightColor = lightenColor(color, 0.92);
+        const darkLightColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.05)`;
+
+        styleElement.innerHTML = `
+          :root {
+            --primary: ${rgb.r} ${rgb.g} ${rgb.b};
+            --primary-foreground: 255 255 255;
+          }
+
+          /* 主要颜色类 */
+          .bg-primary,
+          .bg-blue-500,
+          .bg-blue-400,
+          [data-state=checked].bg-blue-500,
+          [data-state=active].data-\\[state\\=active\\]\\:bg-blue-500 {
+            background-color: ${color} !important;
+          }
+
+          .hover\\:bg-blue-600:hover,
+          .hover\\:bg-blue-500:hover {
+            background-color: ${hoverColor} !important;
+          }
+
+          /* 不透明度背景色 - 用于选中节点 */
+          .bg-blue-100\\/90 {
+            background-color: rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15) !important;
+          }
+
+          .dark .bg-blue-500\\/15,
+          .dark\\:bg-blue-500\\/15:is(.dark *) {
+            background-color: rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15) !important;
+          }
+
+          /* 只覆盖特定的蓝色文本，不影响primary */
+          .text-blue-500,
+          .text-blue-600,
+          .text-blue-400,
+          .text-blue-200,
+          .dark\\:text-blue-400:is(.dark *),
+          .dark\\:text-blue-200:is(.dark *) {
+            color: ${color} !important;
+          }
+
+          /* 悬停时的蓝色文本 */
+          .hover\\:text-blue-200:hover,
+          .dark\\:hover\\:text-blue-200:is(.dark *):hover,
+          .dark [data-state=inactive].dark\\:data-\\[state\\=inactive\\]\\:hover\\:text-blue-200:hover {
+            color: ${color} !important;
+          }
+
+          /* Tab选中等特定场景的primary文本 */
+          [data-state=active].text-primary {
+            color: ${color} !important;
+          }
+
+          /* Tab选中状态的白色文字 - 用于data-[state=active]:text-white */
+          [data-state=active].data-\\[state\\=active\\]\\:text-white {
+            color: white !important;
+          }
+
+          /* 边框颜色 - 只用于特定元素 */
+          .border-blue-500,
+          .border-blue-300,
+          .border-l-blue-500,
+          .dark\\:border-blue-400:is(.dark *),
+          .dark\\:border-blue-500:is(.dark *),
+          .dark\\:border-l-blue-400:is(.dark *) {
+            border-color: ${color} !important;
+          }
+
+          /* 主要边框 - 只用于激活状态 */
+          .bg-primary.border-primary {
+            border-color: ${color} !important;
+          }
+
+          /* 渐变背景 */
+          .from-blue-400,
+          .from-blue-500 {
+            --tw-gradient-from: ${color} var(--tw-gradient-from-position) !important;
+            --tw-gradient-to: rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0) var(--tw-gradient-to-position) !important;
+            --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+          }
+
+          .to-blue-500,
+          .to-blue-600 {
+            --tw-gradient-to: ${hoverColor} var(--tw-gradient-to-position) !important;
+          }
+
+          /* 焦点环 */
+          .ring-primary,
+          .ring-blue-500,
+          .ring-2.ring-blue-500,
+          .focus-visible\\:ring-blue-500\\/60:focus-visible,
+          .focus-visible\\:ring-blue-400\\/60:focus-visible {
+            --tw-ring-color: ${color} !important;
+          }
+
+          /* Slider accent color */
+          .accent-blue-500,
+          input[type="range"]::-webkit-slider-thumb {
+            accent-color: ${color} !important;
+          }
+
+          /* Switch组件选中状态 */
+          [data-state=checked]:is(.peer) {
+            background-color: ${color} !important;
+          }
+
+          /* 悬停背景（浅色） */
+          .hover\\:bg-blue-50\\/50:hover {
+            background-color: ${lightColor} !important;
+          }
+
+          .dark\\:hover\\:bg-blue-900\\/5:is(.dark *):hover {
+            background-color: ${darkLightColor} !important;
+          }
+
+          /* 活跃导航项 */
+          .bg-primary.text-primary-foreground {
+            background-color: ${color} !important;
+            color: white !important;
+          }
+
+          /* 确保图标也是白色 */
+          .bg-primary .text-primary-foreground,
+          .text-primary-foreground svg {
+            color: white !important;
+          }
+
+          /* Tab选中状态 */
+          [data-state=active].border-blue-500,
+          [data-state=active].text-blue-600 {
+            border-color: ${color} !important;
+            color: ${color} !important;
+          }
+
+          .dark [data-state=active].text-blue-400 {
+            color: ${color} !important;
+          }
+
+          /* TabsTrigger选中状态 - 支持data-[state=active]:bg-primary */
+          [data-state=active].data-\\[state\\=active\\]\\:bg-primary,
+          [data-state=active][class*="data-[state=active]:bg-primary"] {
+            background-color: ${color} !important;
+          }
+
+          /* TabsTrigger选中状态文字颜色 - 支持data-[state=active]:text-primary-foreground */
+          [data-state=active].data-\\[state\\=active\\]\\:text-primary-foreground,
+          [data-state=active][class*="data-[state=active]:text-primary-foreground"] {
+            color: white !important;
+          }
+        `;
+
+        if (!document.getElementById('theme-color-override')) {
+          document.head.appendChild(styleElement);
+        }
+
+        console.log('[Layout] 主题色已应用');
+      } else {
+        console.error('[Layout] 无效的颜色值:', color);
+      }
+    };
+
+    // 页面加载时应用已保存的主题色
+    const loadSavedThemeColor = async () => {
+      try {
+        const colorResult = await window.electronAPI.getThemeColor();
+        if (colorResult.success && colorResult.color) {
+          console.log('[Layout] 加载保存的主题色:', colorResult.color);
+          applyThemeColor(colorResult.color);
+        }
+      } catch (error) {
+        console.error('[Layout] 加载主题色失败:', error);
+      }
+    };
+
+    loadSavedThemeColor();
+
+    // 监听主题色变化
+    const cleanup = window.electronAPI.onThemeColorChanged?.(applyThemeColor);
 
     return () => {
       if (cleanup) cleanup();
@@ -223,7 +636,7 @@ export default function Layout({ children }: LayoutProps) {
             {!sidebarCollapsed && (
               <div className="leading-tight">
                 <span className="block text-sm font-semibold text-foreground">FlyClash</span>
-                <span className="text-xs text-muted-foreground">桌面客户端</span>
+                <span className="text-xs text-muted-foreground">{t('layout.desktopClient')}</span>
               </div>
             )}
           </div>

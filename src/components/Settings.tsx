@@ -8,19 +8,25 @@ import { Switch } from './ui/switch';
 import OverrideSettings, { OverrideSettingsRef } from './OverrideSettings';
 import { Button } from './ui/button';
 import TunSettings from './TunSettings';
+import { useTranslation } from 'react-i18next';
 
 export default function Settings() {
+  const { t, i18n } = useTranslation();
   const [startWithSystem, setStartWithSystem] = useState(false);
   const [silentStart, setSilentStart] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
+  const [language, setLanguage] = useState(i18n.language || 'zh-CN');
   const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid' | 'custom'>('dynamic');
   const [customBackground, setCustomBackground] = useState('');
   const [backgroundOpacity, setBackgroundOpacity] = useState(80);
   const [backgroundBlur, setBackgroundBlur] = useState(10);
+  const [backgroundImageName, setBackgroundImageName] = useState(t('settings.notSelected'));
+  const [themeColor, setThemeColor] = useState('#3b82f6'); // 默认蓝色
+  const [customColor, setCustomColor] = useState('#3b82f6');
   const [appVersion, setAppVersion] = useState('');
-  const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty');
+  const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty') ;
   const [kernelPath, setKernelPath] = useState('');
   const [kernelIsDefault, setKernelIsDefault] = useState(true);
   const [kernelExists, setKernelExists] = useState(true);
@@ -135,10 +141,8 @@ export default function Settings() {
     const handleServiceRestarted = (result: {success: boolean, error?: string}) => {
       if (result.success) {
         showToast("服务已重启", "新设置已应用", "success");
-        setIsSaving(false);
       } else {
         showToast("服务重启失败", result.error || "未知错误", "error");
-        setIsSaving(false);
       }
     };
 
@@ -147,7 +151,7 @@ export default function Settings() {
       const removeThemeListener = window.electronAPI.onThemeChanged(handleThemeChanged);
       const removeServiceRestarted = window.electronAPI.onServiceRestarted(handleServiceRestarted);
       const removeAppearanceListener = window.electronAPI.onAppearanceModeChanged
-        ? window.electronAPI.onAppearanceModeChanged((mode: 'acrylic' | 'dynamic' | 'solid') => {
+        ? window.electronAPI.onAppearanceModeChanged((mode: 'acrylic' | 'dynamic' | 'solid' | 'custom') => {
             setAppearanceMode(mode);
           })
         : undefined;
@@ -244,8 +248,37 @@ export default function Settings() {
     }
   };
 
-  const handleAppearanceModeChange = async (mode: 'acrylic' | 'dynamic' | 'solid') => {
+  // 处理语言切换
+  const handleLanguageChange = async (newLanguage: string) => {
+    try {
+      setLanguage(newLanguage);
+      await i18n.changeLanguage(newLanguage);
+      localStorage.setItem('language', newLanguage);
+      showToast('成功', '语言设置已保存', 'success');
+    } catch (error) {
+      console.error('设置语言失败:', error);
+      showToast('错误', `设置语言失败: ${error}`, 'error');
+    }
+  };
+
+  const handleAppearanceModeChange = async (mode: 'acrylic' | 'dynamic' | 'solid' | 'custom') => {
     if (appearanceMode === mode) {
+      return;
+    }
+
+    // 如果从自定义模式切换到其他模式，先清除自定义背景样式
+    if (appearanceMode === 'custom' && mode !== 'custom') {
+      const styleElement = document.getElementById('custom-background-style');
+      if (styleElement) {
+        styleElement.remove();
+        console.log('[Settings] 已清除自定义背景样式');
+      }
+    }
+
+    // 如果切换到自定义模式但没有背景图片，先切换模式让用户可以选择图片
+    if (mode === 'custom' && !customBackground) {
+      setAppearanceMode(mode);
+      showToast('提示', '请选择背景图片并调整效果', 'success');
       return;
     }
 
@@ -265,18 +298,180 @@ export default function Settings() {
     }
   };
 
+  // 选择背景图片
+  const handleSelectBackground = async () => {
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        const result = await window.electronAPI.selectBackgroundImage();
+        if (result.success && result.path && !result.canceled) {
+          setCustomBackground(result.path);
+
+          const fileName = result.path.split(/[\\/]/).pop() || '未知文件';
+          setBackgroundImageName(fileName);
+
+          // 保存配置并应用
+          await handleSaveCustomBackground(result.path, backgroundOpacity, backgroundBlur, true);
+        }
+      }
+    } catch (error) {
+      console.error('选择背景图片失败:', error);
+      showToast('错误', `选择背景图片失败: ${error}`, 'error');
+    }
+  };
+
+  // 保存自定义背景配置
+  const handleSaveCustomBackground = async (path?: string, opacity?: number, blur?: number, applyImmediately?: boolean) => {
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        const imagePath = path || customBackground;
+        if (!imagePath) {
+          showToast('错误', '请先选择背景图片', 'error');
+          return;
+        }
+
+        const result = await window.electronAPI.setCustomBackground({
+          imagePath,
+          opacity: opacity ?? backgroundOpacity,
+          blur: blur ?? backgroundBlur
+        });
+
+        if (result.success) {
+          if (applyImmediately) {
+            showToast('成功', '背景图片已选择，正在应用...', 'success');
+            // 立即应用自定义背景
+            const applyResult = await window.electronAPI.setAppearanceMode('custom');
+            if (applyResult.success) {
+              showToast('成功', '自定义背景已应用', 'success');
+            }
+          } else {
+            // 如果当前是自定义模式，自动应用更新
+            if (appearanceMode === 'custom') {
+              await window.electronAPI.setAppearanceMode('custom');
+            }
+          }
+        } else {
+          showToast('错误', result.error || '保存自定义背景失败', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('保存自定义背景失败:', error);
+      showToast('错误', `保存自定义背景失败: ${error}`, 'error');
+    }
+  };
+
+  // 使用refs来存储最新的值，避免闭包问题
+  const latestOpacityRef = useRef(backgroundOpacity);
+  const latestBlurRef = useRef(backgroundBlur);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 同步refs
+  useEffect(() => {
+    latestOpacityRef.current = backgroundOpacity;
+  }, [backgroundOpacity]);
+
+  useEffect(() => {
+    latestBlurRef.current = backgroundBlur;
+  }, [backgroundBlur]);
+
+  // 处理透明度变化
+  const handleOpacityChange = (value: number) => {
+    setBackgroundOpacity(value);
+    latestOpacityRef.current = value;
+
+    // 清除之前的定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // 延迟保存，避免拖动滑块时频繁触发
+    saveTimeoutRef.current = setTimeout(async () => {
+      if (customBackground) {
+        await handleSaveCustomBackground(undefined, latestOpacityRef.current, latestBlurRef.current);
+      }
+    }, 300);
+  };
+
+  // 处理模糊度变化
+  const handleBlurChange = (value: number) => {
+    setBackgroundBlur(value);
+    latestBlurRef.current = value;
+
+    // 清除之前的定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // 延迟保存，避免拖动滑块时频繁触发
+    saveTimeoutRef.current = setTimeout(async () => {
+      if (customBackground) {
+        await handleSaveCustomBackground(undefined, latestOpacityRef.current, latestBlurRef.current);
+      }
+    }, 300);
+  };
+
+  // 预设主题色
+  const presetColors = [
+    { name: '经典蓝', value: '#3b82f6' },
+    { name: '天空蓝', value: '#0ea5e9' },
+    { name: '紫罗兰', value: '#8b5cf6' },
+    { name: '粉红色', value: '#ec4899' },
+    { name: '翡翠绿', value: '#10b981' },
+    { name: '橙黄色', value: '#f59e0b' },
+    { name: '红宝石', value: '#ef4444' },
+    { name: '靛青色', value: '#6366f1' },
+  ];
+
+  // 处理主题色变化
+  const handleThemeColorChange = async (color: string) => {
+    setThemeColor(color);
+    setCustomColor(color);
+
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        const result = await window.electronAPI.setThemeColor(color);
+        if (result.success) {
+          showToast('成功', '主题色已更新', 'success');
+        } else {
+          showToast('错误', result.error || '设置主题色失败', 'error');
+        }
+      }
+    } catch (error) {
+      console.error('设置主题色失败:', error);
+      showToast('错误', `设置主题色失败: ${error}`, 'error');
+    }
+  };
+
   // 获取用户设置
   useEffect(() => {
     const fetchUserSettings = async () => {
       try {
         if (typeof window !== 'undefined' && window.electronAPI) {
           const result = await window.electronAPI.getProxySettings();
-          
+
           if (result.success && result.settings) {
             console.log('获取到的设置:', result.settings);
             if (result.settings['appearanceMode']) {
-              setAppearanceMode(result.settings['appearanceMode'] as 'acrylic' | 'dynamic' | 'solid');
+              setAppearanceMode(result.settings['appearanceMode'] as 'acrylic' | 'dynamic' | 'solid' | 'custom');
             }
+          }
+
+          // 获取自定义背景配置
+          const bgResult = await window.electronAPI.getCustomBackground();
+          if (bgResult.success && bgResult.config) {
+            setCustomBackground(bgResult.config.imagePath);
+            setBackgroundOpacity(bgResult.config.opacity);
+            setBackgroundBlur(bgResult.config.blur);
+
+            // 提取文件名
+            const fileName = bgResult.config.imagePath.split(/[\\/]/).pop() || '未选择';
+            setBackgroundImageName(fileName);
+          }
+
+          // 获取主题色配置
+          const colorResult = await window.electronAPI.getThemeColor();
+          if (colorResult.success && colorResult.color) {
+            setThemeColor(colorResult.color);
+            setCustomColor(colorResult.color);
           }
         }
       } catch (error) {
@@ -369,40 +564,53 @@ export default function Settings() {
                 value="general"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
-                常规
+                {t('settings.general')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="kernel"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
-                内核
+                {t('settings.proxy')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="override"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
-                覆写
+                {t('settings.override')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="tun"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
-                TUN 模式
+                {t('settings.tun')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="about"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
-                关于
+                {t('settings.about')}
               </Tabs.Trigger>
             </Tabs.List>
             
             <Tabs.Content value="general" className="w-full">
               <div className="space-y-6">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.language')}</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.languageDesc')}</p>
+                  <select
+                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                    value={language}
+                    onChange={(e) => handleLanguageChange(e.target.value)}
+                  >
+                    <option value="zh-CN">{t('settings.simplifiedChinese')}</option>
+                    <option value="en-US">{t('settings.english')}</option>
+                  </select>
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">开机启动</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动计算机时自动启动FlyClash</p>
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.startWithSystem')}</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('settings.startWithSystemDesc')}</p>
                   </div>
                   <Switch
                     checked={startWithSystem}
@@ -412,8 +620,8 @@ export default function Settings() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">静默启动</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动时不显示主窗口，仅在托盘后台运行</p>
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.silentStart')}</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('settings.silentStartDesc')}</p>
                   </div>
                   <Switch
                     checked={silentStart}
@@ -423,8 +631,8 @@ export default function Settings() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">最小化到托盘</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">关闭窗口时最小化到系统托盘</p>
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.minimizeToTray')}</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('settings.minimizeToTrayDesc')}</p>
                   </div>
                   <Switch
                     checked={minimizeToTray}
@@ -434,8 +642,8 @@ export default function Settings() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动检查更新</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启动时自动检查是否有新版本</p>
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.autoCheckUpdate')}</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('settings.autoCheckUpdateDesc')}</p>
                   </div>
                   <Switch
                     checked={autoCheckUpdate}
@@ -444,42 +652,42 @@ export default function Settings() {
                 </div>
 
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">订阅下载 User-Agent</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">不同的 User-Agent 可能会影响订阅服务器返回的配置格式</p>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.subscriptionUA')}</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.subscriptionUADesc')}</p>
                   <select
                     className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
                     value={subscriptionUA}
                     onChange={(e) => {
                       const newUA = e.target.value;
                       setSubscriptionUA(newUA);
-                      
+
                       // 使用专用API保存UA设置，不会重启服务
                       if (typeof window !== 'undefined' && window.electronAPI) {
                         window.electronAPI.saveUASettings(newUA)
                           .then(result => {
                             if (result.success) {
-                              showToast('成功', 'UA设置已保存', 'success');
+                              showToast(t('common.success'), t('toast.settingsSaved'), 'success');
                             } else {
-                              showToast('错误', `保存UA设置失败: ${result.error}`, 'error');
+                              showToast(t('common.error'), `${t('toast.settingsSaveFailed')}: ${result.error}`, 'error');
                             }
                           })
                           .catch(error => {
                             console.error('保存UA设置失败:', error);
-                            showToast('错误', `保存UA设置失败: ${error}`, 'error');
+                            showToast(t('common.error'), `${t('toast.settingsSaveFailed')}: ${error}`, 'error');
                           });
                       }
                     }}
                   >
                     <option value="FlyClash">FlyClash</option>
-                    <option value="Clash">Clash for Windows</option>
-                    <option value="Mihomo">Mihomo</option>
-                    <option value="MihomoParty">Clash Meta（默认）</option>
-                    <option value="Chrome">Chrome浏览器</option>
+                    <option value="Clash">{t('settings.clashForWindows')}</option>
+                    <option value="Mihomo">{t('settings.mihomo')}</option>
+                    <option value="MihomoParty">{t('settings.clashMetaDefault')}</option>
+                    <option value="Chrome">{t('settings.chromeBrowser')}</option>
                   </select>
                 </div>
-                
+
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">主题</h3>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.theme')}</h3>
                   <div className="flex gap-2">
                     <button
                       className={`py-1.5 px-3 text-sm rounded-lg transition-all duration-300 transform hover:scale-105 ${
@@ -489,7 +697,7 @@ export default function Settings() {
                       }`}
                       onClick={() => handleThemeChange('light')}
                     >
-                      浅色
+                      {t('settings.light')}
                     </button>
                     <button
                       className={`py-1.5 px-3 text-sm rounded-lg transition-all duration-300 transform hover:scale-105 ${
@@ -499,7 +707,7 @@ export default function Settings() {
                       }`}
                       onClick={() => handleThemeChange('dark')}
                     >
-                      深色
+                      {t('settings.dark')}
                     </button>
                     <button
                       className={`py-1.5 px-3 text-sm rounded-lg transition-all duration-300 transform hover:scale-105 ${
@@ -509,14 +717,14 @@ export default function Settings() {
                       }`}
                       onClick={() => handleThemeChange('system')}
                     >
-                      跟随系统
+                      {t('settings.system')}
                     </button>
                   </div>
                 </div>
 
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">窗口背景效果</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">选择最适合你的桌面毛玻璃效果</p>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.appearanceMode')}</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('settings.appearanceModeDesc')}</p>
                   <div className="flex flex-wrap gap-2">
                     {/* macOS 只显示默认和纯色背景 */}
                     {typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac') ? (
@@ -529,7 +737,7 @@ export default function Settings() {
                           }`}
                           onClick={() => handleAppearanceModeChange('dynamic')}
                         >
-                          默认
+                          {t('settings.defaultMode')}
                         </button>
                         <button
                           className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
@@ -539,7 +747,17 @@ export default function Settings() {
                           }`}
                           onClick={() => handleAppearanceModeChange('solid')}
                         >
-                          纯色背景
+                          {t('settings.solidBackground')}
+                        </button>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'custom'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('custom')}
+                        >
+                          {t('settings.customBackground')}
                         </button>
                       </>
                     ) : (
@@ -552,7 +770,7 @@ export default function Settings() {
                           }`}
                           onClick={() => handleAppearanceModeChange('dynamic')}
                         >
-                          默认
+                          {t('settings.defaultMode')}
                         </button>
                         <button
                           className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
@@ -562,7 +780,7 @@ export default function Settings() {
                           }`}
                           onClick={() => handleAppearanceModeChange('acrylic')}
                         >
-                          动态模糊
+                          {t('settings.dynamicBlur')}
                         </button>
                         <button
                           className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
@@ -572,10 +790,138 @@ export default function Settings() {
                           }`}
                           onClick={() => handleAppearanceModeChange('solid')}
                         >
-                          纯色背景
+                          {t('settings.solidBackground')}
+                        </button>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'custom'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('custom')}
+                        >
+                          {t('settings.customBackground')}
                         </button>
                       </>
                     )}
+                  </div>
+
+                  {/* 自定义背景配置 */}
+                  {appearanceMode === 'custom' && (
+                    <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1f1f1f] rounded-lg space-y-4">
+                      <div>
+                        <label className="text-xs font-medium text-gray-700 dark:text-gray-200 mb-2 block">
+                          {t('settings.backgroundImage')}
+                        </label>
+                        <div className="flex gap-2 items-center">
+                          <span className="text-xs text-gray-500 dark:text-gray-400 flex-1 truncate">
+                            {backgroundImageName}
+                          </span>
+                          <button
+                            className="py-1.5 px-3 text-xs rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+                            onClick={handleSelectBackground}
+                          >
+                            {t('settings.selectImage')}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                            {t('settings.opacity')}
+                          </label>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {backgroundOpacity}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={backgroundOpacity}
+                          onChange={(e) => handleOpacityChange(Number(e.target.value))}
+                          className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                            {t('settings.blur')}
+                          </label>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {backgroundBlur}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="50"
+                          value={backgroundBlur}
+                          onChange={(e) => handleBlurChange(Number(e.target.value))}
+                          className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 主题色设置 */}
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.themeColor')}</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{t('settings.themeColorDesc')}</p>
+
+                  {/* 预设主题色 */}
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {presetColors.map((preset) => (
+                      <button
+                        key={preset.value}
+                        className={`flex flex-col items-center p-2 rounded-lg transition-all hover:scale-105 ${
+                          themeColor === preset.value
+                            ? 'bg-gray-100 dark:bg-[#1f1f1f] ring-2 ring-blue-500'
+                            : 'bg-gray-50 dark:bg-[#1a1a1a] hover:bg-gray-100 dark:hover:bg-[#1f1f1f]'
+                        }`}
+                        onClick={() => handleThemeColorChange(preset.value)}
+                      >
+                        <div
+                          className="w-8 h-8 rounded-full mb-1 shadow-sm"
+                          style={{ backgroundColor: preset.value }}
+                        />
+                        <span className="text-xs text-gray-600 dark:text-gray-300">
+                          {preset.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 自定义颜色选择器 */}
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-[#1f1f1f] rounded-lg">
+                    <label className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                      {t('settings.customColor')}
+                    </label>
+                    <div className="flex items-center gap-2 flex-1">
+                      <input
+                        type="color"
+                        value={customColor}
+                        onChange={(e) => handleThemeColorChange(e.target.value)}
+                        className="w-10 h-10 rounded cursor-pointer border border-gray-300 dark:border-gray-600"
+                      />
+                      <input
+                        type="text"
+                        value={customColor}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCustomColor(value);
+                          // 验证是否是有效的颜色值
+                          if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
+                            handleThemeColorChange(value);
+                          }
+                        }}
+                        placeholder="#3b82f6"
+                        className="flex-1 py-1.5 px-3 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -584,9 +930,9 @@ export default function Settings() {
             <Tabs.Content value="kernel" className="w-full">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Clash 内核</h3>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.kernelPath')}</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-                    应用默认使用内置的内核文件，你也可以手动指定其他版本的 Clash 内核。
+                    {t('settings.kernelPathDesc')}
                   </p>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input
@@ -601,7 +947,7 @@ export default function Settings() {
                         className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors shadow-sm"
                         onClick={handleSelectKernel}
                       >
-                        选择文件
+                        {t('settings.selectKernel')}
                       </button>
                       <button
                         className={`py-1.5 px-3 text-sm rounded-lg transition-colors shadow-sm ${
@@ -612,18 +958,18 @@ export default function Settings() {
                         onClick={handleResetKernel}
                         disabled={kernelIsDefault && kernelExists}
                       >
-                        恢复默认
+                        {t('settings.resetKernel')}
                       </button>
                     </div>
                   </div>
                   {!kernelExists && (
                     <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-                      无法找到当前配置的内核文件，请重新选择或恢复默认设置。
+                      {t('settings.kernelNotFoundMsg')}
                     </p>
                   )}
                   {kernelIsDefault && kernelExists && (
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      正在使用内置的默认内核文件。
+                      {t('settings.usingDefaultKernel')}
                     </p>
                   )}
                 </div>
@@ -652,7 +998,7 @@ export default function Settings() {
                     disabled={isSavingOverride}
                     className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
                   >
-                    {isSavingOverride ? '保存中...' : '保存所有配置'}
+                    {isSavingOverride ? t('settings.saving') : t('settings.saveAllConfigs')}
                   </Button>
                 </div>
               </div>
@@ -664,26 +1010,31 @@ export default function Settings() {
 
             <Tabs.Content value="about" className="w-full">
               <div className="flex flex-col items-center text-center py-8">
+                {/* Logo */}
+                <div className="mb-4">
+                  <img src="/logo.png" alt="FlyClash Logo" className="h-20 w-20" />
+                </div>
+
                 <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">FlyClash</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">版本: V0.1.7</p>
-                
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">{t('settings.versionLabel')}: v{appVersion || t('settings.loading')}</p>
+
                 <div className="bg-gray-50 dark:bg-[#222222] p-4 rounded-md mb-6 text-left w-full max-w-lg">
                   <p className="text-sm text-gray-700 dark:text-gray-200 mb-2">
-                    FlyClash 是一个基于 Clash 内核的现代化代理客户端，拥有美观的界面和强大的功能。
+                    {t('settings.aboutDescription')}
                   </p>
                   <p className="text-sm text-gray-700 dark:text-gray-200">
-                   功能强大，简单易用，免费无广告
+                   {t('settings.aboutFeatures')}
                   </p>
                 </div>
                 
                 <div className="flex gap-4">
                   <a
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-gray-200 to-gray-300 hover:from-gray-300 hover:to-gray-400 dark:from-gray-700 dark:to-gray-800 dark:hover:from-gray-600 dark:hover:to-gray-700 text-gray-800 dark:text-gray-200 rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
-                    href="https://github.com/MetaCubeX/mihomo"
+                    href="https://t.me/flyclash"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    Clash 项目
+                    {t('settings.clashProject')}
                   </a>
                   <a
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
@@ -691,7 +1042,7 @@ export default function Settings() {
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    FlyClash 项目
+                    {t('settings.flyclashProject')}
                   </a>
                 </div>
               </div>

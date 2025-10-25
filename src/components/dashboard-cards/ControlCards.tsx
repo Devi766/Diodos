@@ -2,6 +2,7 @@ import React from 'react';
 import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { useTranslation } from 'react-i18next';
 
 interface SystemProxyCardProps {
   enabled: boolean;
@@ -10,6 +11,7 @@ interface SystemProxyCardProps {
 }
 
 export function SystemProxyCard({ enabled, updating, onToggle }: SystemProxyCardProps) {
+  const { t } = useTranslation();
   return (
     <Card
       data-hoverable="false"
@@ -17,10 +19,10 @@ export function SystemProxyCard({ enabled, updating, onToggle }: SystemProxyCard
     >
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          系统代理
+          {t('dashboard.systemProxy')}
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
-          切换操作系统级代理开关
+          {t('dashboard.systemProxyDesc')}
         </p>
       </div>
       <Switch checked={enabled} disabled={updating} onCheckedChange={onToggle} />
@@ -36,6 +38,7 @@ interface TunModeCardProps {
 }
 
 export function TunModeCard({ enabled, updating, available, onToggle }: TunModeCardProps) {
+  const { t } = useTranslation();
   return (
     <Card
       data-hoverable="false"
@@ -43,10 +46,10 @@ export function TunModeCard({ enabled, updating, available, onToggle }: TunModeC
     >
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          TUN 模式
+          {t('dashboard.tunMode')}
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
-          增强路由模式,需管理员权限
+          {t('dashboard.tunModeDesc')}
         </p>
       </div>
       <Switch checked={enabled} disabled={updating || !available} onCheckedChange={onToggle} />
@@ -60,19 +63,21 @@ interface ProxyModeCardProps {
   onModeSwitch: (mode: 'rule' | 'global' | 'direct') => void;
 }
 
-const MODE_LABELS = {
-  rule: '规则模式',
-  global: '全局模式',
-  direct: '直连模式',
-};
-
-const MODE_OPTIONS = [
-  { key: 'rule' as const, label: MODE_LABELS.rule },
-  { key: 'global' as const, label: MODE_LABELS.global },
-  { key: 'direct' as const, label: MODE_LABELS.direct },
-];
-
 export function ProxyModeCard({ mode, updating, onModeSwitch }: ProxyModeCardProps) {
+  const { t } = useTranslation();
+
+  const MODE_LABELS = {
+    rule: t('dashboard.ruleMode'),
+    global: t('dashboard.globalMode'),
+    direct: t('dashboard.directMode'),
+  };
+
+  const MODE_OPTIONS = [
+    { key: 'rule' as const, label: MODE_LABELS.rule },
+    { key: 'global' as const, label: MODE_LABELS.global },
+    { key: 'direct' as const, label: MODE_LABELS.direct },
+  ];
+
   return (
     <Card
       data-hoverable="false"
@@ -80,11 +85,11 @@ export function ProxyModeCard({ mode, updating, onModeSwitch }: ProxyModeCardPro
     >
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          代理模式
+          {t('dashboard.proxyMode')}
         </p>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/20 dark:text-blue-100">
-            {mode ? MODE_LABELS[mode] : '读取中...'}
+            {mode ? MODE_LABELS[mode] : t('dashboard.loading')}
           </span>
         </div>
       </div>

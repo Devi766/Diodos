@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart3, TrendingUp, TrendingDown, Monitor, Globe, Shield } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Connection {
   id: string;
@@ -81,6 +82,7 @@ function getProcessIcon(processName: string): React.ReactNode {
 }
 
 export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
+  const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try {
       const saved = localStorage.getItem('trafficRankingViewMode');
@@ -100,17 +102,17 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
 
       switch (viewMode) {
         case 'process':
-          key = conn.metadata.process || conn.metadata.sourceIP || '未知进程';
+          key = conn.metadata.process || conn.metadata.sourceIP || t('dashboard.unknownProcess');
           processPath = conn.metadata.processPath;
           break;
         case 'domain':
-          key = conn.metadata.host || conn.metadata.destinationIP || '未知域名';
+          key = conn.metadata.host || conn.metadata.destinationIP || t('dashboard.unknownDomain');
           break;
         case 'rule':
-          key = conn.rule || '未知规则';
+          key = conn.rule || t('dashboard.unknownRule');
           break;
         default:
-          key = '未知';
+          key = t('dashboard.unknown');
       }
 
       const existing = map.get(key);
@@ -182,7 +184,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
       {/* 标题和切换按钮 */}
       <div className="flex flex-shrink-0 items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          流量排行
+          {t('dashboard.trafficRanking')}
         </p>
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
           <button
@@ -201,7 +203,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             }`}
           >
             <Monitor className="h-3 w-3" />
-            进程
+            {t('dashboard.process')}
           </button>
           <button
             onClick={() => {
@@ -219,7 +221,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             }`}
           >
             <Globe className="h-3 w-3" />
-            域名
+            {t('dashboard.domain')}
           </button>
           <button
             onClick={() => {
@@ -237,7 +239,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             }`}
           >
             <Shield className="h-3 w-3" />
-            规则
+            {t('dashboard.rule')}
           </button>
         </div>
       </div>
@@ -246,7 +248,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
       <div className="flex-1 space-y-3 overflow-x-hidden overflow-y-auto custom-scrollbar">
         {rankings.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            暂无数据
+            {t('dashboard.noData')}
           </div>
         ) : (
           rankings.map((item, index) => (
@@ -280,7 +282,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
                     {item.name}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    ({item.count} 个连接)
+                    ({item.count} {t('dashboard.connections')})
                   </span>
                 </div>
                 <span className="text-sm font-semibold text-foreground">

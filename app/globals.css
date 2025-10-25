@@ -74,6 +74,24 @@
     @apply border-border;
   }
 
+  /* 禁用所有元素的焦点轮廓，适合桌面应用 */
+  *:focus,
+  *:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  /* 禁用 Tab 键导航时的焦点高亮 */
+  button:focus,
+  input:focus,
+  select:focus,
+  textarea:focus,
+  a:focus,
+  [tabindex]:focus {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
   html,
   body,
   body *,

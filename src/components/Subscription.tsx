@@ -6,11 +6,12 @@ import axios from 'axios';
 import Link from 'next/link';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
+import { useTranslation } from 'react-i18next';
 
 type Subscription = {
   name: string;
   path: string;
-  // 订阅信息字段
+  // 配置信息字段
   usedTraffic?: string | null;
   remainingTraffic?: string | null;
   expiryDate?: string | null;
@@ -168,6 +169,7 @@ const getTrafficInfo = (subscription: Subscription) => {
 };
 
 export default function SubscriptionManager() {
+  const { t } = useTranslation();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [subUrl, setSubUrl] = useState('');
   const [subName, setSubName] = useState('');
@@ -222,20 +224,20 @@ export default function SubscriptionManager() {
     // 设置定期刷新活跃配置的计时器
     const intervalId = setInterval(loadActiveConfig, 5000);
     
-    // 监听订阅导入事件
+    // 监听配置导入事件
     let unsubscribeImport: (() => void) | undefined;
-    
+
     if (window.electronAPI?.onImportSubscription) {
-      console.log('设置订阅导入事件监听器');
+      console.log('设置配置导入事件监听器');
       unsubscribeImport = window.electronAPI.onImportSubscription((url: string) => {
-        console.log('收到订阅导入请求，URL:', url);
+        console.log('收到配置导入请求，URL:', url);
         if (url && url.trim() !== '') {
-          console.log('准备导入订阅，设置URL并打开对话框');
-          // 设置订阅URL并自动打开订阅添加对话框
+          console.log('准备导入配置，设置URL并打开对话框');
+          // 设置配置URL并自动打开配置添加对话框
           setSubUrl(url);
           setIsDialogOpen(true);
         } else {
-          console.log('收到的订阅URL为空');
+          console.log('收到的配置URL为空');
         }
       });
     } else {
@@ -279,31 +281,47 @@ export default function SubscriptionManager() {
   // 新增: 切换使用的配置文件
   const switchConfig = async (configPath: string) => {
     if (!window.electronAPI) return;
-    
+
     // 如果当前配置已经是这个，不需要切换
     if (activeConfig === configPath) {
       showToast('提示', '该配置文件已经处于激活状态', 'success');
       return;
     }
-    
+
     setSwitchingConfig(configPath);
-    
+
     try {
+      let result;
+
       // 检查服务是否正在运行
       if (isServiceRunning) {
-        // 先停止当前服务
-        await window.electronAPI.stopMihomo();
-        
-        // 等待一段时间确保服务已停止
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
-      // 启动新的服务
-      const result = await window.electronAPI.startMihomo(configPath);
+        // 如果服务正在运行，使用热重载
+        console.log('使用热重载切换配置...');
+        result = await window.electronAPI.reloadMihomoConfig(configPath);
 
-      if (result && result.success) {
-        showToast('成功', '成功切换配置文件', 'success');
-        setActiveConfig(configPath);
+        if (result) {
+          setActiveConfig(configPath);
+        } else {
+          // 热重载失败，回退到重启方式
+          console.warn('热重载失败，尝试重启服务...');
+          await window.electronAPI.stopMihomo();
+          await new Promise(resolve => setTimeout(resolve, 500));
+          result = await window.electronAPI.startMihomo(configPath);
+
+          if (result) {
+            setActiveConfig(configPath);
+          }
+        }
+      } else {
+        // 服务未运行，直接启动
+        result = await window.electronAPI.startMihomo(configPath);
+
+        if (result) {
+          setActiveConfig(configPath);
+        }
+      }
+
+      if (result) {
 
         // 关键修改：等待服务完全启动后获取节点信息
         setTimeout(async () => {
@@ -330,8 +348,7 @@ export default function SubscriptionManager() {
           }
         }, 2000); // 等待2秒让服务完全启动
       } else {
-        const errorMsg = result?.error || '切换配置文件失败';
-        showToast('错误', errorMsg, 'error');
+        showToast('错误', '切换配置文件失败', 'error');
       }
     } catch (error) {
       console.error('切换配置文件失败:', error);
@@ -347,7 +364,7 @@ export default function SubscriptionManager() {
 
     try {
       const subs = await window.electronAPI.getSubscriptions();
-      console.log('[前端] 加载的订阅数据:', subs);
+      console.log('[前端] 加载的配置数据:', subs);
 
       // 从本地存储中获取排序信息
       const savedOrder = getSavedOrder();
@@ -356,8 +373,8 @@ export default function SubscriptionManager() {
       const sortedSubs = sortSubscriptionsByOrder(subs, savedOrder);
       setSubscriptions(sortedSubs);
     } catch (error) {
-      console.error('加载订阅失败:', error);
-      showToast('错误', '加载订阅失败', 'error');
+      console.error('加载配置失败:', error);
+      showToast('错误', '加载配置失败', 'error');
     }
   };
   
@@ -386,7 +403,7 @@ export default function SubscriptionManager() {
     }
   }, []);
   
-  // 新增: 根据排序信息排序订阅
+  // 新增: 根据排序信息排序配置
   const sortSubscriptionsByOrder = (subs: Subscription[], orderMap: Record<string, number>): Subscription[] => {
     return [...subs].sort((a, b) => {
       const orderA = orderMap[a.path] !== undefined ? orderMap[a.path] : Number.MAX_SAFE_INTEGER;
@@ -419,7 +436,7 @@ export default function SubscriptionManager() {
         const elementUnderMouse = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
         if (!elementUnderMouse) return;
 
-        // 查找最近的订阅卡片
+        // 查找最近的配置卡片
         const card = elementUnderMouse.closest('[data-subscription-path]');
         if (card) {
           const path = card.getAttribute('data-subscription-path');
@@ -884,23 +901,23 @@ export default function SubscriptionManager() {
       <Toast.Provider swipeDirection="right">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
-            <h1 className="text-2xl font-semibold text-foreground">配置管理</h1>
-            <p className="text-sm text-muted-foreground">导入、更新并维护你的订阅配置</p>
+            <h1 className="text-2xl font-semibold text-foreground">{t('subscriptions.title')}</h1>
+            <p className="text-sm text-muted-foreground">{t('subscriptions.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {subscriptions.length > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-slate-600 dark:bg-slate-800/60 dark:text-slate-200">
-                共 {subscriptions.length} 个订阅
+                {t('subscriptions.totalConfigs', { count: subscriptions.length })}
               </span>
             )}
             {isServiceRunning && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
-                <CheckIcon className="h-3 w-3" /> 服务运行中
+                <CheckIcon className="h-3 w-3" /> {t('subscriptions.serviceRunning')}
               </span>
             )}
             {subscriptions.length > 1 && (
               <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-3 py-1 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400">
-                <DragHandleDots2Icon className="h-3 w-3" /> 支持拖动排序
+                <DragHandleDots2Icon className="h-3 w-3" /> {t('subscriptions.dragToSort')}
               </span>
             )}
           </div>
@@ -908,26 +925,26 @@ export default function SubscriptionManager() {
 
         <div className="rounded-2xl bg-white px-4 py-4 shadow-sm dark:bg-[#2a2a2a]">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <p className="text-sm text-muted-foreground">支持拖拽导入 YAML 配置，或使用下方操作快速管理订阅。</p>
+            <p className="text-sm text-muted-foreground">{t('subscriptions.dragToImport')}</p>
 
             <div className="flex flex-wrap items-center gap-2">
               <Link
                 href="/providers"
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                title="外部资源"
+                title={t('subscriptions.externalResources')}
               >
                 <CloudOutlineIcon className="h-5 w-5" />
-                <span className="sr-only">外部资源</span>
+                <span className="sr-only">{t('subscriptions.externalResources')}</span>
               </Link>
 
               <button
                 type="button"
                 onClick={triggerFileInput}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                title="上传配置"
+                title={t('subscriptions.uploadConfig')}
               >
                 <UploadIcon className="h-5 w-5" />
-                <span className="sr-only">上传配置</span>
+                <span className="sr-only">{t('subscriptions.uploadConfig')}</span>
               </button>
               <input
                 type="file"
@@ -943,10 +960,10 @@ export default function SubscriptionManager() {
                 <button
                   type="button"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                  title="添加订阅"
+                  title={t('subscriptions.addSubscription')}
                 >
                   <PlusIcon className="h-5 w-5" />
-                  <span className="sr-only">添加订阅</span>
+                  <span className="sr-only">{t('subscriptions.addSubscription')}</span>
                 </button>
               </Dialog.Trigger>
 
@@ -955,14 +972,14 @@ export default function SubscriptionManager() {
                   <Dialog.Content className="fixed left-1/2 top-1/2 z-[95] w-[min(420px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white/95 p-6 shadow-2xl outline-none transition-all dark:bg-[#2a2a2a] backdrop-blur-xl">
                     <Dialog.Title className="mb-4 flex items-center text-lg font-semibold text-slate-900 dark:text-white">
                       <GlobeIcon className="mr-2 h-5 w-5 text-blue-500" />
-                      添加订阅
+                      {t('subscriptions.addSubscription')}
                     </Dialog.Title>
                   
                   <form onSubmit={addSubscription}>
                     <div className="mb-4">
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center">
                         <GlobeIcon className="w-4 h-4 mr-2 text-blue-500" />
-                        订阅链接
+                        {t('subscriptions.subscriptionLink')}
                       </label>
                       <div className="relative">
                         <input
@@ -982,13 +999,13 @@ export default function SubscriptionManager() {
                     <div className="mb-4">
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center">
                         <Pencil1Icon className="w-4 h-4 mr-2 text-blue-500" />
-                        备注名称（可选）
+                        {t('subscriptions.customName')}
                       </label>
                       <div className="relative">
                         <input
                           type="text"
                           className="w-full py-2 pl-10 pr-3 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#222222] text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                          placeholder="自定义配置文件名称"
+                          placeholder={t('subscriptions.configNamePlaceholder')}
                           value={subName}
                           onChange={(e) => setSubName(e.target.value)}
                         />
@@ -1000,7 +1017,7 @@ export default function SubscriptionManager() {
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1 text-gray-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        <span>配置文件将以此名称保存，不填则使用默认名称。自定义名称可以帮助区分不同的订阅。</span>
+                        <span>{t('subscriptions.customNameHint')}</span>
                       </p>
                     </div>
                     
@@ -1010,16 +1027,16 @@ export default function SubscriptionManager() {
                           type="button"
                           className="rounded-full border border-slate-200/60 px-4 py-2 text-sm text-slate-600 transition hover:bg-slate-100 dark:border-slate-700/60 dark:text-slate-200 dark:hover:bg-slate-800/60"
                         >
-                          取消
+                          {t('subscriptions.cancel')}
                         </button>
                       </Dialog.Close>
-                      
+
                       <button
                         type="submit"
                         className="inline-flex items-center rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
                         disabled={isLoading}
                       >
-                        {isLoading ? '处理中...' : '添加'}
+                        {isLoading ? t('subscriptions.processing') : t('subscriptions.add')}
                       </button>
                     </div>
                   </form>
@@ -1051,10 +1068,10 @@ export default function SubscriptionManager() {
             <div className="flex flex-col items-center justify-center">
               <UploadIcon className="w-16 h-16 mb-4 text-blue-500" />
               <p className="text-lg font-medium text-gray-700 dark:text-gray-300">
-                释放以上传YAML配置文件
+                {t('subscriptions.dropToUpload')}
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                支持.yaml和.yml格式文件
+                {t('subscriptions.supportedFormats')}
               </p>
             </div>
           </div>
@@ -1067,7 +1084,7 @@ export default function SubscriptionManager() {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
-              我的订阅
+              {t('subscriptions.myConfigs')}
             </h2>
           </div>
           
@@ -1077,14 +1094,14 @@ export default function SubscriptionManager() {
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <p className="text-lg font-medium text-gray-500 dark:text-gray-400">还没有添加任何订阅</p>
-                <p className="mt-2 text-sm text-gray-500 dark:text-gray-500">点击"添加订阅"按钮开始使用</p>
+                <p className="text-lg font-medium text-gray-500 dark:text-gray-400">{t('subscriptions.noSubscriptions')}</p>
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-500">{t('subscriptions.clickToAdd')}</p>
                 <button
                   onClick={() => setIsDialogOpen(true)}
                   className="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
                 >
                   <PlusIcon className="h-4 w-4" />
-                  添加订阅
+                  {t('subscriptions.addSubscription')}
                 </button>
               </div>
             </div>
@@ -1128,7 +1145,7 @@ export default function SubscriptionManager() {
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
                       className="text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300 p-0.5 rounded-full hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
-                      title="打开文件"
+                      title={t('subscriptions.openFile')}
                     >
                       <ExternalLinkIcon className="w-4 h-4" />
                     </button>
@@ -1142,7 +1159,7 @@ export default function SubscriptionManager() {
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
                       className="text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 p-0.5 rounded-full hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
-                      title="打开目录"
+                      title={t('subscriptions.openFolder')}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -1159,7 +1176,7 @@ export default function SubscriptionManager() {
                         }}
                         onMouseDown={(e) => e.stopPropagation()}
                         className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 p-0.5 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
-                        title="更新订阅"
+                        title={t('subscriptions.updateSubscription')}
                         disabled={updatingSubPath === sub.path}
                       >
                         {updatingSubPath === sub.path ? (
@@ -1179,7 +1196,7 @@ export default function SubscriptionManager() {
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
                       className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                      title="删除订阅"
+                      title={t('subscriptions.deleteSubscription')}
                       disabled={activeConfig === sub.path} // 不允许删除当前活跃的配置
                     >
                       <TrashIcon className="w-4 h-4" />
@@ -1192,11 +1209,11 @@ export default function SubscriptionManager() {
                       {sub.name}
                       {activeConfig === sub.path ? (
                         <span className="ml-1.5 py-0.5 px-1.5 text-[9px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded font-normal">
-                          当前
+                          {t('subscriptions.current')}
                         </span>
                       ) : (
                         <span className="ml-1.5 py-0.5 px-1.5 text-[9px] bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded font-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                          点击激活
+                          {t('subscriptions.clickActivate')}
                         </span>
                       )}
                     </h3>
@@ -1207,7 +1224,7 @@ export default function SubscriptionManager() {
                     <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/80 dark:bg-gray-900/80">
                       <div className="flex flex-col items-center">
                         <ReloadIcon className="w-8 h-8 animate-spin text-blue-500 mb-2" />
-                        <span className="text-sm text-gray-600 dark:text-gray-300">正在激活配置...</span>
+                        <span className="text-sm text-gray-600 dark:text-gray-300">{t('subscriptions.activating')}</span>
                       </div>
                     </div>
                   )}
@@ -1224,7 +1241,7 @@ export default function SubscriptionManager() {
                               <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                               </svg>
-                              <p className="text-[11px] text-gray-500 dark:text-gray-400">本地配置文件</p>
+                              <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.localConfig')}</p>
                             </div>
                           )}
 
@@ -1236,7 +1253,7 @@ export default function SubscriptionManager() {
                                   <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                                   </svg>
-                                  流量使用情况
+                                  {t('subscriptions.trafficUsage')}
                                 </span>
                               </div>
 
@@ -1288,7 +1305,7 @@ export default function SubscriptionManager() {
                                 {getTrafficInfo(sub).isLow && (
                                   <div className="absolute right-0 top-0 transform translate-x-1/2 -translate-y-1/2">
                                     <div className="bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap shadow-sm">
-                                      流量不足
+                                      {t('subscriptions.lowTraffic')}
                                     </div>
                                   </div>
                                 )}
@@ -1303,20 +1320,20 @@ export default function SubscriptionManager() {
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                                 </svg>
-                                到期时间
+                                {t('subscriptions.expiryDate')}
                               </span>
                               <span className={`font-medium ${isExpiringSoon(sub.expiryDate) ? 'text-amber-500 dark:text-amber-400' : 'text-gray-700 dark:text-gray-200'}`}>
                                 {sub.expiryDate}
                                 {isExpiringSoon(sub.expiryDate) && (
                                   <span className="ml-1.5 py-0.5 px-1.5 text-[9px] bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-full">
-                                    即将到期
+                                    {t('subscriptions.expiringSoon')}
                                   </span>
                                 )}
                               </span>
                             </div>
                           )}
                         </div>
-                        
+
                         {/* 最后更新时间 */}
                         {sub.lastUpdated && (
                           <div className="mt-1 flex items-center justify-between border-t border-gray-200 pt-1 text-[10px] text-gray-400 dark:border-gray-700 dark:text-gray-500">
@@ -1324,7 +1341,7 @@ export default function SubscriptionManager() {
                               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                               </svg>
-                              最后更新
+                              {t('subscriptions.lastUpdated')}
                             </span>
                             <span>{sub.lastUpdated}</span>
                           </div>
@@ -1386,7 +1403,7 @@ export default function SubscriptionManager() {
                 className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
               >
                 <ReloadIcon className="mr-2 h-4 w-4" />
-                更新
+                {t('subscriptions.update')}
               </button>
             )}
 
@@ -1396,7 +1413,7 @@ export default function SubscriptionManager() {
               className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
             >
               <Pencil1Icon className="mr-2 h-4 w-4" />
-              编辑
+              {t('subscriptions.edit')}
             </button>
 
             {/* 打开文件 */}
@@ -1408,7 +1425,7 @@ export default function SubscriptionManager() {
               className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
             >
               <ExternalLinkIcon className="mr-2 h-4 w-4" />
-              打开文件
+              {t('subscriptions.openFile')}
             </button>
 
             {/* 打开文件夹 */}
@@ -1422,7 +1439,7 @@ export default function SubscriptionManager() {
               <svg xmlns="http://www.w3.org/2000/svg" className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
               </svg>
-              打开文件夹
+              {t('subscriptions.openFolder')}
             </button>
 
             {/* 分隔线 */}
@@ -1438,7 +1455,7 @@ export default function SubscriptionManager() {
               className="flex w-full items-center px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed dark:text-red-400 dark:hover:bg-red-900/20"
             >
               <TrashIcon className="mr-2 h-4 w-4" />
-              删除
+              {t('subscriptions.delete')}
             </button>
           </div>
         </>
@@ -1450,21 +1467,21 @@ export default function SubscriptionManager() {
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-6 shadow-lg dark:border-slate-700 dark:bg-[#2a2a2a]">
             <Dialog.Title className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">
-              编辑配置
+              {t('subscriptions.editConfig')}
             </Dialog.Title>
 
             <div className="space-y-4">
               {/* 配置名称 */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  配置名称
+                  {t('subscriptions.configName')}
                 </label>
                 <input
                   type="text"
                   value={editingName}
                   onChange={(e) => setEditingName(e.target.value)}
                   className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
-                  placeholder="请输入配置名称"
+                  placeholder={t('subscriptions.configNamePlaceholder')}
                 />
               </div>
 
@@ -1473,24 +1490,24 @@ export default function SubscriptionManager() {
                 <>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                      订阅URL
+                      {t('subscriptions.subscriptionUrl')}
                     </label>
                     <input
                       type="text"
                       value={editingUrl}
                       onChange={(e) => setEditingUrl(e.target.value)}
                       className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
-                      placeholder="请输入订阅URL"
+                      placeholder={t('subscriptions.subscriptionUrlPlaceholder')}
                     />
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {editingUrl ? '当前URL已加载' : 'URL记录为空,请输入订阅URL'}
+                      {editingUrl ? t('subscriptions.urlLoaded') : t('subscriptions.urlEmpty')}
                     </p>
                   </div>
 
                   {/* 自动更新间隔 */}
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                      自动更新间隔
+                      {t('subscriptions.autoUpdateInterval')}
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -1505,19 +1522,19 @@ export default function SubscriptionManager() {
                         className="w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
                         placeholder="0"
                       />
-                      <span className="text-sm text-slate-600 dark:text-slate-400">分钟</span>
+                      <span className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptions.minutes')}</span>
                       <button
                         type="button"
                         onClick={() => setEditingUpdateInterval(0)}
                         className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                       >
-                        禁用
+                        {t('subscriptions.disable')}
                       </button>
                     </div>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {editingUpdateInterval === 0
-                        ? '设置为0将禁用自动更新'
-                        : `订阅将每 ${editingUpdateInterval} 分钟自动更新一次`}
+                        ? t('subscriptions.disableAutoUpdate')
+                        : t('subscriptions.autoUpdateEvery', { interval: editingUpdateInterval })}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
@@ -1525,35 +1542,35 @@ export default function SubscriptionManager() {
                         onClick={() => setEditingUpdateInterval(60)}
                         className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
-                        1小时
+                        {t('subscriptions.hour1')}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingUpdateInterval(120)}
                         className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
-                        2小时
+                        {t('subscriptions.hour2')}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingUpdateInterval(360)}
                         className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
-                        6小时
+                        {t('subscriptions.hour6')}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingUpdateInterval(720)}
                         className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
-                        12小时
+                        {t('subscriptions.hour12')}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingUpdateInterval(1440)}
                         className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
-                        24小时
+                        {t('subscriptions.hour24')}
                       </button>
                     </div>
                   </div>
@@ -1563,12 +1580,12 @@ export default function SubscriptionManager() {
               {/* 覆写选择 */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  应用覆写
+                  {t('subscriptions.applyOverrides')}
                 </label>
                 <div className="max-h-48 overflow-y-auto rounded-md border border-slate-300 bg-white dark:border-slate-600 dark:bg-[#222222]">
                   {availableOverrides.length === 0 ? (
                     <div className="p-3 text-center text-sm text-slate-500 dark:text-slate-400">
-                      暂无可用覆写
+                      {t('subscriptions.noOverrides')}
                     </div>
                   ) : (
                     <div className="divide-y divide-slate-200 dark:divide-slate-700">
@@ -1596,7 +1613,7 @@ export default function SubscriptionManager() {
                               </span>
                               {override.global && (
                                 <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-                                  全局
+                                  {t('subscriptions.global')}
                                 </span>
                               )}
                             </div>
@@ -1612,7 +1629,7 @@ export default function SubscriptionManager() {
                   )}
                 </div>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  选择要应用到此配置的覆写（全局覆写会自动应用）
+                  {t('subscriptions.overrideDescription')}
                 </p>
               </div>
             </div>
@@ -1620,7 +1637,7 @@ export default function SubscriptionManager() {
             <div className="mt-6 flex justify-end gap-2">
               <Dialog.Close asChild>
                 <button className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-[#222222] dark:text-slate-300 dark:hover:bg-slate-800">
-                  取消
+                  {t('subscriptions.cancel')}
                 </button>
               </Dialog.Close>
               <button
@@ -1628,7 +1645,7 @@ export default function SubscriptionManager() {
                 disabled={isLoading || !editingName}
                 className="rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isLoading ? '保存中...' : '保存'}
+                {isLoading ? t('subscriptions.saving') : t('subscriptions.save')}
               </button>
             </div>
 
@@ -1670,7 +1687,7 @@ export default function SubscriptionManager() {
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        <p className="text-[11px] text-gray-500 dark:text-gray-400">本地配置文件</p>
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.localConfig')}</p>
                       </div>
                     )}
 
@@ -1682,7 +1699,7 @@ export default function SubscriptionManager() {
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                             </svg>
-                            流量使用情况
+                            {t('subscriptions.trafficUsage')}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
@@ -1704,7 +1721,7 @@ export default function SubscriptionManager() {
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center rounded-xl bg-gray-50 p-2 dark:bg-[#222222]">
-                  <p className="text-[11px] text-gray-500 dark:text-gray-400">本地配置</p>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.localConfig')}</p>
                 </div>
               )}
             </div>
@@ -1716,7 +1733,7 @@ export default function SubscriptionManager() {
       {isDraggingCard && (
         <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-blue-500 text-white py-2 px-4 rounded-md shadow-lg z-50 flex items-center">
           <DragHandleDots2Icon className="mr-2 h-4 w-4" />
-          <span>拖动卡片到目标位置</span>
+          <span>{t('subscriptions.dragCard')}</span>
         </div>
       )}
     </div>

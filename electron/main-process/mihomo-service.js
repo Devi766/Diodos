@@ -415,53 +415,83 @@ module.exports = function initMihomoService(context) {
     return validatedConfig;
   }
 
-  function reloadMihomoConfig(configPath) {
+  async function reloadMihomoConfig(configPath) {
     try {
+      console.log('[reloadMihomoConfig] 开始热重载配置:', configPath);
+
       if (!configPath || !fs.existsSync(configPath)) {
-        console.error('配置文件路径无效，无法重新加载配置');
+        console.error('[reloadMihomoConfig] 配置文件路径无效，无法重新加载配置');
         return false;
       }
 
       if (!state.mihomoProcess || !state.mihomoProcess.pid) {
-        console.error('Mihomo进程不在运行状态，无法重新加载配置');
+        console.error('[reloadMihomoConfig] Mihomo进程不在运行状态，无法重新加载配置');
         return false;
       }
 
-      const port = 9090;
+      // 第一步：生成应用了覆写的work配置
       try {
-        const testReq = http.request(
-          {
-            hostname: '127.0.0.1',
-            port,
-            path: '/version',
-            method: 'GET',
-            timeout: 1000
-          },
-          (res) => {
-            if (res.statusCode !== 200) {
-              console.warn(`版本API返回非200状态码: ${res.statusCode}`);
-            }
-            sendReloadRequest(configPath, port);
-          }
-        );
+        console.log('[reloadMihomoConfig] 读取原始配置文件...');
+        const rawConfig = yaml.load(fs.readFileSync(configPath, 'utf8'));
 
-        testReq.on('error', (err) => {
-          console.error('测试Mihomo API连接失败:', err);
-        });
+        console.log('[reloadMihomoConfig] 应用覆写配置...');
+        const configWithOverrides = await applyOverrides(context, rawConfig, configPath);
 
-        testReq.on('timeout', () => {
-          testReq.destroy();
-          console.error('测试Mihomo API连接超时');
-        });
+        // 保存到work配置文件
+        const workConfigPath = path.join(userDataPath, 'mihomo', 'work-config.yaml');
+        console.log('[reloadMihomoConfig] 保存work配置到:', workConfigPath);
+        fs.writeFileSync(workConfigPath, yaml.dump(configWithOverrides), 'utf8');
 
-        testReq.end();
-        return true;
+        // 更新状态
+        state.configFilePath = configPath;
+
+        console.log('[reloadMihomoConfig] work配置生成成功');
       } catch (error) {
-        console.error('尝试连接Mihomo API时出错:', error);
+        console.error('[reloadMihomoConfig] 生成work配置失败:', error);
         return false;
       }
+
+      // 第二步：通过API热重载配置
+      const port = 9090;
+      return new Promise((resolve) => {
+        try {
+          const testReq = http.request(
+            {
+              hostname: '127.0.0.1',
+              port,
+              path: '/version',
+              method: 'GET',
+              timeout: 1000
+            },
+            (res) => {
+              if (res.statusCode !== 200) {
+                console.warn(`[reloadMihomoConfig] 版本API返回非200状态码: ${res.statusCode}`);
+              }
+              const workConfigPath = path.join(userDataPath, 'mihomo', 'work-config.yaml');
+              const success = sendReloadRequest(workConfigPath, port);
+              resolve(success);
+            }
+          );
+
+          testReq.on('error', (err) => {
+            console.error('[reloadMihomoConfig] 测试Mihomo API连接失败:', err);
+            resolve(false);
+          });
+
+          testReq.on('timeout', () => {
+            testReq.destroy();
+            console.error('[reloadMihomoConfig] 测试Mihomo API连接超时');
+            resolve(false);
+          });
+
+          testReq.end();
+        } catch (error) {
+          console.error('[reloadMihomoConfig] 尝试连接Mihomo API时出错:', error);
+          resolve(false);
+        }
+      });
     } catch (error) {
-      console.error('配置热重载失败:', error);
+      console.error('[reloadMihomoConfig] 配置热重载失败:', error);
       return false;
     }
   }
@@ -492,7 +522,7 @@ module.exports = function initMihomoService(context) {
 
       const configData = JSON.stringify({ path: absolutePath });
       const options = {
-        path: '/configs',
+        path: '/configs?force=true',
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

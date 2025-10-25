@@ -8,11 +8,11 @@ import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, Al
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
   DialogDescription,
   DialogFooter
 } from '@/components/ui/dialog';
@@ -20,8 +20,10 @@ import SpeedtestShare from '../components/SpeedtestShare';
 import MediaStreamingTest from '../components/MediaStreamingTest';
 import BatchSpeedtest from '../components/BatchSpeedtest';
 import { useSpeedTest } from '../contexts/SpeedTestContext';
+import { useTranslation } from 'react-i18next';
 
 export default function ToolsPage() {
+  const { t } = useTranslation();
   const [speedtestDialogOpen, setSpeedtestDialogOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mediaTestDialogOpen, setMediaTestDialogOpen] = useState(false);
@@ -234,16 +236,16 @@ export default function ToolsPage() {
       if (window.electronAPI) {
         const result = await window.electronAPI.openToolsApp('EnableLoopback.exe');
         if (result.success) {
-          toast.success('成功启动 EnableLoopback 工具');
+          toast.success(t('tools.enableLoopback.launchSuccess'));
         } else {
-          toast.error(`启动工具失败: ${result.error}`);
+          toast.error(t('tools.enableLoopback.launchError', { error: result.error }));
         }
       } else {
-        toast.error('无法访问系统功能，请在桌面应用中使用此功能');
+        toast.error(t('tools.enableLoopback.noAccess'));
       }
     } catch (error) {
       console.error('启动工具出错:', error);
-      toast.error('启动工具时发生错误');
+      toast.error(t('tools.enableLoopback.error'));
     }
   };
 
@@ -255,10 +257,10 @@ export default function ToolsPage() {
     setSpeedtestLogs([]);
     setShowLogs(false);
   };
-  
+
   const openShareDialog = () => {
     if (!speedtestResult) {
-      toast.error('请先完成测速才能分享结果');
+      toast.error(t('tools.speedtest.completeFirst'));
       return;
     }
     setShareDialogOpen(true);
@@ -274,7 +276,7 @@ export default function ToolsPage() {
 
   const runSpeedtest = async () => {
     if (!window.electronAPI) {
-      toast.error('无法访问系统功能，请在桌面应用中使用此功能');
+      toast.error(t('tools.enableLoopback.noAccess'));
       return;
     }
 
@@ -297,29 +299,29 @@ export default function ToolsPage() {
       });
 
       // 显示启动测速的提示
-      toast.info('正在启动测速工具...');
-      
+      toast.info(t('tools.speedtest.starting'));
+
       // 取消之前的订阅
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
       }
-      
+
       // 订阅speedtest输出事件
       const unsubscribe = window.electronAPI.onSpeedtestOutput((data) => {
         console.log('收到speedtest输出:', data);
-        
+
         // 添加到日志
         if (data.message) {
           setSpeedtestLogs(prev => [...prev, data.message as string]);
         }
-        
+
         // 根据输出类型处理数据
         if (data.type === 'status') {
           if (data.phase === 'start') {
             setCurrentTestPhase('preparing');
           } else if (data.phase === 'complete') {
             // 测速完成 - 停止所有动画
-            toast.success('测速完成');
+            toast.success(t('tools.speedtest.completed'));
             setSpeedtestRunning(false);
             setAnimateDownload(false);
             setAnimateUpload(false);
@@ -330,8 +332,8 @@ export default function ToolsPage() {
             });
           } else if (data.phase === 'error') {
             // 发生错误 - 停止所有动画
-            setSpeedtestError(data.message || '测速过程中出现错误');
-            toast.error(`测速失败: ${data.message || '未知错误'}`);
+            setSpeedtestError(data.message || t('tools.speedtest.error'));
+            toast.error(t('tools.speedtest.testError', { error: data.message || t('tools.speedtest.unknownError') }));
             setSpeedtestRunning(false);
             setAnimateDownload(false);
             setAnimateUpload(false);
@@ -460,12 +462,12 @@ export default function ToolsPage() {
         setCurrentTestPhase('idle');
       } else if (!result.success) {
         // 如果没有在事件中捕获到错误，则显示错误信息
-        const errorMsg = result.error || '未知错误';
+        const errorMsg = result.error || t('tools.speedtest.unknownError');
         if (!speedtestError) {
           setSpeedtestError(errorMsg);
-          toast.error(`测速失败: ${errorMsg}`);
+          toast.error(t('tools.speedtest.testError', { error: errorMsg }));
         }
-        
+
         // 确保测速失败后停止所有动画
         setSpeedtestRunning(false);
         setAnimateDownload(false);
@@ -474,8 +476,8 @@ export default function ToolsPage() {
       }
     } catch (error) {
       console.error('测速出错:', error);
-      toast.error('执行测速时发生错误');
-      setSpeedtestError('执行测速时发生错误，请查看控制台日志');
+      toast.error(t('tools.speedtest.executeError'));
+      setSpeedtestError(t('tools.speedtest.checkConsole'));
     } finally {
       setSpeedtestRunning(false);
     }
@@ -486,8 +488,8 @@ export default function ToolsPage() {
       <div className="space-y-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">实用工具</h1>
-            <p className="mt-1 text-sm text-muted-foreground">运行测速、媒体解锁和其他辅助工具</p>
+            <h1 className="text-2xl font-semibold text-foreground">{t('tools.title')}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{t('tools.subtitle')}</p>
           </div>
         </div>
 
@@ -498,22 +500,22 @@ export default function ToolsPage() {
               <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
                   <NetworkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                  <CardTitle>EnableLoopback</CardTitle>
+                  <CardTitle>{t('tools.enableLoopback.title')}</CardTitle>
                 </div>
                 <CardDescription className="text-gray-500 dark:text-gray-400">
-                  解决 Windows UWP 应用网络回环问题
+                  {t('tools.enableLoopback.description')}
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  此工具可以为UWP应用启用网络回环功能，让UWP应用能够连接到本地代理服务器。
+                  {t('tools.enableLoopback.detail')}
                 </p>
                 <Button
                   onClick={openEnableLoopbackTool}
                   className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                   variant="default"
                 >
-                  启动工具
+                  {t('tools.enableLoopback.launch')}
                 </Button>
               </CardContent>
             </Card>
@@ -525,22 +527,22 @@ export default function ToolsPage() {
               <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
                   <Gauge className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                  <CardTitle>网络测速</CardTitle>
+                  <CardTitle>{t('tools.speedtest.title')}</CardTitle>
                 </div>
                 <CardDescription className="text-gray-500 dark:text-gray-400">
-                  测试网络连接速度和延迟
+                  {t('tools.speedtest.description')}
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  使用Speedtest CLI测试您的网络下载和上传速度以及延迟。
+                  {t('tools.speedtest.detail')}
                 </p>
                 <Button
                   onClick={openSpeedtestDialog}
                   className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                   variant="default"
                 >
-                  开始测速
+                  {t('tools.speedtest.start')}
                 </Button>
               </CardContent>
             </Card>
@@ -550,22 +552,22 @@ export default function ToolsPage() {
             <CardHeader className="pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <Play className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                <CardTitle>媒体服务检测</CardTitle>
+                <CardTitle>{t('tools.mediaTest.title')}</CardTitle>
               </div>
               <CardDescription className="text-gray-500 dark:text-gray-400">
-                检测流媒体平台可用性和支持区域
+                {t('tools.mediaTest.description')}
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                测试您当前线路能否访问Netflix、Disney+等各大流媒体服务，并检测支持的解锁级别。
+                {t('tools.mediaTest.detail')}
               </p>
-              <Button 
+              <Button
                 onClick={openMediaTestDialog}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                 variant="default"
               >
-                开始检测
+                {t('tools.mediaTest.start')}
               </Button>
             </CardContent>
           </Card>
@@ -574,10 +576,10 @@ export default function ToolsPage() {
             <CardHeader className="pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <ZapIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                <CardTitle>批量测速</CardTitle>
+                <CardTitle>{t('tools.batchTest.title')}</CardTitle>
               </div>
               <CardDescription className="text-gray-500 dark:text-gray-400">
-                批量测试配置文件中的所有节点并生成测试报告
+                {t('tools.batchTest.description')}
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
@@ -585,35 +587,35 @@ export default function ToolsPage() {
                 <>
                   <div className="text-sm text-blue-500 font-medium mb-2 flex items-center">
                     <Activity className="w-4 h-4 mr-1 animate-pulse" />
-                    正在后台测速中 ({Math.round(bgTestProgress)}%)
+                    {t('tools.batchTest.testing', { progress: Math.round(bgTestProgress) })}
                   </div>
                   <p className="text-xs text-gray-500 mb-2">
-                    当前节点: {bgTestNodeName || '准备中...'}
+                    {t('tools.batchTest.currentNode', { node: bgTestNodeName || t('tools.batchTest.preparing') })}
                     {bgTestPhase && (
-                      <span className="block mt-1">测试阶段: {bgTestPhase}</span>
+                      <span className="block mt-1">{t('tools.batchTest.testPhase', { phase: bgTestPhase })}</span>
                     )}
                   </p>
                   <Progress value={bgTestProgress} className="h-1 mb-3" />
-                  <Button 
+                  <Button
                     onClick={navigateToTest}
                     className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                     variant="default"
                   >
                     <ArrowRight className="w-4 h-4 mr-1" />
-                    前往测速页面
+                    {t('tools.batchTest.goToPage')}
                   </Button>
                 </>
               ) : (
                 <>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    测试当前配置文件中的第一个代理组的所有节点，并生成测试报告
+                    {t('tools.batchTest.detail')}
                   </p>
-                  <Button 
+                  <Button
                     onClick={openBatchTestDialog}
                     className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                     variant="default"
                   >
-                    开始批量测速
+                    {t('tools.batchTest.start')}
                   </Button>
                 </>
               )}
@@ -627,10 +629,10 @@ export default function ToolsPage() {
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Gauge className="w-5 h-5" /> 网络测速
+              <Gauge className="w-5 h-5" /> {t('tools.speedtest.dialogTitle')}
             </DialogTitle>
             <DialogDescription>
-              测试您的网络下载和上传速度以及延迟
+              {t('tools.speedtest.dialogDescription')}
             </DialogDescription>
           </DialogHeader>
 
@@ -638,17 +640,17 @@ export default function ToolsPage() {
             {!speedtestRunning && !speedtestResult && !speedtestError && (
               <div className="space-y-4">
                 <p className="text-center text-gray-600 dark:text-gray-400">
-                  点击下方按钮开始测试您的网络速度
+                  {t('tools.speedtest.clickToStart')}
                 </p>
                 <div className="flex justify-center my-8">
                   <Gauge className="w-20 h-20 text-blue-500 opacity-20" />
                 </div>
-                <Button 
+                <Button
                   onClick={runSpeedtest}
                   className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                   variant="default"
                 >
-                  开始测速
+                  {t('tools.speedtest.start')}
                 </Button>
               </div>
             )}
@@ -660,22 +662,22 @@ export default function ToolsPage() {
                   <div className="flex items-start">
                     <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 mr-2 flex-shrink-0" />
                     <div>
-                      <h4 className="font-medium text-red-800 dark:text-red-300">测速失败</h4>
+                      <h4 className="font-medium text-red-800 dark:text-red-300">{t('tools.speedtest.failed')}</h4>
                       <p className="text-sm text-red-700 dark:text-red-400 mt-1">{speedtestError}</p>
                     </div>
                   </div>
                 </div>
-                
+
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  请确保您的电脑已连接网络，并且tools目录中已正确放置speedtest.exe文件。
+                  {t('tools.speedtest.errorDetail')}
                 </p>
-                
-                <Button 
+
+                <Button
                   onClick={runSpeedtest}
                   className="w-full bg-blue-500 hover:bg-blue-600 text-white mt-4"
                   variant="default"
                 >
-                  重试
+                  {t('tools.speedtest.retry')}
                 </Button>
               </div>
             )}
@@ -686,11 +688,11 @@ export default function ToolsPage() {
                   <>
                     <div className="flex justify-between items-center mb-1">
                       <span className="text-sm font-medium flex items-center">
-                        <Activity className="w-4 h-4 mr-1 text-blue-500 animate-pulse" /> 
-                        {currentTestPhase === 'preparing' && '正在准备测速...'}
-                        {currentTestPhase === 'ping' && '测试延迟中...'}
-                        {currentTestPhase === 'download' && '测试下载速度中...'}
-                        {currentTestPhase === 'upload' && '测试上传速度中...'}
+                        <Activity className="w-4 h-4 mr-1 text-blue-500 animate-pulse" />
+                        {currentTestPhase === 'preparing' && t('tools.speedtest.preparing')}
+                        {currentTestPhase === 'ping' && t('tools.speedtest.testingPing')}
+                        {currentTestPhase === 'download' && t('tools.speedtest.testingDownload')}
+                        {currentTestPhase === 'upload' && t('tools.speedtest.testingUpload')}
                       </span>
                       <span className="text-sm font-medium">{speedtestResult?.progress || 0}%</span>
                     </div>
@@ -719,7 +721,7 @@ export default function ToolsPage() {
                       "w-5 h-5 text-blue-500 mb-1",
                       currentTestPhase === 'download' && speedtestRunning && "animate-bounce"
                     )} />
-                    <span className="text-xs text-gray-500 dark:text-gray-400">下载速度</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{t('tools.speedtest.downloadSpeed')}</span>
                     <span className={cn(
                       "text-lg font-bold transition-all duration-500",
                       animateDownload && speedtestRunning && "text-blue-600 dark:text-blue-400"
@@ -727,7 +729,7 @@ export default function ToolsPage() {
                       {speedtestResult?.downloadSpeed || 0} Mbps
                     </span>
                   </div>
-                  <div 
+                  <div
                     className={cn(
                       "flex flex-col items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md transition-all duration-500",
                       animateUpload && speedtestRunning && "bg-green-50 dark:bg-green-900/30 scale-105",
@@ -738,7 +740,7 @@ export default function ToolsPage() {
                       "w-5 h-5 text-green-500 mb-1",
                       currentTestPhase === 'upload' && speedtestRunning && "animate-bounce"
                     )} />
-                    <span className="text-xs text-gray-500 dark:text-gray-400">上传速度</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{t('tools.speedtest.uploadSpeed')}</span>
                     <span className={cn(
                       "text-lg font-bold transition-all duration-500",
                       animateUpload && speedtestRunning && "text-green-600 dark:text-green-400"
@@ -749,7 +751,7 @@ export default function ToolsPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div 
+                  <div
                     className={cn(
                       "flex flex-col items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md transition-all duration-500",
                       currentTestPhase === 'ping' && speedtestRunning && "ring-2 ring-purple-300 dark:ring-purple-700 bg-purple-50 dark:bg-purple-900/30 scale-105"
@@ -759,7 +761,7 @@ export default function ToolsPage() {
                       "w-5 h-5 text-purple-500 mb-1",
                       currentTestPhase === 'ping' && speedtestRunning && "animate-pulse"
                     )} />
-                    <span className="text-xs text-gray-500 dark:text-gray-400">Ping延迟</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{t('tools.speedtest.ping')}</span>
                     <span className={cn(
                       "text-lg font-bold",
                       currentTestPhase === 'ping' && speedtestRunning && "text-purple-600 dark:text-purple-400"
@@ -769,7 +771,7 @@ export default function ToolsPage() {
                   </div>
                   <div className="flex flex-col items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md transition-all duration-500">
                     <Radio className="w-5 h-5 text-purple-500 mb-1" />
-                    <span className="text-xs text-gray-500 dark:text-gray-400">抖动</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{t('tools.speedtest.jitter')}</span>
                     <span className={cn(
                       "text-lg font-bold",
                       currentTestPhase === 'ping' && speedtestRunning && "text-purple-600 dark:text-purple-400"
@@ -783,7 +785,7 @@ export default function ToolsPage() {
                   <div className="flex items-center p-3 bg-gray-50 dark:bg-gray-900 rounded-md">
                     <Globe className="w-5 h-5 text-gray-500 mr-2 flex-shrink-0" />
                     <div>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 block">测速服务器</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 block">{t('tools.speedtest.server')}</span>
                       <span className="text-sm font-medium break-all">{speedtestResult.location || 'Unknown'}</span>
                     </div>
                   </div>
@@ -791,14 +793,14 @@ export default function ToolsPage() {
 
                 {/* 日志输出 */}
                 <div className="mt-4">
-                  <button 
+                  <button
                     onClick={() => setShowLogs(!showLogs)}
                     className="flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
                   >
                     <Terminal className="w-4 h-4 mr-1" />
-                    {showLogs ? '隐藏原始输出' : '显示原始输出'}
+                    {showLogs ? t('tools.speedtest.hideLogs') : t('tools.speedtest.showLogs')}
                   </button>
-                  
+
                   {showLogs && speedtestLogs.length > 0 && (
                     <div className="mt-2 bg-gray-100 dark:bg-gray-800 p-3 rounded-md text-xs font-mono h-48 overflow-y-auto">
                       {speedtestLogs.map((log, index) => (
@@ -810,21 +812,21 @@ export default function ToolsPage() {
 
                 {!speedtestRunning && speedtestResult && (
                   <DialogFooter className="gap-2 flex-wrap sm:flex-nowrap">
-                    <Button 
+                    <Button
                       onClick={runSpeedtest}
                       className="bg-blue-500 hover:bg-blue-600 text-white"
                       variant="default"
                     >
-                      重新测速
+                      {t('tools.speedtest.retest')}
                     </Button>
-                    
-                    <Button 
+
+                    <Button
                       onClick={openShareDialog}
                       className="bg-green-500 hover:bg-green-600 text-white"
                       variant="default"
                     >
                       <Share className="mr-2 h-4 w-4" />
-                      分享结果
+                      {t('tools.speedtest.share')}
                     </Button>
                   </DialogFooter>
                 )}
@@ -839,16 +841,16 @@ export default function ToolsPage() {
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Share className="w-5 h-5" /> 分享测速结果
+              <Share className="w-5 h-5" /> {t('tools.shareDialog.title')}
             </DialogTitle>
             <DialogDescription>
-              生成并分享您的网络测速结果
+              {t('tools.shareDialog.description')}
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="py-4">
             {speedtestResult && (
-              <SpeedtestShare 
+              <SpeedtestShare
                 downloadSpeed={speedtestResult.downloadSpeed}
                 uploadSpeed={speedtestResult.uploadSpeed}
                 ping={speedtestResult.ping}
@@ -862,19 +864,19 @@ export default function ToolsPage() {
           </div>
         </DialogContent>
       </Dialog>
-      
+
       {/* 媒体服务检测对话框 */}
       <Dialog open={mediaTestDialogOpen} onOpenChange={setMediaTestDialogOpen}>
         <DialogContent className="sm:max-w-[700px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Play className="w-5 h-5" /> 媒体服务检测
+              <Play className="w-5 h-5" /> {t('tools.mediaTest.dialogTitle')}
             </DialogTitle>
             <DialogDescription>
-              检测各大流媒体平台的可用性和解锁情况
+              {t('tools.mediaTest.dialogDescription')}
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="py-4">
             <MediaStreamingTest currentNode={currentNode} />
           </div>
@@ -885,24 +887,24 @@ export default function ToolsPage() {
       <Dialog open={showSpeedTestDialog} onOpenChange={setShowSpeedTestDialog}>
         <DialogContent className="sm:max-w-[800px]">
           <DialogHeader>
-            <DialogTitle>批量测速</DialogTitle>
+            <DialogTitle>{t('tools.batchTest.dialogTitle')}</DialogTitle>
             <DialogDescription>
-              测试当前配置文件中的第一个代理组的所有节点，并生成测试报告
+              {t('tools.batchTest.dialogDescription')}
             </DialogDescription>
           </DialogHeader>
-          
+
           <BatchSpeedtest onClose={() => setShowSpeedTestDialog(false)} inDialog={true} enableBackground={true} />
-          
+
           <DialogFooter>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => setShowSpeedTestDialog(false)}
             >
-              关闭
+              {t('tools.batchTest.close')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </Layout>
   );
-} 
+}

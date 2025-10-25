@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Mihomo 管理
   startMihomo: (configPath) => ipcRenderer.invoke('start-mihomo', configPath),
   stopMihomo: () => ipcRenderer.invoke('stop-mihomo'),
+  reloadMihomoConfig: (configPath) => ipcRenderer.invoke('reload-mihomo-config', configPath),
   getTrafficStats: () => ipcRenderer.invoke('get-traffic-stats'),
   fetchConnectionsInfo: () => ipcRenderer.invoke('fetch-connections-info'),
   // 重启Mihomo服务（用于端口更改后）
@@ -65,6 +66,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTheme: () => ipcRenderer.invoke('get-theme'),
   setAppearanceMode: (mode) => ipcRenderer.invoke('set-appearance-mode', mode),
   getAppearanceMode: () => ipcRenderer.invoke('get-appearance-mode'),
+
+  // 自定义背景设置
+  selectBackgroundImage: () => ipcRenderer.invoke('select-background-image'),
+  setCustomBackground: (config) => ipcRenderer.invoke('set-custom-background', config),
+  getCustomBackground: () => ipcRenderer.invoke('get-custom-background'),
+  clearCustomBackground: () => ipcRenderer.invoke('clear-custom-background'),
+  onCustomBackgroundApply: (callback) => {
+    const handler = (_, config) => callback(config);
+    ipcRenderer.on('apply-custom-background', handler);
+    return () => ipcRenderer.removeListener('apply-custom-background', handler);
+  },
+  onClearCustomBackground: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('clear-custom-background', handler);
+    return () => ipcRenderer.removeListener('clear-custom-background', handler);
+  },
+
+  // 主题色设置
+  setThemeColor: (color) => ipcRenderer.invoke('set-theme-color', color),
+  getThemeColor: () => ipcRenderer.invoke('get-theme-color'),
+  onThemeColorChanged: (callback) => {
+    const handler = (_, color) => callback(color);
+    ipcRenderer.on('theme-color-changed', handler);
+    return () => ipcRenderer.removeListener('theme-color-changed', handler);
+  },
 
   // 静默启动设置
   getSilentStart: () => ipcRenderer.invoke('get-silent-start'),

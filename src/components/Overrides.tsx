@@ -5,6 +5,7 @@ import { ReloadIcon, PlusIcon, TrashIcon, Pencil1Icon, FileTextIcon, DotsVertica
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
+import { useTranslation } from 'react-i18next';
 import {
   DndContext,
   closestCenter,
@@ -48,6 +49,7 @@ function SortableOverrideCard({
   onEdit: (item: OverrideItem) => void;
   onEditFile: (item: OverrideItem) => void;
 }) {
+  const { t } = useTranslation();
   const {
     attributes,
     listeners,
@@ -64,7 +66,7 @@ function SortableOverrideCard({
   };
 
   const formatDate = (dateString?: string): string => {
-    if (!dateString) return '未知';
+    if (!dateString) return t('overrides.unknown');
     const date = new Date(dateString);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
@@ -72,10 +74,10 @@ function SortableOverrideCard({
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
 
-    if (minutes < 1) return '刚刚';
-    if (minutes < 60) return `${minutes}分钟前`;
-    if (hours < 24) return `${hours}小时前`;
-    return `${days}天前`;
+    if (minutes < 1) return t('overrides.justNow');
+    if (minutes < 60) return t('overrides.minutesAgo', { minutes });
+    if (hours < 24) return t('overrides.hoursAgo', { hours });
+    return t('overrides.daysAgo', { days });
   };
 
   const [showMenu, setShowMenu] = useState(false);
@@ -112,7 +114,7 @@ function SortableOverrideCard({
                 <h4 className="font-medium text-foreground">{item.name}</h4>
                 {item.global && (
                   <span className="px-2 py-0.5 text-xs rounded font-medium bg-primary/10 text-primary">
-                    全局
+                    {t('overrides.global')}
                   </span>
                 )}
                 <span className={`px-2 py-0.5 text-xs rounded font-medium ${
@@ -127,7 +129,7 @@ function SortableOverrideCard({
                     ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                 }`}>
-                  {item.type === 'remote' ? '远程' : '本地'}
+                  {item.type === 'remote' ? t('overrides.remote') : t('overrides.local')}
                 </span>
               </div>
               {item.url && (
@@ -147,7 +149,7 @@ function SortableOverrideCard({
                 size="sm"
                 variant="ghost"
                 onClick={() => onUpdate(item.id)}
-                title="更新"
+                title={t('overrides.updateTitle')}
               >
                 <ReloadIcon className="w-4 h-4" />
               </Button>
@@ -190,7 +192,7 @@ function SortableOverrideCard({
               className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
             >
               <Pencil1Icon className="w-4 h-4" />
-              编辑信息
+              {t('overrides.editInfo')}
             </button>
             <button
               onClick={() => {
@@ -200,7 +202,7 @@ function SortableOverrideCard({
               className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
             >
               <FileTextIcon className="w-4 h-4" />
-              编辑文件
+              {t('overrides.editFile')}
             </button>
             <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
             <button
@@ -211,7 +213,7 @@ function SortableOverrideCard({
               className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2"
             >
               <TrashIcon className="w-4 h-4" />
-              删除
+              {t('overrides.delete')}
             </button>
           </div>
         </>
@@ -221,6 +223,7 @@ function SortableOverrideCard({
 }
 
 export default function Overrides() {
+  const { t } = useTranslation();
   const [items, setItems] = useState<OverrideItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [url, setUrl] = useState('');
@@ -254,7 +257,7 @@ export default function Overrides() {
         // 保存新顺序
         if (typeof window !== 'undefined' && window.electronAPI?.reorderOverrides) {
           window.electronAPI.reorderOverrides(newItems.map(item => item.id)).catch(error => {
-            console.error('保存排序失败:', error);
+            console.error(t('overrides.saveError'), error);
           });
         }
 
@@ -276,7 +279,7 @@ export default function Overrides() {
       }
     } catch (error: any) {
       console.error('获取覆写列表失败:', error);
-      setErrorMessage(`获取覆写列表失败: ${error.message || '未知错误'}`);
+      setErrorMessage(t('overrides.fetchError', { error: error.message || '未知错误' }));
       setItems([]);
     } finally {
       setIsLoading(false);
@@ -304,7 +307,7 @@ export default function Overrides() {
       setUrl('');
     } catch (error: any) {
       console.error('导入覆写失败:', error);
-      alert(`导入失败: ${error.message || '未知错误'}`);
+      alert(t('overrides.importError', { error: error.message || '未知错误' }));
     } finally {
       setImporting(false);
     }
@@ -320,7 +323,7 @@ export default function Overrides() {
       }
     } catch (error: any) {
       console.error('切换覆写状态失败:', error);
-      alert(`操作失败: ${error.message || '未知错误'}`);
+      alert(t('overrides.toggleError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -332,12 +335,12 @@ export default function Overrides() {
       }
     } catch (error: any) {
       console.error('更新覆写失败:', error);
-      alert(`更新失败: ${error.message || '未知错误'}`);
+      alert(t('overrides.updateError', { error: error.message || '未知错误' }));
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个覆写吗？')) return;
+    if (!confirm(t('overrides.confirmDelete'))) return;
 
     try {
       if (typeof window !== 'undefined' && window.electronAPI?.deleteOverride) {
@@ -346,7 +349,7 @@ export default function Overrides() {
       }
     } catch (error: any) {
       console.error('删除覆写失败:', error);
-      alert(`删除失败: ${error.message || '未知错误'}`);
+      alert(t('overrides.deleteError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -381,7 +384,7 @@ export default function Overrides() {
 
     const file = files[0];
     if (!file.name.endsWith('.js') && !file.name.endsWith('.yaml')) {
-      alert('仅支持 .js 和 .yaml 文件');
+      alert(t('overrides.onlySupportedFiles'));
       return;
     }
 
@@ -399,7 +402,7 @@ export default function Overrides() {
       }
     } catch (error: any) {
       console.error('添加文件失败:', error);
-      alert(`添加失败: ${error.message || '未知错误'}`);
+      alert(t('overrides.addError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -427,8 +430,8 @@ export default function Overrides() {
         <div className="fixed inset-0 z-50 bg-primary/10 backdrop-blur-sm flex items-center justify-center">
           <div className="bg-white dark:bg-[#2a2a2a] rounded-xl p-8 shadow-2xl border-2 border-primary border-dashed">
             <FileTextIcon className="w-16 h-16 mx-auto mb-4 text-primary" />
-            <p className="text-lg font-medium text-foreground">拖放文件到此处</p>
-            <p className="text-sm text-muted-foreground mt-2">支持 .js 和 .yaml 文件</p>
+            <p className="text-lg font-medium text-foreground">{t('overrides.dragDropHint')}</p>
+            <p className="text-sm text-muted-foreground mt-2">{t('overrides.supportedFiles')}</p>
           </div>
         </div>
       )}
@@ -447,13 +450,13 @@ export default function Overrides() {
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="输入远程URL导入覆写..."
+            placeholder={t('overrides.importPlaceholder')}
             className="w-full h-9 px-3 pr-10 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a] text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
           <button
             onClick={handlePaste}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            title="粘贴"
+            title={t('overrides.paste')}
           >
             <FileTextIcon className="w-4 h-4" />
           </button>
@@ -464,7 +467,7 @@ export default function Overrides() {
           onClick={handleImport}
           disabled={!url || importing}
         >
-          {importing ? <ReloadIcon className="w-4 h-4 animate-spin" /> : '导入'}
+          {importing ? <ReloadIcon className="w-4 h-4 animate-spin" /> : t('overrides.import')}
         </Button>
 
         {/* 添加按钮下拉菜单 */}
@@ -475,7 +478,7 @@ export default function Overrides() {
             onClick={() => setShowAddMenu(!showAddMenu)}
           >
             <PlusIcon className="w-4 h-4 mr-1" />
-            添加
+            {t('overrides.add')}
           </Button>
 
           {showAddMenu && (
@@ -506,7 +509,7 @@ export default function Overrides() {
                           }
                         } catch (error: any) {
                           console.error('添加文件失败:', error);
-                          alert(`添加失败: ${error.message || '未知错误'}`);
+                          alert(t('overrides.addError', { error: error.message || '未知错误' }));
                         }
                       }
                     };
@@ -516,7 +519,7 @@ export default function Overrides() {
                   className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                 >
                   <FileTextIcon className="w-4 h-4" />
-                  打开本地文件
+                  {t('overrides.openLocalFile')}
                 </button>
                 <button
                   onClick={async () => {
@@ -532,14 +535,14 @@ export default function Overrides() {
                       }
                     } catch (error: any) {
                       console.error('创建文件失败:', error);
-                      alert(`创建失败: ${error.message || '未知错误'}`);
+                      alert(t('overrides.createError', { error: error.message || '未知错误' }));
                     }
                     setShowAddMenu(false);
                   }}
                   className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                 >
                   <FileTextIcon className="w-4 h-4" />
-                  新建 YAML 配置
+                  {t('overrides.newYamlConfig')}
                 </button>
                 <button
                   onClick={async () => {
@@ -555,14 +558,14 @@ export default function Overrides() {
                       }
                     } catch (error: any) {
                       console.error('创建文件失败:', error);
-                      alert(`创建失败: ${error.message || '未知错误'}`);
+                      alert(t('overrides.createError', { error: error.message || '未知错误' }));
                     }
                     setShowAddMenu(false);
                   }}
                   className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                 >
                   <FileTextIcon className="w-4 h-4" />
-                  新建 JS 脚本
+                  {t('overrides.newJsScript')}
                 </button>
               </div>
             </>
@@ -574,8 +577,8 @@ export default function Overrides() {
       {items.length === 0 ? (
         <Card className="p-12 text-center">
           <FileTextIcon className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-          <p className="text-muted-foreground mb-2">暂无覆写配置</p>
-          <p className="text-sm text-muted-foreground">拖放文件或输入URL导入覆写</p>
+          <p className="text-muted-foreground mb-2">{t('overrides.noOverrides')}</p>
+          <p className="text-sm text-muted-foreground">{t('overrides.dragDropOrImport')}</p>
         </Card>
       ) : (
         <DndContext
@@ -624,7 +627,7 @@ export default function Overrides() {
               }
             } catch (error: any) {
               console.error('更新覆写信息失败:', error);
-              alert(`更新失败: ${error.message || '未知错误'}`);
+              alert(t('overrides.updateError', { error: error.message || '未知错误' }));
             }
           }}
         />
@@ -644,7 +647,7 @@ export default function Overrides() {
               }
             } catch (error: any) {
               console.error('更新覆写文件失败:', error);
-              alert(`更新失败: ${error.message || '未知错误'}`);
+              alert(t('overrides.updateError', { error: error.message || '未知错误' }));
             }
           }}
         />
@@ -663,6 +666,7 @@ function EditInfoDialog({
   onClose: () => void;
   onSave: (item: OverrideItem) => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(item.name);
   const [url, setUrl] = useState(item.url || '');
   const [global, setGlobal] = useState(item.global || false);
@@ -671,12 +675,12 @@ function EditInfoDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="bg-white dark:bg-[#2a2a2a] rounded-xl shadow-2xl w-full max-w-md mx-4">
         <div className="p-6 border-b border-slate-200 dark:border-slate-700">
-          <h3 className="text-lg font-semibold text-foreground">编辑信息</h3>
+          <h3 className="text-lg font-semibold text-foreground">{t('overrides.editInfo')}</h3>
         </div>
         <div className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">
-              名称
+              {t('overrides.name')}
             </label>
             <input
               type="text"
@@ -700,7 +704,7 @@ function EditInfoDialog({
           )}
           <div className="flex items-center justify-between">
             <label className="text-sm font-medium text-foreground">
-              全局覆写
+              {t('overrides.globalOverride')}
             </label>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -715,7 +719,7 @@ function EditInfoDialog({
         </div>
         <div className="p-6 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
-            取消
+            {t('overrides.cancel')}
           </Button>
           <Button
             onClick={() => {
@@ -727,7 +731,7 @@ function EditInfoDialog({
               });
             }}
           >
-            保存
+            {t('overrides.save')}
           </Button>
         </div>
       </div>
@@ -745,6 +749,7 @@ function EditFileDialog({
   onClose: () => void;
   onSave: (content: string) => void;
 }) {
+  const { t } = useTranslation();
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -759,7 +764,7 @@ function EditFileDialog({
         }
       } catch (error: any) {
         console.error('加载文件内容失败:', error);
-        alert(`加载失败: ${error.message || '未知错误'}`);
+        alert(t('overrides.loadError', { error: error.message || '未知错误' }));
       } finally {
         setLoading(false);
       }
@@ -772,7 +777,7 @@ function EditFileDialog({
       <div className="bg-white dark:bg-[#2a2a2a] rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col">
         <div className="p-6 border-b border-slate-200 dark:border-slate-700">
           <h3 className="text-lg font-semibold text-foreground">
-            编辑文件 - {item.name}
+            {t('overrides.editFileTitle', { name: item.name })}
           </h3>
         </div>
         <div className="flex-1 p-6 overflow-hidden">
@@ -785,16 +790,16 @@ function EditFileDialog({
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="w-full h-full px-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a] text-foreground text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
-              placeholder={item.ext === 'js' ? '// JavaScript 代码' : '# YAML 配置'}
+              placeholder={item.ext === 'js' ? t('overrides.jsPlaceholder') : t('overrides.yamlPlaceholder')}
             />
           )}
         </div>
         <div className="p-6 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
-            取消
+            {t('overrides.cancel')}
           </Button>
           <Button onClick={() => onSave(content)} disabled={loading}>
-            保存
+            {t('overrides.save')}
           </Button>
         </div>
       </div>

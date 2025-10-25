@@ -20,6 +20,7 @@ import { Input } from './ui/input';
 import { Progress } from './ui/progress';
 import { formatBytes, formatDuration } from '../utils/formatters';
 import { Network } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Connection {
   id: string;
@@ -51,15 +52,17 @@ type Stats = {
   totalDownload: number;
 };
 
-const FILTERS: Array<{ value: 'all' | 'http' | 'https' | 'tcp' | 'udp'; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'http', label: 'HTTP' },
-  { value: 'https', label: 'HTTPS' },
-  { value: 'tcp', label: 'TCP' },
-  { value: 'udp', label: 'UDP' }
-];
-
 export default function ConnectionTable() {
+  const { t } = useTranslation();
+
+  const FILTERS: Array<{ value: 'all' | 'http' | 'https' | 'tcp' | 'udp'; label: string }> = [
+    { value: 'all', label: t('connections.all') },
+    { value: 'http', label: 'HTTP' },
+    { value: 'https', label: 'HTTPS' },
+    { value: 'tcp', label: 'TCP' },
+    { value: 'udp', label: 'UDP' }
+  ];
+
   const [connections, setConnections] = useState<Connection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +221,7 @@ export default function ConnectionTable() {
 
       const versionResponse = await window.electronAPI?.requestMihomoAPI?.('/version');
       if (versionResponse && !versionResponse.ok) {
-        throw new Error('Mihomo 未运行');
+        throw new Error(t('connections.mihomoNotRunning'));
       }
 
       const connectionsResponse = await window.electronAPI?.requestMihomoAPI?.('/connections');
@@ -246,7 +249,7 @@ export default function ConnectionTable() {
       setConnections(data.connections);
     } catch (err) {
       console.error('获取连接数据失败:', err);
-      setError(`获取连接数据失败: ${String(err)}`);
+      setError(t('connections.fetchError', { error: String(err) }));
     } finally {
       setIsLoading(false);
     }
@@ -256,12 +259,12 @@ export default function ConnectionTable() {
     try {
       const response = await window.electronAPI?.requestMihomoAPI?.('/connections', { method: 'DELETE' });
       if (response && !response.ok) {
-        throw new Error(response.statusText || '断开失败');
+        throw new Error(response.statusText || t('connections.disconnectError', { error: '' }));
       }
       fetchConnections();
     } catch (err) {
       console.error('断开所有连接失败:', err);
-      setError(`断开所有连接失败: ${String(err)}`);
+      setError(t('connections.disconnectAllError', { error: String(err) }));
     }
   };
 
@@ -269,7 +272,7 @@ export default function ConnectionTable() {
     try {
       const response = await window.electronAPI?.requestMihomoAPI?.(`/connections/${id}`, { method: 'DELETE' });
       if (response && !response.ok) {
-        throw new Error(response.statusText || '断开失败');
+        throw new Error(response.statusText || t('connections.disconnectError', { error: '' }));
       }
       setConnections((prev) => prev.filter((conn) => conn.id !== id));
       setStats((prev) => ({
@@ -278,7 +281,7 @@ export default function ConnectionTable() {
       }));
     } catch (err) {
       console.error(`断开连接 ${id} 失败:`, err);
-      setError(`断开连接失败: ${String(err)}`);
+      setError(t('connections.disconnectError', { error: String(err) }));
     }
   };
 
@@ -338,27 +341,27 @@ export default function ConnectionTable() {
 
   const metrics = [
     {
-      label: '活跃连接',
+      label: t('connections.activeConnections'),
       value: stats.activeConnections.toString(),
-      helper: '当前活跃连接数',
+      helper: t('connections.activeConnectionsHelper'),
       icon: <GlobeIcon className="h-4 w-4 text-primary" />
     },
     {
-      label: '上传流量',
+      label: t('connections.uploadTraffic'),
       value: formatBytes(stats.totalUpload),
-      helper: '会话累计上传',
+      helper: t('connections.uploadTrafficHelper'),
       icon: <UploadIcon className="h-4 w-4 text-emerald-500" />
     },
     {
-      label: '下载流量',
+      label: t('connections.downloadTraffic'),
       value: formatBytes(stats.totalDownload),
-      helper: '会话累计下载',
+      helper: t('connections.downloadTrafficHelper'),
       icon: <DownloadIcon className="h-4 w-4 text-sky-500" />
     },
     {
-      label: '总流量',
+      label: t('connections.totalTraffic'),
       value: formatBytes(stats.totalUpload + stats.totalDownload),
-      helper: '上传 + 下载',
+      helper: t('connections.totalTrafficHelper'),
       icon: <ClockIcon className="h-4 w-4 text-violet-500" />
     }
   ];
@@ -405,7 +408,7 @@ export default function ConnectionTable() {
 
             <div className="relative w-full sm:w-60">
               <Input
-                placeholder="搜索连接..."
+                placeholder={t('connections.searchPlaceholder')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="h-10 w-full rounded-2xl bg-white/80 pl-10 pr-10 text-sm text-foreground shadow-sm transition focus:outline-none focus:ring-2 focus:ring-primary/30 dark:bg-[#222222] dark:text-slate-100"
@@ -417,9 +420,9 @@ export default function ConnectionTable() {
           <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
             <div>
               {filteredConnections.length > 0 ? (
-                <span>共显示 <strong>{filteredConnections.length}</strong> 个连接</span>
+                <span dangerouslySetInnerHTML={{ __html: t('connections.showingConnections', { count: filteredConnections.length }) }} />
               ) : (
-                <span>没有连接</span>
+                <span>{t('connections.noConnections')}</span>
               )}
             </div>
 
@@ -436,7 +439,7 @@ export default function ConnectionTable() {
                 ) : (
                   <ReloadIcon className="mr-1.5 h-3.5 w-3.5" />
                 )}
-                刷新
+                {t('connections.refresh')}
               </Button>
 
               <Button
@@ -447,7 +450,7 @@ export default function ConnectionTable() {
                 className="h-8 rounded-full px-3 text-xs"
               >
                 <Cross1Icon className="mr-1.5 h-3.5 w-3.5" />
-                断开所有连接
+                {t('connections.disconnectAll')}
               </Button>
             </div>
           </div>
@@ -473,7 +476,7 @@ export default function ConnectionTable() {
                     style={{ width: '25%' }}
                   >
                     <div className="flex items-center">
-                      主机/IP
+                      {t('connections.hostIP')}
                       {sortConfig.key === 'metadata' && (
                         <span className="ml-1">
                           {sortConfig.direction === 'asc' ? (
@@ -486,7 +489,7 @@ export default function ConnectionTable() {
                     </div>
                   </th>
                   <th className="sticky top-0 px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '10%' }}>
-                    类型
+                    {t('connections.type')}
                   </th>
                   <th
                     className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
@@ -494,7 +497,7 @@ export default function ConnectionTable() {
                     style={{ width: '12%' }}
                   >
                     <div className="flex items-center">
-                      上传
+                      {t('connections.upload')}
                       {sortConfig.key === 'upload' && (
                         <span className="ml-1">
                           {sortConfig.direction === 'asc' ? (
@@ -512,7 +515,7 @@ export default function ConnectionTable() {
                     style={{ width: '12%' }}
                   >
                     <div className="flex items-center">
-                      下载
+                      {t('connections.download')}
                       {sortConfig.key === 'download' && (
                         <span className="ml-1">
                           {sortConfig.direction === 'asc' ? (
@@ -530,7 +533,7 @@ export default function ConnectionTable() {
                     style={{ width: '12%' }}
                   >
                     <div className="flex items-center">
-                      连接时长
+                      {t('connections.duration')}
                       {sortConfig.key === 'duration' && (
                         <span className="ml-1">
                           {sortConfig.direction === 'asc' ? (
@@ -543,10 +546,10 @@ export default function ConnectionTable() {
                     </div>
                   </th>
                   <th className="sticky top-0 px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '20%' }}>
-                    代理链
+                    {t('connections.proxyChain')}
                   </th>
                   <th className="sticky top-0 px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '9%' }}>
-                    操作
+                    {t('connections.actions')}
                   </th>
                 </tr>
               </thead>
@@ -565,7 +568,7 @@ export default function ConnectionTable() {
                           {connection.metadata.processPath && iconMap[connection.metadata.processPath] && (
                             <img
                               src={iconMap[connection.metadata.processPath]}
-                              alt="进程图标"
+                              alt={t('connections.processIcon')}
                               className="h-8 w-8 flex-shrink-0 rounded"
                             />
                           )}
@@ -649,14 +652,14 @@ export default function ConnectionTable() {
                       {isLoading ? (
                         <div className="flex items-center justify-center">
                           <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
-                          加载中...
+                          {t('connections.loading')}
                         </div>
                       ) : error ? (
-                        <span>出错了，请尝试刷新</span>
+                        <span>{t('connections.errorRefresh')}</span>
                       ) : (
                         <div className="flex flex-col items-center">
                           <ActivityLogIcon className="mb-2 h-8 w-8 text-slate-300 dark:text-slate-600" />
-                          <span>没有找到符合条件的连接</span>
+                          <span>{t('connections.noMatchingConnections')}</span>
                         </div>
                       )}
                     </td>

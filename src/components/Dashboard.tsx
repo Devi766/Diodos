@@ -27,32 +27,9 @@ import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { CustomizableDashboard } from '@/components/CustomizableDashboard';
 import { Settings2, Plus, RotateCcw, Check } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 type ProxyMode = 'rule' | 'global' | 'direct';
-
-const MODE_LABELS: Record<ProxyMode, string> = {
-  rule: '规则模式',
-  global: '全局模式',
-  direct: '直连模式'
-};
-
-const MODE_OPTIONS: Array<{ key: ProxyMode; label: string; icon: React.ReactNode }> = [
-  {
-    key: 'rule',
-    label: MODE_LABELS.rule,
-    icon: <MixerHorizontalIcon className="h-[14px] w-[14px]" />
-  },
-  {
-    key: 'global',
-    label: MODE_LABELS.global,
-    icon: <GlobeIcon className="h-[14px] w-[14px]" />
-  },
-  {
-    key: 'direct',
-    label: MODE_LABELS.direct,
-    icon: <ExitIcon className="h-[14px] w-[14px]" />
-  }
-];
 
 type TrafficStats = {
   up: number;
@@ -107,8 +84,8 @@ const formatSpeed = (value: number) => {
   return `${speed.toFixed(decimals)} ${units[index]}`;
 };
 
-const getFileName = (path?: string | null) => {
-  if (!path) return '未选择配置';
+const getFileName = (path?: string | null, t: any) => {
+  if (!path) return t('dashboard.noConfigSelected');
   const parts = path.split(/[/\\]/);
   const name = parts[parts.length - 1];
   return name || path;
@@ -120,6 +97,7 @@ const resolveElectron = () => {
 };
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const [isRunning, setIsRunning] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [tunEnabled, setTunEnabled] = useState(false);
@@ -147,6 +125,30 @@ export default function Dashboard() {
   const [downloadTotal, setDownloadTotal] = useState(0);
 
   const electron = useMemo(resolveElectron, []);
+
+  const MODE_LABELS: Record<ProxyMode, string> = {
+    rule: t('dashboard.ruleMode'),
+    global: t('dashboard.globalMode'),
+    direct: t('dashboard.directMode')
+  };
+
+  const MODE_OPTIONS: Array<{ key: ProxyMode; label: string; icon: React.ReactNode }> = [
+    {
+      key: 'rule',
+      label: MODE_LABELS.rule,
+      icon: <MixerHorizontalIcon className="h-[14px] w-[14px]" />
+    },
+    {
+      key: 'global',
+      label: MODE_LABELS.global,
+      icon: <GlobeIcon className="h-[14px] w-[14px]" />
+    },
+    {
+      key: 'direct',
+      label: MODE_LABELS.direct,
+      icon: <ExitIcon className="h-[14px] w-[14px]" />
+    }
+  ];
 
   const hydrateConnections = useCallback((snapshot: ConnectionsSnapshot | null | undefined) => {
     if (!snapshot) return;
@@ -530,7 +532,7 @@ export default function Dashboard() {
     try {
       const config = await resolveConfigForLaunch();
       if (!config) {
-        showBanner({ type: 'error', message: '未找到可用的配置文件，请先在订阅管理中导入配置' });
+        showBanner({ type: 'error', message: t('dashboard.noConfigAvailable') });
         return;
       }
       const result = await electron.startMihomo(config);
@@ -538,7 +540,7 @@ export default function Dashboard() {
         setIsRunning(true);
         setActiveConfig(config);
         setPreferredConfig(config);
-        showBanner({ type: 'success', message: 'Mihomo 服务已启动' });
+        showBanner({ type: 'success', message: t('dashboard.serviceStarted') });
         try {
           const order = await electron.getConfigOrder?.();
           if (order?.success && Array.isArray(order.data?.proxyGroups) && order.data.proxyGroups.length > 0) {
@@ -553,11 +555,11 @@ export default function Dashboard() {
         await syncCurrentNode();
         await syncProxyMode();
       } else {
-        showBanner({ type: 'error', message: '启动服务失败' });
+        showBanner({ type: 'error', message: t('dashboard.startFailed') });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      showBanner({ type: 'error', message: `启动失败: ${message}` });
+      showBanner({ type: 'error', message: t('dashboard.startFailedWithError', { message }) });
     } finally {
       setIsServiceBusy(false);
     }
@@ -574,13 +576,13 @@ export default function Dashboard() {
         setIsRunning(false);
         setCurrentNode('DIRECT');
         setTrafficSamples([]);
-        showBanner({ type: 'info', message: '服务已停止' });
+        showBanner({ type: 'info', message: t('dashboard.serviceStopped') });
       } else {
-        showBanner({ type: 'error', message: '服务已处于停止状态' });
+        showBanner({ type: 'error', message: t('dashboard.serviceAlreadyStopped') });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      showBanner({ type: 'error', message: `停止失败: ${message}` });
+      showBanner({ type: 'error', message: t('dashboard.stopFailed', { message }) });
     } finally {
       setIsServiceBusy(false);
     }
@@ -612,17 +614,17 @@ export default function Dashboard() {
         const message =
           typeof result === 'object' && 'error' in result && result.error
             ? result.error
-            : '切换系统代理失败';
+            : t('dashboard.toggleSystemProxyFailed');
         showBanner({ type: 'error', message });
         await refreshProxyStatus();
         return;
       }
 
       await refreshProxyStatus();
-      showBanner({ type: 'success', message: `系统代理已${value ? '启用' : '关闭'}` });
+      showBanner({ type: 'success', message: t('dashboard.systemProxyToggled', { status: value ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      showBanner({ type: 'error', message: `切换系统代理失败: ${message}` });
+      showBanner({ type: 'error', message: t('dashboard.toggleSystemProxyFailedWithError', { message }) });
     } finally {
       setIsProxyUpdating(false);
     }
@@ -630,7 +632,7 @@ export default function Dashboard() {
 
   const runTunToggle = async (value: boolean) => {
     if (!electron?.toggleTunMode) {
-      showBanner({ type: 'error', message: '当前环境不支持 TUN 模式' });
+      showBanner({ type: 'error', message: t('dashboard.tunModeNotSupported') });
       return;
     }
     if (isTunUpdating) return;
@@ -651,17 +653,17 @@ export default function Dashboard() {
         const message =
           typeof result === 'object' && 'error' in result && result.error
             ? result.error
-            : '切换 TUN 模式失败';
+            : t('dashboard.toggleTunModeFailed');
         showBanner({ type: 'error', message });
         await refreshTunStatus();
         return;
       }
 
       await refreshTunStatus();
-      showBanner({ type: 'success', message: `TUN 模式已${value ? '启用' : '关闭'}` });
+      showBanner({ type: 'success', message: t('dashboard.tunModeToggled', { status: value ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      showBanner({ type: 'error', message: `切换 TUN 模式失败: ${message}` });
+      showBanner({ type: 'error', message: t('dashboard.toggleTunModeFailedWithError', { message }) });
     } finally {
       setIsTunUpdating(false);
     }
@@ -669,7 +671,7 @@ export default function Dashboard() {
 
   const handleTunToggle = (value: boolean) => {
     if (!electron?.toggleTunMode) {
-      showBanner({ type: 'error', message: '当前环境不支持 TUN 模式' });
+      showBanner({ type: 'error', message: t('dashboard.tunModeNotSupported') });
       return;
     }
     if (isTunUpdating) return;
@@ -683,7 +685,7 @@ export default function Dashboard() {
   const handleModeSwitch = useCallback(
     async (nextMode: ProxyMode) => {
       if (!electron?.requestMihomoAPI) {
-        showBanner({ type: 'error', message: '当前环境不支持代理模式切换' });
+        showBanner({ type: 'error', message: t('dashboard.proxyModeNotSupported') });
         return;
       }
       if (isModeUpdating || proxyMode === nextMode) {
@@ -711,16 +713,16 @@ export default function Dashboard() {
           const errorDetail =
             typeof response?.data === 'string'
               ? response.data
-              : response?.data?.message || response?.statusText || '切换失败';
+              : response?.data?.message || response?.statusText || t('dashboard.toggleTunModeFailed');
           throw new Error(errorDetail);
         }
 
         setProxyMode(nextMode);
-        showBanner({ type: 'success', message: `已切换到${MODE_LABELS[nextMode]}` });
+        showBanner({ type: 'success', message: t('dashboard.switchedToMode', { mode: MODE_LABELS[nextMode] }) });
         await syncCurrentNode();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        showBanner({ type: 'error', message: `切换代理模式失败: ${message}` });
+        showBanner({ type: 'error', message: t('dashboard.switchProxyModeFailed', { message }) });
         await syncProxyMode();
       } finally {
         setIsModeUpdating(false);
@@ -731,27 +733,27 @@ export default function Dashboard() {
 
   const metrics = [
     {
-      label: '活跃连接',
+      label: t('dashboard.activeConnections'),
       value: connectionCount.toString(),
-      helper: isRunning ? '实时连接数' : '服务未运行',
+      helper: isRunning ? t('dashboard.realtimeConnections') : t('dashboard.serviceNotRunning'),
       icon: <ActivityLogIcon className="h-4 w-4 text-primary" />
     },
     {
-      label: '下载速度',
+      label: t('dashboard.downloadSpeed'),
       value: formatSpeed(downSpeed),
-      helper: `总计 ${formatBytes(totalDownload, 2)}`,
+      helper: `${t('dashboard.total')} ${formatBytes(totalDownload, 2)}`,
       icon: <DownloadIcon className="h-4 w-4 text-blue-500" />
     },
     {
-      label: '上传速度',
+      label: t('dashboard.uploadSpeed'),
       value: formatSpeed(upSpeed),
-      helper: `总计 ${formatBytes(totalUpload, 2)}`,
+      helper: `${t('dashboard.total')} ${formatBytes(totalUpload, 2)}`,
       icon: <UploadIcon className="h-4 w-4 text-emerald-500" />
     },
     {
-      label: '总流量',
+      label: t('dashboard.totalTraffic'),
       value: formatBytes(totalUpload + totalDownload, 2),
-      helper: `当前节点 ${currentNode || '未选择'}`,
+      helper: `${t('dashboard.currentNode')} ${currentNode || t('dashboard.notSelected')}`,
       icon: <BarChartIcon className="h-4 w-4 text-violet-500" />
     }
   ];
@@ -760,8 +762,8 @@ export default function Dashboard() {
     <div className="space-y-5">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">仪表盘</h1>
-          <p className="mt-1 text-sm text-muted-foreground">查看内核运行情况并快速调整常用开关</p>
+          <h1 className="text-2xl font-semibold text-foreground">{t('dashboard.title')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t('dashboard.subtitle')}</p>
         </div>
         <div className="flex flex-col items-start gap-2 md:items-end">
           <div className="flex items-center gap-2">
@@ -771,47 +773,47 @@ export default function Dashboard() {
                 isRunning ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
               )}
             >
-              {isRunning ? '运行中' : '未运行'}
+              {isRunning ? t('dashboard.running') : t('dashboard.notRunning')}
             </span>
             <span className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-muted-foreground dark:border-slate-700">
-              {getFileName(activeConfig || preferredConfig)}
+              {getFileName(activeConfig || preferredConfig, t)}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {!isEditMode ? (
               <>
                 <Button size="sm" variant="primary" onClick={handleStart} disabled={isServiceBusy || isRunning}>
-                  <PlayIcon className="mr-1 h-3.5 w-3.5" /> 启动
+                  <PlayIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.start')}
                 </Button>
                 <Button size="sm" variant="outline" onClick={handleStop} disabled={isServiceBusy || !isRunning}>
-                  <StopIcon className="mr-1 h-3.5 w-3.5" /> 停止
+                  <StopIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.stop')}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={handleRestart} disabled={isServiceBusy || !isRunning}>
-                  <ReloadIcon className="mr-1 h-3.5 w-3.5" /> 重启
+                  <ReloadIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.restart')}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setIsEditMode(true)}>
-                  <Settings2 className="mr-1 h-3.5 w-3.5" /> 自定义布局
+                  <Settings2 className="mr-1 h-3.5 w-3.5" /> {t('dashboard.customizeLayout')}
                 </Button>
               </>
             ) : (
               <>
                 <Button size="sm" variant="outline" onClick={() => setShowAddCardDialog(true)}>
-                  <Plus className="mr-1 h-3.5 w-3.5" /> 添加卡片
+                  <Plus className="mr-1 h-3.5 w-3.5" /> {t('dashboard.addCard')}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    if (confirm('确定要重置为默认布局吗？')) {
+                    if (confirm(t('dashboard.confirmReset'))) {
                       localStorage.removeItem('flyClash-dashboard-config');
                       window.location.reload();
                     }
                   }}
                 >
-                  <RotateCcw className="mr-1 h-3.5 w-3.5" /> 重置
+                  <RotateCcw className="mr-1 h-3.5 w-3.5" /> {t('dashboard.reset')}
                 </Button>
                 <Button size="sm" variant="primary" onClick={() => setIsEditMode(false)}>
-                  <Check className="mr-1 h-3.5 w-3.5" /> 完成
+                  <Check className="mr-1 h-3.5 w-3.5" /> {t('dashboard.done')}
                 </Button>
               </>
             )}
@@ -853,22 +855,22 @@ export default function Dashboard() {
         onEditModeChange={setIsEditMode}
         onAddCard={() => setShowAddCardDialog(true)}
         onReset={() => {
-          if (confirm('确定要重置为默认布局吗？')) {
+          if (confirm(t('dashboard.confirmReset'))) {
             localStorage.removeItem('flyClash-dashboard-config');
             window.location.reload();
           }
         }}
         showAddDialog={showAddCardDialog}
         onShowAddDialogChange={setShowAddCardDialog}
-        TrafficChart={TrafficChart}
+        TrafficChart={(props: any) => <TrafficChart {...props} t={t} />}
       />
 
       <Dialog open={tunConfirmOpen} onOpenChange={setTunConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>启用 TUN 模式</DialogTitle>
+            <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
             <DialogDescription>
-              TUN 模式需要系统权限并会尝试重启内核，确认继续开启吗？
+              {t('dashboard.tunModeWarning')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -877,7 +879,7 @@ export default function Dashboard() {
               variant="outline"
               onClick={() => setTunConfirmOpen(false)}
             >
-              再考虑一下
+              {t('dashboard.reconsider')}
             </Button>
             <Button
               type="button"
@@ -886,7 +888,7 @@ export default function Dashboard() {
                 await runTunToggle(true);
               }}
             >
-              确认启用
+              {t('dashboard.confirmEnable')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -925,7 +927,7 @@ function MetricCardList({ metrics }: { metrics: MetricCard[] }) {
   );
 }
 
-function TrafficChart({ samples }: { samples: TrafficSample[] }) {
+function TrafficChart({ samples, t }: { samples: TrafficSample[]; t: any }) {
   const chart = useMemo(() => {
     if (!samples || samples.length < 2) {
       return null;
@@ -1035,7 +1037,7 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
   if (!chart) {
     return (
       <div className="flex h-48 items-center justify-center rounded-lg border border-dashed border-slate-200 text-xs text-muted-foreground">
-        等待流量数据...
+        {t('dashboard.waitingForTraffic')}
       </div>
     );
   }
@@ -1045,7 +1047,7 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
       {/* 图例和峰值 */}
       <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-slate-500 dark:text-slate-400">峰值</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">{t('dashboard.peak')}</span>
           <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
             {formatSpeed(chart.peak * 1024)}
           </span>
@@ -1053,17 +1055,17 @@ function TrafficChart({ samples }: { samples: TrafficSample[] }) {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <div className="h-2 w-2 rounded-full bg-gradient-to-r from-emerald-400 to-teal-500"></div>
-            <span className="text-xs text-slate-600 dark:text-slate-400">上传</span>
+            <span className="text-xs text-slate-600 dark:text-slate-400">{t('dashboard.upload')}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="h-2 w-2 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"></div>
-            <span className="text-xs text-slate-600 dark:text-slate-400">下载</span>
+            <span className="text-xs text-slate-600 dark:text-slate-400">{t('dashboard.download')}</span>
           </div>
         </div>
       </div>
 
       {/* 图表 */}
-      <div className="relative h-48 w-full overflow-hidden rounded-xl bg-gradient-to-b from-white via-slate-50 to-white dark:from-slate-900 dark:via-slate-900/80 dark:to-slate-900">
+      <div className="relative h-48 w-full overflow-hidden rounded-xl bg-gradient-to-b from-white via-slate-50 to-white dark:bg-gradient-to-b dark:from-slate-800/40 dark:via-slate-800/20 dark:to-slate-800/40">
         <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         <defs>
           <linearGradient id="traffic-download-fill" x1="0%" y1="0%" x2="0%" y2="100%">

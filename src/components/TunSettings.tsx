@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
 import * as Toast from '@radix-ui/react-toast';
 import { Cross2Icon } from '@radix-ui/react-icons';
+import { useTranslation } from 'react-i18next';
 
 interface TunConfig {
   device: string;
@@ -17,6 +18,7 @@ interface TunConfig {
 }
 
 const TunSettings: React.FC = () => {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<TunConfig>({
     device: process.platform === 'darwin' ? 'utun1500' : 'Mihomo',
     stack: 'mixed',
@@ -58,7 +60,7 @@ const TunSettings: React.FC = () => {
         setConfig(result.config);
       }
     } catch (error) {
-      console.error('加载 TUN 配置失败:', error);
+      console.error(t('tunSettings.loadTunConfigFailed'), error);
     }
   };
 
@@ -69,13 +71,13 @@ const TunSettings: React.FC = () => {
     try {
       const result = await window.electronAPI.saveTunConfig(config);
       if (result.success) {
-        showToast('成功', 'TUN 配置已保存，重启服务后生效', 'success');
+        showToast(t('tunSettings.success'), t('tunSettings.tunConfigSaved'), 'success');
         setChanged(false);
       } else {
-        showToast('错误', result.error || '未知错误', 'error');
+        showToast(t('tunSettings.error'), result.error || t('tunSettings.unknownError'), 'error');
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showToast(t('tunSettings.error'), String(error), 'error');
     } finally {
       setLoading(false);
     }
@@ -88,12 +90,12 @@ const TunSettings: React.FC = () => {
     try {
       const result = await window.electronAPI.grantTunPermissions();
       if (result.success) {
-        showToast('成功', result.message || 'TUN 模式权限已成功授予', 'success');
+        showToast(t('tunSettings.success'), result.message || t('tunSettings.tunPermissionGranted'), 'success');
       } else {
-        showToast('错误', result.error || '未知错误', 'error');
+        showToast(t('tunSettings.error'), result.error || t('tunSettings.unknownError'), 'error');
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showToast(t('tunSettings.error'), String(error), 'error');
     } finally {
       setLoading(false);
     }
@@ -131,18 +133,18 @@ const TunSettings: React.FC = () => {
         {!isWindows && (
           <div>
             <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-              TUN 模式权限
+              {t('tunSettings.tunPermission')}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-              {isMac && '在 macOS 上，TUN 模式需要授予内核 root 权限。点击下方按钮并输入管理员密码。'}
-              {isLinux && '在 Linux 上，TUN 模式需要授予内核 root 权限。'}
+              {isMac && t('tunSettings.tunPermissionDescMac')}
+              {isLinux && t('tunSettings.tunPermissionDescLinux')}
             </p>
             <button
               className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={handleGrantPermissions}
               disabled={loading}
             >
-              授予 TUN 模式权限
+              {t('tunSettings.grantPermission')}
             </button>
           </div>
         )}
@@ -150,7 +152,7 @@ const TunSettings: React.FC = () => {
         {isWindows && (
           <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
             <p className="text-xs text-yellow-800 dark:text-yellow-200">
-              Windows 平台需要以管理员身份运行应用才能使用 TUN 模式
+              {t('tunSettings.windowsAdminRequired')}
             </p>
           </div>
         )}
@@ -159,9 +161,9 @@ const TunSettings: React.FC = () => {
         {isMac && (
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动设置 DNS</h3>
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('tunSettings.autoDns')}</h3>
               <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">
-                macOS 需要自动设置 DNS 以确保 TUN 模式正常工作
+                {t('tunSettings.autoDnsDesc')}
               </p>
             </div>
             <Switch
@@ -173,9 +175,9 @@ const TunSettings: React.FC = () => {
 
         {/* 网络栈 */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">网络栈</h3>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('tunSettings.stack')}</h3>
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-            选择 TUN 模式使用的网络栈实现，推荐使用 Mixed 以获得最佳兼容性
+            {t('tunSettings.stackDesc')}
           </p>
           <div className="flex gap-2">
             <button
@@ -196,7 +198,7 @@ const TunSettings: React.FC = () => {
               }`}
               onClick={() => updateConfig({ stack: 'mixed' })}
             >
-              Mixed（推荐）
+              {t('tunSettings.mixedRecommended')}
             </button>
             <button
               className={`py-1.5 px-3 text-sm rounded-lg transition-colors ${
@@ -213,9 +215,9 @@ const TunSettings: React.FC = () => {
 
         {/* 设备名称 */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">设备名称</h3>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('tunSettings.deviceName')}</h3>
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-            虚拟网卡的设备名称
+            {t('tunSettings.deviceNameDesc')}
           </p>
           <input
             type="text"
@@ -228,9 +230,9 @@ const TunSettings: React.FC = () => {
 
         {/* MTU */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">MTU</h3>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('tunSettings.mtu')}</h3>
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-            最大传输单元大小，默认 1500
+            {t('tunSettings.mtuDesc')}
           </p>
           <input
             type="number"
@@ -242,9 +244,9 @@ const TunSettings: React.FC = () => {
 
         {/* DNS 劫持 */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">DNS 劫持</h3>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('tunSettings.dnsHijack')}</h3>
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-            劫持的 DNS 地址，多个地址使用逗号分隔
+            {t('tunSettings.dnsHijackDesc')}
           </p>
           <input
             type="text"
@@ -262,8 +264,8 @@ const TunSettings: React.FC = () => {
         {/* 路由选项 */}
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">严格路由</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">启用严格的路由规则</p>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('tunSettings.strictRoute')}</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('tunSettings.strictRouteDesc')}</p>
           </div>
           <Switch
             checked={config.strictRoute}
@@ -273,8 +275,8 @@ const TunSettings: React.FC = () => {
 
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动路由</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">自动配置系统路由表</p>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('tunSettings.autoRoute')}</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('tunSettings.autoRouteDesc')}</p>
           </div>
           <Switch
             checked={config.autoRoute}
@@ -285,9 +287,9 @@ const TunSettings: React.FC = () => {
         {isLinux && (
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动重定向</h3>
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('tunSettings.autoRedirect')}</h3>
               <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">
-                自动重定向流量到 TUN（仅 Linux）
+                {t('tunSettings.autoRedirectDesc')}
               </p>
             </div>
             <Switch
@@ -299,8 +301,8 @@ const TunSettings: React.FC = () => {
 
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">自动检测网卡</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">自动检测默认网络接口</p>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('tunSettings.autoDetectInterface')}</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">{t('tunSettings.autoDetectInterfaceDesc')}</p>
           </div>
           <Switch
             checked={config.autoDetectInterface}
@@ -310,9 +312,9 @@ const TunSettings: React.FC = () => {
 
         {/* 排除地址 */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">排除地址</h3>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('tunSettings.excludeAddress')}</h3>
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-            这些地址将不会通过 TUN 模式路由
+            {t('tunSettings.excludeAddressDesc')}
           </p>
           <div className="space-y-2">
             {config.routeExcludeAddress.map((address, index) => (
@@ -321,14 +323,14 @@ const TunSettings: React.FC = () => {
                   type="text"
                   className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
                   value={address}
-                  placeholder="例如: 192.168.0.0/16"
+                  placeholder={t('tunSettings.excludeAddressPlaceholder')}
                   onChange={(e) => handleExcludeAddressChange(index, e.target.value)}
                 />
                 <button
                   className="py-1.5 px-3 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:text-gray-200 dark:hover:bg-[#333333] transition-colors"
                   onClick={() => handleExcludeAddressChange(index, '')}
                 >
-                  删除
+                  {t('tunSettings.delete')}
                 </button>
               </div>
             ))}
@@ -336,7 +338,7 @@ const TunSettings: React.FC = () => {
               className="w-full py-1.5 px-3 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:text-gray-200 dark:hover:bg-[#333333] transition-colors"
               onClick={handleAddExcludeAddress}
             >
-              + 添加排除地址
+              {t('tunSettings.addExcludeAddress')}
             </button>
           </div>
         </div>
@@ -349,10 +351,10 @@ const TunSettings: React.FC = () => {
               onClick={handleSave}
               disabled={loading}
             >
-              {loading ? '保存中...' : '保存配置'}
+              {loading ? t('tunSettings.saving') : t('tunSettings.saveConfig')}
             </button>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-              配置修改后需要重启服务才能生效
+              {t('tunSettings.configNeedRestart')}
             </p>
           </div>
         )}

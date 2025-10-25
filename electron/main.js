@@ -20,8 +20,10 @@ const { testMediaStreaming } = require('./mediatest');
 // 导入图标提取模块
 const { getIconDataURL } = require('./icon');
 
-// 应用版本号 - 统一管理所有界面显示的版本
-const APP_VERSION = '0.2.0';
+// 从 package.json 读取版本号
+const packageJson = require('../package.json');
+const APP_VERSION = packageJson.version;
+
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 
@@ -676,6 +678,78 @@ function refreshWindowsBackdrop(win, attempt = 0) {
   }, delay);
 
   timer.unref?.();
+}
+
+function applyCustomBackground(win) {
+  if (!win || win.isDestroyed?.()) {
+    return;
+  }
+
+  try {
+    const configStr = dbManager.getSetting('customBackground', null);
+    if (!configStr) {
+      console.warn('未找到自定义背景配置');
+      return;
+    }
+
+    const config = JSON.parse(configStr);
+    const { imagePath, opacity = 80, blur = 10 } = config;
+
+    console.log('[自定义背景] 应用背景图片:', imagePath, '透明度:', opacity, '模糊度:', blur);
+
+    // 清除现有效果
+    try {
+      win.setVibrancy(null);
+    } catch {}
+
+    try {
+      win.setBackgroundMaterial?.('none');
+    } catch {}
+
+    // 设置背景颜色为透明
+    win.setBackgroundColor('#00000000');
+
+    // 读取图片并转换为base64
+    const fs = require('fs');
+    const path = require('path');
+
+    try {
+      const imageBuffer = fs.readFileSync(imagePath);
+      const ext = path.extname(imagePath).toLowerCase();
+      const mimeTypes = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.webp': 'image/webp'
+      };
+      const mimeType = mimeTypes[ext] || 'image/png';
+      const base64Image = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+
+      // 通过webContents向渲染进程发送背景配置
+      if (win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send('apply-custom-background', {
+          imageData: base64Image,
+          opacity,
+          blur
+        });
+        console.log('[自定义背景] 背景配置已发送到渲染进程');
+      }
+    } catch (readError) {
+      console.error('[自定义背景] 读取图片文件失败:', readError);
+      // 如果读取失败，尝试发送路径让渲染进程处理
+      if (win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send('apply-custom-background', {
+          imagePath,
+          opacity,
+          blur
+        });
+      }
+    }
+  } catch (error) {
+    console.error('[自定义背景] 应用自定义背景失败:', error);
+  }
 }
 
 function updateUserSettings(settings) {
@@ -1866,7 +1940,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('set-appearance-mode', (event, mode) => {
     try {
-      const allowedModes = ['acrylic', 'dynamic', 'solid'];
+      const allowedModes = ['acrylic', 'dynamic', 'solid', 'custom'];
       if (!allowedModes.includes(mode)) {
         return { success: false, error: '不支持的外观模式' };
       }
@@ -1875,14 +1949,24 @@ app.whenReady().then(() => {
       dbManager.setSetting('appearanceMode', mode);
 
       if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-        if (isMac) {
-          // macOS 使用专用函数
-          applyMacOSBackdrop(state.mainWindow);
-        } else if (isWindows) {
-          // Windows 使用原有逻辑
-          state.mainWindow[Symbol.for('flyclash.backdropNudgeCount')] = 0;
-          applyWindowsBackdrop(state.mainWindow);
-          refreshWindowsBackdrop(state.mainWindow, 0);
+        if (mode === 'custom') {
+          // 自定义背景模式
+          applyCustomBackground(state.mainWindow);
+        } else {
+          // 切换到其他模式时，通知渲染进程清除自定义背景
+          try {
+            state.mainWindow.webContents.send('clear-custom-background');
+          } catch {}
+
+          if (isMac) {
+            // macOS 使用专用函数
+            applyMacOSBackdrop(state.mainWindow);
+          } else if (isWindows) {
+            // Windows 使用原有逻辑
+            state.mainWindow[Symbol.for('flyclash.backdropNudgeCount')] = 0;
+            applyWindowsBackdrop(state.mainWindow);
+            refreshWindowsBackdrop(state.mainWindow, 0);
+          }
         }
         try {
           state.mainWindow.webContents.send('appearance-mode-changed', mode);
@@ -1892,6 +1976,138 @@ app.whenReady().then(() => {
       return { success: true, mode };
     } catch (error) {
       console.error('设置外观模式失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // 选择背景图片
+  ipcMain.handle('select-background-image', async () => {
+    try {
+      const { dialog } = require('electron');
+      const result = await dialog.showOpenDialog(state.mainWindow, {
+        title: '选择背景图片',
+        properties: ['openFile'],
+        filters: [
+          { name: '图片文件', extensions: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'] }
+        ]
+      });
+
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return { success: true, canceled: true };
+      }
+
+      return { success: true, path: result.filePaths[0] };
+    } catch (error) {
+      console.error('选择背景图片失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // 设置自定义背景
+  ipcMain.handle('set-custom-background', (event, config) => {
+    try {
+      if (!config || !config.imagePath) {
+        return { success: false, error: '图片路径不能为空' };
+      }
+
+      const opacity = Math.max(0, Math.min(100, config.opacity ?? 80));
+      const blur = Math.max(0, Math.min(100, config.blur ?? 10));
+
+      const backgroundConfig = {
+        imagePath: config.imagePath,
+        opacity,
+        blur
+      };
+
+      dbManager.setSetting('customBackground', JSON.stringify(backgroundConfig));
+
+      // 如果当前是自定义模式，立即应用
+      if (state.appearanceMode === 'custom' && state.mainWindow && !state.mainWindow.isDestroyed()) {
+        applyCustomBackground(state.mainWindow);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('设置自定义背景失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // 获取自定义背景配置
+  ipcMain.handle('get-custom-background', () => {
+    try {
+      const configStr = dbManager.getSetting('customBackground', null);
+      if (!configStr) {
+        return { success: true, config: null };
+      }
+
+      const config = JSON.parse(configStr);
+      return { success: true, config };
+    } catch (error) {
+      console.error('获取自定义背景配置失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // 清除自定义背景
+  ipcMain.handle('clear-custom-background', () => {
+    try {
+      dbManager.setSetting('customBackground', null);
+
+      // 如果当前是自定义模式，切换回默认模式
+      if (state.appearanceMode === 'custom') {
+        state.appearanceMode = 'dynamic';
+        dbManager.setSetting('appearanceMode', 'dynamic');
+
+        if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+          if (isMac) {
+            applyMacOSBackdrop(state.mainWindow);
+          } else if (isWindows) {
+            applyWindowsBackdrop(state.mainWindow);
+          }
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('清除自定义背景失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // 设置主题色
+  ipcMain.handle('set-theme-color', (event, color) => {
+    try {
+      if (!color || typeof color !== 'string') {
+        return { success: false, error: '无效的颜色值' };
+      }
+
+      dbManager.setSetting('themeColor', color);
+      console.log('主题色已保存:', color);
+
+      // 通知所有窗口主题色已更改
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+        try {
+          state.mainWindow.webContents.send('theme-color-changed', color);
+        } catch (err) {
+          console.error('发送主题色变更通知失败:', err);
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('设置主题色失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
+  // 获取主题色
+  ipcMain.handle('get-theme-color', () => {
+    try {
+      const color = dbManager.getSetting('themeColor', null);
+      return { success: true, color };
+    } catch (error) {
+      console.error('获取主题色失败:', error);
       return { success: false, error: error?.message || String(error) };
     }
   });
@@ -2881,6 +3097,7 @@ app.whenReady().then(() => {
   ipcMain.handle('start-mihomo', (_, configPath) => startMihomo(configPath));
   ipcMain.handle('stop-mihomo', stopMihomo);
   ipcMain.handle('restart-service', restartMihomoService);
+  ipcMain.handle('reload-mihomo-config', (_, configPath) => reloadMihomoConfig(configPath));
   ipcMain.handle('open-tools-app', (_, toolName) => openToolsApp(toolName));
 
   // 新增: 切换TUN模式

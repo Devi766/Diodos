@@ -7,6 +7,7 @@ import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
+import { useTranslation } from 'react-i18next';
 
 type GeoDataConfig = {
   geoip: string;
@@ -16,6 +17,7 @@ type GeoDataConfig = {
 };
 
 export default function ExternalResources() {
+  const { t } = useTranslation();
   const mihomoAPI = useMihomoAPI();
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -66,7 +68,7 @@ export default function ExternalResources() {
       setGeoUpdateInterval((config as any)['geo-update-interval'] || 24);
     } catch (error: any) {
       console.error('获取配置失败:', error);
-      setErrorMessage(`获取配置失败: ${error.message || '未知错误'}`);
+      setErrorMessage(t('externalResources.fetchError', { error: error.message || '未知错误' }));
     } finally {
       setIsLoading(false);
     }
@@ -78,12 +80,12 @@ export default function ExternalResources() {
     setSuccessMessage(null);
     try {
       await mihomoAPI.upgradeGeo();
-      setSuccessMessage('GeoData 更新成功！');
+      setSuccessMessage(t('externalResources.updateSuccess'));
       // 3秒后自动清除成功消息
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error('更新GeoData失败:', error);
-      setErrorMessage(`更新失败: ${error.message || '未知错误'}`);
+      setErrorMessage(t('externalResources.updateError', { error: error.message || '未知错误' }));
     } finally {
       setIsUpdating(false);
     }
@@ -100,7 +102,7 @@ export default function ExternalResources() {
       setGeoxUrl(prev => ({ ...prev, [field]: value }));
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(`保存失败: ${error.message || '未知错误'}`);
+      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -112,7 +114,7 @@ export default function ExternalResources() {
       setGeoMode(mode);
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(`保存失败: ${error.message || '未知错误'}`);
+      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -124,7 +126,7 @@ export default function ExternalResources() {
       setGeoAutoUpdate(enabled);
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(`保存失败: ${error.message || '未知错误'}`);
+      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -136,7 +138,7 @@ export default function ExternalResources() {
       setGeoUpdateInterval(interval);
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(`保存失败: ${error.message || '未知错误'}`);
+      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
     }
   };
 
@@ -172,7 +174,7 @@ export default function ExternalResources() {
       <Card className="p-6">
         <div className="space-y-5">
           <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-700">
-            <h3 className="text-lg font-semibold text-foreground">地理数据库</h3>
+            <h3 className="text-lg font-semibold text-foreground">{t('externalResources.geoDatabase')}</h3>
             <Button
               size="sm"
               variant="solid"
@@ -180,7 +182,7 @@ export default function ExternalResources() {
               disabled={isUpdating}
             >
               <ReloadIcon className={`w-4 h-4 mr-2 ${isUpdating ? 'animate-spin' : ''}`} />
-              更新数据库
+              {t('externalResources.updateDatabase')}
             </Button>
           </div>
 
@@ -193,7 +195,7 @@ export default function ExternalResources() {
                   size="sm"
                   onClick={() => handleSaveGeoUrl('geoip', geoipInput)}
                 >
-                  确认
+                  {t('externalResources.confirm')}
                 </Button>
               )}
               <input
@@ -214,7 +216,7 @@ export default function ExternalResources() {
                   size="sm"
                   onClick={() => handleSaveGeoUrl('geosite', geositeInput)}
                 >
-                  确认
+                  {t('externalResources.confirm')}
                 </Button>
               )}
               <input
@@ -235,7 +237,7 @@ export default function ExternalResources() {
                   size="sm"
                   onClick={() => handleSaveGeoUrl('mmdb', mmdbInput)}
                 >
-                  确认
+                  {t('externalResources.confirm')}
                 </Button>
               )}
               <input
@@ -256,7 +258,7 @@ export default function ExternalResources() {
                   size="sm"
                   onClick={() => handleSaveGeoUrl('asn', asnInput)}
                 >
-                  确认
+                  {t('externalResources.confirm')}
                 </Button>
               )}
               <input
@@ -270,7 +272,7 @@ export default function ExternalResources() {
 
           {/* GeoData模式 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">数据模式</label>
+            <label className="text-sm font-medium text-foreground">{t('externalResources.dataMode')}</label>
             <Tabs value={geoMode} onValueChange={(v) => handleSaveGeoMode(v as 'dat' | 'db')} className="w-fit">
               <TabsList className="bg-slate-100 dark:bg-slate-800">
                 <TabsTrigger
@@ -291,7 +293,7 @@ export default function ExternalResources() {
 
           {/* 自动更新 */}
           <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-700">
-            <label className="text-sm font-medium text-foreground">自动更新</label>
+            <label className="text-sm font-medium text-foreground">{t('externalResources.autoUpdate')}</label>
             <Switch
               checked={geoAutoUpdate}
               onCheckedChange={handleSaveAutoUpdate}
@@ -301,7 +303,7 @@ export default function ExternalResources() {
           {/* 更新间隔 */}
           {geoAutoUpdate && (
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">更新间隔（小时）</label>
+              <label className="text-sm font-medium text-foreground">{t('externalResources.updateInterval')}</label>
               <input
                 type="number"
                 value={geoUpdateInterval}

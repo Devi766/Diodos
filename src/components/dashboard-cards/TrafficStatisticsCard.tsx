@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 type ViewMode = 'day' | 'month';
 
@@ -21,6 +22,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function TrafficStatisticsCard() {
+  const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try {
       const saved = localStorage.getItem('trafficStatisticsViewMode');
@@ -108,7 +110,7 @@ export function TrafficStatisticsCard() {
       {/* 标题和视图切换 */}
       <div className="flex flex-shrink-0 items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          流量统计
+          {t('dashboard.trafficStatistics')}
         </p>
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
           <button
@@ -127,7 +129,7 @@ export function TrafficStatisticsCard() {
             }`}
           >
             <Calendar className="h-3 w-3" />
-            日
+            {t('dashboard.day')}
           </button>
           <button
             onClick={() => {
@@ -145,7 +147,7 @@ export function TrafficStatisticsCard() {
             }`}
           >
             <Calendar className="h-3 w-3" />
-            月
+            {t('dashboard.month')}
           </button>
         </div>
       </div>
@@ -158,7 +160,7 @@ export function TrafficStatisticsCard() {
             <div className="space-y-3">
               {/* 总流量 */}
               <div className="text-center">
-                <div className="text-xs text-muted-foreground">今日总流量</div>
+                <div className="text-xs text-muted-foreground">{t('dashboard.todayTotal')}</div>
                 <div className="text-2xl font-semibold text-foreground mt-1">
                   {formatBytes(totalTraffic)}
                 </div>
@@ -186,7 +188,7 @@ export function TrafficStatisticsCard() {
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-gradient-to-r from-yellow-300 to-yellow-500" />
                     <div className="text-xs">
-                      <span className="text-gray-600 dark:text-gray-400">上传 </span>
+                      <span className="text-gray-600 dark:text-gray-400">{t('dashboard.upload')} </span>
                       <span className="font-medium text-yellow-500 dark:text-yellow-400">
                         {formatBytes(pieData[0].value)}
                       </span>
@@ -195,7 +197,7 @@ export function TrafficStatisticsCard() {
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-gradient-to-r from-blue-400 to-blue-600" />
                     <div className="text-xs">
-                      <span className="text-gray-600 dark:text-gray-400">下载 </span>
+                      <span className="text-gray-600 dark:text-gray-400">{t('dashboard.download')} </span>
                       <span className="font-medium text-blue-600 dark:text-blue-400">
                         {formatBytes(pieData[1].value)}
                       </span>
@@ -210,7 +212,7 @@ export function TrafficStatisticsCard() {
           {viewMode === 'month' && (
             <div className="space-y-2">
               <div className="text-center">
-                <div className="text-xs text-muted-foreground">本月总流量</div>
+                <div className="text-xs text-muted-foreground">{t('dashboard.monthTotal')}</div>
                 <div className="text-xl font-semibold text-foreground mt-0.5">
                   {formatBytes(totalTraffic)}
                 </div>
@@ -309,7 +311,7 @@ export function TrafficStatisticsCard() {
                 <span>{formatBytes(hoveredDay.download)}</span>
               </div>
               <div className="flex items-center gap-2 pt-0.5 border-t border-gray-700">
-                <span className="text-gray-400">总计</span>
+                <span className="text-gray-400">{t('dashboard.total')}</span>
                 <span className="font-medium">{formatBytes(hoveredDay.upload + hoveredDay.download)}</span>
               </div>
             </div>

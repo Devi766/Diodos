@@ -5,6 +5,7 @@ import { MagnifyingGlassIcon, ReloadIcon } from '@radix-ui/react-icons';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useMihomoAPI } from '../services/mihomo-api';
+import { useTranslation } from 'react-i18next';
 
 type MatchRule = {
   type: string;
@@ -14,6 +15,7 @@ type MatchRule = {
 };
 
 export default function MatchRules() {
+  const { t } = useTranslation();
   const [matchRulesList, setMatchRulesList] = useState<MatchRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -29,7 +31,7 @@ export default function MatchRules() {
       setMatchRulesList(response.rules || []);
     } catch (error: any) {
       console.error('获取规则列表失败:', error);
-      setErrorMessage(`获取规则列表失败: ${error.message || '未知错误'}`);
+      setErrorMessage(t('matchRules.fetchError', { error: error.message || '未知错误' }));
       setMatchRulesList([]);
     } finally {
       setIsLoading(false);
@@ -82,7 +84,7 @@ export default function MatchRules() {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="搜索规则..."
+            placeholder={t('matchRules.searchPlaceholder')}
             className="w-full pl-10 pr-4 py-2 bg-white dark:bg-[#2a2a2a] border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
           {searchTerm && (
@@ -100,10 +102,10 @@ export default function MatchRules() {
           onClick={fetchMatchRules}
           disabled={isLoading}
           className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
-          title="刷新规则列表"
+          title={t('matchRules.refreshTitle')}
         >
           <ReloadIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          <span className="text-sm">刷新</span>
+          <span className="text-sm">{t('matchRules.refresh')}</span>
         </button>
       </div>
 
@@ -121,12 +123,12 @@ export default function MatchRules() {
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <div className="text-center">
                 <ReloadIcon className="w-8 h-8 animate-spin mx-auto mb-2 text-primary" />
-                <p className="text-sm">加载中...</p>
+                <p className="text-sm">{t('matchRules.loading')}</p>
               </div>
             </div>
           ) : filteredRules.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              {searchTerm ? '没有匹配的规则' : '暂无规则'}
+              {searchTerm ? t('matchRules.noMatchingRules') : t('matchRules.noRules')}
             </div>
           ) : (
             <div style={{ height: '100%', paddingTop: '12px', paddingBottom: '12px' }}>
@@ -151,8 +153,8 @@ export default function MatchRules() {
       {/* 规则统计 */}
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>
-          共 {filteredRules.length} 条规则
-          {searchTerm && ` (从 ${matchRulesList.length} 条中筛选)`}
+          {t('matchRules.totalRules', { count: filteredRules.length })}
+          {searchTerm && t('matchRules.filtered', { total: matchRulesList.length })}
         </span>
       </div>
     </div>

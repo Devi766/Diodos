@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { MagnifyingGlassIcon, TrashIcon, TargetIcon } from '@radix-ui/react-icons';
+import { useTranslation } from 'react-i18next';
 
 type LogLevel = 'error' | 'warning' | 'info' | 'debug';
 
@@ -14,6 +15,7 @@ interface LogEntry {
 const MAX_LOGS = 500;
 
 const MihomoLogs: React.FC = () => {
+  const { t } = useTranslation();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
@@ -98,7 +100,7 @@ const MihomoLogs: React.FC = () => {
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="搜索日志..."
+            placeholder={t('logs.searchPlaceholder')}
             className="w-full pl-10 pr-4 py-2 bg-white dark:bg-[#2a2a2a] border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
           {filter && (
@@ -119,20 +121,20 @@ const MihomoLogs: React.FC = () => {
               ? 'bg-primary text-primary-foreground'
               : 'bg-muted text-foreground hover:bg-muted/80'
           }`}
-          title="自动滚动"
+          title={t('logs.autoScrollTitle')}
         >
           <TargetIcon className="w-4 h-4" />
-          <span className="text-sm">自动滚动</span>
+          <span className="text-sm">{t('logs.autoScroll')}</span>
         </button>
 
         {/* 清空按钮 */}
         <button
           onClick={handleClearLogs}
           className="px-4 py-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg flex items-center gap-2 transition-colors"
-          title="清空日志"
+          title={t('logs.clearTitle')}
         >
           <TrashIcon className="w-4 h-4" />
-          <span className="text-sm">清空</span>
+          <span className="text-sm">{t('logs.clear')}</span>
         </button>
       </div>
 
@@ -144,7 +146,7 @@ const MihomoLogs: React.FC = () => {
         <div className="h-[calc(100vh-280px)] overflow-y-auto p-4 space-y-2">
           {filteredLogs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              {filter ? '没有匹配的日志' : '暂无日志'}
+              {filter ? t('logs.noMatchingLogs') : t('logs.noLogs')}
             </div>
           ) : (
             filteredLogs.map((log, index) => (
@@ -171,10 +173,10 @@ const MihomoLogs: React.FC = () => {
       {/* 日志统计 */}
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>
-          共 {filteredLogs.length} 条日志
-          {filter && ` (从 ${logs.length} 条中筛选)`}
+          {t('logs.totalLogs', { count: filteredLogs.length })}
+          {filter && t('logs.filtered', { total: logs.length })}
         </span>
-        <span>最多保留 {MAX_LOGS} 条</span>
+        <span>{t('logs.maxLogs', { max: MAX_LOGS })}</span>
       </div>
     </div>
   );

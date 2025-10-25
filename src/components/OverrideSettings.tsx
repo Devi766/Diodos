@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { showToast } from './ui/toast';
 import { Badge } from './ui/badge';
+import { useTranslation } from 'react-i18next';
 
 export interface OverrideSettingsRef {
   saveConfig: () => Promise<void>;
@@ -60,6 +61,7 @@ interface HostsConfig {
 }
 
 const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<KernelConfig>({});
   const [dnsConfig, setDnsConfig] = useState<DnsConfig>({});
   const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
@@ -83,7 +85,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         }
       }
     } catch (error) {
-      console.error('加载内核配置失败:', error);
+      console.error(t('overrideSettings.loadKernelConfigFailed'), error);
     } finally {
       setLoading(false);
     }
@@ -106,7 +108,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         }
       }
     } catch (error) {
-      console.error('加载DNS配置失败:', error);
+      console.error(t('overrideSettings.loadDnsConfigFailed'), error);
     }
   };
 
@@ -118,7 +120,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
       if (window.electronAPI?.saveKernelConfig) {
         const kernelResult = await window.electronAPI.saveKernelConfig(config);
         if (!kernelResult.success) {
-          const errorMsg = '内核配置保存失败: ' + kernelResult.error;
+          const errorMsg = t('overrideSettings.kernelConfigSaveFailed') + ': ' + kernelResult.error;
           showToast({ message: errorMsg, type: 'error' });
           throw new Error(errorMsg);
         }
@@ -128,7 +130,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
       if (window.electronAPI?.saveDnsConfig) {
         const dnsResult = await window.electronAPI.saveDnsConfig(dnsConfig);
         if (!dnsResult.success) {
-          const errorMsg = 'DNS配置保存失败: ' + dnsResult.error;
+          const errorMsg = t('overrideSettings.dnsConfigSaveFailed') + ': ' + dnsResult.error;
           showToast({ message: errorMsg, type: 'error' });
           throw new Error(errorMsg);
         }
@@ -139,10 +141,10 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         }
       }
 
-      showToast({ message: '所有配置保存成功，内核已自动重启', type: 'success' });
+      showToast({ message: t('overrideSettings.allConfigSaved'), type: 'success' });
     } catch (error) {
-      console.error('保存配置失败:', error);
-      const errorMsg = '保存配置失败: ' + error;
+      console.error(t('overrideSettings.saveConfigFailed'), error);
+      const errorMsg = t('overrideSettings.saveConfigFailed') + ': ' + error;
       showToast({ message: errorMsg, type: 'error' });
       throw error;
     } finally {
@@ -181,7 +183,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="text-gray-500 dark:text-gray-400">加载中...</div>
+        <div className="text-gray-500 dark:text-gray-400">{t('overrideSettings.loading')}</div>
       </div>
     );
   }
@@ -198,7 +200,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           }`}
           onClick={() => setActiveTab('basic')}
         >
-          基础设置
+          {t('overrideSettings.basic')}
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -208,7 +210,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           }`}
           onClick={() => setActiveTab('port')}
         >
-          端口设置
+          {t('overrideSettings.port')}
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -218,7 +220,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           }`}
           onClick={() => setActiveTab('controller')}
         >
-          控制器设置
+          {t('overrideSettings.controller')}
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -228,7 +230,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           }`}
           onClick={() => setActiveTab('dns')}
         >
-          DNS设置
+          {t('overrideSettings.dns')}
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -238,7 +240,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           }`}
           onClick={() => setActiveTab('advanced')}
         >
-          高级设置
+          {t('overrideSettings.advanced')}
         </button>
       </div>
 
@@ -248,8 +250,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* IPv6 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">IPv6</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">启用 IPv6 支持</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.ipv6')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.ipv6Desc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -265,19 +267,19 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* 日志等级 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">日志等级</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">设置日志输出级别</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.logLevel')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.logLevelDesc')}</p>
               </div>
               <select
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
                 value={config['log-level'] || 'info'}
                 onChange={(e) => updateConfig('log-level', e.target.value)}
               >
-                <option value="silent">静默</option>
-                <option value="error">错误</option>
-                <option value="warning">警告</option>
-                <option value="info">信息</option>
-                <option value="debug">调试</option>
+                <option value="silent">{t('overrideSettings.silent')}</option>
+                <option value="error">{t('overrideSettings.error')}</option>
+                <option value="warning">{t('overrideSettings.warning')}</option>
+                <option value="info">{t('overrideSettings.info')}</option>
+                <option value="debug">{t('overrideSettings.debug')}</option>
               </select>
             </div>
         </div>
@@ -289,8 +291,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* Mixed Port */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">混合端口</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">HTTP(S) 和 SOCKS5 混合端口</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.mixedPort')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.mixedPortDesc')}</p>
               </div>
               <Input
                 type="number"
@@ -303,8 +305,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* Socks Port */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Socks 端口</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">SOCKS5 代理端口（0 表示禁用）</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.socksPort')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.socksPortDesc')}</p>
               </div>
               <Input
                 type="number"
@@ -317,8 +319,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* HTTP Port */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">HTTP 端口</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">HTTP 代理端口（0 表示禁用）</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.httpPort')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.httpPortDesc')}</p>
               </div>
               <Input
                 type="number"
@@ -331,8 +333,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* Allow LAN */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">允许局域网连接</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">允许其他设备通过局域网连接</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.allowLan')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.allowLanDesc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -349,8 +351,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {config['allow-lan'] && (
               <>
                 <div>
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">允许连接的 IP 段</label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个 IP 段（如 192.168.1.0/24）</p>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.lanAllowedIps')}</label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.lanAllowedIpsDesc')}</p>
                   <textarea
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
                     rows={3}
@@ -364,8 +366,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">禁止连接的 IP 段</label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个 IP 段（如 192.168.1.0/24）</p>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.lanDisallowedIps')}</label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.lanDisallowedIpsDesc')}</p>
                   <textarea
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
                     rows={3}
@@ -382,8 +384,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
             {/* Authentication */}
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">用户验证</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个用户（格式：用户名:密码）</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.authentication')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.authenticationDesc')}</p>
               <textarea
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
                 rows={3}
@@ -398,8 +400,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
             {/* Skip Auth Prefixes */}
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">允许跳过验证的 IP 段</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个 IP 段</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.skipAuthPrefixes')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.skipAuthPrefixesDesc')}</p>
               <textarea
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
                 rows={2}
@@ -419,12 +421,12 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         <div className="space-y-4">
             {/* External Controller */}
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">外部控制器地址</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">RESTful API 监听地址 (留空则不启动外部控制器)</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.externalController')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.externalControllerDesc')}</p>
               <Input
                 type="text"
                 className="text-gray-900 dark:text-gray-100"
-                placeholder="留空不启动,例如: 127.0.0.1:9090"
+                placeholder={t('overrideSettings.externalControllerPlaceholder')}
                 value={config['external-controller'] || ''}
                 onChange={(e) => updateConfig('external-controller', e.target.value)}
               />
@@ -434,8 +436,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <div>
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">访问密钥</label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">RESTful API 访问密钥</p>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.secret')}</label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.secretDesc')}</p>
                 </div>
                 <Button
                   onClick={() => {
@@ -445,13 +447,13 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
                   }}
                   className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded transition-colors"
                 >
-                  生成密钥
+                  {t('overrideSettings.generateSecret')}
                 </Button>
               </div>
               <Input
                 type="text"
                 className="text-gray-900 dark:text-gray-100"
-                placeholder="留空表示不设置密钥"
+                placeholder={t('overrideSettings.secretPlaceholder')}
                 value={config.secret || ''}
                 onChange={(e) => updateConfig('secret', e.target.value)}
               />
@@ -465,8 +467,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* 启用 DNS */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">启用 DNS</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">启用内置 DNS 服务器</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enableDns')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enableDnsDesc')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -482,8 +484,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* IPv6 */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">IPv6</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">解析 IPv6 地址</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.dnsIpv6')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.dnsIpv6Desc')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -499,24 +501,24 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* 增强模式 */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">增强模式</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">DNS 增强模式</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enhancedMode')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enhancedModeDesc')}</p>
             </div>
             <select
               className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
               value={dnsConfig['enhanced-mode'] || 'fake-ip'}
               onChange={(e) => updateDnsConfig('enhanced-mode', e.target.value)}
             >
-              <option value="normal">普通</option>
-              <option value="fake-ip">Fake-IP</option>
-              <option value="redir-host">Redir-Host</option>
+              <option value="normal">{t('overrideSettings.normal')}</option>
+              <option value="fake-ip">{t('overrideSettings.fakeIp')}</option>
+              <option value="redir-host">{t('overrideSettings.redirHost')}</option>
             </select>
           </div>
 
           {/* Fake-IP 范围 */}
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Fake-IP 范围</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Fake-IP 模式的 IP 范围</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.fakeIpRange')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.fakeIpRangeDesc')}</p>
             <Input
               type="text"
               className="text-gray-900 dark:text-gray-100"
@@ -528,8 +530,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
           {/* Fake-IP 过滤 */}
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Fake-IP 过滤</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">排除在 Fake-IP 之外的域名（每行一个）</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.fakeIpFilter')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.fakeIpFilterDesc')}</p>
             <textarea
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
               rows={4}
@@ -542,8 +544,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* 遵守规则 */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">遵守规则</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">使用基于规则的 DNS 解析</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.respectRules')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.respectRulesDesc')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -559,8 +561,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* 使用系统 Hosts */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">使用系统 Hosts</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">使用系统 hosts 文件</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.useSystemHosts')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.useSystemHostsDesc')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -575,8 +577,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
           {/* 默认域名服务器 */}
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">默认域名服务器</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">引导 DNS 服务器（每行一个）</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.defaultNameserver')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.defaultNameserverDesc')}</p>
             <textarea
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
               rows={3}
@@ -588,8 +590,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
           {/* 域名服务器 */}
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">域名服务器</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">主 DNS 服务器（每行一个）</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.nameserver')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.nameserverDesc')}</p>
             <textarea
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
               rows={4}
@@ -601,8 +603,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
           {/* 代理服务器域名服务器 */}
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">代理服务器域名服务器</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">代理服务器的 DNS（每行一个）</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.proxyServerNameserver')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.proxyServerNameserverDesc')}</p>
             <textarea
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
               rows={3}
@@ -614,8 +616,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
 
           {/* 直连域名服务器 */}
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">直连域名服务器</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">直连连接的 DNS（每行一个）</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.directNameserver')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.directNameserverDesc')}</p>
             <textarea
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
               rows={3}
@@ -628,8 +630,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* 自定义 Hosts */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">自定义 Hosts</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">启用自定义 hosts 映射</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.useHosts')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.useHostsDesc')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -645,8 +647,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           {/* Hosts 映射 */}
           {dnsConfig['use-hosts'] && (
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Hosts 映射</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">格式：域名=IP（每行一个）</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.hostsMapping')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.hostsMappingDesc')}</p>
               <textarea
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
                 rows={6}
@@ -675,8 +677,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* 存储选择节点 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">存储选择节点</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">记住手动选择的节点</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.storeSelected')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.storeSelectedDesc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -692,8 +694,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* 存储 FakeIP */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">存储 FakeIP</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">持久化 FakeIP 映射</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.storeFakeIp')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.storeFakeIpDesc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -709,8 +711,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* 使用 RTT 延迟测试 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">使用 RTT 延迟测试</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">使用统一延迟测试消除握手时间影响</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.unifiedDelay')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.unifiedDelayDesc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -726,8 +728,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* TCP 并发 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">TCP 并发</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">对多个 IP 地址进行 TCP 并发连接</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.tcpConcurrent')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.tcpConcurrentDesc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -743,8 +745,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* 禁用 TCP Keep Alive */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">禁用 TCP Keep Alive</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">禁用 TCP 保活机制</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.disableKeepAlive')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.disableKeepAliveDesc')}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
@@ -760,8 +762,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* TCP Keep Alive 间隔 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">TCP Keep Alive 间隔</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">保活探测间隔时间（秒）</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.keepAliveInterval')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.keepAliveIntervalDesc')}</p>
               </div>
               <Input
                 type="number"
@@ -774,8 +776,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* TCP Keep Alive 空闲 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">TCP Keep Alive 空闲</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">开始保活探测前的空闲时间（秒）</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.keepAliveIdle')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.keepAliveIdleDesc')}</p>
               </div>
               <Input
                 type="number"
@@ -788,16 +790,16 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* uTLS 指纹 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">uTLS 指纹</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">TLS 客户端指纹伪装</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.globalClientFingerprint')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.globalClientFingerprintDesc')}</p>
               </div>
               <select
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
                 value={config['global-client-fingerprint'] || ''}
                 onChange={(e) => updateConfig('global-client-fingerprint', e.target.value)}
               >
-                <option value="">禁用</option>
-                <option value="random">随机</option>
+                <option value="">{t('overrideSettings.disabled')}</option>
+                <option value="random">{t('overrideSettings.random')}</option>
                 <option value="chrome">Chrome</option>
                 <option value="firefox">Firefox</option>
                 <option value="safari">Safari</option>
@@ -812,28 +814,28 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
             {/* 查找进程模式 */}
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">查找进程模式</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">追踪连接的进程信息</p>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.findProcessMode')}</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.findProcessModeDesc')}</p>
               </div>
               <select
                 className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
                 value={config['find-process-mode'] || 'strict'}
                 onChange={(e) => updateConfig('find-process-mode', e.target.value)}
               >
-                <option value="off">关闭</option>
-                <option value="strict">自动</option>
-                <option value="always">开启</option>
+                <option value="off">{t('overrideSettings.off')}</option>
+                <option value="strict">{t('overrideSettings.strict')}</option>
+                <option value="always">{t('overrideSettings.always')}</option>
               </select>
             </div>
 
             {/* 指定出站接口 */}
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">指定出站接口</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">指定出站网络接口名称</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.interfaceName')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.interfaceNameDesc')}</p>
               <Input
                 type="text"
                 className="text-gray-900 dark:text-gray-100"
-                placeholder="留空表示自动选择"
+                placeholder={t('overrideSettings.interfaceNamePlaceholder')}
                 value={config['interface-name'] || ''}
                 onChange={(e) => updateConfig('interface-name', e.target.value)}
               />

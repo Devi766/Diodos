@@ -18,6 +18,7 @@ import {
 import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { useTranslation } from 'react-i18next';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -72,6 +73,7 @@ const renderGroupIcon = (icon?: string | null) => {
 
 // 节点组件
 export default function ProxyNodes() {
+  const { t } = useTranslation();
   const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -571,7 +573,7 @@ export default function ProxyNodes() {
   // 测试节点延迟
   const handleTestNode = async (nodeName: string) => {
     if (!mihomoRunning) {
-      showError("测试失败: Mihomo服务未运行");
+      showError(t('nodes.testFailed'));
       return;
     }
     
@@ -679,7 +681,7 @@ export default function ProxyNodes() {
   // 测试代理组延迟（并发测速，实时更新）
   const handleTestGroup = async (groupName: string) => {
     if (!mihomoRunning) {
-      showError("测试失败: Mihomo服务未运行");
+      showError(t('nodes.testFailed'));
       return;
     }
 
@@ -716,7 +718,7 @@ export default function ProxyNodes() {
       const successCount = results.filter(r => r.success).length;
       const failCount = results.filter(r => !r.success).length;
 
-      showSuccess(`代理组 ${groupName} 测速完成：成功 ${successCount}，失败 ${failCount}`);
+      showSuccess(t('nodes.testGroupComplete', { groupName, successCount, failCount }));
     } catch (error: any) {
       console.error(`测试代理组 ${groupName} 失败:`, error);
       showError(`测试代理组失败: ${error.message || '未知错误'}`);
@@ -733,7 +735,7 @@ export default function ProxyNodes() {
   // 使用useCallback包装handleBatchTest函数，避免循环依赖
   const handleBatchTest = useCallback(async (groupName: string) => {
     if (!mihomoRunning) {
-      showError("测试失败: Mihomo服务未运行");
+      showError(t('nodes.testFailed'));
       return;
     }
 
@@ -1003,7 +1005,7 @@ export default function ProxyNodes() {
                   }}
                   disabled={isTesting}
                   className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400 disabled:opacity-50"
-                  title="测试延迟"
+                  title={t('nodes.testLatency')}
                 >
                   <ReloadIcon className={`h-4 w-4 ${isTesting ? 'text-blue-500 animate-spin' : ''}`} />
                 </button>
@@ -1014,7 +1016,7 @@ export default function ProxyNodes() {
                     handleToggleFavorite(node.name);
                   }}
                   className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                  title={isFavorite ? "取消收藏" : "添加到收藏"}
+                  title={isFavorite ? t('nodes.removeFromFavorite') : t('nodes.addToFavorite')}
                 >
                   {isFavorite ? (
                     <StarFilledIcon className="h-4 w-4 text-yellow-500" />
@@ -1039,7 +1041,7 @@ export default function ProxyNodes() {
                     ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
                     : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
                 }`}>
-                  {node.delay === 0 ? '超时' : `${node.delay}ms`}
+                  {node.delay === 0 ? t('nodes.timeout') : `${node.delay}ms`}
                 </span>
               )}
             </div>
@@ -1176,10 +1178,11 @@ export default function ProxyNodes() {
       await fetchProxies();
       
       // 显示成功提示
-      showSuccess(`已切换到${mode === 'rule' ? '规则' : mode === 'global' ? '全局' : '直连'}模式`);
+      const modeText = mode === 'rule' ? t('nodes.ruleMode') : mode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
+      showSuccess(t('nodes.switchedToMode', { mode: modeText }));
     } catch (error) {
       console.error('切换模式失败:', error);
-      showError(`切换模式失败: ${String(error)}`);
+      showError(t('nodes.switchModeFailed', { error: String(error) }));
       
       // 失败时恢复UI状态
       try {
@@ -1205,11 +1208,11 @@ export default function ProxyNodes() {
           <path d="M8 12h8" />
           <path d="M12 8v8" />
         </svg>
-        <h3 className="text-lg font-medium text-foreground">直连模式已启用</h3>
+        <h3 className="text-lg font-medium text-foreground">{t('nodes.directModeEnabled')}</h3>
         <p className="max-w-lg text-sm text-muted-foreground">
-          在直连模式下，所有流量将直接访问目标，不通过任何代理节点。
+          {t('nodes.directModeDesc')}
           <br />
-          此模式下不需要选择代理节点。
+          {t('nodes.directModeNote')}
         </p>
       </div>
     </div>
@@ -1246,7 +1249,7 @@ export default function ProxyNodes() {
   // 选择节点 - 优化后的逻辑
   const handleNodeSelect = async (nodeName: string, groupName: string) => {
     if (!mihomoRunning) {
-      showError("切换失败: Mihomo服务未运行");
+      showError(t('nodes.switchFailed'));
       return;
     }
     
@@ -1391,22 +1394,22 @@ export default function ProxyNodes() {
   const displayGroups = activeTab === 'favorites' ? favoriteFilteredGroups : filteredGroups;
   const totalNodes = groups.reduce((acc, group) => acc + group.nodes.length, 0);
   const visibleNodes = displayGroups.reduce((acc, group) => acc + group.nodes.length, 0);
-  const modeDisplay = currentMode === 'rule' ? '规则模式' : currentMode === 'global' ? '全局模式' : '直连模式';
+  const modeDisplay = currentMode === 'rule' ? t('nodes.ruleMode') : currentMode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
 
   if (!mihomoRunning) {
     return (
       <div className="py-12 text-center">
         <div className="mx-auto flex max-w-md flex-col items-center gap-4">
           <ExclamationTriangleIcon className="h-12 w-12 text-amber-500" />
-          <h2 className="text-xl font-semibold text-foreground">Mihomo 服务未运行</h2>
+          <h2 className="text-xl font-semibold text-foreground">{t('nodes.mihomoNotRunning')}</h2>
           <p className="text-sm text-muted-foreground">
-            请先启动 Mihomo 服务，然后刷新页面，确保内核正常工作。
+            {t('nodes.mihomoNotRunningDesc')}
           </p>
           <button
             onClick={fetchProxies}
             className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
           >
-            <ReloadIcon className="h-4 w-4" /> 检查连接
+            <ReloadIcon className="h-4 w-4" /> {t('nodes.checkConnection')}
           </button>
         </div>
       </div>
@@ -1431,17 +1434,17 @@ export default function ProxyNodes() {
           </span>
           {currentMode !== 'direct' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-slate-600 dark:bg-slate-800/70 dark:text-slate-200">
-              可用 {visibleNodes} / {totalNodes}
+              {t('nodes.available')} {visibleNodes} / {totalNodes}
             </span>
           )}
           {favoriteNodes.size > 0 && (
             <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-slate-600 dark:bg-slate-800/70 dark:text-slate-200">
-              收藏 {favoriteNodes.size}
+              {t('nodes.favorite')} {favoriteNodes.size}
             </span>
           )}
           {selectedNode && currentMode !== 'direct' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
-              当前节点 {selectedNode}
+              {t('nodes.currentNode')} {selectedNode}
             </span>
           )}
         </div>
@@ -1452,19 +1455,19 @@ export default function ProxyNodes() {
               value="rule"
               className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
             >
-              规则模式
+              {t('nodes.ruleMode')}
             </TabsTrigger>
             <TabsTrigger
               value="global"
               className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
             >
-              全局模式
+              {t('nodes.globalMode')}
             </TabsTrigger>
             <TabsTrigger
               value="direct"
               className="flex-1 rounded-full text-xs font-medium text-slate-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 data-[state=active]:bg-blue-500 data-[state=active]:text-white data-[state=active]:shadow-sm dark:text-slate-200 dark:data-[state=inactive]:hover:text-blue-200"
             >
-              直连模式
+              {t('nodes.directMode')}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -1491,7 +1494,7 @@ export default function ProxyNodes() {
               <input
                 type="text"
                 className="h-11 w-full rounded-full border border-slate-200/70 bg-slate-50 pl-10 pr-12 text-sm text-foreground transition focus:border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700/60 dark:bg-[#3a3a3a] dark:text-slate-100 dark:focus:border-slate-600 dark:focus:ring-slate-600"
-                placeholder="搜索节点..."
+                placeholder={t('nodes.searchPlaceholder')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -1517,7 +1520,7 @@ export default function ProxyNodes() {
                       ? 'bg-slate-200 text-slate-700 shadow-sm dark:bg-slate-700 dark:text-slate-200'
                       : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
-                  title="所有节点"
+                  title={t('nodes.allNodes')}
                 >
                   <GlobeIcon className="h-5 w-5" />
                 </button>
@@ -1529,7 +1532,7 @@ export default function ProxyNodes() {
                       ? 'bg-slate-200 text-slate-700 shadow-sm dark:bg-slate-700 dark:text-slate-200'
                       : 'bg-transparent text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700/60'
                   }`}
-                  title="收藏节点"
+                  title={t('nodes.favoriteNodes')}
                 >
                   <StarIcon className="h-5 w-5" />
                 </button>
@@ -1548,7 +1551,7 @@ export default function ProxyNodes() {
                     }
                   }}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
-                  title={layoutMode === 'single' ? "切换到双列布局" : "切换到单列布局"}
+                  title={layoutMode === 'single' ? t('nodes.switchToDoubleLayout') : t('nodes.switchToSingleLayout')}
                 >
                   {layoutMode === 'single' ? <ViewHorizontalIcon className="h-5 w-5" /> : <ViewVerticalIcon className="h-5 w-5" />}
                 </button>
@@ -1556,7 +1559,7 @@ export default function ProxyNodes() {
                   type="button"
                   onClick={fetchProxies}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
-                  title="刷新列表"
+                  title={t('nodes.refreshList')}
                 >
                   <ReloadIcon className="h-5 w-5" />
                 </button>
@@ -1566,7 +1569,7 @@ export default function ProxyNodes() {
                     type="button"
                     onClick={() => setShowOptionsMenu(!showOptionsMenu)}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
-                    title="选项"
+                    title={t('nodes.options')}
                   >
                     <MixerHorizontalIcon className="h-5 w-5" />
                   </button>
@@ -1603,7 +1606,7 @@ export default function ProxyNodes() {
                           }}
                           className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                         >
-                          {collapsedGroups.size > 0 ? '展开所有代理组' : '收起所有代理组'}
+                          {collapsedGroups.size > 0 ? t('nodes.expandAll') : t('nodes.collapseAll')}
                         </button>
                         <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
                         <button
@@ -1623,7 +1626,7 @@ export default function ProxyNodes() {
                           <div className="w-4 h-4 flex items-center justify-center mr-2">
                             {sortMode === 'default' && <CheckCircledIcon className="w-4 h-4" />}
                           </div>
-                          <span>默认排序</span>
+                          <span>{t('nodes.defaultSort')}</span>
                         </button>
                         <button
                           onClick={() => {
@@ -1642,7 +1645,7 @@ export default function ProxyNodes() {
                           <div className="w-4 h-4 flex items-center justify-center mr-2">
                             {sortMode === 'latency' && <CheckCircledIcon className="w-4 h-4" />}
                           </div>
-                          <span>按延迟排序</span>
+                          <span>{t('nodes.sortByLatency')}</span>
                         </button>
                       </div>
                     </>
@@ -1664,7 +1667,8 @@ export default function ProxyNodes() {
               const collapseKey = group.name;
               const isCollapsed = collapsedGroups.has(collapseKey);
 
-              const groupStatus = group.type.toUpperCase();
+              const groupType = group.type.toUpperCase();
+              const selectedNode = group.now || '-';
               const nodeCount = group.nodes.length;
               const isTestingGroup = testingGroups.has(group.name);
 
@@ -1684,7 +1688,7 @@ export default function ProxyNodes() {
                         <div>
                           <div className="text-sm font-semibold text-foreground">{group.name}</div>
                           <div className="mt-0.5 text-xs text-muted-foreground">
-                            {groupStatus} · {nodeCount} 个节点
+                            {t('nodes.groupSubtitle', { groupType, selectedNode })}
                           </div>
                         </div>
                       </div>
@@ -1700,7 +1704,7 @@ export default function ProxyNodes() {
                           }}
                           disabled={isTestingGroup}
                           className="inline-flex items-center justify-center text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="测试代理组所有节点"
+                          title={t('nodes.testAllNodes')}
                         >
                           <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
                         </button>
@@ -1709,7 +1713,7 @@ export default function ProxyNodes() {
                         type="button"
                         onClick={() => toggleGroupCollapse(collapseKey)}
                         className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition p-1"
-                        title={isCollapsed ? "展开" : "收起"}
+                        title={isCollapsed ? t('nodes.expand') : t('nodes.collapse')}
                       >
                         <ChevronRightIcon
                           className={`h-5 w-5 transition-transform duration-200 ${
@@ -1743,7 +1747,7 @@ export default function ProxyNodes() {
             })}
           </>
           ) : (
-            <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">暂无匹配的节点</div>
+            <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">{t('nodes.noMatchingNodes')}</div>
           )}
         </div>
       )}
@@ -1764,17 +1768,17 @@ export default function ProxyNodes() {
           </span>
           {currentMode !== 'direct' ? (
             <>
-              <span>总计 {totalNodes} 个节点</span>
-              <span>当前筛选 {visibleNodes} 个</span>
-              <span>收藏 {favoriteNodes.size} 个</span>
+              <span>{t('nodes.total')} {totalNodes} {t('nodes.nodes')}</span>
+              <span>{t('nodes.currentFilter')} {visibleNodes} {t('nodes.nodes')}</span>
+              <span>{t('nodes.favorite')} {favoriteNodes.size} {t('nodes.nodes')}</span>
             </>
           ) : (
-            <span>直连模式下所有流量均直接访问目标</span>
+            <span>{t('nodes.directModeNote2')}</span>
           )}
         </div>
         {selectedNode && currentMode !== 'direct' && (
           <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-200">
-            当前节点 {selectedNode}
+            {t('nodes.currentNode')} {selectedNode}
           </span>
         )}
       </div>

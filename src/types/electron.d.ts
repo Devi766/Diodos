@@ -75,6 +75,7 @@ export interface ElectronAPI {
   // Mihomo 管理
   startMihomo: (configPath: string) => Promise<boolean>;
   stopMihomo: () => Promise<boolean>;
+  reloadMihomoConfig: (configPath: string) => Promise<boolean>;
   getTrafficStats: () => Promise<TrafficStats>;
   fetchConnectionsInfo: () => Promise<any>;
   restartService: () => Promise<{ success: boolean, message: string }>;
@@ -123,9 +124,22 @@ export interface ElectronAPI {
   getTheme: () => Promise<{ success: boolean, theme: string, error?: string }>;
   onThemeChanged: (callback: (event: any, theme: string) => void) => void;
   removeThemeListener: () => void;
-  setAppearanceMode: (mode: 'acrylic' | 'dynamic' | 'solid') => Promise<{ success: boolean; mode?: string; error?: string }>;
+  setAppearanceMode: (mode: 'acrylic' | 'dynamic' | 'solid' | 'custom') => Promise<{ success: boolean; mode?: string; error?: string }>;
   getAppearanceMode: () => Promise<{ success: boolean; mode: string; error?: string }>;
-  onAppearanceModeChanged?: (callback: (mode: 'acrylic' | 'dynamic' | 'solid') => void) => (() => void);
+  onAppearanceModeChanged?: (callback: (mode: 'acrylic' | 'dynamic' | 'solid' | 'custom') => void) => (() => void);
+
+  // 自定义背景设置
+  selectBackgroundImage: () => Promise<{ success: boolean; path?: string; error?: string; canceled?: boolean }>;
+  setCustomBackground: (config: { imagePath: string; opacity: number; blur: number }) => Promise<{ success: boolean; error?: string }>;
+  getCustomBackground: () => Promise<{ success: boolean; config?: { imagePath: string; opacity: number; blur: number }; error?: string }>;
+  clearCustomBackground: () => Promise<{ success: boolean; error?: string }>;
+  onCustomBackgroundApply: (callback: (config: { imageData?: string; imagePath?: string; opacity: number; blur: number }) => void) => (() => void);
+  onClearCustomBackground: (callback: () => void) => (() => void);
+
+  // 主题色设置
+  setThemeColor: (color: string) => Promise<{ success: boolean; error?: string }>;
+  getThemeColor: () => Promise<{ success: boolean; color?: string; error?: string }>;
+  onThemeColorChanged: (callback: (color: string) => void) => (() => void);
 
   // 静默启动设置
   getSilentStart: () => Promise<{ success: boolean, silentStart: boolean, error?: string }>;
