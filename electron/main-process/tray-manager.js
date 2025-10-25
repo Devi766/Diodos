@@ -15,15 +15,27 @@ module.exports = function initTrayManager(context) {
     }
 
     let iconPath = null;
-    const possiblePaths = [
-      context.isDev ? path.join(__dirname, '../public/favicon.ico') : null,
-      !context.isDev ? path.join(process.resourcesPath, 'public/favicon.ico') : null,
-      !context.isDev ? path.join(process.resourcesPath, 'favicon.ico') : null,
-      !context.isDev ? path.join(app.getAppPath(), 'public/favicon.ico') : null,
-      !context.isDev ? path.join(app.getAppPath(), 'out/favicon.ico') : null
-    ].filter(Boolean);
+    const isMac = process.platform === 'darwin';
 
-    for (const tryPath of possiblePaths) {
+    // macOS 优先使用 SVG,然后是 PNG,最后是 ICO
+    const iconFileNames = isMac
+      ? ['trayTemplate.svg', 'trayTemplate.png', 'favicon.ico']
+      : ['favicon.ico', 'trayTemplate.png'];
+
+    const possiblePaths = [];
+    for (const fileName of iconFileNames) {
+      possiblePaths.push(
+        context.isDev ? path.join(__dirname, `../public/${fileName}`) : null,
+        !context.isDev ? path.join(process.resourcesPath, `public/${fileName}`) : null,
+        !context.isDev ? path.join(process.resourcesPath, fileName) : null,
+        !context.isDev ? path.join(app.getAppPath(), `public/${fileName}`) : null,
+        !context.isDev ? path.join(app.getAppPath(), `out/${fileName}`) : null
+      );
+    }
+
+    const validPaths = possiblePaths.filter(Boolean);
+
+    for (const tryPath of validPaths) {
       if (fs.existsSync(tryPath)) {
         iconPath = tryPath;
         console.log(`找到托盘图标: ${iconPath}`);
@@ -32,12 +44,33 @@ module.exports = function initTrayManager(context) {
     }
 
     if (!iconPath) {
-      iconPath = possiblePaths[0];
+      iconPath = validPaths[0];
       console.warn(`警告: 未找到托盘图标文件，使用默认路径: ${iconPath}`);
     }
 
     try {
-      state.tray = new Tray(iconPath);
+      let trayIcon;
+
+      // 如果是 SVG 文件,读取内容并创建图像
+      if (iconPath.endsWith('.svg')) {
+        const svgContent = fs.readFileSync(iconPath, 'utf8');
+        // 创建一个 32x32 的图像
+        trayIcon = nativeImage.createFromBuffer(Buffer.from(svgContent));
+        if (trayIcon.isEmpty()) {
+          // 如果 SVG 解析失败,尝试使用 Data URL
+          const svgDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgContent).toString('base64')}`;
+          trayIcon = nativeImage.createFromDataURL(svgDataUrl);
+        }
+      } else {
+        trayIcon = nativeImage.createFromPath(iconPath);
+      }
+
+      // macOS 上设置为模板图标
+      if (isMac && !trayIcon.isEmpty()) {
+        trayIcon.setTemplateImage(true);
+      }
+
+      state.tray = new Tray(trayIcon);
     } catch (error) {
       console.error('设置托盘图标失败:', error);
       try {
