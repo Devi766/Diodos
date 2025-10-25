@@ -21,7 +21,7 @@ module.exports = function initTrayManager(context) {
 
       if (isMac) {
         // macOS: 使用模板图标
-        const iconFileName = 'iconTemplate.png';
+        const iconFileName = 'logoTemplate.png';
         let iconPath;
 
         // 开发环境
