@@ -206,7 +206,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         console.error('切换TUN模式失败: 无法获取安全令牌');
         return { success: false, error: tokenResult.error };
       }
-      
+
       return await ipcRenderer.invoke('toggleTunMode', tokenResult.token, enabled);
     } catch (error) {
       console.error('切换TUN模式异常:', error);
@@ -214,6 +214,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
   getTunStatus: () => ipcRenderer.invoke('getTunStatus'),
+
+  // TUN 模式权限和配置
+  grantTunPermissions: () => ipcRenderer.invoke('grant-tun-permissions'),
+  getTunConfig: () => ipcRenderer.invoke('get-tun-config'),
+  saveTunConfig: (config) => ipcRenderer.invoke('save-tun-config', config),
   
   // 自动启动设置
   setAutoStart: (enabled) => ipcRenderer.invoke('set-auto-start', enabled),

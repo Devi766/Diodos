@@ -1298,6 +1298,16 @@ module.exports = function initMihomoService(context) {
     }
   }
 
+  // 获取内核路径 (用于 TUN 模式权限授予)
+  function getKernelPath() {
+    try {
+      return findMihomoExecutable();
+    } catch (error) {
+      console.error('获取内核路径失败:', error);
+      return null;
+    }
+  }
+
   context.mihomoService = {
     findMihomoExecutable,
     ensureMihomoDataFiles,
@@ -1313,6 +1323,7 @@ module.exports = function initMihomoService(context) {
     autoStartMihomo,
     checkMihomoService,
     getConfig,
-    restartMihomoService
+    restartMihomoService,
+    getKernelPath
   };
 };

@@ -2905,6 +2905,92 @@ app.whenReady().then(() => {
   ipcMain.handle('getTunStatus', async () => {
     return state.tunModeEnabled;
   });
+
+  // 授予 TUN 模式权限 (macOS/Linux)
+  ipcMain.handle('grant-tun-permissions', async () => {
+    try {
+      if (isMac) {
+        const { promisify } = require('util');
+        const execFile = promisify(require('child_process').execFile);
+
+        // 获取 mihomo 内核路径
+        const kernelPath = context.mihomoService?.getKernelPath?.();
+        if (!kernelPath) {
+          throw new Error('无法获取 Mihomo 内核路径');
+        }
+
+        // 验证内核文件存在
+        if (!fs.existsSync(kernelPath)) {
+          throw new Error(`内核文件不存在: ${kernelPath}`);
+        }
+
+        // 使用 osascript 请求管理员权限
+        const script = `do shell script "chown root:admin '${kernelPath}' && chmod +sx '${kernelPath}'" with administrator privileges`;
+        await execFile('osascript', ['-e', script]);
+
+        console.log('[TUN] macOS 权限授予成功');
+        return { success: true, message: 'TUN 模式权限已成功授予' };
+      } else if (process.platform === 'linux') {
+        const { promisify } = require('util');
+        const execFile = promisify(require('child_process').execFile);
+
+        const kernelPath = context.mihomoService?.getKernelPath?.();
+        if (!kernelPath) {
+          throw new Error('无法获取 Mihomo 内核路径');
+        }
+
+        if (!fs.existsSync(kernelPath)) {
+          throw new Error(`内核文件不存在: ${kernelPath}`);
+        }
+
+        await execFile('pkexec', ['chown', 'root:root', kernelPath]);
+        await execFile('pkexec', ['chmod', '+sx', kernelPath]);
+
+        console.log('[TUN] Linux 权限授予成功');
+        return { success: true, message: 'TUN 模式权限已成功授予' };
+      } else if (isWindows) {
+        // Windows 需要以管理员身份运行应用
+        return { success: false, error: 'Windows 平台需要以管理员身份运行应用才能使用 TUN 模式' };
+      }
+    } catch (error) {
+      console.error('[TUN] 授予权限失败:', error);
+      return { success: false, error: error.message || String(error) };
+    }
+  });
+
+  // 获取 TUN 配置
+  ipcMain.handle('get-tun-config', async () => {
+    try {
+      const config = dbManager.getSetting('tunConfig', {
+        device: isMac ? 'utun1500' : 'Mihomo',
+        stack: 'mixed',
+        autoRoute: true,
+        autoRedirect: false,
+        autoDetectInterface: true,
+        dnsHijack: ['any:53'],
+        strictRoute: false,
+        routeExcludeAddress: [],
+        mtu: 1500,
+        autoSetDNS: isMac ? true : false
+      });
+      return { success: true, config };
+    } catch (error) {
+      console.error('[TUN] 获取配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 保存 TUN 配置
+  ipcMain.handle('save-tun-config', async (event, config) => {
+    try {
+      dbManager.setSetting('tunConfig', config);
+      console.log('[TUN] 配置已保存:', config);
+      return { success: true };
+    } catch (error) {
+      console.error('[TUN] 保存配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
 });
 
 // 媒体服务检测 - 将其移到闭包外以确保正常注册

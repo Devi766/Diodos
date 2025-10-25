@@ -171,6 +171,11 @@ export interface ElectronAPI {
   toggleTunMode: (enabled: boolean) => Promise<boolean>;
   getTunStatus: () => Promise<boolean>;
   onTunStatus: (callback: (enabled: boolean) => void) => (() => void);
+
+  // TUN 模式权限和配置
+  grantTunPermissions: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  getTunConfig: () => Promise<{ success: boolean; config?: TunConfig; error?: string }>;
+  saveTunConfig: (config: TunConfig) => Promise<{ success: boolean; error?: string }>;
   
   // 自动启动设置
   setAutoStart: (enabled: boolean) => Promise<boolean>;
@@ -389,6 +394,20 @@ interface SpeedtestReportSummary {
   nodeCount: number;
   skippedCount: number;
   excludedCount: number;
+}
+
+// TUN 配置接口
+interface TunConfig {
+  device: string;
+  stack: 'gvisor' | 'mixed' | 'system';
+  autoRoute: boolean;
+  autoRedirect: boolean;
+  autoDetectInterface: boolean;
+  dnsHijack: string[];
+  strictRoute: boolean;
+  routeExcludeAddress: string[];
+  mtu: number;
+  autoSetDNS?: boolean;
 }
 
 // 已将ElectronAPI导出

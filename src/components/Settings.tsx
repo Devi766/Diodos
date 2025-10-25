@@ -7,6 +7,7 @@ import { useMihomoAPI } from '../services/mihomo-api';
 import { Switch } from './ui/switch';
 import OverrideSettings, { OverrideSettingsRef } from './OverrideSettings';
 import { Button } from './ui/button';
+import TunSettings from './TunSettings';
 
 export default function Settings() {
   const [startWithSystem, setStartWithSystem] = useState(false);
@@ -380,6 +381,12 @@ export default function Settings() {
                 覆写
               </Tabs.Trigger>
               <Tabs.Trigger
+                value="tun"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+              >
+                TUN 模式
+              </Tabs.Trigger>
+              <Tabs.Trigger
                 value="about"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
@@ -646,6 +653,10 @@ export default function Settings() {
                   </Button>
                 </div>
               </div>
+            </Tabs.Content>
+
+            <Tabs.Content value="tun" className="w-full">
+              <TunSettings />
             </Tabs.Content>
 
             <Tabs.Content value="about" className="w-full">
