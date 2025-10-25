@@ -100,6 +100,11 @@ mac:
   category: public.app-category.utilities
   icon: public/icons.png
   artifactName: ${productName}-${version}-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: false
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
+  sign: false
 

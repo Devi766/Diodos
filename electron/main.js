@@ -21,7 +21,7 @@ const { testMediaStreaming } = require('./mediatest');
 const { getIconDataURL } = require('./icon');
 
 // 应用版本号 - 统一管理所有界面显示的版本
-const APP_VERSION = '0.1.4';
+const APP_VERSION = '0.2.0';
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 
