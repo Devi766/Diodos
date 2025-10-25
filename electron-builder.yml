@@ -98,7 +98,7 @@ mac:
     - dmg
     - zip
   category: public.app-category.utilities
-  icon: public/logo.png
+  icon: public/icons.png
   artifactName: ${productName}-${version}-${arch}.${ext}
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
