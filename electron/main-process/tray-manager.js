@@ -17,10 +17,10 @@ module.exports = function initTrayManager(context) {
     let iconPath = null;
     const isMac = process.platform === 'darwin';
 
-    // macOS 优先使用 SVG,然后是 PNG,最后是 ICO
+    // macOS 使用 ic_logo_service, Windows 使用 favicon.ico
     const iconFileNames = isMac
-      ? ['trayTemplate.svg', 'trayTemplate.png', 'favicon.ico']
-      : ['favicon.ico', 'trayTemplate.png'];
+      ? ['ic_logo_service.png', 'trayTemplate.png', 'favicon.ico']
+      : ['favicon.ico', 'ic_logo_service.png'];
 
     const possiblePaths = [];
     for (const fileName of iconFileNames) {
@@ -49,21 +49,7 @@ module.exports = function initTrayManager(context) {
     }
 
     try {
-      let trayIcon;
-
-      // 如果是 SVG 文件,读取内容并创建图像
-      if (iconPath.endsWith('.svg')) {
-        const svgContent = fs.readFileSync(iconPath, 'utf8');
-        // 创建一个 32x32 的图像
-        trayIcon = nativeImage.createFromBuffer(Buffer.from(svgContent));
-        if (trayIcon.isEmpty()) {
-          // 如果 SVG 解析失败,尝试使用 Data URL
-          const svgDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgContent).toString('base64')}`;
-          trayIcon = nativeImage.createFromDataURL(svgDataUrl);
-        }
-      } else {
-        trayIcon = nativeImage.createFromPath(iconPath);
-      }
+      const trayIcon = nativeImage.createFromPath(iconPath);
 
       // macOS 上设置为模板图标
       if (isMac && !trayIcon.isEmpty()) {
