@@ -26,7 +26,7 @@ module.exports = function initTrayManager(context) {
 
         // 开发环境
         if (context.isDev) {
-          iconPath = path.join(__dirname, '../public', iconFileName);
+          iconPath = path.join(__dirname, '../../public', iconFileName);
         } else {
           // 生产环境：尝试多个可能的路径
           const possiblePaths = [
