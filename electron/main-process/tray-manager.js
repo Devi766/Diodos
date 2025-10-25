@@ -17,10 +17,10 @@ module.exports = function initTrayManager(context) {
     let iconPath = null;
     const isMac = process.platform === 'darwin';
 
-    // macOS 使用 ic_logo_service, Windows 使用 favicon.ico
+    // macOS 使用 ic_logo_service32x32, Windows 使用 favicon.ico
     const iconFileNames = isMac
-      ? ['ic_logo_service.png', 'trayTemplate.png', 'favicon.ico']
-      : ['favicon.ico', 'ic_logo_service.png'];
+      ? ['ic_logo_service32x32.png', 'ic_logo_service.png', 'trayTemplate.png', 'favicon.ico']
+      : ['favicon.ico', 'ic_logo_service32x32.png', 'ic_logo_service.png'];
 
     const possiblePaths = [];
     for (const fileName of iconFileNames) {
@@ -49,14 +49,33 @@ module.exports = function initTrayManager(context) {
     }
 
     try {
-      const trayIcon = nativeImage.createFromPath(iconPath);
+      let trayIcon;
 
-      // macOS 上设置为模板图标
-      if (isMac && !trayIcon.isEmpty()) {
-        trayIcon.setTemplateImage(true);
+      // 尝试加载图标
+      if (fs.existsSync(iconPath)) {
+        console.log(`正在加载托盘图标: ${iconPath}`);
+        trayIcon = nativeImage.createFromPath(iconPath);
+
+        if (trayIcon.isEmpty()) {
+          console.warn(`图标加载失败或为空: ${iconPath}`);
+          // 尝试创建一个简单的占位图标
+          trayIcon = nativeImage.createEmpty();
+        } else {
+          console.log(`图标加载成功,尺寸: ${trayIcon.getSize().width}x${trayIcon.getSize().height}`);
+
+          // macOS 上设置为模板图标
+          if (isMac) {
+            trayIcon.setTemplateImage(true);
+            console.log('已设置为模板图标');
+          }
+        }
+      } else {
+        console.warn(`图标文件不存在: ${iconPath}`);
+        trayIcon = nativeImage.createEmpty();
       }
 
       state.tray = new Tray(trayIcon);
+      console.log('托盘创建成功');
     } catch (error) {
       console.error('设置托盘图标失败:', error);
       try {
