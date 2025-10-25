@@ -104,6 +104,7 @@ mac:
   gatekeeperAssess: false
   entitlementsInherit: build/entitlements.mac.plist
   notarize: false
+  identity: null
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
   sign: false
