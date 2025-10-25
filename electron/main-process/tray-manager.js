@@ -19,7 +19,7 @@ module.exports = function initTrayManager(context) {
 
     // macOS 模板图标文件名应以 Template 结尾,或手动设置 setTemplateImage
     const iconFileNames = isMac
-      ? ['ic_logo_serviceTemplate.png', 'ic_logo_service32x32.png', 'trayTemplate.png', 'favicon.ico']
+      ? ['iconTemplate.png', 'ic_logo_serviceTemplate.png', 'ic_logo_service32x32.png', 'trayTemplate.png', 'favicon.ico']
       : ['favicon.ico', 'ic_logo_service32x32.png'];
 
     const possiblePaths = [];
