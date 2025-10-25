@@ -5,28 +5,55 @@ import {
   DASHBOARD_CONFIG_KEY,
 } from '@/types/dashboard';
 
+// 检查是否在 Electron 环境中
+const isElectron = typeof window !== 'undefined' && window.electron;
+
 export function useDashboardCards() {
   const [cards, setCards] = useState<DashboardCard[]>(DEFAULT_DASHBOARD_CARDS);
   const [isEditMode, setIsEditMode] = useState(false);
 
-  // 从本地存储加载配置
+  // 从存储加载配置
   useEffect(() => {
-    try {
-      const savedConfig = localStorage.getItem(DASHBOARD_CONFIG_KEY);
-      if (savedConfig) {
-        const parsedConfig = JSON.parse(savedConfig) as DashboardCard[];
-        setCards(parsedConfig);
+    const loadCards = async () => {
+      try {
+        if (isElectron) {
+          // Electron 环境：使用 IPC 从数据库读取
+          const result = await window.electron.ipcRenderer.invoke('get-setting', DASHBOARD_CONFIG_KEY, null);
+          if (result.success && result.value) {
+            setCards(result.value as DashboardCard[]);
+          }
+        } else {
+          // 浏览器环境：使用 localStorage
+          const savedConfig = localStorage.getItem(DASHBOARD_CONFIG_KEY);
+          if (savedConfig) {
+            const parsedConfig = JSON.parse(savedConfig) as DashboardCard[];
+            setCards(parsedConfig);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load dashboard config:', error);
       }
-    } catch (error) {
-      console.error('Failed to load dashboard config:', error);
-    }
+    };
+
+    loadCards();
   }, []);
 
-  // 保存配置到本地存储
-  const saveCards = useCallback((newCards: DashboardCard[]) => {
+  // 保存配置到存储
+  const saveCards = useCallback(async (newCards: DashboardCard[]) => {
     try {
-      localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(newCards));
-      setCards(newCards);
+      if (isElectron) {
+        // Electron 环境：使用 IPC 保存到数据库
+        const result = await window.electron.ipcRenderer.invoke('set-setting', DASHBOARD_CONFIG_KEY, newCards);
+        if (result.success) {
+          setCards(newCards);
+        } else {
+          console.error('Failed to save dashboard config:', result.error);
+        }
+      } else {
+        // 浏览器环境：使用 localStorage
+        localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(newCards));
+        setCards(newCards);
+      }
     } catch (error) {
       console.error('Failed to save dashboard config:', error);
     }
@@ -34,7 +61,7 @@ export function useDashboardCards() {
 
   // 更新卡片顺序
   const reorderCards = useCallback(
-    (startIndex: number, endIndex: number) => {
+    async (startIndex: number, endIndex: number) => {
       // 只对已启用的卡片进行排序
       const enabledCardsList = cards
         .filter((card) => card.enabled)
@@ -54,46 +81,46 @@ export function useDashboardCards() {
       const disabledCards = cards.filter((card) => !card.enabled);
       const allCards = [...reorderedEnabledCards, ...disabledCards];
 
-      saveCards(allCards);
+      await saveCards(allCards);
     },
     [cards, saveCards],
   );
 
   // 切换卡片启用状态
   const toggleCard = useCallback(
-    (cardId: string) => {
+    async (cardId: string) => {
       const updatedCards = cards.map((card) =>
         card.id === cardId ? { ...card, enabled: !card.enabled } : card,
       );
-      saveCards(updatedCards);
+      await saveCards(updatedCards);
     },
     [cards, saveCards],
   );
 
   // 添加卡片
   const addCard = useCallback(
-    (card: DashboardCard) => {
+    async (card: DashboardCard) => {
       const maxOrder = Math.max(...cards.map((c) => c.order), -1);
       const newCard = { ...card, enabled: true, order: maxOrder + 1 };
-      saveCards([...cards, newCard]);
+      await saveCards([...cards, newCard]);
     },
     [cards, saveCards],
   );
 
   // 删除卡片
   const removeCard = useCallback(
-    (cardId: string) => {
+    async (cardId: string) => {
       const updatedCards = cards
         .filter((card) => card.id !== cardId)
         .map((card, index) => ({ ...card, order: index }));
-      saveCards(updatedCards);
+      await saveCards(updatedCards);
     },
     [cards, saveCards],
   );
 
   // 重置为默认配置
-  const resetToDefault = useCallback(() => {
-    saveCards(DEFAULT_DASHBOARD_CARDS);
+  const resetToDefault = useCallback(async () => {
+    await saveCards(DEFAULT_DASHBOARD_CARDS);
   }, [saveCards]);
 
   // 获取已启用的卡片(按order排序)

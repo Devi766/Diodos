@@ -1931,6 +1931,29 @@ app.whenReady().then(() => {
     }
   });
 
+  // 通用设置处理器 - 获取设置
+  ipcMain.handle('get-setting', (event, key, defaultValue = null) => {
+    try {
+      const value = dbManager.getSetting(key, defaultValue);
+      return { success: true, value };
+    } catch (error) {
+      console.error(`获取设置失败 [${key}]:`, error);
+      return { success: false, value: defaultValue, error: error.message };
+    }
+  });
+
+  // 通用设置处理器 - 保存设置
+  ipcMain.handle('set-setting', (event, key, value) => {
+    try {
+      dbManager.setSetting(key, value);
+      console.log(`设置已保存 [${key}]`);
+      return { success: true };
+    } catch (error) {
+      console.error(`保存设置失败 [${key}]:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // 切换节点
   ipcMain.handle('select-node', async (event, nodeName, groupName, updateGlobal = false) => {
     try {
