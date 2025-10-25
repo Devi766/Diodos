@@ -86,6 +86,11 @@ export default function ProxyNodes() {
   
   // 初始化折叠状态，从localStorage加载，确保有效
   const loadSavedCollapsedState = () => {
+    // 检查是否在浏览器环境
+    if (typeof window === 'undefined') {
+      return new Set();
+    }
+
     try {
       const savedState = localStorage.getItem('collapsedGroups');
       if (savedState) {
@@ -100,7 +105,7 @@ export default function ProxyNodes() {
     }
     return new Set();
   };
-  
+
   // 使用函数初始化，确保只运行一次
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(loadSavedCollapsedState);
 
@@ -142,6 +147,11 @@ export default function ProxyNodes() {
   
   const [currentMode, setCurrentMode] = useState<string>('rule');
   const [layoutMode, setLayoutMode] = useState<'single' | 'double'>(() => {
+    // 检查是否在浏览器环境
+    if (typeof window === 'undefined') {
+      return 'single';
+    }
+
     try {
       const saved = localStorage.getItem('proxyGroupsLayoutMode');
       return (saved === 'double' ? 'double' : 'single') as 'single' | 'double';
@@ -150,6 +160,11 @@ export default function ProxyNodes() {
     }
   });
   const [sortMode, setSortMode] = useState<'default' | 'latency'>(() => {
+    // 检查是否在浏览器环境
+    if (typeof window === 'undefined') {
+      return 'default';
+    }
+
     try {
       const saved = localStorage.getItem('nodesSortMode');
       return (saved === 'latency' ? 'latency' : 'default') as 'default' | 'latency';
