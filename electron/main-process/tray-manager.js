@@ -14,69 +14,91 @@ module.exports = function initTrayManager(context) {
       return state.tray;
     }
 
-    let iconPath = null;
     const isMac = process.platform === 'darwin';
-
-    // macOS 模板图标文件名应以 Template 结尾,或手动设置 setTemplateImage
-    const iconFileNames = isMac
-      ? ['iconTemplate.png', 'ic_logo_serviceTemplate.png', 'ic_logo_service32x32.png', 'trayTemplate.png', 'favicon.ico']
-      : ['favicon.ico', 'ic_logo_service32x32.png'];
-
-    const possiblePaths = [];
-    for (const fileName of iconFileNames) {
-      possiblePaths.push(
-        context.isDev ? path.join(__dirname, `../public/${fileName}`) : null,
-        !context.isDev ? path.join(process.resourcesPath, `public/${fileName}`) : null,
-        !context.isDev ? path.join(process.resourcesPath, fileName) : null,
-        !context.isDev ? path.join(app.getAppPath(), `public/${fileName}`) : null,
-        !context.isDev ? path.join(app.getAppPath(), `out/${fileName}`) : null
-      );
-    }
-
-    const validPaths = possiblePaths.filter(Boolean);
-
-    for (const tryPath of validPaths) {
-      if (fs.existsSync(tryPath)) {
-        iconPath = tryPath;
-        console.log(`找到托盘图标: ${iconPath}`);
-        break;
-      }
-    }
-
-    if (!iconPath) {
-      iconPath = validPaths[0];
-      console.warn(`警告: 未找到托盘图标文件，使用默认路径: ${iconPath}`);
-    }
 
     try {
       let trayIcon;
 
-      // 尝试加载图标
-      if (fs.existsSync(iconPath)) {
-        console.log(`正在加载托盘图标: ${iconPath}`);
-        let originalIcon = nativeImage.createFromPath(iconPath);
+      if (isMac) {
+        // macOS: 使用模板图标
+        const iconFileName = 'iconTemplate.png';
+        let iconPath;
 
-        if (originalIcon.isEmpty()) {
-          console.warn(`图标加载失败或为空: ${iconPath}`);
-          trayIcon = nativeImage.createEmpty();
+        // 开发环境
+        if (context.isDev) {
+          iconPath = path.join(__dirname, '../public', iconFileName);
         } else {
-          console.log(`图标加载成功,尺寸: ${originalIcon.getSize().width}x${originalIcon.getSize().height}`);
+          // 生产环境：尝试多个可能的路径
+          const possiblePaths = [
+            path.join(process.resourcesPath, 'public', iconFileName),
+            path.join(process.resourcesPath, iconFileName),
+            path.join(app.getAppPath(), 'public', iconFileName)
+          ];
 
-          // macOS 上需要特殊处理
-          if (isMac) {
-            // 调整到标准托盘图标尺寸 (16 像素，参考 mihomo-party)
-            // 只指定 height，保持宽高比
-            trayIcon = originalIcon.resize({ height: 16 });
-            // 必须设置为模板图标，macOS 会自动根据系统主题调整颜色
-            trayIcon.setTemplateImage(true);
-            console.log('已设置为模板图标,尺寸: 16px (高度)');
-          } else {
-            trayIcon = originalIcon;
+          for (const tryPath of possiblePaths) {
+            if (fs.existsSync(tryPath)) {
+              iconPath = tryPath;
+              break;
+            }
+          }
+
+          if (!iconPath) {
+            iconPath = possiblePaths[0]; // 使用第一个作为默认
           }
         }
+
+        console.log(`[macOS] 托盘图标路径: ${iconPath}`);
+        console.log(`[macOS] 文件存在: ${fs.existsSync(iconPath)}`);
+
+        if (fs.existsSync(iconPath)) {
+          const icon = nativeImage.createFromPath(iconPath);
+          if (!icon.isEmpty()) {
+            console.log(`[macOS] 原始图标尺寸: ${icon.getSize().width}x${icon.getSize().height}`);
+            trayIcon = icon.resize({ height: 16 });
+            trayIcon.setTemplateImage(true);
+            console.log('[macOS] 托盘图标设置成功: 16px 高度, Template 模式');
+          } else {
+            console.warn('[macOS] 图标加载为空');
+            trayIcon = nativeImage.createEmpty();
+          }
+        } else {
+          console.warn(`[macOS] 图标文件不存在: ${iconPath}`);
+          trayIcon = nativeImage.createEmpty();
+        }
       } else {
-        console.warn(`图标文件不存在: ${iconPath}`);
-        trayIcon = nativeImage.createEmpty();
+        // Windows/Linux: 使用 favicon.ico
+        const iconFileName = 'favicon.ico';
+        let iconPath;
+
+        if (context.isDev) {
+          iconPath = path.join(__dirname, '../public', iconFileName);
+        } else {
+          const possiblePaths = [
+            path.join(process.resourcesPath, 'public', iconFileName),
+            path.join(process.resourcesPath, iconFileName),
+            path.join(app.getAppPath(), 'public', iconFileName)
+          ];
+
+          for (const tryPath of possiblePaths) {
+            if (fs.existsSync(tryPath)) {
+              iconPath = tryPath;
+              break;
+            }
+          }
+
+          if (!iconPath) {
+            iconPath = possiblePaths[0];
+          }
+        }
+
+        console.log(`托盘图标路径: ${iconPath}`);
+
+        if (fs.existsSync(iconPath)) {
+          trayIcon = nativeImage.createFromPath(iconPath);
+        } else {
+          console.warn(`图标文件不存在: ${iconPath}`);
+          trayIcon = nativeImage.createEmpty();
+        }
       }
 
       state.tray = new Tray(trayIcon);
