@@ -64,17 +64,12 @@ module.exports = function initTrayManager(context) {
 
           // macOS 上需要特殊处理
           if (isMac) {
-            // 调整到标准托盘图标尺寸
-            const resized = originalIcon.resize({ width: 22, height: 22 });
-
-            // 获取图片数据并反转颜色(白色->黑色)
-            const buffer = resized.toPNG();
-
-            // 使用 sharp 或直接使用反转后的图标
-            // 这里我们先尝试直接使用,如果是白色图标,需要手动转换
-            trayIcon = resized;
+            // 调整到标准托盘图标尺寸 (16-18 像素)
+            // 只指定 height，保持宽高比
+            trayIcon = originalIcon.resize({ height: 18 });
+            // 必须设置为模板图标，macOS 会自动根据系统主题调整颜色
             trayIcon.setTemplateImage(true);
-            console.log('已设置为模板图标,尺寸: 22x22');
+            console.log('已设置为模板图标,尺寸: 18px (高度)');
           } else {
             trayIcon = originalIcon;
           }
