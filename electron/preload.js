@@ -70,6 +70,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSilentStart: () => ipcRenderer.invoke('get-silent-start'),
   setSilentStart: (enabled) => ipcRenderer.invoke('set-silent-start', enabled),
 
+  // 通用设置处理器
+  getSetting: (key, defaultValue) => ipcRenderer.invoke('get-setting', key, defaultValue),
+  setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
+
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),

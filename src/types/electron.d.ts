@@ -131,6 +131,10 @@ export interface ElectronAPI {
   getSilentStart: () => Promise<{ success: boolean, silentStart: boolean, error?: string }>;
   setSilentStart: (enabled: boolean) => Promise<{ success: boolean, error?: string }>;
 
+  // 通用设置处理器
+  getSetting: (key: string, defaultValue?: any) => Promise<{ success: boolean, value: any, error?: string }>;
+  setSetting: (key: string, value: any) => Promise<{ success: boolean, error?: string }>;
+
   // 消息通信
   onMessage: (channel: string, callback: (data: any) => void) => (() => void);
   

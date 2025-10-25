@@ -267,8 +267,9 @@ export default function Dashboard() {
   useEffect(() => {
     if (!electron) return;
     let cancelled = false;
+    let retryTimeoutId: NodeJS.Timeout | null = null;
 
-    const bootstrap = async () => {
+    const bootstrap = async (retryCount = 0) => {
       try {
         const status = await electron.getProxyStatus?.();
         if (!cancelled && typeof status === 'boolean') {
@@ -291,8 +292,17 @@ export default function Dashboard() {
             setPreferredConfig(config);
             setIsRunning(true);
             await syncCurrentNode();
+            await syncProxyMode();
           } else {
             setIsRunning(false);
+            // macOS: 服务可能正在启动中，等待后重试
+            if (retryCount < 3) {
+              retryTimeoutId = setTimeout(() => {
+                if (!cancelled) {
+                  bootstrap(retryCount + 1);
+                }
+              }, 1000);
+            }
           }
         }
       } catch {}
@@ -325,20 +335,26 @@ export default function Dashboard() {
         }
       } catch {}
 
-      try {
-        const mode = await fetchProxyMode();
-        if (!cancelled && mode) {
-          setProxyMode(mode);
-        }
-      } catch {}
+      // 只在首次加载或状态更新时获取代理模式
+      if (retryCount === 0) {
+        try {
+          const mode = await fetchProxyMode();
+          if (!cancelled && mode) {
+            setProxyMode(mode);
+          }
+        } catch {}
+      }
     };
 
     bootstrap();
 
     return () => {
       cancelled = true;
+      if (retryTimeoutId) {
+        clearTimeout(retryTimeoutId);
+      }
     };
-  }, [electron, fetchProxyMode, hydrateConnections, syncCurrentNode]);
+  }, [electron, fetchProxyMode, hydrateConnections, syncCurrentNode, syncProxyMode]);
 
   useEffect(() => {
     if (!electron?.getTrafficStats) return;

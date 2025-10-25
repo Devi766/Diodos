@@ -6,7 +6,7 @@ import {
 } from '@/types/dashboard';
 
 // 检查是否在 Electron 环境中
-const isElectron = typeof window !== 'undefined' && window.electron;
+const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 export function useDashboardCards() {
   const [cards, setCards] = useState<DashboardCard[]>(DEFAULT_DASHBOARD_CARDS);
@@ -18,7 +18,7 @@ export function useDashboardCards() {
       try {
         if (isElectron) {
           // Electron 环境：使用 IPC 从数据库读取
-          const result = await window.electron.ipcRenderer.invoke('get-setting', DASHBOARD_CONFIG_KEY, null);
+          const result = await window.electronAPI.getSetting(DASHBOARD_CONFIG_KEY, null);
           if (result.success && result.value) {
             setCards(result.value as DashboardCard[]);
           }
@@ -43,7 +43,7 @@ export function useDashboardCards() {
     try {
       if (isElectron) {
         // Electron 环境：使用 IPC 保存到数据库
-        const result = await window.electron.ipcRenderer.invoke('set-setting', DASHBOARD_CONFIG_KEY, newCards);
+        const result = await window.electronAPI.setSetting(DASHBOARD_CONFIG_KEY, newCards);
         if (result.success) {
           setCards(newCards);
         } else {
