@@ -38,90 +38,107 @@ export function useDashboardCards() {
     loadCards();
   }, []);
 
-  // 保存配置到存储
-  const saveCards = useCallback(async (newCards: DashboardCard[]) => {
+  // 保存配置到存储(仅保存,不更新状态)
+  const saveCardsToStorage = useCallback(async (newCards: DashboardCard[]) => {
     try {
       if (isElectron) {
         // Electron 环境：使用 IPC 保存到数据库
         const result = await window.electronAPI.setSetting(DASHBOARD_CONFIG_KEY, newCards);
-        if (result.success) {
-          setCards(newCards);
-        } else {
+        if (!result.success) {
           console.error('Failed to save dashboard config:', result.error);
+          return false;
         }
       } else {
         // 浏览器环境：使用 localStorage
         localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(newCards));
-        setCards(newCards);
       }
+      return true;
     } catch (error) {
       console.error('Failed to save dashboard config:', error);
+      return false;
     }
   }, []);
 
   // 更新卡片顺序
   const reorderCards = useCallback(
     async (startIndex: number, endIndex: number) => {
-      // 只对已启用的卡片进行排序
-      const enabledCardsList = cards
-        .filter((card) => card.enabled)
-        .sort((a, b) => a.order - b.order);
+      // 使用函数式更新,避免闭包问题
+      setCards((currentCards) => {
+        // 只对已启用的卡片进行排序
+        const enabledCardsList = currentCards
+          .filter((card) => card.enabled)
+          .sort((a, b) => a.order - b.order);
 
-      const result = Array.from(enabledCardsList);
-      const [removed] = result.splice(startIndex, 1);
-      result.splice(endIndex, 0, removed);
+        const result = Array.from(enabledCardsList);
+        const [removed] = result.splice(startIndex, 1);
+        result.splice(endIndex, 0, removed);
 
-      // 更新order字段
-      const reorderedEnabledCards = result.map((card, index) => ({
-        ...card,
-        order: index,
-      }));
+        // 更新order字段
+        const reorderedEnabledCards = result.map((card, index) => ({
+          ...card,
+          order: index,
+        }));
 
-      // 合并未启用的卡片
-      const disabledCards = cards.filter((card) => !card.enabled);
-      const allCards = [...reorderedEnabledCards, ...disabledCards];
+        // 合并未启用的卡片
+        const disabledCards = currentCards.filter((card) => !card.enabled);
+        const newCards = [...reorderedEnabledCards, ...disabledCards];
 
-      await saveCards(allCards);
+        // 异步保存到数据库(不阻塞UI更新)
+        saveCardsToStorage(newCards);
+
+        return newCards;
+      });
     },
-    [cards, saveCards],
+    [saveCardsToStorage],
   );
 
   // 切换卡片启用状态
   const toggleCard = useCallback(
     async (cardId: string) => {
-      const updatedCards = cards.map((card) =>
-        card.id === cardId ? { ...card, enabled: !card.enabled } : card,
-      );
-      await saveCards(updatedCards);
+      setCards((currentCards) => {
+        const updatedCards = currentCards.map((card) =>
+          card.id === cardId ? { ...card, enabled: !card.enabled } : card,
+        );
+        saveCardsToStorage(updatedCards);
+        return updatedCards;
+      });
     },
-    [cards, saveCards],
+    [saveCardsToStorage],
   );
 
   // 添加卡片
   const addCard = useCallback(
     async (card: DashboardCard) => {
-      const maxOrder = Math.max(...cards.map((c) => c.order), -1);
-      const newCard = { ...card, enabled: true, order: maxOrder + 1 };
-      await saveCards([...cards, newCard]);
+      setCards((currentCards) => {
+        const maxOrder = Math.max(...currentCards.map((c) => c.order), -1);
+        const newCard = { ...card, enabled: true, order: maxOrder + 1 };
+        const updatedCards = [...currentCards, newCard];
+        saveCardsToStorage(updatedCards);
+        return updatedCards;
+      });
     },
-    [cards, saveCards],
+    [saveCardsToStorage],
   );
 
   // 删除卡片
   const removeCard = useCallback(
     async (cardId: string) => {
-      const updatedCards = cards
-        .filter((card) => card.id !== cardId)
-        .map((card, index) => ({ ...card, order: index }));
-      await saveCards(updatedCards);
+      setCards((currentCards) => {
+        const updatedCards = currentCards
+          .filter((card) => card.id !== cardId)
+          .map((card, index) => ({ ...card, order: index }));
+        saveCardsToStorage(updatedCards);
+        return updatedCards;
+      });
     },
-    [cards, saveCards],
+    [saveCardsToStorage],
   );
 
   // 重置为默认配置
   const resetToDefault = useCallback(async () => {
-    await saveCards(DEFAULT_DASHBOARD_CARDS);
-  }, [saveCards]);
+    setCards(DEFAULT_DASHBOARD_CARDS);
+    await saveCardsToStorage(DEFAULT_DASHBOARD_CARDS);
+  }, [saveCardsToStorage]);
 
   // 获取已启用的卡片(按order排序)
   const enabledCards = cards
