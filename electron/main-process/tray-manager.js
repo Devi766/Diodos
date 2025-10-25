@@ -17,10 +17,10 @@ module.exports = function initTrayManager(context) {
     let iconPath = null;
     const isMac = process.platform === 'darwin';
 
-    // macOS 使用 ic_logo_service32x32, Windows 使用 favicon.ico
+    // macOS 模板图标文件名应以 Template 结尾,或手动设置 setTemplateImage
     const iconFileNames = isMac
-      ? ['ic_logo_service32x32.png', 'ic_logo_service.png', 'trayTemplate.png', 'favicon.ico']
-      : ['favicon.ico', 'ic_logo_service32x32.png', 'ic_logo_service.png'];
+      ? ['ic_logo_serviceTemplate.png', 'ic_logo_service32x32.png', 'trayTemplate.png', 'favicon.ico']
+      : ['favicon.ico', 'ic_logo_service32x32.png'];
 
     const possiblePaths = [];
     for (const fileName of iconFileNames) {
