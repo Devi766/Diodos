@@ -15,7 +15,10 @@ export default function Settings() {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [theme, setTheme] = useState('system');
-  const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid'>('dynamic');
+  const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid' | 'custom'>('dynamic');
+  const [customBackground, setCustomBackground] = useState('');
+  const [backgroundOpacity, setBackgroundOpacity] = useState(80);
+  const [backgroundBlur, setBackgroundBlur] = useState(10);
   const [appVersion, setAppVersion] = useState('');
   const [subscriptionUA, setSubscriptionUA] = useState('MihomoParty');
   const [kernelPath, setKernelPath] = useState('');

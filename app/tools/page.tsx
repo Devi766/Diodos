@@ -495,7 +495,7 @@ export default function ToolsPage() {
           {/* EnableLoopback 工具 - 仅在 Windows 上显示 */}
           {!isMacOS && (
             <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-              <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
+              <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
                   <NetworkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                   <CardTitle>EnableLoopback</CardTitle>
@@ -522,7 +522,7 @@ export default function ToolsPage() {
           {/* 网络测速工具 - 仅在 Windows 上显示 */}
           {!isMacOS && (
             <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-              <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
+              <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
                   <Gauge className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                   <CardTitle>网络测速</CardTitle>
@@ -547,7 +547,7 @@ export default function ToolsPage() {
           )}
 
           <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
+            <CardHeader className="pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <Play className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 <CardTitle>媒体服务检测</CardTitle>
@@ -571,7 +571,7 @@ export default function ToolsPage() {
           </Card>
 
           <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-            <CardHeader className="bg-white dark:bg-[#2a2a2a] pb-6">
+            <CardHeader className="pb-6">
               <div className="flex items-center space-x-3 mb-2">
                 <ZapIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
                 <CardTitle>批量测速</CardTitle>

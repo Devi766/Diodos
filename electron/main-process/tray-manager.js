@@ -80,7 +80,7 @@ module.exports = function initTrayManager(context) {
         let iconPath;
 
         if (context.isDev) {
-          iconPath = path.join(__dirname, '../public', iconFileName);
+          iconPath = path.join(__dirname, '../../public', iconFileName);
         } else {
           const possiblePaths = [
             path.join(process.resourcesPath, 'public', iconFileName),
@@ -100,12 +100,21 @@ module.exports = function initTrayManager(context) {
           }
         }
 
-        console.log(`托盘图标路径: ${iconPath}`);
+        console.log(`[Windows/Linux] 托盘图标路径: ${iconPath}`);
+        console.log(`[Windows/Linux] 文件存在: ${fs.existsSync(iconPath)}`);
 
         if (fs.existsSync(iconPath)) {
           trayIcon = nativeImage.createFromPath(iconPath);
+
+          if (!trayIcon.isEmpty()) {
+            const size = trayIcon.getSize();
+            console.log(`[Windows/Linux] 原始图标尺寸: ${size.width}x${size.height}`);
+          } else {
+            console.warn('[Windows/Linux] 图标加载为空');
+            trayIcon = nativeImage.createEmpty();
+          }
         } else {
-          console.warn(`图标文件不存在: ${iconPath}`);
+          console.warn(`[Windows/Linux] 图标文件不存在: ${iconPath}`);
           trayIcon = nativeImage.createEmpty();
         }
       }
@@ -123,17 +132,45 @@ module.exports = function initTrayManager(context) {
       }
     }
 
-    state.tray.on('click', () => {
-      if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-      state.mainWindow.isVisible() ? state.mainWindow.hide() : state.mainWindow.show();
+    // 设置托盘事件监听
+    if (!isMac) {
+      // Windows/Linux: 左键点击显示/隐藏窗口
+      state.tray.on('click', () => {
+        if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+        state.mainWindow.isVisible() ? state.mainWindow.hide() : state.mainWindow.show();
+      });
+    }
+
+    // 右键点击时更新菜单（所有平台）
+    state.tray.on('right-click', async () => {
+      console.log('[托盘] 右键点击，更新菜单');
+      await updateTrayMenu();
     });
+
+    // macOS 特殊处理：点击图标时更新菜单（macOS 会自动显示菜单）
+    if (isMac) {
+      state.tray.on('click', async () => {
+        console.log('[托盘] macOS 点击，更新菜单');
+        await updateTrayMenu();
+      });
+    }
 
     return state.tray;
   }
 
+  let updateTrayMenuInProgress = false;
+
   async function updateTrayMenu() {
     if (!state.tray) await ensureTray();
     if (!state.tray) return;
+
+    // 防止重复更新
+    if (updateTrayMenuInProgress) {
+      console.log('[托盘菜单] 正在更新中，跳过本次请求');
+      return;
+    }
+
+    updateTrayMenuInProgress = true;
 
     try {
       const proxyEnabled = state.systemProxyEnabled;
@@ -141,8 +178,8 @@ module.exports = function initTrayManager(context) {
       const menuItems = [
         { label: '显示主窗口', click: () => state.mainWindow && state.mainWindow.show() },
         { type: 'separator' },
-        { label: '启用系统代理', type: 'checkbox', checked: proxyEnabled, click: context.toggleSystemProxy },
-        { label: '启用TUN模式', type: 'checkbox', checked: state.tunModeEnabled, click: context.toggleTunMode },
+        { label: '启用系统代理', type: 'checkbox', checked: proxyEnabled, click: (menuItem) => context.toggleSystemProxy(menuItem) },
+        { label: '启用TUN模式', type: 'checkbox', checked: state.tunModeEnabled, click: (menuItem) => context.toggleTunMode(menuItem) },
         {
           label: '断开所有连接',
           click: async () => {
@@ -152,7 +189,6 @@ module.exports = function initTrayManager(context) {
                 return;
               }
 
-              // Socket 模式: 使用 fetchMihomoAPI
               const response = await context.fetchMihomoAPI('/connections', {
                 method: 'DELETE'
               });
@@ -170,48 +206,276 @@ module.exports = function initTrayManager(context) {
         }
       ];
 
-      let nodeMenuItems = [];
-
+      // 添加代理模式选择菜单
+      let proxyModeItems = [];
       try {
         const isServiceRunning = await context.checkMihomoService();
         if (isServiceRunning && state.activeApiConfig) {
-          // Socket 模式: 使用 fetchMihomoAPI
-          const response = await context.fetchMihomoAPI('/proxies');
+          const response = await context.fetchMihomoAPI('/configs');
           if (response.ok) {
             const data = await response.json();
-            const proxyGroups = [];
+            const currentMode = data.mode || 'rule';
 
-            for (const [name, proxy] of Object.entries(data.proxies)) {
-              if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
-                if (proxy.all && proxy.all.length > 0) {
-                  if (name === 'PROXY' || name === 'GLOBAL') {
-                    proxyGroups.unshift({ name, type: proxy.type, all: proxy.all, now: proxy.now });
-                  } else {
-                    proxyGroups.push({ name, type: proxy.type, all: proxy.all, now: proxy.now });
+            const modeSubmenu = [
+              {
+                label: '规则模式',
+                type: 'radio',
+                checked: currentMode === 'rule',
+                click: async () => {
+                  try {
+                    const updateResponse = await context.fetchMihomoAPI('/configs', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ mode: 'rule' })
+                    });
+
+                    if (updateResponse.ok) {
+                      console.log('已切换到规则模式');
+                      setTimeout(() => updateTrayMenu(), 500);
+                    } else {
+                      console.error('切换模式失败:', updateResponse.statusText);
+                    }
+                  } catch (error) {
+                    console.error('切换模式时出错:', error);
+                  }
+                }
+              },
+              {
+                label: '全局模式',
+                type: 'radio',
+                checked: currentMode === 'global',
+                click: async () => {
+                  try {
+                    const updateResponse = await context.fetchMihomoAPI('/configs', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ mode: 'global' })
+                    });
+
+                    if (updateResponse.ok) {
+                      console.log('已切换到全局模式');
+                      setTimeout(() => updateTrayMenu(), 500);
+                    } else {
+                      console.error('切换模式失败:', updateResponse.statusText);
+                    }
+                  } catch (error) {
+                    console.error('切换模式时出错:', error);
+                  }
+                }
+              },
+              {
+                label: '直连模式',
+                type: 'radio',
+                checked: currentMode === 'direct',
+                click: async () => {
+                  try {
+                    const updateResponse = await context.fetchMihomoAPI('/configs', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ mode: 'direct' })
+                    });
+
+                    if (updateResponse.ok) {
+                      console.log('已切换到直连模式');
+                      setTimeout(() => updateTrayMenu(), 500);
+                    } else {
+                      console.error('切换模式失败:', updateResponse.statusText);
+                    }
+                  } catch (error) {
+                    console.error('切换模式时出错:', error);
                   }
                 }
               }
-            }
+            ];
+
+            proxyModeItems = [
+              { type: 'separator' },
+              { label: '代理模式', submenu: modeSubmenu }
+            ];
+          }
+        }
+      } catch (error) {
+        console.error('获取代理模式失败:', error);
+      }
+
+      // 添加配置文件选择菜单
+      let configMenuItems = [];
+      try {
+        const dbManager = context.dbManager;
+        if (dbManager) {
+          const subscriptions = dbManager.getAllSubscriptions();
+
+          if (subscriptions && subscriptions.length > 0) {
+            const currentConfigPath = state.configFilePath;
+
+            const configSubmenu = subscriptions.map((sub) => ({
+              label: sub.name,
+              type: 'radio',
+              checked: currentConfigPath === sub.file_path,
+              click: async () => {
+                try {
+                  if (currentConfigPath === sub.file_path) {
+                    console.log('已经在使用该配置');
+                    return;
+                  }
+
+                  console.log(`切换到配置: ${sub.name} (${sub.file_path})`);
+
+                  await context.mihomoService?.stopMihomo?.();
+
+                  const started = await context.mihomoService?.startMihomo?.(sub.file_path);
+
+                  if (started) {
+                    console.log('配置切换成功');
+                    state.configFilePath = sub.file_path;
+
+                    if (context.dbManager?.setSetting) {
+                      context.dbManager.setSetting('lastActiveConfig', sub.file_path);
+                    }
+
+                    setTimeout(() => updateTrayMenu(), 1000);
+                  } else {
+                    console.error('启动新配置失败');
+                  }
+                } catch (error) {
+                  console.error('切换配置时出错:', error);
+                }
+              }
+            }));
+
+            configMenuItems = [
+              { type: 'separator' },
+              { label: '配置文件', submenu: configSubmenu }
+            ];
+          }
+        }
+      } catch (error) {
+        console.error('获取配置列表失败:', error);
+      }
+
+      let nodeMenuItems = [];
+
+      try {
+        if (state.activeApiConfig) {
+          console.log('[托盘菜单] 开始获取节点列表...');
+
+          // 获取当前代理模式
+          const configResponse = await context.fetchMihomoAPI('/configs');
+          let currentMode = 'rule';
+          if (configResponse.ok) {
+            const configData = await configResponse.json();
+            currentMode = configData.mode || 'rule';
+            console.log('[托盘菜单] 当前代理模式:', currentMode);
+          }
+
+          // 直连模式下不显示节点菜单
+          if (currentMode === 'direct') {
+            console.log('[托盘菜单] 直连模式，跳过节点菜单');
+          } else {
+            const response = await context.fetchMihomoAPI('/proxies');
+            console.log('[托盘菜单] 获取代理响应状态:', response.ok);
+
+            if (response.ok) {
+              const data = await response.json();
+              console.log('[托盘菜单] 代理数据:', Object.keys(data.proxies || {}).length, '个条目');
+
+              // 获取配置文件顺序
+              let configOrder = null;
+              try {
+                if (context.dbManager && state.configFilePath) {
+                  const fs = require('fs');
+                  const yaml = require('js-yaml');
+
+                  if (fs.existsSync(state.configFilePath)) {
+                    const configContent = fs.readFileSync(state.configFilePath, 'utf8');
+                    const config = yaml.load(configContent);
+                    configOrder = {
+                      proxyGroups: config['proxy-groups'] || [],
+                      proxies: config.proxies || []
+                    };
+                    console.log('[托盘菜单] 成功加载配置文件顺序，代理组数:', configOrder.proxyGroups.length);
+                  }
+                }
+              } catch (error) {
+                console.log('[托盘菜单] 获取配置顺序失败:', error.message);
+              }
+
+              const proxyGroups = [];
+              const selectorGroups = {};
+
+              // 提取所有 selector 类型的组
+              for (const [name, proxy] of Object.entries(data.proxies || {})) {
+                if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
+                  // 全局模式只显示 GLOBAL 组
+                  if (currentMode === 'global' && name !== 'GLOBAL') {
+                    continue;
+                  }
+                  // 规则模式不显示 GLOBAL 组
+                  if (currentMode === 'rule' && name === 'GLOBAL') {
+                    continue;
+                  }
+
+                  if (proxy.all && proxy.all.length > 0) {
+                    selectorGroups[name] = proxy;
+                  }
+                }
+              }
+
+              // 按配置文件顺序排列
+              let groupsOrder = [];
+              if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
+                groupsOrder = configOrder.proxyGroups
+                  .filter(group => {
+                    if (currentMode === 'global' && group.name !== 'GLOBAL') return false;
+                    if (currentMode === 'rule' && group.name === 'GLOBAL') return false;
+                    return true;
+                  })
+                  .map(group => group.name);
+
+                // 添加 API 中有但配置文件中没有的组
+                const missingInConfig = Object.keys(selectorGroups).filter(name => !groupsOrder.includes(name));
+                groupsOrder.push(...missingInConfig);
+              } else {
+                groupsOrder = Object.keys(selectorGroups);
+              }
+
+              console.log('[托盘菜单] 代理组顺序:', groupsOrder.join(', '));
+
+              // 按顺序构建代理组
+              for (const groupName of groupsOrder) {
+                if (!selectorGroups[groupName]) continue;
+
+                const proxy = selectorGroups[groupName];
+                const configGroup = configOrder?.proxyGroups?.find(g => g.name === groupName);
+
+                // 确定节点顺序
+                let nodesOrder = proxy.all || [];
+                if (configGroup && configGroup.proxies && configGroup.proxies.length > 0) {
+                  const configNodeNames = configGroup.proxies;
+                  const apiNodeNames = proxy.all || [];
+                  const missingInConfig = apiNodeNames.filter(name => !configNodeNames.includes(name));
+                  nodesOrder = [...configNodeNames, ...missingInConfig];
+                }
+
+                proxyGroups.push({
+                  name: groupName,
+                  type: proxy.type,
+                  all: nodesOrder,
+                  now: proxy.now
+                });
+              }
+
+              console.log('[托盘菜单] 找到的代理组数量:', proxyGroups.length);
 
             if (proxyGroups.length > 0) {
               const groupSubmenuItems = [];
 
               for (const group of proxyGroups) {
                 const nodesSubmenu = [];
-                const sortedNodeNames = [...group.all].sort((a, b) => {
-                  if (a === group.now) return -1;
-                  if (b === group.now) return 1;
-                  const nodeA = data.proxies[a];
-                  const nodeB = data.proxies[b];
-                  const delayA = nodeA?.history?.[0]?.delay ?? -1;
-                  const delayB = nodeB?.history?.[0]?.delay ?? -1;
-                  if (delayA > 0 && delayB > 0) return delayA - delayB;
-                  if (delayA > 0) return -1;
-                  if (delayB > 0) return 1;
-                  return a.localeCompare(b);
-                });
+                // 使用配置文件中的节点顺序，不再按延迟排序
+                const nodeNames = group.all;
 
-                for (const nodeName of sortedNodeNames) {
+                for (const nodeName of nodeNames) {
                   const node = data.proxies[nodeName];
                   if (!node) continue;
 
@@ -272,16 +536,29 @@ module.exports = function initTrayManager(context) {
                 }
               }
 
-              nodeMenuItems = [{ type: 'separator' }, { label: '节点选择', submenu: groupSubmenuItems }];
+              nodeMenuItems = [{ type: 'separator' }, { label: '代理组', submenu: groupSubmenuItems }];
+              console.log('[托盘菜单] 节点菜单已创建，组数:', groupSubmenuItems.length);
+            } else {
+              console.log('[托盘菜单] 代理组列表为空');
+            }
+            } else {
+              console.log('[托盘菜单] 获取代理失败');
             }
           }
+        } else {
+          console.log('[托盘菜单] API配置不可用，跳过节点菜单');
         }
       } catch (error) {
-        console.error('获取节点列表失败:', error);
+        console.error('[托盘菜单] 获取节点列表失败:', error);
+        console.error(error.stack);
       }
+
+      console.log('[托盘菜单] 菜单项统计 - 基础:', menuItems.length, '模式:', proxyModeItems.length, '配置:', configMenuItems.length, '节点:', nodeMenuItems.length);
 
       const contextMenu = Menu.buildFromTemplate([
         ...menuItems,
+        ...proxyModeItems,
+        ...configMenuItems,
         ...nodeMenuItems,
         { type: 'separator' },
         {
@@ -294,6 +571,7 @@ module.exports = function initTrayManager(context) {
       ]);
 
       state.tray.setContextMenu(contextMenu);
+      console.log('[托盘菜单] 菜单已更新');
 
       if (state.currentNode) {
         state.tray.setToolTip(`FlyClash - ${state.currentNode}`);
@@ -314,6 +592,8 @@ module.exports = function initTrayManager(context) {
         }
       ]);
       state.tray.setContextMenu(basicMenu);
+    } finally {
+      updateTrayMenuInProgress = false;
     }
   }
 

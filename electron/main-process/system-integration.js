@@ -146,15 +146,51 @@ module.exports = function initSystemIntegration(context) {
       userSettings.tun.enable = menuItem.checked;
 
       if (menuItem.checked) {
-        userSettings.tun = {
-          ...userSettings.tun,
-          enable: true,
-          stack: 'system',
-          'auto-route': true,
-          'auto-detect-interface': true,
-          'dns-hijack': ['any:53']
-        };
-        console.log('启用TUN模式，配置:', userSettings.tun);
+        // 从数据库加载保存的 TUN 配置
+        const savedTunConfig = dbManager.getSetting('tunConfig', null);
+
+        if (savedTunConfig) {
+          // 使用保存的配置
+          userSettings.tun = {
+            enable: true,
+            device: savedTunConfig.device,
+            stack: savedTunConfig.stack,
+            'auto-route': savedTunConfig.autoRoute,
+            'auto-redirect': savedTunConfig.autoRedirect,
+            'auto-detect-interface': savedTunConfig.autoDetectInterface,
+            'dns-hijack': savedTunConfig.dnsHijack,
+            'strict-route': savedTunConfig.strictRoute,
+            'route-exclude-address': savedTunConfig.routeExcludeAddress,
+            mtu: savedTunConfig.mtu
+          };
+
+          // macOS 特有配置
+          if (process.platform === 'darwin' && savedTunConfig.autoSetDNS !== undefined) {
+            userSettings.tun['auto-set-dns'] = savedTunConfig.autoSetDNS;
+          }
+
+          console.log('启用TUN模式，使用保存的配置:', userSettings.tun);
+        } else {
+          // 使用默认配置
+          userSettings.tun = {
+            enable: true,
+            device: process.platform === 'darwin' ? 'utun1500' : 'Mihomo',
+            stack: 'mixed',
+            'auto-route': true,
+            'auto-redirect': false,
+            'auto-detect-interface': true,
+            'dns-hijack': ['any:53'],
+            'strict-route': false,
+            'route-exclude-address': [],
+            mtu: 1500
+          };
+
+          if (process.platform === 'darwin') {
+            userSettings.tun['auto-set-dns'] = true;
+          }
+
+          console.log('启用TUN模式，使用默认配置:', userSettings.tun);
+        }
       } else {
         userSettings.tun.enable = false;
         console.log('禁用TUN模式');

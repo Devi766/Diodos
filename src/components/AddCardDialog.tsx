@@ -51,7 +51,7 @@ export function AddCardDialog({
         <DialogHeader>
           <DialogTitle>添加卡片</DialogTitle>
           <DialogDescription>
-            选择要添加到控制面板的卡片
+            选择要添加到仪表盘的卡片
           </DialogDescription>
         </DialogHeader>
 

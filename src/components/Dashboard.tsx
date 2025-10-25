@@ -760,7 +760,7 @@ export default function Dashboard() {
     <div className="space-y-5">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">控制面板</h1>
+          <h1 className="text-2xl font-semibold text-foreground">仪表盘</h1>
           <p className="mt-1 text-sm text-muted-foreground">查看内核运行情况并快速调整常用开关</p>
         </div>
         <div className="flex flex-col items-start gap-2 md:items-end">

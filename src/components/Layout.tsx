@@ -105,8 +105,8 @@ export default function Layout({ children }: LayoutProps) {
   
   const menuItems = useMemo(() => {
     const items = [
-      { name: '控制面板', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
-      { name: '节点管理', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
+      { name: '仪表盘', href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
+      { name: '代理组', href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
       { name: '配置管理', href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
       { name: '连接数据', href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
       { name: '匹配规则', href: '/match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
