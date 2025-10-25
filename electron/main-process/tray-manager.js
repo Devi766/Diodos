@@ -54,19 +54,29 @@ module.exports = function initTrayManager(context) {
       // 尝试加载图标
       if (fs.existsSync(iconPath)) {
         console.log(`正在加载托盘图标: ${iconPath}`);
-        trayIcon = nativeImage.createFromPath(iconPath);
+        let originalIcon = nativeImage.createFromPath(iconPath);
 
-        if (trayIcon.isEmpty()) {
+        if (originalIcon.isEmpty()) {
           console.warn(`图标加载失败或为空: ${iconPath}`);
-          // 尝试创建一个简单的占位图标
           trayIcon = nativeImage.createEmpty();
         } else {
-          console.log(`图标加载成功,尺寸: ${trayIcon.getSize().width}x${trayIcon.getSize().height}`);
+          console.log(`图标加载成功,尺寸: ${originalIcon.getSize().width}x${originalIcon.getSize().height}`);
 
-          // macOS 上设置为模板图标
+          // macOS 上需要特殊处理
           if (isMac) {
+            // 调整到标准托盘图标尺寸
+            const resized = originalIcon.resize({ width: 22, height: 22 });
+
+            // 获取图片数据并反转颜色(白色->黑色)
+            const buffer = resized.toPNG();
+
+            // 使用 sharp 或直接使用反转后的图标
+            // 这里我们先尝试直接使用,如果是白色图标,需要手动转换
+            trayIcon = resized;
             trayIcon.setTemplateImage(true);
-            console.log('已设置为模板图标');
+            console.log('已设置为模板图标,尺寸: 22x22');
+          } else {
+            trayIcon = originalIcon;
           }
         }
       } else {
