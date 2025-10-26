@@ -8,6 +8,7 @@ import { Switch } from './ui/switch';
 import OverrideSettings, { OverrideSettingsRef } from './OverrideSettings';
 import { Button } from './ui/button';
 import TunSettings from './TunSettings';
+import BackupSettings from './BackupSettings';
 import { useTranslation } from 'react-i18next';
 
 export default function Settings() {
@@ -585,6 +586,12 @@ export default function Settings() {
                 {t('settings.tun')}
               </Tabs.Trigger>
               <Tabs.Trigger
+                value="backup"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+              >
+                {t('settings.backup')}
+              </Tabs.Trigger>
+              <Tabs.Trigger
                 value="about"
                 className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
               >
@@ -1006,6 +1013,10 @@ export default function Settings() {
 
             <Tabs.Content value="tun" className="w-full">
               <TunSettings />
+            </Tabs.Content>
+
+            <Tabs.Content value="backup" className="w-full">
+              <BackupSettings />
             </Tabs.Content>
 
             <Tabs.Content value="about" className="w-full">

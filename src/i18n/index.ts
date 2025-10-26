@@ -27,6 +27,10 @@ i18n
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage']
+    },
+    // 避免 SSR hydration 不匹配：在服务器端跳过语言检测
+    react: {
+      useSuspense: false
     }
   });
 

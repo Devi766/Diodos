@@ -31,6 +31,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
       return false;
@@ -42,6 +43,11 @@ export default function Layout({ children }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('0.1.7');
   const { hasProviders } = useProviderAvailability();
+
+  // 避免 SSR hydration 不匹配
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -636,7 +642,9 @@ export default function Layout({ children }: LayoutProps) {
             {!sidebarCollapsed && (
               <div className="leading-tight">
                 <span className="block text-sm font-semibold text-foreground">FlyClash</span>
-                <span className="text-xs text-muted-foreground">{t('layout.desktopClient')}</span>
+                <span className="text-xs text-muted-foreground">
+                  {mounted ? t('layout.desktopClient') : '\u00A0'}
+                </span>
               </div>
             )}
           </div>
@@ -644,7 +652,7 @@ export default function Layout({ children }: LayoutProps) {
           <div className="flex-1 px-3 pb-4">
             <nav className="flex flex-col gap-1">
               {menuItems.map((item) => (
-                <Link 
+                <Link
                   key={item.href}
                   href={item.href}
                   className={getNavLinkClass(item.href, sidebarCollapsed)}
@@ -652,8 +660,8 @@ export default function Layout({ children }: LayoutProps) {
                   <span className={getIconWrapperClass(item.href, sidebarCollapsed)}>
                     {item.icon}
                   </span>
-                  {!sidebarCollapsed && <span className="text-[13px]">{item.name}</span>}
-                  {sidebarCollapsed && <span className="sr-only">{item.name}</span>}
+                  {!sidebarCollapsed && <span className="text-[13px]">{mounted ? item.name : '\u00A0'}</span>}
+                  {sidebarCollapsed && <span className="sr-only">{mounted ? item.name : '\u00A0'}</span>}
                 </Link>
               ))}
             </nav>
@@ -707,7 +715,7 @@ export default function Layout({ children }: LayoutProps) {
                     <span className={getIconWrapperClass(item.href, false)}>
                       {item.icon}
                     </span>
-                    <span className="text-[13px]">{item.name}</span>
+                    <span className="text-[13px]">{mounted ? item.name : '\u00A0'}</span>
                   </Link>
                 ))}
               </div>

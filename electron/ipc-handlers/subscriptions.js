@@ -392,7 +392,30 @@ module.exports = function registerSubscriptionHandlers(context) {
 
       dbManager.updateSubscriptionByPath(oldPath, updates);
 
-      return { success: true, newPath };
+      // 如果文件路径改变了
+      if (oldPath !== newPath) {
+        // 1. 刷新订阅调度器
+        const scheduler = context.get('subscriptionScheduler');
+        if (scheduler) {
+          console.log('配置文件路径已更改，刷新订阅调度器');
+          scheduler.refresh();
+        }
+
+        // 2. 如果改名的是当前激活的配置，更新 activeConfig 状态
+        if (context.state?.configFilePath === oldPath) {
+          console.log('当前激活的配置被重命名，更新 activeConfig 状态');
+          context.state.configFilePath = newPath;
+
+          // 通知前端更新
+          if (context.state.mainWindow && !context.state.mainWindow.isDestroyed()) {
+            context.state.mainWindow.webContents.send('active-config-changed', newPath);
+          }
+        }
+      }
+
+      // 返回最终使用的路径（如果没改名就是oldPath，改名了就是newPath）
+      const finalPath = oldPath !== newPath ? newPath : oldPath;
+      return { success: true, newPath: finalPath };
     } catch (error) {
       console.error('编辑配置失败:', error);
       throw error;

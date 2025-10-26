@@ -702,23 +702,25 @@ export default function SubscriptionManager() {
     try {
       setIsLoading(true);
 
-      // 调用后端API保存编辑
-      await window.electronAPI.editSubscription({
+      // 调用后端API保存编辑，获取返回的新路径
+      const result = await window.electronAPI.editSubscription({
         oldPath: editingSub.path,
         newName: editingName,
         newUrl: editingUrl
       });
 
-      // 保存覆写设置
-      const newPath = editingSub.path.replace(/[^/\\]+\.yaml$/, `${editingName.replace(/[/\\?%*:|"<>]/g, '_')}.yaml`);
+      // 使用后端返回的正确路径（而不是自己计算）
+      const finalPath = result?.newPath || editingSub.path;
+
+      // 保存覆写设置 - 使用后端返回的正确路径
       await window.electronAPI.setSubscriptionOverrides(
-        editingName !== editingSub.name ? newPath : editingSub.path,
+        finalPath,
         editingOverrides
       );
 
-      // 保存自动更新间隔
+      // 保存自动更新间隔 - 使用后端返回的正确路径
       await window.electronAPI.setSubscriptionUpdateInterval(
-        editingName !== editingSub.name ? newPath : editingSub.path,
+        finalPath,
         editingUpdateInterval
       );
 

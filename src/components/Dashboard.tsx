@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { CustomizableDashboard } from '@/components/CustomizableDashboard';
 import { Settings2, Plus, RotateCcw, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useThemeColor } from '@/hooks/useThemeColor';
 
 type ProxyMode = 'rule' | 'global' | 'direct';
 
@@ -98,6 +99,7 @@ const resolveElectron = () => {
 
 export default function Dashboard() {
   const { t } = useTranslation();
+  const themeColor = useThemeColor();
   const [isRunning, setIsRunning] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [tunEnabled, setTunEnabled] = useState(false);
@@ -246,6 +248,12 @@ export default function Dashboard() {
 
   const showBanner = (payload: BannerState | null) => {
     setBanner(payload);
+    // 3秒后自动关闭
+    if (payload) {
+      setTimeout(() => {
+        setBanner(null);
+      }, 3000);
+    }
   };
 
   const refreshProxyStatus = useCallback(async () => {
@@ -824,10 +832,10 @@ export default function Dashboard() {
       {banner && (
         <div
           className={cn(
-            'rounded-xl border px-4 py-3 text-sm shadow-sm',
-            banner.type === 'success' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
-            banner.type === 'error' && 'border-rose-200 bg-rose-50 text-rose-600',
-            banner.type === 'info' && 'border-slate-200 bg-slate-50 text-slate-600'
+            'rounded-xl border px-4 py-3 text-sm shadow-sm transition-all duration-300 animate-in slide-in-from-top-2',
+            banner.type === 'success' && 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400',
+            banner.type === 'error' && 'border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-400',
+            banner.type === 'info' && 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/20 dark:text-slate-300'
           )}
         >
           {banner.message}
@@ -881,15 +889,26 @@ export default function Dashboard() {
             >
               {t('dashboard.reconsider')}
             </Button>
-            <Button
+            <button
               type="button"
               onClick={async () => {
                 setTunConfirmOpen(false);
                 await runTunToggle(true);
               }}
+              className="relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-11 px-5 transition-all hover:brightness-110"
+              style={{
+                backgroundColor: themeColor,
+                boxShadow: `0 20px 42px -22px ${themeColor}70`
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow = `0 24px 52px -20px ${themeColor}90`;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = `0 20px 42px -22px ${themeColor}70`;
+              }}
             >
               {t('dashboard.confirmEnable')}
-            </Button>
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

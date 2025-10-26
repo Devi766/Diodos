@@ -520,6 +520,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTrafficMonth: (yearMonth) => ipcRenderer.invoke('traffic-history:get-month', yearMonth),
   getTrafficYear: (year) => ipcRenderer.invoke('traffic-history:get-year', year),
   getTrafficByDate: (date) => ipcRenderer.invoke('traffic-history:get-by-date', date),
+
+  // 备份与还原
+  backupCreateLocal: (backupType) => ipcRenderer.invoke('backup-create-local', backupType),
+  backupRestoreLocal: () => ipcRenderer.invoke('backup-restore-local'),
+  backupWebDAVTest: (config) => ipcRenderer.invoke('backup-webdav-test', config),
+  backupWebDAVUpload: (backupType) => ipcRenderer.invoke('backup-webdav-upload', backupType),
+  backupWebDAVDownload: (fileName = null) => ipcRenderer.invoke('backup-webdav-download', fileName),
+  backupWebDAVList: () => ipcRenderer.invoke('backup-webdav-list'),
+  backupWebDAVDelete: (fileName) => ipcRenderer.invoke('backup-webdav-delete', fileName),
+  backupWebDAVSaveConfig: (config) => ipcRenderer.invoke('backup-webdav-save-config', config),
+  backupWebDAVGetConfig: () => ipcRenderer.invoke('backup-webdav-get-config'),
+  onBackupUploadProgress: (callback) => {
+    const listener = (event, progress) => callback(progress);
+    ipcRenderer.on('backup-upload-progress', listener);
+    return () => ipcRenderer.removeListener('backup-upload-progress', listener);
+  },
+  onBackupDownloadProgress: (callback) => {
+    const listener = (event, progress) => callback(progress);
+    ipcRenderer.on('backup-download-progress', listener);
+    return () => ipcRenderer.removeListener('backup-download-progress', listener);
+  },
 });
 
 // 移除重复的事件监听器

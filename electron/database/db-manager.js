@@ -181,6 +181,11 @@ class DatabaseManager {
       fields.push('url = ?');
       values.push(updates.url);
     }
+    // 支持更新 file_path（用于配置重命名）
+    if (updates.file_path !== undefined) {
+      fields.push('file_path = ?');
+      values.push(updates.file_path);
+    }
 
     fields.push('updated_at = ?');
     values.push(Date.now());

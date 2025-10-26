@@ -443,6 +443,10 @@ registerOverrideHandlers(context);
 const { registerTrafficHistoryHandlers } = require('./ipc-handlers/traffic-history');
 registerTrafficHistoryHandlers(context);
 
+// 注册备份处理器
+const registerBackupHandlers = require('./ipc-handlers/backup');
+registerBackupHandlers(context);
+
 // 导入批量测速模块
 const {
   initBatchSpeedtest,
