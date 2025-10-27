@@ -55,6 +55,7 @@
     "@radix-ui/react-toast": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.1.8",
     "@types/js-yaml": "^4.0.9",
+    "adm-zip": "^0.5.16",
     "axios": "^1.8.4",
     "better-sqlite3": "^11.8.1",
     "class-variance-authority": "^0.7.1",
@@ -86,6 +87,7 @@
     "tailwind-merge": "^3.2.0",
     "tailwindcss-animate": "^1.0.7",
     "uuid": "13.0.0",
+    "webdav": "^5.8.0",
     "ws": "^8.18.1",
     "zustand": "^5.0.3"
   },
@@ -97,7 +99,6 @@
     "@types/react-dom": "^19",
     "@types/react-virtualized-auto-sizer": "^1.0.4",
     "@types/react-window": "^1.8.8",
-    "adm-zip": "^0.5.10",
     "autoprefixer": "^10.4.15",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",

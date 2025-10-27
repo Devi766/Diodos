@@ -566,7 +566,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getConfig: () => ipcRenderer.invoke('proxy-icon:get-config'),
     saveConfig: (config) => ipcRenderer.invoke('proxy-icon:save-config', config),
     addRule: (rule) => ipcRenderer.invoke('proxy-icon:add-rule', rule),
-    updateRule: (rule) => ipcRenderer.invoke('proxy-icon:update-rule', rule),
+    updateRule: (ruleId, updates) => ipcRenderer.invoke('proxy-icon:update-rule', ruleId, updates),
     deleteRule: (ruleId) => ipcRenderer.invoke('proxy-icon:delete-rule', ruleId),
     toggleRule: (ruleId, enabled) => ipcRenderer.invoke('proxy-icon:toggle-rule', ruleId, enabled),
     getGroupIcon: (groupName, configIcon) => ipcRenderer.invoke('proxy-icon:get-group-icon', groupName, configIcon),
