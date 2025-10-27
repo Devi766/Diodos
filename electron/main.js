@@ -447,6 +447,14 @@ registerTrafficHistoryHandlers(context);
 const registerBackupHandlers = require('./ipc-handlers/backup');
 registerBackupHandlers(context);
 
+// 注册代理图标处理器
+const { registerProxyIconHandlers } = require('./ipc-handlers/proxy-icon');
+registerProxyIconHandlers();
+
+// 注册订阅转换器处理器
+const { registerConverterHandlers } = require('./ipc-handlers/converter');
+registerConverterHandlers(app, dbManager);
+
 // 导入批量测速模块
 const {
   initBatchSpeedtest,
@@ -1801,6 +1809,33 @@ app.whenReady().then(() => {
 
   // 启动订阅调度器
   subscriptionScheduler.start();
+
+  // 自动启动转换器服务器
+  // 延迟执行,确保IPC处理器已注册
+  setTimeout(async () => {
+    try {
+      const fs = require('fs');
+      const settingsFile = path.join(app.getPath('userData'), 'converter-settings.json');
+      if (fs.existsSync(settingsFile)) {
+        const data = fs.readFileSync(settingsFile, 'utf-8');
+        const settings = JSON.parse(data);
+        if (settings.autoStart) {
+          console.log('[main.js] 自动启动转换器服务器...');
+          // 使用IPC处理器启动服务器,避免创建多个实例
+          const { getServer } = require('./ipc-handlers/converter');
+          const server = getServer(app);
+          try {
+            await server.start();
+            console.log('[main.js] 转换器服务器自动启动成功');
+          } catch (error) {
+            console.error('[main.js] 转换器服务器自动启动失败:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[main.js] 检查转换器自动启动设置失败:', error);
+    }
+  }, 1000);
 
   // 注册批量测速相关的 IPC handlers
   ipcMain.handle('run-proxy-speedtest', async (event, options) => {

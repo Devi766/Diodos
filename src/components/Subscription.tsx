@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 type Subscription = {
   name: string;
   path: string;
+  url?: string | null;
   // 配置信息字段
   usedTraffic?: string | null;
   remainingTraffic?: string | null;
@@ -290,7 +291,7 @@ export default function SubscriptionManager() {
 
     setSwitchingConfig(configPath);
 
-    try {
+    try{
       let result;
 
       // 检查服务是否正在运行
@@ -1108,7 +1109,7 @@ export default function SubscriptionManager() {
               </div>
             </div>
           ) : (
-            <div className="grid auto-rows-[minmax(170px,1fr)] grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid auto-rows-[minmax(130px,1fr)] grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
               {subscriptions.map((sub) => (
                 <div
                   key={sub.path}
@@ -1168,8 +1169,8 @@ export default function SubscriptionManager() {
                       </svg>
                     </button>
 
-                    {/* 刷新按钮 */}
-                    {(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate) && (
+                    {/* 刷新按钮 - 只要有URL就显示 */}
+                    {sub.url && (
                       <button
                         draggable="false"
                         onClick={(e) => {
@@ -1237,8 +1238,8 @@ export default function SubscriptionManager() {
                     {(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate || sub.lastUpdated) ? (
                       <div className="flex h-full flex-col justify-between rounded-xl bg-gray-50 p-2 text-[11px] transition-colors dark:bg-[#222222] group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20">
                         <div className="flex flex-col space-y-2">
-                          {/* 本地配置文件标识 */}
-                          {(!sub.usedTraffic && !sub.remainingTraffic && !sub.expiryDate) && (
+                          {/* 本地配置文件标识 - 只有没有URL时才显示 */}
+                          {!sub.url && (
                             <div className="flex flex-col items-center justify-center py-4 space-y-2">
                               <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -1683,8 +1684,8 @@ export default function SubscriptionManager() {
               {(draggedItem.usedTraffic || draggedItem.remainingTraffic || draggedItem.expiryDate || draggedItem.lastUpdated) ? (
                 <div className="flex h-full flex-col justify-between rounded-xl bg-gray-50 p-2 text-[11px] dark:bg-[#222222]">
                   <div className="flex flex-col space-y-2">
-                    {/* 本地配置文件标识 */}
-                    {(!draggedItem.usedTraffic && !draggedItem.remainingTraffic && !draggedItem.expiryDate) && (
+                    {/* 本地配置文件标识 - 只有没有URL时才显示 */}
+                    {!draggedItem.url && (
                       <div className="flex flex-col items-center justify-center py-4 space-y-2">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

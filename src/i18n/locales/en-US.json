@@ -9,6 +9,7 @@
     "update": "Update",
     "refresh": "Refresh",
     "close": "Close",
+    "ok": "OK",
     "loading": "Loading...",
     "success": "Success",
     "error": "Error",
@@ -709,6 +710,120 @@
     "deleteConfirmDesc": "Are you sure you want to delete backup file {{fileName}}?",
     "deleteSuccess": "Backup deleted successfully",
     "deleteFailed": "Failed to delete backup"
+  },
+
+  "proxyIcon": {
+    "title": "Proxy Group Icons",
+    "enableIcons": "Enable Proxy Group Icons",
+    "enableIconsDesc": "Display custom icons for proxy groups",
+    "rules": "Icon Rules",
+    "addRule": "Add Rule",
+    "editRule": "Edit Rule",
+    "noRules": "No rules yet, click the button above to add",
+    "ruleName": "Rule Name",
+    "ruleNamePlaceholder": "e.g., Hong Kong Nodes",
+    "regex": "Regular Expression",
+    "regexPlaceholder": "e.g., .*Hong Kong.*|.*HK.*",
+    "iconType": "Icon Type",
+    "type": "Type",
+    "iconUrl": "Icon URL",
+    "iconBase64": "Base64 Icon Data",
+    "priority": "Priority",
+    "priorityDesc": "Higher values have higher priority, rules with higher priority are matched first",
+    "clearCache": "Clear Icon Cache",
+    "clearCacheDesc": "Clear all downloaded icon cache files",
+    "cacheClearedSuccess": "Icon cache cleared successfully",
+    "iconSettings": "Icon Settings"
+  },
+  "converter": {
+    "title": "Config Converter",
+    "subtitle": "Convert config formats, supports Clash, Sing-box and more",
+    "input": {
+      "title": "Input Method",
+      "description": "Choose to fetch from URL or paste config content directly",
+      "url": "Config URL",
+      "content": "Config Content",
+      "urlPlaceholder": "Enter config URL...",
+      "contentPlaceholder": "Paste config content or share links..."
+    },
+    "proxies": {
+      "title": "Proxy Nodes",
+      "description": "Detected proxy nodes list",
+      "more": "{{count}} more nodes not shown"
+    },
+    "settings": {
+      "title": "Conversion Settings",
+      "description": "Configure target format and conversion options",
+      "targetFormat": "Target Format",
+      "filterRegex": "Node Filter",
+      "filterPlaceholder": "Enter regex to filter nodes (optional)",
+      "options": "Conversion Options",
+      "template": "Config Template",
+      "templateNone": "No Template (Nodes Only)",
+      "templateSelect": "Select Template",
+      "useTemplate": "Use Template",
+      "converterSettings": "Converter Settings",
+      "serverPort": "Server Port",
+      "serverPortHint": "Subscription server listening port, default 59999",
+      "autoStart": "Auto Start",
+      "autoStartHint": "Automatically start subscription server on app launch"
+    },
+    "options": {
+      "enableUdp": "Enable UDP",
+      "enableTcpFastOpen": "Enable TCP Fast Open",
+      "skipCertVerify": "Skip Certificate Verification",
+      "autoAddEmoji": "Auto Add Emoji"
+    },
+    "actions": {
+      "convert": "Start Conversion",
+      "converting": "Converting...",
+      "createSubscription": "Generate Config",
+      "export": "Export Config",
+      "addToConfig": "Add to Config"
+    },
+    "result": {
+      "title": "Conversion Result",
+      "success": "Successfully converted {{input}} nodes, output {{output}} nodes",
+      "output": "Conversion Output"
+    },
+    "subscription": {
+      "title": "Config URL",
+      "description": "Use this URL to subscribe in your client",
+      "hint": "Config server is running, you can use this URL to subscribe in your client"
+    },
+    "server": {
+      "running": "Server Running",
+      "stopped": "Server Stopped",
+      "start": "Start",
+      "stop": "Stop"
+    },
+    "errors": {
+      "emptyUrl": "Please enter config URL",
+      "emptyInput": "Please enter config content",
+      "fetchFailed": "Failed to fetch config: {{error}}",
+      "fetchError": "Error occurred while fetching config",
+      "convertFailed": "Conversion Failed",
+      "convertError": "Error occurred during conversion",
+      "subscriptionFailed": "Failed to create config: {{error}}",
+      "subscriptionError": "Error occurred while creating config",
+      "noResult": "No result to export",
+      "noSubscriptionUrl": "Please generate config URL first",
+      "formatNotSupported": "Current format does not support adding to config",
+      "addToConfigFailed": "Failed to add to config: {{error}}",
+      "addToConfigError": "Error occurred while adding to config",
+      "saveSettingsFailed": "Failed to save settings: {{error}}",
+      "saveSettingsError": "Error occurred while saving settings"
+    },
+    "success": {
+      "urlFetched": "Config content fetched successfully",
+      "converted": "Conversion successful: {{input}} → {{output}} nodes",
+      "subscriptionCreated": "Config created successfully",
+      "urlCopied": "Config URL copied",
+      "exported": "Config exported successfully",
+      "addedToConfig": "Added Successfully",
+      "addedToConfigHint": "The configuration has been successfully added to the config list. You can view and use it in the config page",
+      "settingsSaved": "Settings saved successfully"
+    }
   }
 }
 

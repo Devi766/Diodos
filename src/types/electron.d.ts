@@ -352,6 +352,36 @@ export interface ElectronAPI {
 
   // 移除监听器
   removeAllListeners: (prefix?: string) => void;
+
+  // 订阅转换器
+  converter?: {
+    convert: (params: any) => Promise<any>;
+    convertWithTemplate: (params: any) => Promise<any>;
+    fetchUrl: (url: string) => Promise<any>;
+    startServer: (params?: any) => Promise<any>;
+    stopServer: () => Promise<any>;
+    createSubscription: (params: any) => Promise<any>;
+    deleteSubscription: (id: string) => Promise<any>;
+    listSubscriptions: () => Promise<any>;
+    serverStatus: () => Promise<any>;
+    parseProxies: (input: string) => Promise<any>;
+    getTemplates: () => Promise<any>;
+    getTemplate: (templateId: string) => Promise<any>;
+    addToConfig: (params: { name: string; url: string }) => Promise<{ success: boolean; id?: string; filePath?: string; error?: string }>;
+    getSettings: () => Promise<any>;
+    saveSettings: (settings: any) => Promise<any>;
+  };
+
+  // 代理组图标
+  proxyIcon?: {
+    getConfig: () => Promise<{ success: boolean; config?: any; error?: string }>;
+    saveConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+    addRule: (rule: any) => Promise<{ success: boolean; error?: string }>;
+    updateRule: (rule: any) => Promise<{ success: boolean; error?: string }>;
+    deleteRule: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
+    toggleRule: (ruleId: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+    getGroupIcon: (groupName: string, configIcon?: string | null) => Promise<{ success: boolean; iconPath?: string; error?: string }>;
+  };
 }
 
 interface Window {

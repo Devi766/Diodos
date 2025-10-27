@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play, ZapIcon, ArrowRight } from 'lucide-react';
+import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play, ZapIcon, ArrowRight, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
@@ -24,6 +25,7 @@ import { useTranslation } from 'react-i18next';
 
 export default function ToolsPage() {
   const { t } = useTranslation();
+  const router = useRouter();
   const [speedtestDialogOpen, setSpeedtestDialogOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mediaTestDialogOpen, setMediaTestDialogOpen] = useState(false);
@@ -619,6 +621,31 @@ export default function ToolsPage() {
                   </Button>
                 </>
               )}
+            </CardContent>
+          </Card>
+
+          {/* 订阅转换器 */}
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="pb-6">
+              <div className="flex items-center space-x-3 mb-2">
+                <RefreshCw className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                <CardTitle>{t('converter.title')}</CardTitle>
+              </div>
+              <CardDescription className="text-gray-500 dark:text-gray-400">
+                {t('converter.subtitle')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                支持 Clash、Clash Meta、Sing-box 等多种格式的订阅转换
+              </p>
+              <Button
+                onClick={() => router.push('/converter')}
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white"
+                variant="default"
+              >
+                打开转换器
+              </Button>
             </CardContent>
           </Card>
         </div>

@@ -9,6 +9,7 @@
     "update": "更新",
     "refresh": "刷新",
     "close": "关闭",
+    "ok": "确定",
     "loading": "加载中...",
     "success": "成功",
     "error": "错误",
@@ -707,6 +708,120 @@
     "deleteConfirmDesc": "确定要删除备份文件 {{fileName}} 吗？",
     "deleteSuccess": "备份已删除",
     "deleteFailed": "删除备份失败"
+  },
+
+  "proxyIcon": {
+    "title": "代理组图标",
+    "enableIcons": "启用代理组图标",
+    "enableIconsDesc": "为代理组显示自定义图标",
+    "rules": "图标规则",
+    "addRule": "添加规则",
+    "editRule": "编辑规则",
+    "noRules": "暂无规则，点击上方按钮添加",
+    "ruleName": "规则名称",
+    "ruleNamePlaceholder": "例如：香港节点",
+    "regex": "正则表达式",
+    "regexPlaceholder": "例如：.*香港.*|.*HK.*",
+    "iconType": "图标类型",
+    "type": "类型",
+    "iconUrl": "图标URL",
+    "iconBase64": "Base64图标数据",
+    "priority": "优先级",
+    "priorityDesc": "数值越大优先级越高，匹配时优先使用高优先级规则",
+    "clearCache": "清除图标缓存",
+    "clearCacheDesc": "清除所有已下载的图标缓存文件",
+    "cacheClearedSuccess": "图标缓存已清除",
+    "iconSettings": "图标设置"
+  },
+  "converter": {
+    "title": "配置转换器",
+    "subtitle": "转换配置格式，支持 Clash、Sing-box 等多种格式",
+    "input": {
+      "title": "输入方式",
+      "description": "选择从URL获取或直接粘贴配置内容",
+      "url": "配置链接",
+      "content": "配置内容",
+      "urlPlaceholder": "输入配置链接...",
+      "contentPlaceholder": "粘贴配置内容或分享链接..."
+    },
+    "proxies": {
+      "title": "代理节点",
+      "description": "识别到的代理节点列表",
+      "more": "还有 {{count}} 个节点未显示"
+    },
+    "settings": {
+      "title": "转换设置",
+      "description": "配置目标格式和转换选项",
+      "targetFormat": "目标格式",
+      "filterRegex": "节点过滤",
+      "filterPlaceholder": "输入正则表达式过滤节点（可选）",
+      "options": "转换选项",
+      "template": "配置模板",
+      "templateNone": "无模板(仅节点)",
+      "templateSelect": "选择模板",
+      "useTemplate": "使用模板",
+      "converterSettings": "转换器设置",
+      "serverPort": "服务器端口",
+      "serverPortHint": "订阅服务器监听端口，默认 59999",
+      "autoStart": "自动启动",
+      "autoStartHint": "启动应用时自动启动订阅服务器"
+    },
+    "options": {
+      "enableUdp": "启用 UDP",
+      "enableTcpFastOpen": "启用 TCP Fast Open",
+      "skipCertVerify": "跳过证书验证",
+      "autoAddEmoji": "自动添加 Emoji"
+    },
+    "actions": {
+      "convert": "开始转换",
+      "converting": "转换中...",
+      "createSubscription": "生成配置",
+      "export": "导出配置",
+      "addToConfig": "添加到配置"
+    },
+    "result": {
+      "title": "转换结果",
+      "success": "成功转换 {{input}} 个节点，输出 {{output}} 个节点",
+      "output": "转换输出"
+    },
+    "subscription": {
+      "title": "配置链接",
+      "description": "使用此链接在客户端中订阅",
+      "hint": "配置服务器已启动，您可以在客户端中使用此链接订阅配置"
+    },
+    "server": {
+      "running": "服务运行中",
+      "stopped": "服务未运行",
+      "start": "启动",
+      "stop": "停止"
+    },
+    "errors": {
+      "emptyUrl": "请输入配置链接",
+      "emptyInput": "请输入配置内容",
+      "fetchFailed": "获取配置失败: {{error}}",
+      "fetchError": "获取配置时发生错误",
+      "convertFailed": "转换失败",
+      "convertError": "转换时发生错误",
+      "subscriptionFailed": "创建配置失败: {{error}}",
+      "subscriptionError": "创建配置时发生错误",
+      "noResult": "没有可导出的结果",
+      "noSubscriptionUrl": "请先生成配置链接",
+      "formatNotSupported": "当前格式不支持添加到配置",
+      "addToConfigFailed": "添加到配置失败: {{error}}",
+      "addToConfigError": "添加到配置时发生错误",
+      "saveSettingsFailed": "保存设置失败: {{error}}",
+      "saveSettingsError": "保存设置时发生错误"
+    },
+    "success": {
+      "urlFetched": "配置内容获取成功",
+      "converted": "转换成功: {{input}} → {{output}} 个节点",
+      "subscriptionCreated": "配置创建成功",
+      "urlCopied": "配置链接已复制",
+      "exported": "配置已导出",
+      "addedToConfig": "添加成功",
+      "addedToConfigHint": "配置已成功添加到配置列表，您可以在配置页面中查看和使用",
+      "settingsSaved": "设置已保存"
+    }
   }
 }
 

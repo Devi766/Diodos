@@ -618,7 +618,9 @@ export default function Layout({ children }: LayoutProps) {
     pathname.startsWith('/tools') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/providers') ||
-    pathname.startsWith('/logs');
+    pathname.startsWith('/converter') ||
+    pathname.startsWith('/logs') ||
+    pathname.startsWith('/proxy-icon-settings');
 
   return (
     <div className="relative h-screen overflow-hidden bg-transparent">

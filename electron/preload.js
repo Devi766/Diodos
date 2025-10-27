@@ -541,6 +541,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('backup-download-progress', listener);
     return () => ipcRenderer.removeListener('backup-download-progress', listener);
   },
+
+  // 订阅转换器
+  converter: {
+    convert: (params) => ipcRenderer.invoke('converter:convert', params),
+    convertWithTemplate: (params) => ipcRenderer.invoke('converter:convert-with-template', params),
+    fetchUrl: (url) => ipcRenderer.invoke('converter:fetch-url', url),
+    startServer: (params) => ipcRenderer.invoke('converter:start-server', params),
+    stopServer: () => ipcRenderer.invoke('converter:stop-server'),
+    createSubscription: (params) => ipcRenderer.invoke('converter:create-subscription', params),
+    deleteSubscription: (id) => ipcRenderer.invoke('converter:delete-subscription', id),
+    listSubscriptions: () => ipcRenderer.invoke('converter:list-subscriptions'),
+    serverStatus: () => ipcRenderer.invoke('converter:server-status'),
+    parseProxies: (input) => ipcRenderer.invoke('converter:parse-proxies', input),
+    getTemplates: () => ipcRenderer.invoke('converter:get-templates'),
+    getTemplate: (templateId) => ipcRenderer.invoke('converter:get-template', templateId),
+    addToConfig: (params) => ipcRenderer.invoke('converter:add-to-config', params),
+    getSettings: () => ipcRenderer.invoke('converter:get-settings'),
+    saveSettings: (settings) => ipcRenderer.invoke('converter:save-settings', settings),
+  },
+
+  // 代理组图标
+  proxyIcon: {
+    getConfig: () => ipcRenderer.invoke('proxy-icon:get-config'),
+    saveConfig: (config) => ipcRenderer.invoke('proxy-icon:save-config', config),
+    addRule: (rule) => ipcRenderer.invoke('proxy-icon:add-rule', rule),
+    updateRule: (rule) => ipcRenderer.invoke('proxy-icon:update-rule', rule),
+    deleteRule: (ruleId) => ipcRenderer.invoke('proxy-icon:delete-rule', ruleId),
+    toggleRule: (ruleId, enabled) => ipcRenderer.invoke('proxy-icon:toggle-rule', ruleId, enabled),
+    getGroupIcon: (groupName, configIcon) => ipcRenderer.invoke('proxy-icon:get-group-icon', groupName, configIcon),
+  },
 });
 
 // 移除重复的事件监听器

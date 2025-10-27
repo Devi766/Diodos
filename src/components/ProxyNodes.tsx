@@ -19,6 +19,7 @@ import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { useTranslation } from 'react-i18next';
+import { useRouter } from 'next/navigation';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -54,7 +55,9 @@ const renderGroupIcon = (icon?: string | null) => {
   if (!icon) return null;
   const trimmed = icon.trim();
   if (!trimmed) return null;
-  const isImageSource = /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/') || trimmed.startsWith('data:image');
+  const isImageSource = /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/') || trimmed.startsWith('data:image') || trimmed.startsWith('file://');
+
+  console.log('[renderGroupIcon] icon:', trimmed.substring(0, 100), 'isImageSource:', isImageSource);
 
   if (isImageSource) {
     return (
@@ -175,6 +178,7 @@ export default function ProxyNodes() {
     }
   });
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const router = useRouter();
   let mihomoAPI = useMihomoAPI();
 
   // 获取节点的动画高度，用于折叠/展开动画
@@ -367,7 +371,18 @@ export default function ProxyNodes() {
             });
             
             const globalConfigGroup = configOrder?.proxyGroups?.find((g: any) => g.name === 'GLOBAL');
-            const globalIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
+            const globalConfigIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
+
+            // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
+            let globalIcon = globalConfigIcon;
+            try {
+              const result = await window.electronAPI?.proxyIcon?.getGroupIcon('GLOBAL', globalConfigIcon);
+              if (result?.success && result.iconPath) {
+                globalIcon = result.iconPath;
+              }
+            } catch (error) {
+              console.error('[ProxyNodes] 获取GLOBAL组图标失败:', error);
+            }
 
             groupsData.push({
               name: 'GLOBAL',
@@ -498,7 +513,18 @@ export default function ProxyNodes() {
               };
             });
 
-            const groupIcon = configGroup?.icon || (proxy as any)?.icon || null;
+            const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
+
+            // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
+            let groupIcon = groupConfigIcon;
+            try {
+              const result = await window.electronAPI?.proxyIcon?.getGroupIcon(groupName, groupConfigIcon);
+              if (result?.success && result.iconPath) {
+                groupIcon = result.iconPath;
+              }
+            } catch (error) {
+              console.error(`[ProxyNodes] 获取${groupName}组图标失败:`, error);
+            }
 
             groupsData.push({
               name: groupName,
@@ -1646,6 +1672,16 @@ export default function ProxyNodes() {
                             {sortMode === 'latency' && <CheckCircledIcon className="w-4 h-4" />}
                           </div>
                           <span>{t('nodes.sortByLatency')}</span>
+                        </button>
+                        <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
+                        <button
+                          onClick={() => {
+                            router.push('/proxy-icon-settings');
+                            setShowOptionsMenu(false);
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        >
+                          {t('proxyIcon.iconSettings')}
                         </button>
                       </div>
                     </>

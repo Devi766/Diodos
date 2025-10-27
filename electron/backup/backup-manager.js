@@ -12,6 +12,7 @@ const {
   BackupData,
   ImportedProfileBackup
 } = require('./backup-types');
+const { getInstance: getProxyIconManager } = require('../proxy-icon/proxy-icon-manager');
 
 class BackupManager {
   constructor(context) {
@@ -46,7 +47,11 @@ class BackupManager {
 
       console.log(`[BackupManager] 备份了 ${backupData.importedProfiles.length} 个配置`);
 
-      // 3. 如果是全量备份，包含设置
+      // 3. 备份代理图标配置（总是备份）
+      backupData.proxyIconConfig = this.backupProxyIconConfig();
+      console.log('[BackupManager] 已备份代理图标配置');
+
+      // 4. 如果是全量备份，包含设置
       if (backupType === BackupType.FULL_BACKUP) {
         backupData.uiSettings = this.backupUiSettings();
         backupData.webDAVSettings = this.backupWebDAVSettings();
@@ -216,7 +221,13 @@ class BackupManager {
         console.log(`[BackupManager] 还原了 ${backupData.importedProfiles.length} 个配置`);
       }
 
-      // 3. 如果是全量备份，还原设置
+      // 3. 还原代理图标配置（总是还原）
+      if (backupData.proxyIconConfig) {
+        this.restoreProxyIconConfig(backupData.proxyIconConfig);
+        console.log('[BackupManager] 已还原代理图标配置');
+      }
+
+      // 4. 如果是全量备份，还原设置
       if (backupData.backupType === BackupType.FULL_BACKUP) {
         if (backupData.uiSettings) {
           this.restoreUiSettings(backupData.uiSettings);
@@ -233,7 +244,7 @@ class BackupManager {
         console.log('[BackupManager] 已还原全量备份数据');
       }
 
-      // 4. 如果有激活的配置，设置为激活状态
+      // 5. 如果有激活的配置，设置为激活状态
       if (restoredActiveConfigPath) {
         this.context.state.configFilePath = restoredActiveConfigPath;
         console.log(`[BackupManager] 设置激活配置: ${restoredActiveConfigPath}`);
@@ -675,6 +686,79 @@ class BackupManager {
     } catch (error) {
       console.error('[BackupManager] 读取备份ZIP失败:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 备份代理图标配置
+   */
+  backupProxyIconConfig() {
+    try {
+      const iconManager = getProxyIconManager();
+      const config = iconManager.getConfig();
+
+      // 获取图标缓存文件
+      const iconCacheFiles = {};
+      const cachedIcons = iconManager.getCachedIcons();
+
+      for (const filename of cachedIcons) {
+        try {
+          const filePath = path.join(iconManager.getIconCacheDir(), filename);
+          const fileData = fs.readFileSync(filePath);
+          const base64 = fileData.toString('base64');
+          iconCacheFiles[filename] = base64;
+        } catch (error) {
+          console.warn(`[BackupManager] 读取图标缓存文件失败: ${filename}`, error);
+        }
+      }
+
+      console.log(`[BackupManager] 备份代理图标配置: ${config.rules.length} 条规则, ${Object.keys(iconCacheFiles).length} 个缓存文件`);
+
+      return {
+        enabled: config.enabled,
+        rules: config.rules,
+        iconCacheFiles: iconCacheFiles
+      };
+    } catch (error) {
+      console.error('[BackupManager] 备份代理图标配置失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 还原代理图标配置
+   */
+  restoreProxyIconConfig(configBackup) {
+    try {
+      console.log('[BackupManager] 开始还原代理图标配置...');
+
+      const iconManager = getProxyIconManager();
+
+      // 还原配置
+      const config = {
+        enabled: configBackup.enabled !== undefined ? configBackup.enabled : true,
+        rules: configBackup.rules || []
+      };
+      iconManager.saveConfig(config);
+
+      // 还原图标缓存文件
+      if (configBackup.iconCacheFiles) {
+        const cacheDir = iconManager.getIconCacheDir();
+
+        for (const [filename, base64Content] of Object.entries(configBackup.iconCacheFiles)) {
+          try {
+            const buffer = Buffer.from(base64Content, 'base64');
+            const filePath = path.join(cacheDir, filename);
+            fs.writeFileSync(filePath, buffer);
+          } catch (error) {
+            console.warn(`[BackupManager] 还原图标缓存文件失败: ${filename}`, error);
+          }
+        }
+
+        console.log(`[BackupManager] 代理图标配置还原成功: ${config.rules.length} 条规则, ${Object.keys(configBackup.iconCacheFiles).length} 个缓存文件`);
+      }
+    } catch (error) {
+      console.error('[BackupManager] 还原代理图标配置失败:', error);
     }
   }
 }

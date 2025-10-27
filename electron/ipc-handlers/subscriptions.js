@@ -311,6 +311,7 @@ module.exports = function registerSubscriptionHandlers(context) {
         return {
           name: sub.name,
           path: sub.file_path,
+          url: sub.url,
           usedTraffic,
           remainingTraffic,
           totalTraffic,
