@@ -13,10 +13,11 @@ module.exports = function initUserSettings(context) {
       'allow-lan': false,
       'ipv6': false,
       'find-process-mode': 'always',
+      'external-controller': '',  // 显式设置为空字符串,确保不启动外部控制器(安全)
+      'secret': '',  // 显式设置为空字符串
       'tun': {
         enable: false
       }
-      // 注意: 不设置 external-controller 和 secret,默认不启动外部控制器(安全)
     };
 
     try {
@@ -29,18 +30,37 @@ module.exports = function initUserSettings(context) {
 
   function getUserSettings() {
     try {
+      let settings;
+
       // 从数据库读取设置
       if (dbManager) {
-        return dbManager.getAllSettings();
+        settings = dbManager.getAllSettings();
+      } else {
+        // 降级方案:从YAML文件读取
+        ensureUserSettingsFile();
+        const content = fs.readFileSync(userSettingsPath, 'utf8');
+        settings = yaml.load(content) || {};
       }
 
-      // 降级方案:从YAML文件读取
-      ensureUserSettingsFile();
-      const content = fs.readFileSync(userSettingsPath, 'utf8');
-      return yaml.load(content) || {};
+      // 确保安全默认值存在(用于已有的配置文件)
+      if (!('find-process-mode' in settings)) {
+        settings['find-process-mode'] = 'always';
+      }
+      if (!('external-controller' in settings)) {
+        settings['external-controller'] = '';
+      }
+      if (!('secret' in settings)) {
+        settings['secret'] = '';
+      }
+
+      return settings;
     } catch (error) {
       console.error('读取用户设置失败:', error);
-      return {};
+      return {
+        'find-process-mode': 'always',
+        'external-controller': '',
+        'secret': ''
+      };
     }
   }
 

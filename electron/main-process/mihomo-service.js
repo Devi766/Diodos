@@ -350,7 +350,7 @@ module.exports = function initMihomoService(context) {
     const result = { ...target };
 
     for (const key in source) {
-      const mustOverrideFields = ['mixed-port', 'allow-lan', 'ipv6', 'log-level'];
+      const mustOverrideFields = ['mixed-port', 'allow-lan', 'ipv6', 'log-level', 'find-process-mode'];
 
       // external-controller 和 secret 特殊处理:
       // - 如果用户设置中有值(非空字符串),则覆盖
