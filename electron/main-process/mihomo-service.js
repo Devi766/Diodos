@@ -182,38 +182,54 @@ module.exports = function initMihomoService(context) {
       const homeDir = process.env.USERPROFILE || process.env.HOME;
       const mihomoConfigDir = path.join(homeDir, '.config', 'mihomo');
 
-      console.log(`检查mihomo配置目录: ${mihomoConfigDir}`);
+      console.log(`[ensureMihomoDataFiles] 平台: ${process.platform}, 架构: ${process.arch}`);
+      console.log(`[ensureMihomoDataFiles] 检查mihomo配置目录: ${mihomoConfigDir}`);
 
       if (!fs.existsSync(mihomoConfigDir)) {
-        console.log(`创建mihomo配置目录: ${mihomoConfigDir}`);
+        console.log(`[ensureMihomoDataFiles] 创建mihomo配置目录: ${mihomoConfigDir}`);
         fs.mkdirSync(mihomoConfigDir, { recursive: true });
       }
 
-      let dataSourceDir;
+      // 尝试多个可能的数据源目录
+      let dataSourceDir = null;
+      const possibleDirs = [];
+
       if (isDev) {
-        dataSourceDir = path.join(process.cwd(), 'tools', 'data');
-        console.log(`开发环境数据源目录: ${dataSourceDir}`);
+        possibleDirs.push(
+          path.join(process.cwd(), 'tools', 'data'),
+          path.join(process.cwd(), 'flycast-ui', 'tools', 'data')
+        );
       } else {
-        dataSourceDir = path.join(process.resourcesPath, 'tools', 'data');
-        console.log(`生产环境数据源目录: ${dataSourceDir}`);
+        // 生产环境下的多个可能路径
+        possibleDirs.push(
+          path.join(process.resourcesPath, 'tools', 'data'),
+          path.join(app.getAppPath(), 'tools', 'data'),
+          path.join(process.resourcesPath, '..', 'tools', 'data'), // macOS 可能需要
+          path.join(app.getAppPath(), '..', 'Resources', 'tools', 'data') // macOS .app 结构
+        );
       }
 
-      if (!fs.existsSync(dataSourceDir)) {
-        console.warn(`数据源目录不存在: ${dataSourceDir}`);
-        if (isDev) {
-          dataSourceDir = path.join(process.cwd(), 'flycast-ui', 'tools', 'data');
+      console.log(`[ensureMihomoDataFiles] 尝试查找数据源目录...`);
+      for (const dir of possibleDirs) {
+        console.log(`[ensureMihomoDataFiles] 检查: ${dir}`);
+        if (fs.existsSync(dir)) {
+          dataSourceDir = dir;
+          console.log(`[ensureMihomoDataFiles] ✓ 找到数据源目录: ${dataSourceDir}`);
+          break;
         } else {
-          dataSourceDir = path.join(app.getAppPath(), 'tools', 'data');
-        }
-        console.log(`尝试备用数据源目录: ${dataSourceDir}`);
-
-        if (!fs.existsSync(dataSourceDir)) {
-          console.error(`备用数据源目录也不存在: ${dataSourceDir}`);
-          return;
+          console.log(`[ensureMihomoDataFiles] ✗ 不存在`);
         }
       }
 
-      console.log(`从 ${dataSourceDir} 复制数据文件到 ${mihomoConfigDir}`);
+      if (!dataSourceDir) {
+        console.error(`[ensureMihomoDataFiles] 错误: 无法找到数据源目录`);
+        console.error(`[ensureMihomoDataFiles] process.resourcesPath: ${process.resourcesPath}`);
+        console.error(`[ensureMihomoDataFiles] app.getAppPath(): ${app.getAppPath()}`);
+        console.error(`[ensureMihomoDataFiles] 尝试过的路径:`, possibleDirs);
+        return;
+      }
+
+      console.log(`[ensureMihomoDataFiles] 从 ${dataSourceDir} 复制数据文件到 ${mihomoConfigDir}`);
 
       const dataFiles = ['geoip.metadb', 'geosite.dat', 'country.mmdb', 'geoip.dat', 'ASN.mmdb'];
 
@@ -222,24 +238,24 @@ module.exports = function initMihomoService(context) {
         const targetFile = path.join(mihomoConfigDir, fileName);
 
         if (!fs.existsSync(sourceFile)) {
-          console.warn(`源文件不存在: ${sourceFile}`);
+          console.warn(`[ensureMihomoDataFiles] 源文件不存在: ${sourceFile}`);
           continue;
         }
 
         if (!fs.existsSync(targetFile)) {
           console.log(
-            `复制文件: ${fileName} (${(fs.statSync(sourceFile).size / 1024 / 1024).toFixed(2)} MB)`
+            `[ensureMihomoDataFiles] 复制文件: ${fileName} (${(fs.statSync(sourceFile).size / 1024 / 1024).toFixed(2)} MB)`
           );
           fs.copyFileSync(sourceFile, targetFile);
-          console.log(`文件复制成功: ${targetFile}`);
+          console.log(`[ensureMihomoDataFiles] 文件复制成功: ${targetFile}`);
         } else {
-          console.log(`目标文件已存在，跳过: ${targetFile}`);
+          console.log(`[ensureMihomoDataFiles] 目标文件已存在，跳过: ${targetFile}`);
         }
       }
 
-      console.log('mihomo数据文件检查和复制完成');
+      console.log('[ensureMihomoDataFiles] mihomo数据文件检查和复制完成');
     } catch (error) {
-      console.error('准备mihomo数据文件时出错:', error);
+      console.error('[ensureMihomoDataFiles] 准备mihomo数据文件时出错:', error);
       throw error;
     }
   }
