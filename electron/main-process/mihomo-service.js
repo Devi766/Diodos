@@ -651,8 +651,11 @@ module.exports = function initMihomoService(context) {
         let mergedConfig = deepMergeConfig(configWithOverrides, userSettings);
 
         const validatedConfig = validateMergedConfig(mergedConfig);
-        validatedConfig['external-controller'] = '0.0.0.0:9090';
-        validatedConfig['secret'] = '';
+
+        // 不再强制设置 external-controller 和 secret
+        // 如果用户没有设置,则不启动外部控制器(安全)
+        // 如果用户设置了,则使用用户的设置
+
         const mergedConfigContent = yaml.dump(validatedConfig, {
           lineWidth: -1,
           noRefs: true,

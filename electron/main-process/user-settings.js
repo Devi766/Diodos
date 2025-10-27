@@ -12,9 +12,11 @@ module.exports = function initUserSettings(context) {
       'mixed-port': 7890,
       'allow-lan': false,
       'ipv6': false,
+      'find-process-mode': 'always',
       'tun': {
         enable: false
       }
+      // 注意: 不设置 external-controller 和 secret,默认不启动外部控制器(安全)
     };
 
     try {

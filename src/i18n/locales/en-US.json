@@ -110,8 +110,8 @@
     "monthTotal": "This Month's Total Traffic"
   },
   "nodes": {
-    "title": "Node Management",
-    "subtitle": "Select and manage proxy nodes",
+    "title": "Proxy Groups",
+    "subtitle": "Select and manage proxy groups",
     "proxyGroup": "Proxy Group",
     "testLatency": "Test Latency",
     "addToFavorite": "Add to Favorites",
@@ -123,8 +123,8 @@
     "directModeEnabled": "Direct Mode Enabled",
     "directModeDesc": "In direct mode, all traffic will access targets directly without going through any proxy nodes.",
     "directModeNote": "No need to select proxy nodes in this mode.",
-    "mihomoNotRunning": "Mihomo Service Not Running",
-    "mihomoNotRunningDesc": "Please start the Mihomo service first, then refresh the page to ensure the core is working properly.",
+    "mihomoNotRunning": "Core Service Not Running",
+    "mihomoNotRunningDesc": "Please start the service first, then refresh the page to ensure the core is working properly.",
     "checkConnection": "Check Connection",
     "available": "Available",
     "favorite": "Favorite",

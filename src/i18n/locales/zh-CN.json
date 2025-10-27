@@ -110,8 +110,8 @@
     "monthTotal": "本月总流量"
   },
   "nodes": {
-    "title": "节点管理",
-    "subtitle": "选择和管理代理节点",
+    "title": "代理组",
+    "subtitle": "选择和管理代理组",
     "proxyGroup": "代理组",
     "testLatency": "测试延迟",
     "addToFavorite": "添加到收藏",
@@ -123,8 +123,8 @@
     "directModeEnabled": "直连模式已启用",
     "directModeDesc": "在直连模式下，所有流量将直接访问目标，不通过任何代理节点。",
     "directModeNote": "此模式下不需要选择代理节点。",
-    "mihomoNotRunning": "Mihomo 服务未运行",
-    "mihomoNotRunningDesc": "请先启动 Mihomo 服务，然后刷新页面，确保内核正常工作。",
+    "mihomoNotRunning": "内核服务未运行",
+    "mihomoNotRunningDesc": "请先启动服务，然后刷新页面，确保内核正常工作。",
     "checkConnection": "检查连接",
     "available": "可用",
     "favorite": "收藏",
