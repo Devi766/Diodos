@@ -312,6 +312,7 @@ module.exports = function registerSubscriptionHandlers(context) {
           name: sub.name,
           path: sub.file_path,
           url: sub.url,
+          iconUrl: sub.icon_url || null,
           usedTraffic,
           remainingTraffic,
           totalTraffic,
@@ -354,7 +355,7 @@ module.exports = function registerSubscriptionHandlers(context) {
 
   ipcMain.handle('edit-subscription', async (event, params) => {
     try {
-      const { oldPath, newName, newUrl } = params;
+      const { oldPath, newName, newUrl, iconUrl } = params;
 
       // 读取旧文件内容
       const content = fs.readFileSync(oldPath, 'utf8');
@@ -389,6 +390,10 @@ module.exports = function registerSubscriptionHandlers(context) {
 
       if (newUrl !== undefined) {
         updates.url = newUrl;
+      }
+
+      if (iconUrl !== undefined) {
+        updates.icon_url = iconUrl;
       }
 
       dbManager.updateSubscriptionByPath(oldPath, updates);

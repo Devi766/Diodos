@@ -19,6 +19,10 @@ type Subscription = {
   lastUpdated?: string;
   // 新增：排序索引
   order?: number;
+  // 新增：自定义图标URL (原始URL)
+  iconUrl?: string | null;
+  // 新增：缓存的图标路径 (data URL)
+  cachedIconPath?: string | null;
 };
 
 // 计算流量进度百分比
@@ -208,6 +212,7 @@ export default function SubscriptionManager() {
   const [editingSub, setEditingSub] = useState<Subscription | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingUrl, setEditingUrl] = useState('');
+  const [editingIconUrl, setEditingIconUrl] = useState('');
   const [editingOverrides, setEditingOverrides] = useState<string[]>([]);
   const [availableOverrides, setAvailableOverrides] = useState<any[]>([]);
   const [editingUpdateInterval, setEditingUpdateInterval] = useState<number>(0);
@@ -367,11 +372,29 @@ export default function SubscriptionManager() {
       const subs = await window.electronAPI.getSubscriptions();
       console.log('[前端] 加载的配置数据:', subs);
 
+      // 下载并缓存图标
+      const subsWithIcons = await Promise.all(
+        subs.map(async (sub) => {
+          if (sub.iconUrl && window.electronAPI?.configIcon) {
+            try {
+              const result = await window.electronAPI.configIcon.getIcon(sub.iconUrl, sub.path);
+              if (result.success && result.iconPath) {
+                // 保留原始iconUrl,缓存路径存到cachedIconPath
+                return { ...sub, cachedIconPath: result.iconPath };
+              }
+            } catch (error) {
+              console.error(`下载配置图标失败 (${sub.name}):`, error);
+            }
+          }
+          return sub;
+        })
+      );
+
       // 从本地存储中获取排序信息
       const savedOrder = getSavedOrder();
 
       // 应用排序
-      const sortedSubs = sortSubscriptionsByOrder(subs, savedOrder);
+      const sortedSubs = sortSubscriptionsByOrder(subsWithIcons, savedOrder);
       setSubscriptions(sortedSubs);
     } catch (error) {
       console.error('加载配置失败:', error);
@@ -658,6 +681,7 @@ export default function SubscriptionManager() {
   const openEditDialog = async (sub: Subscription) => {
     setEditingSub(sub);
     setEditingName(sub.name);
+    setEditingIconUrl(sub.iconUrl || '');
 
     // 如果是URL类型的配置,加载URL
     const isUrlType = !!(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate);
@@ -707,7 +731,8 @@ export default function SubscriptionManager() {
       const result = await window.electronAPI.editSubscription({
         oldPath: editingSub.path,
         newName: editingName,
-        newUrl: editingUrl
+        newUrl: editingUrl,
+        iconUrl: editingIconUrl
       });
 
       // 使用后端返回的正确路径（而不是自己计算）
@@ -1209,6 +1234,17 @@ export default function SubscriptionManager() {
                   {/* 订阅标题 - 移除左侧内边距 */}
                   <div className="mb-2 border-b border-gray-100 pb-1.5 dark:border-gray-800">
                     <h3 className="flex items-center truncate pr-14 text-[13px] font-medium text-gray-800 dark:text-white">
+                      {/* 自定义图标 */}
+                      {sub.cachedIconPath && (
+                        <img
+                          src={sub.cachedIconPath}
+                          alt=""
+                          className="w-4 h-4 mr-1.5 rounded object-cover flex-shrink-0"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      )}
                       {sub.name}
                       {activeConfig === sub.path ? (
                         <span className="ml-1.5 py-0.5 px-1.5 text-[9px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded font-normal">
@@ -1512,80 +1548,85 @@ export default function SubscriptionManager() {
                     <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
                       {t('subscriptions.autoUpdateInterval')}
                     </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={editingUpdateInterval}
-                        onChange={(e) => {
-                          const value = parseInt(e.target.value) || 0;
-                          setEditingUpdateInterval(value < 0 ? 0 : value);
-                        }}
-                        className="w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
-                        placeholder="0"
-                      />
-                      <span className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptions.minutes')}</span>
-                      <button
-                        type="button"
-                        onClick={() => setEditingUpdateInterval(0)}
-                        className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                      >
-                        {t('subscriptions.disable')}
-                      </button>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={editingUpdateInterval}
+                          onChange={(e) => {
+                            const value = parseInt(e.target.value) || 0;
+                            setEditingUpdateInterval(value < 0 ? 0 : value);
+                          }}
+                          className="w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
+                          placeholder="0"
+                        />
+                        <span className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptions.minutes')}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingUpdateInterval(0)}
+                          className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          {t('subscriptions.disable')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingUpdateInterval(60)}
+                          className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          {t('subscriptions.hour1')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingUpdateInterval(4320)}
+                          className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          3天
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingUpdateInterval(10080)}
+                          className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                        >
+                          7天
+                        </button>
+                      </div>
                     </div>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       {editingUpdateInterval === 0
                         ? t('subscriptions.disableAutoUpdate')
                         : t('subscriptions.autoUpdateEvery', { interval: editingUpdateInterval })}
                     </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditingUpdateInterval(60)}
-                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        {t('subscriptions.hour1')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingUpdateInterval(120)}
-                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        {t('subscriptions.hour2')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingUpdateInterval(360)}
-                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        {t('subscriptions.hour6')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingUpdateInterval(720)}
-                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        {t('subscriptions.hour12')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingUpdateInterval(1440)}
-                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        {t('subscriptions.hour24')}
-                      </button>
-                    </div>
                   </div>
                 </>
               )}
+
+              {/* 自定义图标URL */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  自定义图标 (可选)
+                </label>
+                <input
+                  type="text"
+                  value={editingIconUrl}
+                  onChange={(e) => setEditingIconUrl(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
+                  placeholder="支持网站URL或图片链接"
+                />
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  输入网站URL自动提取favicon，或直接输入图片链接
+                </p>
+              </div>
 
               {/* 覆写选择 */}
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
                   {t('subscriptions.applyOverrides')}
                 </label>
-                <div className="max-h-48 overflow-y-auto rounded-md border border-slate-300 bg-white dark:border-slate-600 dark:bg-[#222222]">
+                <div className="max-h-24 overflow-y-auto rounded-md border border-slate-300 bg-white dark:border-slate-600 dark:bg-[#222222] custom-scrollbar">
                   {availableOverrides.length === 0 ? (
                     <div className="p-3 text-center text-sm text-slate-500 dark:text-slate-400">
                       {t('subscriptions.noOverrides')}

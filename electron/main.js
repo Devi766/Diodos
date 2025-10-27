@@ -451,6 +451,10 @@ registerBackupHandlers(context);
 const { registerProxyIconHandlers } = require('./ipc-handlers/proxy-icon');
 registerProxyIconHandlers();
 
+// 注册配置图标处理器
+const { registerConfigIconHandlers } = require('./ipc-handlers/config-icon');
+registerConfigIconHandlers(app);
+
 // 注册订阅转换器处理器
 const { registerConverterHandlers } = require('./ipc-handlers/converter');
 registerConverterHandlers(app, dbManager);

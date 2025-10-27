@@ -92,6 +92,26 @@ const getFileName = (path?: string | null, t: any) => {
   return name || path;
 };
 
+const loadConfigIcon = async (configPath: string | null): Promise<string | null> => {
+  if (!configPath || !window.electronAPI) return null;
+
+  try {
+    const subs = await window.electronAPI.getSubscriptions();
+    const sub = subs.find((s: any) => s.path === configPath);
+
+    if (sub?.iconUrl && window.electronAPI.configIcon) {
+      const result = await window.electronAPI.configIcon.getIcon(sub.iconUrl, configPath);
+      if (result.success && result.iconPath) {
+        return result.iconPath;
+      }
+    }
+  } catch (error) {
+    console.error('加载配置图标失败:', error);
+  }
+
+  return null;
+};
+
 const resolveElectron = () => {
   if (typeof window === 'undefined') return undefined;
   return window.electronAPI;
@@ -110,6 +130,7 @@ export default function Dashboard() {
   const [isServiceBusy, setIsServiceBusy] = useState(false);
   const [activeConfig, setActiveConfig] = useState<string | null>(null);
   const [preferredConfig, setPreferredConfig] = useState<string | null>(null);
+  const [activeConfigIcon, setActiveConfigIcon] = useState<string | null>(null);
   const [currentNode, setCurrentNode] = useState<string>('DIRECT');
   const [primaryProxyGroup, setPrimaryProxyGroup] = useState<string>('PROXY');
   const [connectionCount, setConnectionCount] = useState(0);
@@ -301,6 +322,9 @@ export default function Dashboard() {
             setActiveConfig(config);
             setPreferredConfig(config);
             setIsRunning(true);
+            // 加载配置图标
+            const iconPath = await loadConfigIcon(config);
+            setActiveConfigIcon(iconPath);
             await syncCurrentNode();
             await syncProxyMode();
           } else {
@@ -548,6 +572,9 @@ export default function Dashboard() {
         setIsRunning(true);
         setActiveConfig(config);
         setPreferredConfig(config);
+        // 加载配置图标
+        const iconPath = await loadConfigIcon(config);
+        setActiveConfigIcon(iconPath);
         showBanner({ type: 'success', message: t('dashboard.serviceStarted') });
         try {
           const order = await electron.getConfigOrder?.();

@@ -571,6 +571,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     toggleRule: (ruleId, enabled) => ipcRenderer.invoke('proxy-icon:toggle-rule', ruleId, enabled),
     getGroupIcon: (groupName, configIcon) => ipcRenderer.invoke('proxy-icon:get-group-icon', groupName, configIcon),
   },
+
+  // 配置图标
+  configIcon: {
+    getIcon: (iconUrl, configPath) => ipcRenderer.invoke('config-icon:get-icon', iconUrl, configPath),
+    clearCache: () => ipcRenderer.invoke('config-icon:clear-cache'),
+    getCacheSize: () => ipcRenderer.invoke('config-icon:get-cache-size'),
+  },
 });
 
 // 移除重复的事件监听器

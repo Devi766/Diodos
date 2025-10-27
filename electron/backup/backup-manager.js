@@ -85,6 +85,7 @@ class BackupManager {
         profile.source = sub.url || sub.file_path;
         profile.interval = sub.update_interval || 0;
         profile.createdAt = sub.created_at || Date.now();
+        profile.iconUrl = sub.icon_url || '';
 
         // 流量信息
         profile.upload = sub.used_traffic || 0;
@@ -286,6 +287,13 @@ class BackupManager {
           profile.source,
           profile.interval || 0
         );
+
+        // 设置图标URL
+        if (profile.iconUrl) {
+          this.dbManager.updateSubscriptionByPath(filePath, {
+            icon_url: profile.iconUrl
+          });
+        }
 
         // 设置流量信息
         if (profile.total > 0 || profile.expire > 0) {

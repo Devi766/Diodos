@@ -44,12 +44,13 @@ interface SubscriptionResult {
 }
 
 interface Subscription {
-  name: string; 
+  name: string;
   path: string;
   usedTraffic?: string;
   remainingTraffic?: string;
   expiryDate?: string;
   lastUpdated?: string;
+  iconUrl?: string;
 }
 
 interface MihomoApiResponse {
@@ -156,7 +157,7 @@ export interface ElectronAPI {
   saveSubscription: (subUrl: string, configData: string, customName: string, subscriptionInfo?: SubscriptionInfo) => Promise<string>;
   getSubscriptions: () => Promise<Array<Subscription>>;
   deleteSubscription: (filePath: string) => Promise<boolean>;
-  editSubscription: (params: { oldPath: string; newName: string; newUrl: string }) => Promise<{ success: boolean; newPath: string }>;
+  editSubscription: (params: { oldPath: string; newName: string; newUrl: string; iconUrl?: string }) => Promise<{ success: boolean; newPath: string }>;
   getSubscriptionUrl: (filePath: string) => Promise<string | null>;
   fetchSubscription: (subUrl: string) => Promise<SubscriptionResult | null>;
   updateSubscription: (filePath: string, configData: string, subUrl: string, subscriptionInfo?: SubscriptionInfo) => Promise<boolean>;
@@ -381,6 +382,13 @@ export interface ElectronAPI {
     deleteRule: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
     toggleRule: (ruleId: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>;
     getGroupIcon: (groupName: string, configIcon?: string | null) => Promise<{ success: boolean; iconPath?: string; error?: string }>;
+  };
+
+  // 配置图标
+  configIcon?: {
+    getIcon: (iconUrl: string, configPath: string) => Promise<{ success: boolean; iconPath?: string; error?: string }>;
+    clearCache: () => Promise<{ success: boolean; error?: string }>;
+    getCacheSize: () => Promise<{ success: boolean; size?: number; error?: string }>;
   };
 }
 

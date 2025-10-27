@@ -108,6 +108,15 @@ class DatabaseManager {
         console.error('添加update_interval列失败:', error);
       }
     }
+
+    // 添加 icon_url 列（兼容已有数据库）
+    try {
+      this.db.exec(`ALTER TABLE subscriptions ADD COLUMN icon_url TEXT DEFAULT ''`);
+    } catch (error) {
+      if (!error.message.includes('duplicate column name')) {
+        console.error('添加icon_url列失败:', error);
+      }
+    }
   }
 
   /**
@@ -185,6 +194,11 @@ class DatabaseManager {
     if (updates.file_path !== undefined) {
       fields.push('file_path = ?');
       values.push(updates.file_path);
+    }
+    // 支持更新 icon_url
+    if (updates.icon_url !== undefined) {
+      fields.push('icon_url = ?');
+      values.push(updates.icon_url);
     }
 
     fields.push('updated_at = ?');
