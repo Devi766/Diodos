@@ -209,6 +209,7 @@
     "current": "当前",
     "clickActivate": "点击激活",
     "localConfig": "本地配置文件",
+    "remoteConfig": "远程配置文件",
     "dragToSort": "支持拖动排序",
     "dragToImport": "支持拖拽导入 YAML 配置，或使用下方操作快速管理订阅。",
     "totalConfigs": "共 {{count}} 个订阅",

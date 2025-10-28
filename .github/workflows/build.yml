@@ -47,18 +47,13 @@ jobs:
           npm_config_target_arch: ${{ matrix.arch }}
         run: npm run electron:build:ci
 
-      - name: Upload Setup Installer
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Windows-${{ matrix.arch }}-Setup
-          path: dist/*-setup.exe
-          if-no-files-found: error
-
-      - name: Upload Portable Version
-        uses: actions/upload-artifact@v4
-        with:
-          name: Windows-${{ matrix.arch }}-Portable
-          path: dist/*.7z
+          name: Windows-${{ matrix.arch }}
+          path: |
+            dist/*-setup.exe
+            dist/*.7z
           if-no-files-found: error
 
       - name: Publish Release
@@ -70,60 +65,58 @@ jobs:
             dist/*.7z
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # linux:
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       arch:
-  #         - x64
-  #         - arm64
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Setup Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: '20'
-  #
-  #     - name: Install Dependencies
-  #       env:
-  #         npm_config_arch: ${{ matrix.arch }}
-  #         npm_config_target_arch: ${{ matrix.arch }}
-  #       run: npm install
-  #
-  #     - name: Prepare (Download Mihomo Core)
-  #       run: node scripts/prepare.mjs --${{ matrix.arch }}
-  #
-  #     - name: Build Next.js
-  #       run: npm run build
-  #
-  #     - name: Build Electron
-  #       env:
-  #         npm_config_arch: ${{ matrix.arch }}
-  #         npm_config_target_arch: ${{ matrix.arch }}
-  #       run: npm run electron:build
-  #
-  #     - name: Upload Artifacts
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: Linux-${{ matrix.arch }}
-  #         path: |
-  #           dist/*.deb
-  #           dist/*.rpm
-  #           dist/*.AppImage
-  #         if-no-files-found: error
-  #
-  #     - name: Publish Release
-  #       if: startsWith(github.ref, 'refs/tags/v')
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         files: |
-  #           dist/*.deb
-  #           dist/*.rpm
-  #           dist/*.AppImage
-  #         token: ${{ secrets.GITHUB_TOKEN }}
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x64
+          - arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          npm_config_target_arch: ${{ matrix.arch }}
+        run: npm install
+
+      - name: Prepare (Download Mihomo Core)
+        run: node scripts/prepare.mjs --${{ matrix.arch }}
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Build Electron
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          npm_config_target_arch: ${{ matrix.arch }}
+        run: npm run electron:build:ci
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Linux-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   macos:
     strategy:

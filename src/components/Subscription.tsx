@@ -163,10 +163,8 @@ const getTrafficInfo = (subscription: Subscription) => {
     isLowTraffic(usedTrafficValue, remainingTrafficValue) : false;
   
   return {
-    usedColorClass: 'text-red-500 dark:text-red-400 font-medium',
-    remainingColorClass: isLow ? 
-      'text-amber-500 dark:text-amber-400 font-medium' : 
-      'text-emerald-500 dark:text-emerald-400 font-medium',
+    usedColorClass: 'text-gray-500 dark:text-gray-400 font-medium',
+    remainingColorClass: 'text-gray-500 dark:text-gray-400 font-medium',
     progressColorClass: getProgressColorClass(usedTrafficValue, remainingTrafficValue),
     progress: calculateProgressPercentage(usedTrafficValue, remainingTrafficValue),
     isLow
@@ -249,7 +247,7 @@ export default function SubscriptionManager() {
     } else {
       console.log('onImportSubscription API不可用');
     }
-    
+
     return () => {
       clearInterval(intervalId);
       if (unsubscribeImport) unsubscribeImport();
@@ -683,10 +681,8 @@ export default function SubscriptionManager() {
     setEditingName(sub.name);
     setEditingIconUrl(sub.iconUrl || '');
 
-    // 如果是URL类型的配置,加载URL
-    const isUrlType = !!(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate);
-
-    if (isUrlType) {
+    // 如果配置有URL,加载URL
+    if (sub.url && sub.url.trim() !== '') {
       try {
         const url = await window.electronAPI?.getSubscriptionUrl?.(sub.path);
         setEditingUrl(url || '');
@@ -1090,7 +1086,7 @@ export default function SubscriptionManager() {
             isDragging ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
         >
-          <div className={`bg-white dark:bg-[#2a2a2a] rounded-lg p-8 shadow-xl border-2 border-dashed border-blue-500 mx-4 max-w-lg w-full transition-transform duration-300 transform ${
+          <div className={`bg-white dark:bg-[#2a2a2a] rounded-2xl p-8 shadow-xl border-2 border-dashed border-blue-500 mx-4 max-w-lg w-full transition-transform duration-300 transform ${
             isDragging ? 'scale-100' : 'scale-95'
           }`}>
             <div className="flex flex-col items-center justify-center">
@@ -1106,7 +1102,7 @@ export default function SubscriptionManager() {
         </div>
         
         {/* 卡片网格 */}
-        <div className="bg-white dark:bg-[#2a2a2a] rounded-lg shadow-sm p-6">
+        <div>
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-white flex items-center">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1115,7 +1111,7 @@ export default function SubscriptionManager() {
               {t('subscriptions.myConfigs')}
             </h2>
           </div>
-          
+
           {subscriptions.length === 0 ? (
             <div className="rounded-2xl bg-white py-16 text-center shadow-sm dark:bg-[#2a2a2a]">
               <div className="flex flex-col items-center justify-center">
@@ -1134,13 +1130,13 @@ export default function SubscriptionManager() {
               </div>
             </div>
           ) : (
-            <div className="grid auto-rows-[minmax(130px,1fr)] grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid auto-rows-[minmax(110px,1fr)] grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
               {subscriptions.map((sub) => (
                 <div
                   key={sub.path}
                   data-subscription-path={sub.path}
                   ref={draggedItem?.path === sub.path ? draggedItemRef : null}
-                  className={`relative flex h-full min-h-[180px] flex-col overflow-hidden rounded-xl border select-none ${
+                  className={`relative flex h-full min-h-[140px] flex-col overflow-hidden rounded-2xl border select-none ${
                     activeConfig === sub.path
                       ? 'bg-white dark:bg-[#2a2a2a] border-l-4 border-l-blue-500 dark:border-l-blue-400 border-slate-200 dark:border-slate-700'
                       : 'bg-white dark:bg-[#2a2a2a] border-slate-200 dark:border-slate-700'
@@ -1215,20 +1211,21 @@ export default function SubscriptionManager() {
                       </button>
                     )}
 
-                    {/* 删除按钮 */}
-                    <button
-                      draggable="false"
-                      onClick={(e) => {
-                        e.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
-                        deleteSubscription(sub.path);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                      title={t('subscriptions.deleteSubscription')}
-                      disabled={activeConfig === sub.path} // 不允许删除当前活跃的配置
-                    >
-                      <TrashIcon className="w-4 h-4" />
-                    </button>
+                    {/* 删除按钮 - 隐藏当前激活配置的删除按钮 */}
+                    {activeConfig !== sub.path && (
+                      <button
+                        draggable="false"
+                        onClick={(e) => {
+                          e.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
+                          deleteSubscription(sub.path);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 p-0.5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                        title={t('subscriptions.deleteSubscription')}
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                   
                   {/* 订阅标题 - 移除左侧内边距 */}
@@ -1270,20 +1267,10 @@ export default function SubscriptionManager() {
                   
                   {/* 内容区域 - 占用主要空间 */}
                   <div className="flex flex-1 flex-col">
-                    {/* 订阅流量信息或本地配置信息 */}
-                    {(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate || sub.lastUpdated) ? (
-                      <div className="flex h-full flex-col justify-between rounded-xl bg-gray-50 p-2 text-[11px] transition-colors dark:bg-[#222222] group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20">
+                    {/* 订阅流量信息或本地/远程配置信息 */}
+                    {(sub.usedTraffic || sub.remainingTraffic || sub.expiryDate) ? (
+                      <div className="flex h-full flex-col justify-between p-2 text-[11px]">
                         <div className="flex flex-col space-y-2">
-                          {/* 本地配置文件标识 - 只有没有URL时才显示 */}
-                          {!sub.url && (
-                            <div className="flex flex-col items-center justify-center py-4 space-y-2">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                              </svg>
-                              <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.localConfig')}</p>
-                            </div>
-                          )}
-
                           {/* 流量信息区域 */}
                           {(sub.usedTraffic || sub.remainingTraffic) && (
                             <div className="space-y-1.5">
@@ -1386,7 +1373,28 @@ export default function SubscriptionManager() {
                           </div>
                         )}
                       </div>
-                    ) : null}
+                    ) : (
+                      /* 没有流量信息时显示配置类型 */
+                      <div className="flex h-full flex-col items-center justify-center p-2 text-[11px]">
+                        {(sub.url && sub.url.trim() !== '') ? (
+                          /* 远程配置 */
+                          <div className="flex flex-col items-center justify-center py-3 space-y-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-blue-400 dark:text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                            </svg>
+                            <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.remoteConfig')}</p>
+                          </div>
+                        ) : (
+                          /* 本地配置 */
+                          <div className="flex flex-col items-center justify-center py-3 space-y-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-blue-400 dark:text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.localConfig')}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1525,7 +1533,7 @@ export default function SubscriptionManager() {
               </div>
 
               {/* 订阅URL - 仅URL类型配置显示 */}
-              {editingSub && (editingSub.usedTraffic || editingSub.remainingTraffic || editingSub.expiryDate) && (
+              {editingSub && editingSub.url && editingSub.url.trim() !== '' && (
                 <>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -1712,7 +1720,7 @@ export default function SubscriptionManager() {
             transform: 'translate(-50%, -50%)',
           }}
         >
-          <div className="w-[280px] min-h-[180px] flex flex-col overflow-hidden rounded-xl border border-blue-500 dark:border-blue-400 bg-white dark:bg-[#2a2a2a] p-2.5 shadow-2xl opacity-90 scale-105">
+          <div className="w-[280px] min-h-[140px] flex flex-col overflow-hidden rounded-2xl border border-blue-500 dark:border-blue-400 bg-white dark:bg-[#2a2a2a] p-2.5 shadow-2xl opacity-90 scale-105">
             {/* 订阅标题 */}
             <div className="mb-2 border-b border-gray-100 pb-1.5 dark:border-gray-800">
               <h3 className="flex items-center truncate text-[13px] font-medium text-gray-800 dark:text-white">
@@ -1723,7 +1731,7 @@ export default function SubscriptionManager() {
             {/* 内容区域 */}
             <div className="flex flex-1 flex-col">
               {(draggedItem.usedTraffic || draggedItem.remainingTraffic || draggedItem.expiryDate || draggedItem.lastUpdated) ? (
-                <div className="flex h-full flex-col justify-between rounded-xl bg-gray-50 p-2 text-[11px] dark:bg-[#222222]">
+                <div className="flex h-full flex-col justify-between p-2 text-[11px]">
                   <div className="flex flex-col space-y-2">
                     {/* 本地配置文件标识 - 只有没有URL时才显示 */}
                     {!draggedItem.url && (
@@ -1764,7 +1772,7 @@ export default function SubscriptionManager() {
                   </div>
                 </div>
               ) : (
-                <div className="flex h-full items-center justify-center rounded-xl bg-gray-50 p-2 dark:bg-[#222222]">
+                <div className="flex h-full items-center justify-center p-2">
                   <p className="text-[11px] text-gray-500 dark:text-gray-400">{t('subscriptions.localConfig')}</p>
                 </div>
               )}

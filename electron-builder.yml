@@ -89,7 +89,6 @@ linux:
   target:
     - deb
     - rpm
-    - AppImage
   category: Network
   icon: public/logo.png
   artifactName: ${productName}-${version}-${arch}.${ext}

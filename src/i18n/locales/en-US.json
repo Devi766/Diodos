@@ -209,6 +209,7 @@
     "current": "Current",
     "clickActivate": "Click to activate",
     "localConfig": "Local Configuration File",
+    "remoteConfig": "Remote Configuration File",
     "dragToSort": "Drag to sort",
     "dragToImport": "Drag and drop YAML files here, or use the buttons below to manage subscriptions.",
     "totalConfigs": "{{count}} subscription(s)",
