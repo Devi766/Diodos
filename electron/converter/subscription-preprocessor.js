@@ -5,6 +5,8 @@
  */
 
 const yaml = require('js-yaml');
+const SurgeParser = require('./surge-parser');
+const QXParser = require('./qx-parser');
 
 class SubscriptionPreprocessor {
   /**
@@ -19,6 +21,7 @@ class SubscriptionPreprocessor {
    */
   static preprocess(raw) {
     const trimmed = raw.trim();
+    console.log(`[SubscriptionPreprocessor] Processing input (${trimmed.length} bytes)`);
 
     // 1. HTML - 直接丢弃
     if (trimmed.toLowerCase().startsWith('<!doctype html>') ||
@@ -29,50 +32,84 @@ class SubscriptionPreprocessor {
 
     // 2. 处理 Sing-box 配置
     const singBoxResult = this.handleSingBox(trimmed);
-    if (singBoxResult) return singBoxResult;
+    if (singBoxResult) {
+      console.log('[SubscriptionPreprocessor] Successfully processed as Sing-box config');
+      return singBoxResult;
+    }
 
     // 3. 处理 Clash 配置
     const clashResult = this.handleClash(trimmed);
-    if (clashResult) return clashResult;
+    if (clashResult) {
+      console.log('[SubscriptionPreprocessor] Successfully processed as Clash config');
+      return clashResult;
+    }
 
     // 4. 处理 SSD 格式
     if (trimmed.startsWith('ssd://')) {
+      console.log('[SubscriptionPreprocessor] Processing as SSD format');
       return this.handleSSD(trimmed);
     }
 
     // 5. 处理 Surge/QuantumultX 完整配置
-    if (trimmed.includes('[Proxy]') || trimmed.includes('[Server]')) {
+    if (trimmed.includes('[Proxy]') || trimmed.includes('[Server]') || trimmed.includes('[server_local]')) {
+      console.log('[SubscriptionPreprocessor] Processing as Surge/QuantumultX config');
       return this.extractProxiesFromConfig(trimmed);
     }
 
-    // 6. 智能检测 Base64
-    if (this.looksLikeBase64(trimmed)) {
-      try {
-        const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
-        // 递归处理解码后的内容
-        return this.preprocess(decoded);
-      } catch (e) {
-        console.warn('[SubscriptionPreprocessor] Base64 decode failed:', e.message);
-      }
-    }
+    // 6. 智能检测 Base64 (检查是否包含 Base64 编码的协议关键字)
+    const base64Keys = [
+      'dm1lc3M',      // vmess
+      'c3NyOi8v',     // ssr://
+      'c29ja3M6Ly',   // socks://
+      'dHJvamFu',     // trojan
+      'c3M6Ly',       // ss:/
+      'c3NkOi8v',     // ssd://
+      'c2hhZG93',     // shadow
+      'aHR0c',        // htt
+      'dmxlc3M=',     // vless
+      'aHlzdGVyaWEy', // hysteria2
+      'aHkyOi8v',     // hy2://
+      'd2lyZWd1YXJkOi8v', // wireguard://
+      'd2c6Ly8=',     // wg://
+      'dHVpYzovLw=='  // tuic://
+    ];
 
-    // 7. Fallback: 尝试 Base64 解码
-    // 只有在不包含协议前缀时才尝试解码
-    if (!trimmed.includes('://') && !trimmed.includes(' = ') && trimmed.length > 100) {
+    // 如果不包含协议前缀，但包含 Base64 关键字，尝试解码
+    if (!/^\w+:\/\/\w+/.test(trimmed) && base64Keys.some(key => trimmed.includes(key))) {
       try {
         const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
-        // 验证解码后的内容是否包含协议或配置关键字
-        if (decoded && decoded.length > 0 && decoded !== trimmed &&
-            (decoded.includes('://') || decoded.includes('proxies'))) {
-          console.log('[SubscriptionPreprocessor] Detected Base64 encoded content (fallback)');
+        // 验证解码后的内容是否包含协议
+        if (/^\w+(:|\/\/|\s*?=\s*?)\w+/m.test(decoded)) {
+          console.log('[SubscriptionPreprocessor] Detected Base64 encoded content (smart detection)');
+          // 递归处理解码后的内容
+          const singBoxResult = this.handleSingBox(decoded);
+          if (singBoxResult) return singBoxResult;
           return this.preprocess(decoded);
         }
       } catch (e) {
-        // 忽略解码失败
+        console.log('[SubscriptionPreprocessor] Base64 smart detection failed:', e.message);
+      }
+    }
+
+    // 7. Fallback Base64 - 最后尝试解码
+    // 如果没有协议标识，尝试 Base64 解码
+    if (!trimmed.includes('://') && !trimmed.includes(' = ') && trimmed.length > 100) {
+      try {
+        const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
+        if (/^\w+(:|\/\/|\s*?=\s*?)\w+/m.test(decoded)) {
+          console.log('[SubscriptionPreprocessor] Detected Base64 encoded content (fallback)');
+          // 递归处理解码后的内容
+          const singBoxResult = this.handleSingBox(decoded);
+          if (singBoxResult) return singBoxResult;
+          return this.preprocess(decoded);
+        }
+      } catch (e) {
+        console.log('[SubscriptionPreprocessor] Fallback Base64 decode failed:', e.message);
       }
     }
 
     // 8. 返回原始内容
+    console.log('[SubscriptionPreprocessor] No special format detected, returning raw content');
     return trimmed;
   }
 
@@ -82,24 +119,37 @@ class SubscriptionPreprocessor {
   static handleSingBox(content) {
     try {
       const json = JSON.parse(content);
-      
+
       // 检查是否是 Sing-box 配置
       if (json.outbounds && Array.isArray(json.outbounds)) {
-        console.log('[SubscriptionPreprocessor] Detected Sing-box config');
-        
-        // 提取所有代理节点
-        const proxies = json.outbounds
+        console.log(`[SubscriptionPreprocessor] Detected Sing-box config with ${json.outbounds.length} outbounds`);
+
+        // 提取所有代理节点并转换为 Clash JSON
+        const jsonLines = json.outbounds
           .filter(outbound => {
             const type = outbound.type?.toLowerCase();
-            return type && !['direct', 'block', 'dns', 'selector', 'urltest'].includes(type);
+            const isProxy = type && !['direct', 'block', 'dns', 'selector', 'urltest'].includes(type);
+            if (!isProxy && type) {
+              console.log(`[SubscriptionPreprocessor] Skipping Sing-box outbound type: ${type}`);
+            }
+            return isProxy;
           })
-          .map(outbound => this.convertSingBoxToClashJson(outbound))
-          .filter(proxy => proxy !== null);
+          .map(outbound => {
+            const clashProxy = this.convertSingBoxToClashJson(outbound);
+            if (clashProxy) {
+              console.log(`[SubscriptionPreprocessor] Converted Sing-box ${outbound.type}: ${outbound.tag}`);
+            } else {
+              console.warn(`[SubscriptionPreprocessor] Failed to convert Sing-box ${outbound.type}: ${outbound.tag}`);
+            }
+            return clashProxy ? JSON.stringify(clashProxy) : null;
+          })
+          .filter(line => line !== null);
 
-        if (proxies.length > 0) {
-          // 转换为 Clash YAML 格式
-          const clashConfig = { proxies };
-          return yaml.dump(clashConfig);
+        if (jsonLines.length > 0) {
+          console.log(`[SubscriptionPreprocessor] Converted ${jsonLines.length} proxies from Sing-box config`);
+          return jsonLines.join('\n');
+        } else {
+          console.warn('[SubscriptionPreprocessor] No valid proxies found in Sing-box config');
         }
       }
     } catch (e) {
@@ -112,16 +162,33 @@ class SubscriptionPreprocessor {
    * 处理 Clash 配置
    */
   static handleClash(content) {
+    // 检查是否包含 proxies: 关键字
+    if (!content.includes('proxies:') && !content.includes('proxies :')) {
+      return null;
+    }
+
     try {
       const config = yaml.load(content);
-      
+
       if (config && config.proxies && Array.isArray(config.proxies)) {
-        console.log('[SubscriptionPreprocessor] Detected Clash config');
-        // 返回 YAML 格式的 proxies 部分
-        return yaml.dump({ proxies: config.proxies });
+        console.log(`[SubscriptionPreprocessor] Detected Clash YAML format with ${config.proxies.length} proxies`);
+
+        // 处理 global-client-fingerprint
+        const globalFingerprint = config['global-client-fingerprint'];
+
+        // 将每个代理转换为 JSON 字符串，每行一个
+        const jsonLines = config.proxies.map(proxy => {
+          // 如果有全局 fingerprint 且代理没有，则添加
+          if (globalFingerprint && !proxy['client-fingerprint']) {
+            proxy['client-fingerprint'] = globalFingerprint;
+          }
+          return JSON.stringify(proxy);
+        });
+
+        return jsonLines.join('\n');
       }
     } catch (e) {
-      // 不是有效的 YAML
+      console.log('[SubscriptionPreprocessor] Not a valid Clash YAML:', e.message);
     }
     return null;
   }
@@ -153,35 +220,155 @@ class SubscriptionPreprocessor {
   }
 
   /**
-   * 从完整配置中提取代理部分
+   * 从完整配置中提取代理部分 (Surge/QuantumultX)
    */
   static extractProxiesFromConfig(content) {
-    const lines = content.split('\n');
-    const proxies = [];
-    let inProxySection = false;
+    try {
+      console.log('[SubscriptionPreprocessor] Detected Full Config format (Surge/QuantumultX)');
+      const lines = content.split('\n');
+      const headerRegex = /^\s*\[(.+?)]/;
+      const extracted = [];
+      let inTargetSection = false;
+      let collectedSection = false;
+      let isSurge = false;
+      let isQX = false;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      
-      // 检测代理段开始
-      if (trimmed === '[Proxy]' || trimmed === '[Server]') {
-        inProxySection = true;
+      for (const originalLine of lines) {
+        const line = originalLine.trimEnd();
+        const headerMatch = line.match(headerRegex);
+
+        if (headerMatch) {
+          const sectionName = headerMatch[1].trim().toLowerCase();
+          if (sectionName === 'proxy') {
+            // Surge 格式
+            if (!collectedSection) {
+              inTargetSection = true;
+              isSurge = true;
+              isQX = false;
+              extracted.length = 0; // 清空之前的内容
+            } else {
+              inTargetSection = false;
+            }
+          } else if (sectionName === 'server_local') {
+            // QuantumultX 格式
+            if (!collectedSection) {
+              inTargetSection = true;
+              isQX = true;
+              isSurge = false;
+              extracted.length = 0; // 清空之前的内容
+            } else {
+              inTargetSection = false;
+            }
+          } else {
+            if (inTargetSection) {
+              collectedSection = true;
+            }
+            inTargetSection = false;
+          }
+          continue;
+        }
+
+        if (inTargetSection && line.trim()) {
+          extracted.push(line);
+        }
+      }
+
+      if (extracted.length === 0) {
+        return '';
+      }
+
+      console.log(`[SubscriptionPreprocessor] Extracted ${extracted.length} lines from Full Config`);
+
+      // 解析并转换为 JSON 行格式
+      const jsonLines = [];
+      for (const line of extracted) {
+        try {
+          let proxy = null;
+          if (isSurge) {
+            console.log('[SubscriptionPreprocessor] Parsing Surge line:', line.substring(0, 100));
+            proxy = SurgeParser.parseLine(line);
+          } else if (isQX) {
+            console.log('[SubscriptionPreprocessor] Parsing QX line:', line.substring(0, 100));
+            proxy = QXParser.parseLine(line);
+          }
+
+          if (proxy) {
+            // 转换为 Clash JSON 格式
+            const clashJson = this.convertProxyToClashJson(proxy);
+            if (clashJson) {
+              jsonLines.push(JSON.stringify(clashJson));
+              console.log('[SubscriptionPreprocessor] Successfully converted proxy:', proxy.name);
+            }
+          }
+        } catch (e) {
+          console.warn('[SubscriptionPreprocessor] Failed to parse line:', line.substring(0, 100), e.message);
+        }
+      }
+
+      if (jsonLines.length > 0) {
+        console.log(`[SubscriptionPreprocessor] Converted ${jsonLines.length} proxies from Full Config`);
+        return jsonLines.join('\n');
+      }
+    } catch (e) {
+      console.log('[SubscriptionPreprocessor] Failed to extract from Full Config:', e.message);
+    }
+    return '';
+  }
+
+  /**
+   * 将代理对象转换为 Clash JSON 格式
+   */
+  static convertProxyToClashJson(proxy) {
+    if (!proxy) return null;
+
+    const json = {
+      name: proxy.name,
+      type: proxy.type,
+      server: proxy.server,
+      port: proxy.port
+    };
+
+    // 复制所有其他属性,但要转换属性名
+    for (const key in proxy) {
+      if (['name', 'type', 'server', 'port'].includes(key)) {
         continue;
       }
-      
-      // 检测代理段结束
-      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-        inProxySection = false;
+
+      const value = proxy[key];
+      if (value === null || value === undefined) {
         continue;
       }
-      
-      // 提取代理行
-      if (inProxySection && trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('//')) {
-        proxies.push(trimmed);
-      }
+
+      // 转换属性名: camelCase -> kebab-case
+      const clashKey = this.toKebabCase(key);
+      json[clashKey] = value;
     }
 
-    return proxies.join('\n');
+    return json;
+  }
+
+  /**
+   * 将 camelCase 转换为 kebab-case
+   */
+  static toKebabCase(str) {
+    // 特殊映射
+    const specialMappings = {
+      'skipCertVerify': 'skip-cert-verify',
+      'pluginOpts': 'plugin-opts',
+      'wsOpts': 'ws-opts',
+      'grpcOpts': 'grpc-opts',
+      'h2Opts': 'h2-opts',
+      'httpOpts': 'http-opts',
+      'alterId': 'alterId', // VMess 保持原样
+      'servername': 'servername' // 保持原样
+    };
+
+    if (specialMappings[str]) {
+      return specialMappings[str];
+    }
+
+    // 默认转换
+    return str.replace(/([A-Z])/g, '-$1').toLowerCase();
   }
 
   /**
@@ -248,15 +435,25 @@ class SubscriptionPreprocessor {
    * 转换 Sing-box Shadowsocks
    */
   static convertSingBoxSS(outbound) {
-    return {
+    const proxy = {
       name: outbound.tag || 'SS',
       type: 'ss',
       server: outbound.server,
-      port: outbound.server_port,
+      port: outbound.server_port || outbound.port,
       cipher: outbound.method,
       password: outbound.password,
       udp: true
     };
+
+    // Plugin 配置
+    if (outbound.plugin) {
+      proxy.plugin = outbound.plugin;
+      if (outbound.plugin_opts) {
+        proxy['plugin-opts'] = outbound.plugin_opts;
+      }
+    }
+
+    return proxy;
   }
 
   /**
@@ -305,13 +502,163 @@ class SubscriptionPreprocessor {
     return proxy;
   }
 
-  // 其他转换方法将在后续添加...
-  static convertSingBoxTrojan(outbound) { return null; }
-  static convertSingBoxVLESS(outbound) { return null; }
-  static convertSingBoxHysteria(outbound) { return null; }
-  static convertSingBoxHysteria2(outbound) { return null; }
-  static convertSingBoxTUIC(outbound) { return null; }
-  static convertSingBoxWireGuard(outbound) { return null; }
+  /**
+   * 转换 Sing-box Trojan
+   */
+  static convertSingBoxTrojan(outbound) {
+    const proxy = {
+      name: outbound.tag || 'Trojan',
+      type: 'trojan',
+      server: outbound.server,
+      port: outbound.server_port || outbound.port,
+      password: outbound.password,
+      udp: true
+    };
+
+    // TLS 配置
+    if (outbound.tls) {
+      if (outbound.tls.server_name) {
+        proxy.sni = outbound.tls.server_name;
+      }
+      if (outbound.tls.insecure) {
+        proxy['skip-cert-verify'] = true;
+      }
+    }
+
+    // 传输层配置
+    if (outbound.transport) {
+      const transport = outbound.transport;
+      proxy.network = transport.type || 'tcp';
+
+      if (transport.type === 'ws') {
+        proxy['ws-opts'] = {
+          path: transport.path || '/',
+          headers: transport.headers || {}
+        };
+      } else if (transport.type === 'grpc') {
+        proxy['grpc-opts'] = {
+          'grpc-service-name': transport.service_name || ''
+        };
+      }
+    }
+
+    return proxy;
+  }
+
+  /**
+   * 转换 Sing-box VLESS
+   */
+  static convertSingBoxVLESS(outbound) {
+    const proxy = {
+      name: outbound.tag || 'VLESS',
+      type: 'vless',
+      server: outbound.server,
+      port: outbound.server_port || outbound.port,
+      uuid: outbound.uuid,
+      udp: true
+    };
+
+    // TLS 配置
+    if (outbound.tls) {
+      proxy.tls = true;
+      if (outbound.tls.server_name) {
+        proxy.servername = outbound.tls.server_name;
+      }
+      if (outbound.tls.insecure) {
+        proxy['skip-cert-verify'] = true;
+      }
+    }
+
+    // 传输层配置
+    if (outbound.transport) {
+      const transport = outbound.transport;
+      proxy.network = transport.type || 'tcp';
+
+      if (transport.type === 'ws') {
+        proxy['ws-opts'] = {
+          path: transport.path || '/',
+          headers: transport.headers || {}
+        };
+      } else if (transport.type === 'grpc') {
+        proxy['grpc-opts'] = {
+          'grpc-service-name': transport.service_name || ''
+        };
+      }
+    }
+
+    return proxy;
+  }
+
+  /**
+   * 转换 Sing-box Hysteria
+   */
+  static convertSingBoxHysteria(outbound) {
+    return {
+      name: outbound.tag || 'Hysteria',
+      type: 'hysteria',
+      server: outbound.server,
+      port: outbound.server_port || outbound.port,
+      auth: outbound.auth || outbound.auth_str,
+      obfs: outbound.obfs,
+      'up-mbps': outbound.up_mbps || outbound.up,
+      'down-mbps': outbound.down_mbps || outbound.down,
+      sni: outbound.tls?.server_name,
+      'skip-cert-verify': outbound.tls?.insecure || false,
+      udp: true
+    };
+  }
+
+  /**
+   * 转换 Sing-box Hysteria2
+   */
+  static convertSingBoxHysteria2(outbound) {
+    return {
+      name: outbound.tag || 'Hysteria2',
+      type: 'hysteria2',
+      server: outbound.server,
+      port: outbound.server_port || outbound.port,
+      password: outbound.password,
+      obfs: outbound.obfs?.type,
+      'obfs-password': outbound.obfs?.password,
+      sni: outbound.tls?.server_name,
+      'skip-cert-verify': outbound.tls?.insecure || false,
+      udp: true
+    };
+  }
+
+  /**
+   * 转换 Sing-box TUIC
+   */
+  static convertSingBoxTUIC(outbound) {
+    return {
+      name: outbound.tag || 'TUIC',
+      type: 'tuic',
+      server: outbound.server,
+      port: outbound.server_port || outbound.port,
+      uuid: outbound.uuid,
+      password: outbound.password,
+      sni: outbound.tls?.server_name,
+      'skip-cert-verify': outbound.tls?.insecure || false,
+      udp: true
+    };
+  }
+
+  /**
+   * 转换 Sing-box WireGuard
+   */
+  static convertSingBoxWireGuard(outbound) {
+    return {
+      name: outbound.tag || 'WireGuard',
+      type: 'wireguard',
+      server: outbound.server,
+      port: outbound.server_port || outbound.port,
+      'private-key': outbound.private_key,
+      'public-key': outbound.peer_public_key,
+      'preshared-key': outbound.pre_shared_key,
+      ip: outbound.local_address?.[0],
+      udp: true
+    };
+  }
 }
 
 module.exports = SubscriptionPreprocessor;

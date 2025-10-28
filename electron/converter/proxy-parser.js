@@ -7,6 +7,7 @@
 const { Shadowsocks, VMess, Trojan, VLESS, Socks5, Http, Hysteria, Hysteria2, TUIC, WireGuard } = require('./proxy-models');
 const SubscriptionPreprocessor = require('./subscription-preprocessor');
 const yaml = require('js-yaml');
+const JSON5 = require('json5');
 
 /**
  * 解析器基类
@@ -564,23 +565,45 @@ class Clash_All extends Parser {
   }
 
   test(line) {
-    // 检测是否是 YAML 格式的代理配置
+    // 检测是否是 YAML 或 JSON 格式的代理配置
     const trimmed = line.trim();
-    return (trimmed.startsWith('- name:') ||
-            trimmed.startsWith('- {name:') ||
-            trimmed.startsWith('name:'));
+    let proxy;
+    try {
+      proxy = JSON5.parse(trimmed);
+    } catch (e) {
+      try {
+        proxy = yaml.load(trimmed);
+      } catch (yamlError) {
+        return false;
+      }
+    }
+    return !!proxy?.type;
   }
 
   parse(line) {
     try {
       let config;
-      if (line.trim().startsWith('-')) {
-        // 数组格式
-        const yamlArray = yaml.load(`proxies:\n  ${line}`);
-        config = yamlArray.proxies[0];
-      } else {
-        // 对象格式
-        config = yaml.load(line);
+      const trimmed = line.trim();
+
+      // 尝试解析 JSON5 格式(支持更宽松的JSON语法)
+      try {
+        config = JSON5.parse(trimmed);
+      } catch (jsonError) {
+        // 如果 JSON5 解析失败，尝试 YAML
+        config = yaml.load(trimmed);
+      }
+
+      // 处理 vmess/vless 的 sni 字段
+      if (['vmess', 'vless'].includes(config.type)) {
+        if (config.servername && !config.sni) {
+          config.sni = config.servername;
+          delete config.servername;
+        }
+      }
+
+      // 处理 server-cert-fingerprint
+      if (config['server-cert-fingerprint']) {
+        config['tls-fingerprint'] = config['server-cert-fingerprint'];
       }
 
       return this.convertClashProxy(config);
@@ -681,6 +704,12 @@ class Clash_All extends Parser {
           tls: config.tls || type === 'https',
           skipCertVerify: config['skip-cert-verify'] || false
         });
+
+      case 'direct':
+      case 'reject':
+        // Direct和Reject类型不需要转换,直接跳过
+        console.log(`[Clash_All] Skipping ${type} type proxy`);
+        return null;
 
       default:
         console.warn(`[Clash_All] Unsupported type: ${type}`);

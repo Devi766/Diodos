@@ -158,9 +158,10 @@ class SubscriptionConverter {
    * 2. 原始分享链接列表（每行一个）
    * 3. Clash YAML 配置
    * 4. Sing-box JSON 配置
+   * 5. JSON 行格式（预处理器输出）
    */
   parseInput(input) {
-    // 预处理输入(包括Base64解码)
+    // 预处理输入(包括Base64解码、格式转换)
     const preprocessed = SubscriptionPreprocessor.preprocess(input);
 
     if (!preprocessed) {
@@ -169,27 +170,15 @@ class SubscriptionConverter {
 
     const trimmed = preprocessed.trim();
 
-    // 检测是否是 Clash YAML 配置
-    if (trimmed.startsWith('proxies:') || trimmed.includes('\nproxies:')) {
-      return this.parseClashConfig(preprocessed);
-    }
-
-    // 检测是否是 Sing-box JSON 配置
-    try {
-      const json = JSON.parse(trimmed);
-      if (json.outbounds && Array.isArray(json.outbounds)) {
-        // Sing-box 配置已经在预处理阶段转换为 Clash YAML
-        return this.parseClashConfig(preprocessed);
-      }
-    } catch (e) {
-      // 不是 JSON
-    }
-
-    // 分享链接列表（每行一个）
-    // 注意:这里不能再调用 parseLines,因为它会再次预处理
+    // 分享链接列表或JSON行（每行一个）
+    // 预处理器已经将Clash/Sing-box配置转换为JSON行格式
     // 直接按行解析
     return preprocessed.split('\n')
-      .map(line => this.parser.parseLine(line))
+      .map(line => {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) return null;
+        return this.parser.parseLine(trimmedLine);
+      })
       .filter(proxy => proxy !== null);
   }
 

@@ -65,6 +65,18 @@ jobs:
             dist/*.7z
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Publish Dev Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          files: |
+            dist/*-setup.exe
+            dist/*.7z
+          prerelease: true
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   linux:
     strategy:
       fail-fast: false
@@ -118,6 +130,18 @@ jobs:
             dist/*.rpm
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Publish Dev Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          files: |
+            dist/*.deb
+            dist/*.rpm
+          prerelease: true
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   macos:
     strategy:
       fail-fast: false
@@ -160,18 +184,13 @@ jobs:
           npm_config_target_arch: ${{ matrix.arch }}
         run: npm run electron:build:ci
       
-      - name: Upload DMG
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MacOS-${{ matrix.arch }}-DMG
-          path: dist/*.dmg
-          if-no-files-found: error
-
-      - name: Upload ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: MacOS-${{ matrix.arch }}-ZIP
-          path: dist/*.zip
+          name: MacOS-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
           if-no-files-found: error
 
       - name: Publish Release
@@ -181,5 +200,17 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Dev Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          files: |
+            dist/*.dmg
+            dist/*.zip
+          prerelease: true
+          draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
