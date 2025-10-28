@@ -179,8 +179,8 @@ module.exports = function initMihomoService(context) {
 
   async function ensureMihomoDataFiles() {
     try {
-      const homeDir = process.env.USERPROFILE || process.env.HOME;
-      const mihomoConfigDir = path.join(homeDir, '.config', 'mihomo');
+      // 使用应用的mihomo目录,而不是系统的.config/mihomo
+      const mihomoConfigDir = path.join(userDataPath, 'mihomo');
 
       console.log(`[ensureMihomoDataFiles] 平台: ${process.platform}, 架构: ${process.arch}`);
       console.log(`[ensureMihomoDataFiles] 检查mihomo配置目录: ${mihomoConfigDir}`);
