@@ -460,6 +460,15 @@ module.exports = function initMihomoService(context) {
 
         // 更新状态
         state.configFilePath = configPath;
+        state.preferredConfig = configPath; // 同时更新首选配置
+
+        // 保存到last-config.json
+        try {
+          const lastConfigPath = path.join(userDataPath, 'last-config.json');
+          fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
+        } catch (saveError) {
+          console.error('[reloadMihomoConfig] 保存首选配置失败:', saveError);
+        }
 
         console.log('[reloadMihomoConfig] work配置生成成功');
       } catch (error) {
@@ -719,6 +728,7 @@ module.exports = function initMihomoService(context) {
       }
 
       state.configFilePath = configPath;
+      state.preferredConfig = configPath; // 同时更新用户选择的配置
 
       try {
         await ensureMihomoDataFiles();

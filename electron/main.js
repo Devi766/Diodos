@@ -1756,7 +1756,21 @@ app.whenReady().then(() => {
   }).catch(error => {
     console.error('mihomo数据文件初始化失败:', error);
   });
-  
+
+  // 加载上次使用的配置
+  try {
+    const lastConfigPath = path.join(userDataPath, 'last-config.json');
+    if (fs.existsSync(lastConfigPath)) {
+      const lastConfigData = JSON.parse(fs.readFileSync(lastConfigPath, 'utf8'));
+      if (lastConfigData && lastConfigData.path) {
+        state.preferredConfig = lastConfigData.path;
+        console.log('已加载上次使用的配置:', state.preferredConfig);
+      }
+    }
+  } catch (error) {
+    console.error('加载上次使用的配置失败:', error);
+  }
+
   // 检查系统是否已经启用代理
   try {
     if (process.platform === 'win32') {
@@ -2445,11 +2459,49 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('get-active-config', () => {
-    // 通过state.configFilePath判断mihomo是否在运行
-    // 如果mihomo已停止，这里应该返回null
-    return state.configFilePath || null;
+    // 返回用户选择的配置，独立于服务运行状态
+    // 如果没有preferredConfig，则fallback到configFilePath
+    return state.preferredConfig || state.configFilePath || null;
   });
-  
+
+  ipcMain.handle('set-preferred-config', (event, configPath) => {
+    try {
+      state.preferredConfig = configPath;
+      // 保存到文件
+      const lastConfigPath = path.join(userDataPath, 'last-config.json');
+      fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
+      console.log('已设置首选配置:', configPath);
+      return true;
+    } catch (error) {
+      console.error('设置首选配置失败:', error);
+      return false;
+    }
+  });
+
+  ipcMain.handle('is-mihomo-running', async () => {
+    // 方法1: 检查进程是否存在
+    if (!state.mihomoProcess || !state.mihomoProcess.pid || state.mihomoProcess.exitCode !== null) {
+      return false;
+    }
+
+    // 方法2: 尝试调用mihomo API的/version端点来验证服务真正可用
+    // 这是mihomo-party使用的方法，更可靠
+    try {
+      const axios = await context.getAxiosInstance(true);
+      if (axios) {
+        await axios.get('/version', { timeout: 1000 });
+        return true;
+      }
+    } catch (error) {
+      // API调用失败，说明服务不可用
+      console.log('[is-mihomo-running] API check failed:', error.message);
+      return false;
+    }
+
+    // 如果axios不可用，仅依靠进程检查
+    return true;
+  });
+
   ipcMain.handle('get-proxy-nodes', (event, configPath) => {
     try {
       // 如果指定了配置路径，则使用指定的路径

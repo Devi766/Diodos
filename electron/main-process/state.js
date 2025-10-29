@@ -3,6 +3,7 @@ module.exports = {
   tray: null,
   mihomoProcess: null,
   configFilePath: null,
+  preferredConfig: null, // 用户选择的配置，独立于服务运行状态
   isQuitting: false,
   autoStartEnabled: true,
   currentNode: null,

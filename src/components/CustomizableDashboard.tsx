@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 
 // 卡片组件导入
 import { SystemProxyCard, TunModeCard, ProxyModeCard } from '@/components/dashboard-cards/ControlCards';
+import { IpAddressCard } from '@/components/dashboard-cards/IpAddressCard';
 import { TrafficRankingCard } from '@/components/dashboard-cards/TrafficRankingCard';
 import { TrafficStatisticsCard } from '@/components/dashboard-cards/TrafficStatisticsCard';
 
@@ -47,6 +48,7 @@ interface CustomizableDashboardProps {
   tunEnabled: boolean;
   isTunUpdating: boolean;
   tunAvailable: boolean;
+  isRunning: boolean;
   onTunToggle: (checked: boolean) => void;
 
   // 代理模式
@@ -107,6 +109,7 @@ export function CustomizableDashboard({
   tunEnabled,
   isTunUpdating,
   tunAvailable,
+  isRunning,
   onTunToggle,
   proxyMode,
   isModeUpdating,
@@ -219,6 +222,7 @@ export function CustomizableDashboard({
             enabled={tunEnabled}
             updating={isTunUpdating}
             available={tunAvailable}
+            isRunning={isRunning}
             onToggle={onTunToggle}
           />
         );
@@ -231,6 +235,9 @@ export function CustomizableDashboard({
             onModeSwitch={onModeSwitch}
           />
         );
+
+      case 'ip-address':
+        return <IpAddressCard />;
 
       case 'traffic-chart':
         return (
@@ -258,25 +265,29 @@ export function CustomizableDashboard({
     if (type.startsWith('metric-')) {
       return 'col-span-1';
     }
-    // 系统代理和TUN模式：占一半宽度（在2列以上时是2列，在4列时是2列）
+    // 系统代理和TUN模式：占1列（与指标卡片保持一致，可以并排放4个）
     if (type === 'system-proxy' || type === 'tun-mode') {
-      return 'md:col-span-1 xl:col-span-2';
+      return 'col-span-1';
     }
-    // 代理模式：占一半宽度（在2列以上时占2列）
+    // 代理模式：占1列（与指标卡片保持一致）
     if (type === 'proxy-mode') {
-      return 'md:col-span-1 xl:col-span-2';
+      return 'col-span-1';
     }
-    // 流量图表：占一半宽度
+    // IP地址：占1列（与指标卡片保持一致）
+    if (type === 'ip-address') {
+      return 'col-span-1';
+    }
+    // 流量图表：占2列（左边大卡片，右边可以放2个小卡片）
     if (type === 'traffic-chart') {
-      return 'md:col-span-1 xl:col-span-2';
+      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
     }
-    // 流量排行：占一半宽度
+    // 流量排行：占2列（左边大卡片，右边可以放2个小卡片）
     if (type === 'traffic-ranking') {
-      return 'md:col-span-1 xl:col-span-2';
+      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
     }
-    // 流量统计：占一半宽度
+    // 流量统计：占2列（左边大卡片，右边可以放2个小卡片）
     if (type === 'traffic-statistics') {
-      return 'md:col-span-1 xl:col-span-2';
+      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
     }
     return '';
   };
@@ -293,7 +304,7 @@ export function CustomizableDashboard({
         onDragCancel={handleDragCancel}
       >
         <SortableContext items={cards.map((c) => c.id)} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             {cards.map((card) => (
               <DraggableCard
                 key={card.id}

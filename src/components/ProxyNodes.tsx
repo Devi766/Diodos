@@ -61,14 +61,14 @@ const renderGroupIcon = (icon?: string | null) => {
 
   if (isImageSource) {
     return (
-      <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-muted/40">
-        <img src={trimmed} alt="" className="h-10 w-10 object-contain" />
+      <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-muted/40">
+        <img src={trimmed} alt="" className="h-7 w-7 object-contain" />
       </span>
     );
   }
 
   return (
-    <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary text-lg font-semibold">
+    <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary text-base font-semibold">
       {trimmed.length > 2 ? trimmed.slice(0, 2) : trimmed}
     </span>
   );
@@ -77,7 +77,20 @@ const renderGroupIcon = (icon?: string | null) => {
 // 节点组件
 export default function ProxyNodes() {
   const { t } = useTranslation();
-  const [groups, setGroups] = useState<ProxyGroup[]>([]);
+  // 初始化时直接从sessionStorage加载缓存数据，避免闪烁
+  const [groups, setGroups] = useState<ProxyGroup[]>(() => {
+    try {
+      const saved = sessionStorage.getItem('proxyGroupsCache');
+      if (saved) {
+        const cached = JSON.parse(saved);
+        console.log('从sessionStorage加载了缓存的代理组数据:', cached.length);
+        return cached;
+      }
+    } catch (error) {
+      console.error('Failed to load cached groups:', error);
+    }
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -85,7 +98,20 @@ export default function ProxyNodes() {
   const [testingNodes, setTestingNodes] = useState<Set<string>>(new Set());
   const [testingGroups, setTestingGroups] = useState<Set<string>>(new Set());
   const [favoriteNodes, setFavoriteNodes] = useState<Set<string>>(new Set());
-  const [mihomoRunning, setMihomoRunning] = useState(false);
+  // 初始化时从sessionStorage加载mihomo运行状态
+  const [mihomoRunning, setMihomoRunning] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('mihomoRunningState');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    } catch (error) {
+      console.error('Failed to load mihomo running state:', error);
+    }
+    // 如果有缓存的groups数据，说明之前mihomo是运行的
+    const hasCache = sessionStorage.getItem('proxyGroupsCache');
+    return hasCache !== null;
+  });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
@@ -104,6 +130,13 @@ export default function ProxyNodes() {
           console.log('初始化时从localStorage加载折叠状态:', parsed);
           return new Set(parsed);
         }
+      }
+      // 如果没有保存的状态，检查是否是首次访问
+      const isFirstVisit = localStorage.getItem('proxyNodesFirstVisit');
+      if (isFirstVisit === null) {
+        // 首次访问，标记并返回空Set（表示全部展开，然后会被下面的useEffect设置为全部折叠）
+        localStorage.setItem('proxyNodesFirstVisit', 'false');
+        return new Set();
       }
     } catch (error) {
       console.error('加载折叠状态失败:', error);
@@ -241,6 +274,26 @@ export default function ProxyNodes() {
     setTimeout(() => setErrorMessage(null), 5000);
   };
 
+  // 保存groups到sessionStorage，用于下次加载时显示
+  useEffect(() => {
+    if (groups.length > 0) {
+      try {
+        sessionStorage.setItem('proxyGroupsCache', JSON.stringify(groups));
+      } catch (error) {
+        console.error('Failed to cache groups:', error);
+      }
+    }
+  }, [groups]);
+
+  // 保存mihomo运行状态到sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('mihomoRunningState', mihomoRunning.toString());
+    } catch (error) {
+      console.error('Failed to cache mihomo running state:', error);
+    }
+  }, [mihomoRunning]);
+
   // 过滤节点组
   const filteredGroups = groups.map(group => {
     const filteredNodes = group.nodes.filter(node =>
@@ -262,8 +315,11 @@ export default function ProxyNodes() {
 
   // 获取节点列表
   const fetchProxies = async () => {
-    setIsLoading(true);
-    
+    // 只在初始加载时（groups为空）显示loading
+    if (groups.length === 0) {
+      setIsLoading(true);
+    }
+
     try {
       // 检查Mihomo是否运行
       try {
@@ -273,16 +329,22 @@ export default function ProxyNodes() {
           setMihomoRunning(true);
         } else {
           setMihomoRunning(false);
-          setIsLoading(false);
+          // 只在初始加载时才设置loading为false
+          if (groups.length === 0) {
+            setIsLoading(false);
+          }
           return;
         }
       } catch (error) {
         console.error('Mihomo未运行:', error);
         setMihomoRunning(false);
-        setIsLoading(false);
+        // 只在初始加载时才设置loading为false
+        if (groups.length === 0) {
+          setIsLoading(false);
+        }
         return;
       }
-      
+
       // 获取当前模式
       let currentProxyMode = 'rule';
       try {
@@ -292,12 +354,17 @@ export default function ProxyNodes() {
       } catch (error) {
         console.error('获取当前模式失败:', error);
       }
-      
-      // 如果是直连模式，可以提前结束加载过程，只需设置空的节点列表
+
+      // 如果是直连模式，可以提前结束加载过程
       if (currentProxyMode === 'direct') {
         console.log('直连模式，不加载节点列表');
-        setGroups([]);
-        setIsLoading(false);
+        // 只在初始加载或从其他模式切换时才清空groups
+        if (groups.length === 0 || currentMode !== 'direct') {
+          setGroups([]);
+        }
+        if (groups.length === 0) {
+          setIsLoading(false);
+        }
         return;
       }
       
@@ -563,14 +630,22 @@ export default function ProxyNodes() {
       console.error('获取代理失败:', error);
       showError(`获取代理失败: ${String(error)}`);
     } finally {
-      setIsLoading(false);
+      // 只在初始加载时才设置loading为false，避免后续刷新时的闪烁
+      if (isLoading) {
+        setIsLoading(false);
+      }
     }
   };
 
   // 初始加载
   useEffect(() => {
     fetchProxies();
-    
+
+    // 定期刷新代理组数据（每10秒）
+    const refreshInterval = setInterval(() => {
+      fetchProxies();
+    }, 10000);
+
     // 监听测试所有节点的事件
     if (window.electronAPI) {
       const api = window.electronAPI as any;
@@ -581,20 +656,43 @@ export default function ProxyNodes() {
           handleBatchTest(group.name);
         });
       };
-      
+
       // 添加事件监听器
       api.onTestAllNodes(testAllNodesHandler);
-      
+
       // 清理函数
       return () => {
+        clearInterval(refreshInterval);
         // 移除事件监听器
         api.removeAllListeners('test-all-nodes');
       };
     }
-    
+
     // 无电子API时的清理函数
-    return () => {};
+    return () => {
+      clearInterval(refreshInterval);
+    };
   }, []);  // 初始加载时运行一次
+
+  // 在groups首次加载完成后，如果没有保存的折叠状态，则默认全部折叠
+  useEffect(() => {
+    if (groups.length > 0 && typeof window !== 'undefined') {
+      const savedState = localStorage.getItem('collapsedGroups');
+      // 只在没有保存状态时(null)设置默认全部折叠
+      // 如果savedState是'[]'，表示用户选择了全部展开，应该保持
+      if (savedState === null) {
+        const allGroupNames = groups.map(g => g.name);
+        const newCollapsedSet = new Set(allGroupNames);
+        setCollapsedGroups(newCollapsedSet);
+        try {
+          localStorage.setItem('collapsedGroups', JSON.stringify(allGroupNames));
+          console.log('首次加载，默认全部折叠:', allGroupNames);
+        } catch (error) {
+          console.error('保存默认折叠状态失败:', error);
+        }
+      }
+    }
+  }, [groups.length]); // 只在groups首次加载时触发
 
   // 测试节点延迟
   const handleTestNode = async (nodeName: string) => {
@@ -1015,8 +1113,8 @@ export default function ProxyNodes() {
         >
           <div className="flex flex-col space-y-1">
             <div className="flex items-center justify-between">
-              <h3 
-                className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate max-w-[85%] group" 
+              <h3
+                className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate max-w-[85%] group"
                 title={node.name}
               >
                 <span className="truncate inline-block w-full group-hover:whitespace-normal group-hover:break-words">
@@ -1052,7 +1150,7 @@ export default function ProxyNodes() {
                 </button>
               </div>
             </div>
-            
+
             <div className="flex justify-between items-center">
               <div className="text-xs text-gray-500 dark:text-gray-400">
                 {node.type}
@@ -1061,8 +1159,8 @@ export default function ProxyNodes() {
                 <span className={`text-xs px-1.5 py-0.5 rounded-full ${
                   node.delay === 0
                     ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                    : node.delay < 100 
-                    ? 'bg-green-100 text-green-800 dark:bg-[#2a2a2a] dark:text-green-400' 
+                    : node.delay < 100
+                    ? 'bg-green-100 text-green-800 dark:bg-[#2a2a2a] dark:text-green-400'
                     : node.delay < 300
                     ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
                     : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
@@ -1614,7 +1712,9 @@ export default function ProxyNodes() {
                               // 展开所有
                               setCollapsedGroups(new Set());
                               try {
-                                localStorage.removeItem('collapsedGroups');
+                                // 保存空数组表示全部展开状态
+                                localStorage.setItem('collapsedGroups', JSON.stringify([]));
+                                console.log('已展开所有代理组');
                               } catch (error) {
                                 console.error('展开所有代理组失败:', error);
                               }
@@ -1624,6 +1724,7 @@ export default function ProxyNodes() {
                               setCollapsedGroups(allGroupNames);
                               try {
                                 localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(allGroupNames)));
+                                console.log('已收起所有代理组');
                               } catch (error) {
                                 console.error('收起所有代理组失败:', error);
                               }

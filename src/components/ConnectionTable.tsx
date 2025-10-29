@@ -198,7 +198,10 @@ export default function ConnectionTable() {
   }, []);
 
   const fetchConnections = async () => {
-    setIsLoading(true);
+    // 只在初始加载时（connections为空）显示loading
+    if (connections.length === 0) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {
@@ -228,8 +231,11 @@ export default function ConnectionTable() {
       const data = connectionsResponse?.data ?? connectionsResponse;
 
       if (!data?.connections || !Array.isArray(data.connections)) {
-        setConnections([]);
-        setStats({ totalConnections: 0, activeConnections: 0, totalUpload: 0, totalDownload: 0 });
+        // 只在初始加载或从有数据变为无数据时才更新为空
+        if (connections.length === 0 || connections.length > 0) {
+          setConnections([]);
+          setStats({ totalConnections: 0, activeConnections: 0, totalUpload: 0, totalDownload: 0 });
+        }
         return;
       }
 
@@ -251,7 +257,10 @@ export default function ConnectionTable() {
       console.error('获取连接数据失败:', err);
       setError(t('connections.fetchError', { error: String(err) }));
     } finally {
-      setIsLoading(false);
+      // 只在初始加载时才设置loading为false，避免后续刷新时的闪烁
+      if (isLoading) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -332,7 +341,7 @@ export default function ConnectionTable() {
     }
 
     return (
-      <Badge className={`flex items-center rounded-full border px-1.5 py-0.5 text-[10px] ${badgeClass}`}>
+      <Badge className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] whitespace-nowrap ${badgeClass}`}>
         {icon}
         {type || network.toUpperCase()}
       </Badge>
@@ -466,14 +475,13 @@ export default function ConnectionTable() {
         )}
 
         <Card className="flex flex-col overflow-hidden rounded-3xl bg-white shadow-sm dark:bg-[#2a2a2a] min-w-0">
-          <div className="connection-table-scroll border-b border-white/20 bg-white text-slate-600 dark:border-gray-700 dark:bg-[#2a2a2a] dark:text-slate-200 overflow-x-auto">
-            <table className="w-full min-w-[560px] md:min-w-[720px] text-xs">
-              <thead>
+          <div className="connection-table-scroll flex-1 overflow-x-auto overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10 border-b border-white/20 bg-white text-slate-600 dark:border-gray-700 dark:bg-[#2a2a2a] dark:text-slate-200">
                 <tr>
                   <th
-                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground whitespace-nowrap"
                     onClick={() => requestSort('metadata')}
-                    style={{ width: '25%' }}
                   >
                     <div className="flex items-center">
                       {t('connections.hostIP')}
@@ -488,13 +496,12 @@ export default function ConnectionTable() {
                       )}
                     </div>
                   </th>
-                  <th className="sticky top-0 px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '10%' }}>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground whitespace-nowrap">
                     {t('connections.type')}
                   </th>
                   <th
-                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground whitespace-nowrap"
                     onClick={() => requestSort('upload')}
-                    style={{ width: '12%' }}
                   >
                     <div className="flex items-center">
                       {t('connections.upload')}
@@ -510,9 +517,8 @@ export default function ConnectionTable() {
                     </div>
                   </th>
                   <th
-                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground whitespace-nowrap"
                     onClick={() => requestSort('download')}
-                    style={{ width: '12%' }}
                   >
                     <div className="flex items-center">
                       {t('connections.download')}
@@ -528,9 +534,8 @@ export default function ConnectionTable() {
                     </div>
                   </th>
                   <th
-                    className="sticky top-0 cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                    className="cursor-pointer px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground whitespace-nowrap"
                     onClick={() => requestSort('duration')}
-                    style={{ width: '12%' }}
                   >
                     <div className="flex items-center">
                       {t('connections.duration')}
@@ -545,24 +550,19 @@ export default function ConnectionTable() {
                       )}
                     </div>
                   </th>
-                  <th className="sticky top-0 px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '20%' }}>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground whitespace-nowrap">
                     {t('connections.proxyChain')}
                   </th>
-                  <th className="sticky top-0 px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground" style={{ width: '9%' }}>
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground whitespace-nowrap">
                     {t('connections.actions')}
                   </th>
                 </tr>
               </thead>
-            </table>
-          </div>
-
-          <div className="connection-table-scroll flex-1 overflow-x-auto overflow-y-auto">
-            <table className="w-full min-w-[560px] md:min-w-[720px] text-xs">
               <tbody className="divide-y divide-white/20 dark:divide-white/15">
                 {filteredConnections.length > 0 ? (
                   filteredConnections.map((connection) => (
                     <tr key={connection.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-white/10">
-                      <td className="px-4 py-3" style={{ width: '25%' }}>
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-3">
                           {/* 进程图标 */}
                           {connection.metadata.processPath && iconMap[connection.metadata.processPath] && (
@@ -572,11 +572,11 @@ export default function ConnectionTable() {
                               className="h-8 w-8 flex-shrink-0 rounded"
                             />
                           )}
-                          <div className="flex flex-col min-w-0">
-                            <span className="max-w-[220px] truncate font-medium text-slate-700 dark:text-slate-100">
+                          <div className="flex flex-col">
+                            <span className="font-medium text-slate-700 dark:text-slate-100">
                               {connection.metadata.host || connection.metadata.destinationIP}
                             </span>
-                            <span className="mt-1 text-[10px] text-slate-400 dark:text-slate-400">
+                            <span className="mt-1 text-[10px] text-slate-400 dark:text-slate-400 whitespace-nowrap">
                               {connection.metadata.sourceIP}:{connection.metadata.sourcePort}
                               <span className="mx-1 inline-block rotate-90">⟶</span>
                               {connection.metadata.destinationIP}:{connection.metadata.destinationPort}
@@ -584,16 +584,16 @@ export default function ConnectionTable() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3" style={{ width: '10%' }}>
+                      <td className="px-4 py-3 whitespace-nowrap">
                         {renderTypeBadge(connection.metadata.type, connection.metadata.network)}
                       </td>
-                      <td className="px-4 py-3" style={{ width: '12%' }}>
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex flex-col">
                           <span className="font-medium text-emerald-500 dark:text-emerald-300">
                             {formatBytes(connection.upload)}
                           </span>
                           {connection.upload > 0 && (
-                            <div className="mt-0.5 w-full">
+                            <div className="mt-0.5 w-20">
                               <Progress
                                 className="h-1"
                                 value={(connection.upload / (connection.upload + connection.download || 1)) * 100}
@@ -603,13 +603,13 @@ export default function ConnectionTable() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3" style={{ width: '12%' }}>
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex flex-col">
                           <span className="font-medium text-sky-500 dark:text-sky-300">
                             {formatBytes(connection.download)}
                           </span>
                           {connection.download > 0 && (
-                            <div className="mt-0.5 w-full">
+                            <div className="mt-0.5 w-20">
                               <Progress
                                 className="h-1"
                                 value={(connection.download / (connection.upload + connection.download || 1)) * 100}
@@ -619,12 +619,12 @@ export default function ConnectionTable() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-200" style={{ width: '12%' }}>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-200 whitespace-nowrap">
                         {formatConnectionDuration(connection.start)}
                       </td>
-                      <td className="px-4 py-3" style={{ width: '20%' }}>
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex flex-col">
-                          <span className="truncate font-medium text-slate-700 dark:text-slate-200">
+                          <span className="font-medium text-slate-700 dark:text-slate-200">
                             {connection.chains?.join(' → ') || '-'}
                           </span>
                           <span className="mt-0.5 inline-flex items-center text-[10px] text-slate-400 dark:text-slate-400">
@@ -634,7 +634,7 @@ export default function ConnectionTable() {
                           </span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right" style={{ width: '9%' }}>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
                         <Button
                           variant="outline"
                           size="sm"

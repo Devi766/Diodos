@@ -201,6 +201,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProxies: () => ipcRenderer.invoke('get-proxies'),
   testNodeDelay: (nodeName) => ipcRenderer.invoke('test-node-delay', nodeName),
   getActiveConfig: () => ipcRenderer.invoke('get-active-config'),
+  setPreferredConfig: (configPath) => ipcRenderer.invoke('set-preferred-config', configPath),
+  isMihomoRunning: () => ipcRenderer.invoke('is-mihomo-running'),
   getProxyNodes: (configPath) => ipcRenderer.invoke('get-proxy-nodes', configPath),
   getConfigOrder: () => ipcRenderer.invoke('get-config-order'),
   notifyNodeChanged: (nodeName) => ipcRenderer.invoke('notify-node-changed', nodeName),

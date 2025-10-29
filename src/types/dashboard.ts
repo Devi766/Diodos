@@ -7,6 +7,7 @@ export type DashboardCardType =
   | 'system-proxy' // 系统代理
   | 'tun-mode' // TUN模式
   | 'proxy-mode' // 代理模式
+  | 'ip-address' // IP地址
   | 'traffic-chart' // 流量图表
   | 'traffic-ranking' // 流量排行
   | 'traffic-statistics'; // 流量统计
@@ -80,12 +81,20 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
     order: 6,
   },
   {
+    id: 'ip-address-card',
+    type: 'ip-address',
+    title: 'IP 地址',
+    description: '当前公网IP地址信息',
+    enabled: true,
+    order: 7,
+  },
+  {
     id: 'traffic-chart-card',
     type: 'traffic-chart',
     title: '流量图表',
     description: '实时流量监控图表',
     enabled: true,
-    order: 7,
+    order: 8,
   },
   {
     id: 'traffic-ranking-card',
@@ -93,7 +102,7 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
     title: '流量排行',
     description: '按进程/域名/策略统计流量排行',
     enabled: false,
-    order: 8,
+    order: 9,
   },
   {
     id: 'traffic-statistics-card',
@@ -101,7 +110,7 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
     title: '流量统计',
     description: '总流量和连接统计信息',
     enabled: false,
-    order: 9,
+    order: 10,
   },
 ];
 

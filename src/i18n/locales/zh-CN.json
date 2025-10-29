@@ -107,7 +107,11 @@
     "day": "日",
     "month": "月",
     "todayTotal": "今日总流量",
-    "monthTotal": "本月总流量"
+    "monthTotal": "本月总流量",
+    "ipAddress": "IP 地址",
+    "hideIp": "隐藏 IP",
+    "showIp": "显示 IP",
+    "ipFetchError": "获取失败"
   },
   "nodes": {
     "title": "代理组",

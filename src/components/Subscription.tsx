@@ -173,7 +173,20 @@ const getTrafficInfo = (subscription: Subscription) => {
 
 export default function SubscriptionManager() {
   const { t } = useTranslation();
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  // 初始化时直接从sessionStorage加载缓存数据，避免闪烁
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>(() => {
+    try {
+      const saved = sessionStorage.getItem('subscriptionsCache');
+      if (saved) {
+        const cached = JSON.parse(saved);
+        console.log('从sessionStorage加载了缓存的订阅数据:', cached.length);
+        return cached;
+      }
+    } catch (error) {
+      console.error('Failed to load cached subscriptions:', error);
+    }
+    return [];
+  });
   const [subUrl, setSubUrl] = useState('');
   const [subName, setSubName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -271,11 +284,20 @@ export default function SubscriptionManager() {
   // 新增: 加载当前活跃的配置
   const loadActiveConfig = async () => {
     if (!window.electronAPI) return;
-    
+
     try {
+      // 获取用户选择的配置（独立于服务运行状态）
       const config = await window.electronAPI.getActiveConfig();
       setActiveConfig(config);
-      setIsServiceRunning(!!config);
+
+      // 检查服务实际运行状态
+      try {
+        const running = await window.electronAPI.isMihomoRunning();
+        setIsServiceRunning(!!running);
+      } catch {
+        setIsServiceRunning(false);
+      }
+
       refreshProvidersAvailability();
     } catch (error) {
       console.error('获取当前配置失败:', error);
@@ -317,40 +339,45 @@ export default function SubscriptionManager() {
           }
         }
       } else {
-        // 服务未运行，直接启动
-        result = await window.electronAPI.startMihomo(configPath);
-
+        // 服务未运行，只设置为首选配置，不自动启动服务
+        console.log('服务未运行，设置为首选配置...');
+        result = await window.electronAPI.setPreferredConfig(configPath);
         if (result) {
           setActiveConfig(configPath);
+          showToast('成功', '已设置为首选配置，下次启动服务时将使用此配置', 'success');
+        } else {
+          showToast('错误', '设置首选配置失败', 'error');
         }
       }
 
       if (result) {
+        // 只在服务运行时才需要等待节点信息
+        if (isServiceRunning) {
+          // 关键修改：等待服务完全启动后获取节点信息
+          setTimeout(async () => {
+            try {
+              // 获取最新节点状态
+              if (window.electronAPI) {
+                // 使用getProxies方法获取节点状态而不是getCurrentNode
+                const proxies = await window.electronAPI.getProxies();
+                if (proxies && proxies.groups) {
+                  // 找到当前选中的节点
+                  const selectedNode = Object.values(proxies.proxies || {})
+                    .find((proxy: any) => proxy.selected) as any;
 
-        // 关键修改：等待服务完全启动后获取节点信息
-        setTimeout(async () => {
-          try {
-            // 获取最新节点状态
-            if (window.electronAPI) {
-              // 使用getProxies方法获取节点状态而不是getCurrentNode
-              const proxies = await window.electronAPI.getProxies();
-              if (proxies && proxies.groups) {
-                // 找到当前选中的节点
-                const selectedNode = Object.values(proxies.proxies || {})
-                  .find((proxy: any) => proxy.selected) as any;
+                  if (selectedNode?.name) {
+                    console.log('当前节点已更新为:', selectedNode.name);
 
-                if (selectedNode?.name) {
-                  console.log('当前节点已更新为:', selectedNode.name);
-
-                  // 通知其他组件配置已切换 - 使用已有的notifyNodeChanged方法
-                  await window.electronAPI.notifyNodeChanged(selectedNode.name);
+                    // 通知其他组件配置已切换 - 使用已有的notifyNodeChanged方法
+                    await window.electronAPI.notifyNodeChanged(selectedNode.name);
+                  }
                 }
               }
+            } catch (error) {
+              console.error('获取节点信息失败:', error);
             }
-          } catch (error) {
-            console.error('获取节点信息失败:', error);
-          }
-        }, 2000); // 等待2秒让服务完全启动
+          }, 2000); // 等待2秒让服务完全启动
+        }
       } else {
         showToast('错误', '切换配置文件失败', 'error');
       }
@@ -394,6 +421,13 @@ export default function SubscriptionManager() {
       // 应用排序
       const sortedSubs = sortSubscriptionsByOrder(subsWithIcons, savedOrder);
       setSubscriptions(sortedSubs);
+
+      // 保存到sessionStorage缓存
+      try {
+        sessionStorage.setItem('subscriptionsCache', JSON.stringify(sortedSubs));
+      } catch (error) {
+        console.error('Failed to cache subscriptions:', error);
+      }
     } catch (error) {
       console.error('加载配置失败:', error);
       showToast('错误', '加载配置失败', 'error');

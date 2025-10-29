@@ -120,7 +120,17 @@ const resolveElectron = () => {
 export default function Dashboard() {
   const { t } = useTranslation();
   const themeColor = useThemeColor();
-  const [isRunning, setIsRunning] = useState(false);
+
+  // 从sessionStorage初始化运行状态，避免闪烁
+  const [isRunning, setIsRunning] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const cached = sessionStorage.getItem('mihomoRunningState');
+      return cached === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [tunEnabled, setTunEnabled] = useState(false);
   const [proxyMode, setProxyMode] = useState<ProxyMode | null>(null);
@@ -295,6 +305,13 @@ export default function Dashboard() {
     } catch {}
   }, [electron]);
 
+  // 保存运行状态到sessionStorage，避免页面刷新时闪烁
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('mihomoRunningState', isRunning.toString());
+    } catch {}
+  }, [isRunning]);
+
   useEffect(() => {
     if (!electron) return;
     let cancelled = false;
@@ -317,27 +334,32 @@ export default function Dashboard() {
 
       try {
         const config = await electron.getActiveConfig?.();
-        if (!cancelled) {
-          if (typeof config === 'string' && config.length > 0) {
-            setActiveConfig(config);
-            setPreferredConfig(config);
-            setIsRunning(true);
-            // 加载配置图标
-            const iconPath = await loadConfigIcon(config);
-            setActiveConfigIcon(iconPath);
-            await syncCurrentNode();
-            await syncProxyMode();
-          } else {
-            setIsRunning(false);
-            // macOS: 服务可能正在启动中，等待后重试
-            if (retryCount < 3) {
-              retryTimeoutId = setTimeout(() => {
-                if (!cancelled) {
-                  bootstrap(retryCount + 1);
-                }
-              }, 1000);
+        if (!cancelled && typeof config === 'string' && config.length > 0) {
+          setActiveConfig(config);
+          setPreferredConfig(config);
+          // 加载配置图标
+          const iconPath = await loadConfigIcon(config);
+          setActiveConfigIcon(iconPath);
+        }
+
+        // 直接检查mihomo进程状态
+        try {
+          const running = await electron.isMihomoRunning?.();
+          console.log('[Dashboard bootstrap] isMihomoRunning result:', running);
+          if (!cancelled) {
+            if (running) {
+              console.log('[Dashboard bootstrap] Setting isRunning = true');
+              setIsRunning(true);
+              await syncCurrentNode();
+              await syncProxyMode();
+            } else {
+              console.log('[Dashboard bootstrap] Setting isRunning = false');
+              setIsRunning(false);
             }
           }
+        } catch (error) {
+          console.log('[Dashboard bootstrap] isMihomoRunning failed, setting isRunning = false', error);
+          setIsRunning(false);
         }
       } catch {}
 
@@ -611,6 +633,10 @@ export default function Dashboard() {
         setIsRunning(false);
         setCurrentNode('DIRECT');
         setTrafficSamples([]);
+        // 停止服务时自动关闭TUN模式
+        if (tunEnabled) {
+          setTunEnabled(false);
+        }
         showBanner({ type: 'info', message: t('dashboard.serviceStopped') });
       } else {
         showBanner({ type: 'error', message: t('dashboard.serviceAlreadyStopped') });
@@ -655,7 +681,8 @@ export default function Dashboard() {
         return;
       }
 
-      await refreshProxyStatus();
+      // 立即更新状态
+      setProxyEnabled(value);
       showBanner({ type: 'success', message: t('dashboard.systemProxyToggled', { status: value ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -694,7 +721,8 @@ export default function Dashboard() {
         return;
       }
 
-      await refreshTunStatus();
+      // 立即更新状态
+      setTunEnabled(value);
       showBanner({ type: 'success', message: t('dashboard.tunModeToggled', { status: value ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -817,11 +845,21 @@ export default function Dashboard() {
           <div className="flex items-center gap-2">
             {!isEditMode ? (
               <>
-                <Button size="sm" variant="primary" onClick={handleStart} disabled={isServiceBusy || isRunning}>
-                  <PlayIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.start')}
-                </Button>
-                <Button size="sm" variant="outline" onClick={handleStop} disabled={isServiceBusy || !isRunning}>
-                  <StopIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.stop')}
+                <Button
+                  size="sm"
+                  variant={isRunning ? "outline" : "primary"}
+                  onClick={isRunning ? handleStop : handleStart}
+                  disabled={isServiceBusy}
+                >
+                  {isRunning ? (
+                    <>
+                      <StopIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.stop')}
+                    </>
+                  ) : (
+                    <>
+                      <PlayIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.start')}
+                    </>
+                  )}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={handleRestart} disabled={isServiceBusy || !isRunning}>
                   <ReloadIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.restart')}
@@ -878,6 +916,7 @@ export default function Dashboard() {
         tunEnabled={tunEnabled}
         isTunUpdating={isTunUpdating}
         tunAvailable={!!electron?.toggleTunMode}
+        isRunning={isRunning}
         onTunToggle={handleTunToggle}
         proxyMode={proxyMode}
         isModeUpdating={isModeUpdating}

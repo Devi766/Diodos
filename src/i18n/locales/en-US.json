@@ -107,7 +107,11 @@
     "day": "Day",
     "month": "Month",
     "todayTotal": "Today's Total Traffic",
-    "monthTotal": "This Month's Total Traffic"
+    "monthTotal": "This Month's Total Traffic",
+    "ipAddress": "IP Address",
+    "hideIp": "Hide IP",
+    "showIp": "Show IP",
+    "ipFetchError": "Fetch Failed"
   },
   "nodes": {
     "title": "Proxy Groups",
