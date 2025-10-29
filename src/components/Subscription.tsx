@@ -175,6 +175,7 @@ export default function SubscriptionManager() {
   const { t } = useTranslation();
   // 初始化时直接从sessionStorage加载缓存数据，避免闪烁
   const [subscriptions, setSubscriptions] = useState<Subscription[]>(() => {
+    if (typeof window === 'undefined') return [];
     try {
       const saved = sessionStorage.getItem('subscriptionsCache');
       if (saved) {
