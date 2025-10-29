@@ -101,17 +101,19 @@ export default function ProxyNodes() {
   const [favoriteNodes, setFavoriteNodes] = useState<Set<string>>(new Set());
   // 初始化时从sessionStorage加载mihomo运行状态
   const [mihomoRunning, setMihomoRunning] = useState(() => {
+    if (typeof window === 'undefined') return false;
     try {
       const saved = sessionStorage.getItem('mihomoRunningState');
       if (saved !== null) {
         return saved === 'true';
       }
+      // 如果有缓存的groups数据，说明之前mihomo是运行的
+      const hasCache = sessionStorage.getItem('proxyGroupsCache');
+      return hasCache !== null;
     } catch (error) {
       console.error('Failed to load mihomo running state:', error);
+      return false;
     }
-    // 如果有缓存的groups数据，说明之前mihomo是运行的
-    const hasCache = sessionStorage.getItem('proxyGroupsCache');
-    return hasCache !== null;
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -277,6 +279,7 @@ export default function ProxyNodes() {
 
   // 保存groups到sessionStorage，用于下次加载时显示
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     if (groups.length > 0) {
       try {
         sessionStorage.setItem('proxyGroupsCache', JSON.stringify(groups));
@@ -288,6 +291,7 @@ export default function ProxyNodes() {
 
   // 保存mihomo运行状态到sessionStorage
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
       sessionStorage.setItem('mihomoRunningState', mihomoRunning.toString());
     } catch (error) {

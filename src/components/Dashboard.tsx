@@ -307,6 +307,7 @@ export default function Dashboard() {
 
   // 保存运行状态到sessionStorage，避免页面刷新时闪烁
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
       sessionStorage.setItem('mihomoRunningState', isRunning.toString());
     } catch {}
