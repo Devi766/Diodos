@@ -151,6 +151,7 @@ export default function Dashboard() {
   const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>([]);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [tunConfirmOpen, setTunConfirmOpen] = useState(false);
+  const [hasAdminPermission, setHasAdminPermission] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showAddCardDialog, setShowAddCardDialog] = useState(false);
   const [connections, setConnections] = useState<any[]>([]);
@@ -338,12 +339,10 @@ export default function Dashboard() {
         if (!cancelled && typeof config === 'string' && config.length > 0) {
           setActiveConfig(config);
           setPreferredConfig(config);
-          // 加载配置图标
           const iconPath = await loadConfigIcon(config);
           setActiveConfigIcon(iconPath);
         }
 
-        // 直接检查mihomo进程状态
         try {
           const running = await electron.isMihomoRunning?.();
           console.log('[Dashboard bootstrap] isMihomoRunning result:', running);
@@ -392,7 +391,6 @@ export default function Dashboard() {
         }
       } catch {}
 
-      // 只在首次加载或状态更新时获取代理模式
       if (retryCount === 0) {
         try {
           const mode = await fetchProxyMode();
@@ -405,10 +403,26 @@ export default function Dashboard() {
 
     bootstrap();
 
+    const unsubAutostart = electron.onMihomoAutostart?.((data: any) => {
+      console.log('[Dashboard] Received mihomo-autostart event:', data);
+      if (data?.success) {
+        console.log('[Dashboard] Setting isRunning = true from autostart event');
+        setIsRunning(true);
+        if (data.configPath) {
+          setActiveConfig(data.configPath);
+        }
+        syncCurrentNode();
+        syncProxyMode();
+      }
+    });
+
     return () => {
       cancelled = true;
       if (retryTimeoutId) {
         clearTimeout(retryTimeoutId);
+      }
+      if (unsubAutostart) {
+        unsubAutostart();
       }
     };
   }, [electron, fetchProxyMode, hydrateConnections, syncCurrentNode, syncProxyMode]);
@@ -733,13 +747,27 @@ export default function Dashboard() {
     }
   };
 
-  const handleTunToggle = (value: boolean) => {
+  const handleTunToggle = async (value: boolean) => {
     if (!electron?.toggleTunMode) {
       showBanner({ type: 'error', message: t('dashboard.tunModeNotSupported') });
       return;
     }
     if (isTunUpdating) return;
     if (value) {
+      // Windows 下检查是否有管理员权限（通过检查计划任务是否存在）
+      // 使用 checkElevateTask 方法的存在来判断是否为 Windows
+      if (electron?.checkElevateTask) {
+        try {
+          const hasTask = await electron.checkElevateTask();
+          console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
+          setHasAdminPermission(hasTask);
+        } catch (error) {
+          console.error('Failed to check admin permission:', error);
+          setHasAdminPermission(false);
+        }
+      } else {
+        setHasAdminPermission(true);
+      }
       setTunConfirmOpen(true);
       return;
     }
@@ -945,7 +973,9 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
             <DialogDescription>
-              {t('dashboard.tunModeWarning')}
+              {electron?.checkElevateTask && !hasAdminPermission
+                ? '首次启动 TUN 模式需要管理员权限，请退出应用并以管理员权限启动'
+                : t('dashboard.tunModeWarning')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -956,26 +986,28 @@ export default function Dashboard() {
             >
               {t('dashboard.reconsider')}
             </Button>
-            <button
-              type="button"
-              onClick={async () => {
-                setTunConfirmOpen(false);
-                await runTunToggle(true);
-              }}
-              className="relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-11 px-5 transition-all hover:brightness-110"
-              style={{
-                backgroundColor: themeColor,
-                boxShadow: `0 20px 42px -22px ${themeColor}70`
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.boxShadow = `0 24px 52px -20px ${themeColor}90`;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = `0 20px 42px -22px ${themeColor}70`;
-              }}
-            >
-              {t('dashboard.confirmEnable')}
-            </button>
+            {(!electron?.checkElevateTask || hasAdminPermission) && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setTunConfirmOpen(false);
+                  await runTunToggle(true);
+                }}
+                className="relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-11 px-5 transition-all hover:brightness-110"
+                style={{
+                  backgroundColor: themeColor,
+                  boxShadow: `0 20px 42px -22px ${themeColor}70`
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.boxShadow = `0 24px 52px -20px ${themeColor}90`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = `0 20px 42px -22px ${themeColor}70`;
+                }}
+              >
+                {t('dashboard.confirmEnable')}
+              </button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

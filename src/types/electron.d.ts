@@ -163,6 +163,7 @@ export interface ElectronAPI {
   updateSubscription: (filePath: string, configData: string, subUrl: string, subscriptionInfo?: SubscriptionInfo) => Promise<boolean>;
   refreshSubscription: (filePath: string) => Promise<{ success: boolean, filePath?: string, error?: string }>;
   onImportSubscription: (callback: (url: string) => void) => () => void;
+  saveSubscriptionOrder: (orderList: Array<{ path: string; order: number }>) => Promise<{ success: boolean; error?: string }>;
   
   // 节点管理
   selectNode: (nodeName: string, groupName: string) => Promise<{ success: boolean, nodeName: string, groupName: string, error?: string }>;
@@ -187,8 +188,11 @@ export interface ElectronAPI {
   getTunStatus: () => Promise<boolean>;
   onTunStatus: (callback: (enabled: boolean) => void) => (() => void);
 
-  // TUN 模式权限和配置
+  checkElevateTask: () => Promise<boolean>;
+  deleteElevateTask: () => Promise<{ success: boolean; error?: string }>;
   grantTunPermissions: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  checkCorePermission: () => Promise<{ success: boolean; hasPermission: boolean }>;
+  revokeCorePermission: () => Promise<{ success: boolean; error?: string }>;
   getTunConfig: () => Promise<{ success: boolean; config?: TunConfig; error?: string }>;
   saveTunConfig: (config: TunConfig) => Promise<{ success: boolean; error?: string }>;
   

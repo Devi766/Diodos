@@ -166,7 +166,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 订阅管理
   saveSubscription: (subUrl, configData, customName, subscriptionInfo) => {
-    console.log('preload.js - 传递订阅参数 - URL:', subUrl); 
+    console.log('preload.js - 传递订阅参数 - URL:', subUrl);
     console.log('preload.js - 传递订阅参数 - 自定义名称:', customName);
     if (subscriptionInfo) {
       console.log('preload.js - 传递订阅流量信息:', subscriptionInfo);
@@ -180,6 +180,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchSubscription: (subUrl) => ipcRenderer.invoke('fetch-subscription', subUrl),
   updateSubscription: (filePath, configData, subUrl, subscriptionInfo) => ipcRenderer.invoke('update-subscription', filePath, configData, subUrl, subscriptionInfo),
   refreshSubscription: (filePath) => ipcRenderer.invoke('refresh-subscription', filePath),
+  saveSubscriptionOrder: (orderList) => ipcRenderer.invoke('save-subscription-order', orderList),
 
   // 订阅自动更新间隔设置
   setSubscriptionUpdateInterval: (filePath, intervalMinutes) => ipcRenderer.invoke('set-subscription-update-interval', filePath, intervalMinutes),
@@ -243,8 +244,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getTunStatus: () => ipcRenderer.invoke('getTunStatus'),
 
-  // TUN 模式权限和配置
+  checkElevateTask: () => ipcRenderer.invoke('check-elevate-task'),
+  deleteElevateTask: () => ipcRenderer.invoke('delete-elevate-task'),
   grantTunPermissions: () => ipcRenderer.invoke('grant-tun-permissions'),
+  checkCorePermission: () => ipcRenderer.invoke('check-core-permission'),
+  revokeCorePermission: () => ipcRenderer.invoke('revoke-core-permission'),
   getTunConfig: () => ipcRenderer.invoke('get-tun-config'),
   saveTunConfig: (config) => ipcRenderer.invoke('save-tun-config', config),
   

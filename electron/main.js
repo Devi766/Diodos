@@ -769,11 +769,14 @@ function applyCustomBackground(win) {
 }
 
 function updateUserSettings(settings) {
-  const success = updateUserSettingsRaw(settings);
-  if (success && state.mihomoProcess && state.mihomoProcess.pid && state.configFilePath) {
-    regenerateAndReloadConfig();
+  try {
+    const success = updateUserSettingsRaw(settings);
+    return success;
+  } catch (error) {
+    console.error('[updateUserSettings] 更新用户设置时发生错误:', error);
+    console.error('[updateUserSettings] 错误堆栈:', error.stack);
+    return false;
   }
-  return success;
 }
 
 context.updateUserSettings = updateUserSettings;
@@ -1697,6 +1700,128 @@ ipcMain.handle('reset-kernel-path', async () => {
   }
 });
 
+// Windows 权限初始化 - 像 Sparkle 一样自动通过计划任务获取管理员权限
+if (process.platform === 'win32' && !isDev) {
+  const PermissionManager = require('./main-process/permission-manager');
+  const permissionManager = new PermissionManager();
+  const { execSync, spawn } = require('child_process');
+  const { dialog } = require('electron');
+  const path = require('path');
+  const fs = require('fs');
+
+  // 将 PermissionManager 方法添加到 context
+  context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
+  context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
+
+  console.log('[Startup] Checking admin privileges...');
+
+  let hasAdminPrivileges = false;
+  try {
+    execSync('net session', { stdio: 'ignore' });
+    hasAdminPrivileges = true;
+    console.log('[Startup] ✓ Current process has admin privileges');
+
+    // 有管理员权限时，确保任务已创建
+    try {
+      permissionManager.createElevateTask();
+      console.log('[Startup] ✓ Elevated task created/updated successfully');
+    } catch (error) {
+      console.log('[Startup] ! Task creation failed (may already exist):', error.message);
+    }
+  } catch {
+    console.log('[Startup] ✗ Current process does NOT have admin privileges');
+
+    // 没有管理员权限，检查是否有计划任务
+    const taskExists = permissionManager.checkElevateTaskSync();
+
+    if (taskExists) {
+      console.log('[Startup] ✓ Found existing elevated task, using it to restart...');
+      try {
+        // 通过计划任务运行自己（会以管理员权限启动）
+        execSync(`%SystemRoot%\\System32\\schtasks.exe /run /tn "${permissionManager.taskName}"`, {
+          stdio: 'ignore'
+        });
+        console.log('[Startup] → Task execution triggered, exiting current instance...');
+
+        // 延迟退出，让计划任务有时间启动
+        setTimeout(() => {
+          app.quit();
+        }, 1000);
+
+        // 阻止继续执行
+        return;
+      } catch (runError) {
+        console.error('[Startup] ✗ Failed to run task:', runError.message);
+        console.log('[Startup] → Will continue without admin privileges');
+      }
+    } else {
+      console.log('[Startup] ✗ No elevated task found');
+      console.log('[Startup] → First time setup required');
+      console.log('[Startup] → Attempting to create task with UAC prompt...');
+
+      // 首次启动，需要创建任务
+      try {
+        // 尝试通过 PowerShell 以管理员权限创建任务
+        const taskDir = permissionManager.taskDir;
+        const taskName = permissionManager.taskName;
+
+        // 确保任务目录存在
+        permissionManager.ensureTaskDir();
+
+        // 生成任务 XML
+        const taskFilePath = path.join(taskDir, 'flycast-task.xml');
+        const xmlContent = permissionManager.getElevateTaskXml();
+        fs.writeFileSync(taskFilePath, Buffer.from(`\ufeff${xmlContent}`, 'utf-16le'));
+
+        // 使用 PowerShell 以管理员权限创建任务
+        const psCommand = `Start-Process -FilePath "schtasks.exe" -ArgumentList "/create", "/tn", "${taskName}", "/xml", "${taskFilePath}", "/f" -Verb RunAs -Wait`;
+
+        console.log('[Startup] → Requesting admin privileges to create task...');
+
+        execSync(`powershell -Command "${psCommand}"`, {
+          stdio: 'inherit',
+          windowsHide: false
+        });
+
+        console.log('[Startup] ✓ Task created successfully!');
+        console.log('[Startup] → Restarting with elevated privileges...');
+
+        // 任务创建成功，通过任务运行自己
+        execSync(`%SystemRoot%\\System32\\schtasks.exe /run /tn "${taskName}"`, {
+          stdio: 'ignore'
+        });
+
+        // 退出当前实例
+        setTimeout(() => {
+          app.quit();
+        }, 1000);
+
+        return;
+      } catch (createError) {
+        console.error('[Startup] ✗ Failed to create task:', createError.message);
+        console.log('[Startup] → User may have declined UAC prompt');
+        console.log('[Startup] → Continuing without admin privileges');
+        console.log('[Startup] → TUN mode will NOT work');
+
+        // 显示提示（可选）
+        // dialog.showErrorBox(
+        //   '首次启动需要管理员权限',
+        //   'TUN 模式需要管理员权限。\n\n请右键应用图标，选择"以管理员身份运行"。'
+        // );
+      }
+    }
+  }
+
+  console.log('[Startup] Initialization complete, admin status:', hasAdminPrivileges ? 'YES' : 'NO');
+} else if (process.platform === 'win32' && isDev) {
+  // 开发环境也需要提供这些方法
+  const PermissionManager = require('./main-process/permission-manager');
+  const permissionManager = new PermissionManager();
+
+  context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
+  context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
+}
+
 // 应用启动时执行
 app.whenReady().then(() => {
   // 注册协议处理器
@@ -1806,14 +1931,28 @@ app.whenReady().then(() => {
 
   // 检查TUN模式状态
   try {
-    // 读取用户设置
-    const userSettings = getUserSettings();
-    // 检查TUN模式状态
-    state.tunModeEnabled = userSettings.tun && userSettings.tun.enable === true;
+    state.tunModeEnabled = getTunModeEnabled();
     console.log('TUN模式状态:', state.tunModeEnabled ? '已启用' : '未启用');
 
-    // 保存TUN状态到数据库
-    dbManager.setSetting('tunModeEnabled', state.tunModeEnabled);
+    // 检查是否有待处理的 TUN 启用请求（从管理员重启后）
+    const pendingTunEnable = dbManager.getSetting('pendingTunEnable', false);
+    if (pendingTunEnable) {
+      console.log('[TUN] 检测到待处理的 TUN 启用请求');
+      dbManager.deleteSetting('pendingTunEnable');
+
+      // 检查是否有管理员权限
+      try {
+        const { execSync } = require('child_process');
+        execSync('net session', { stdio: 'ignore' });
+        console.log('[TUN] 已获得管理员权限，TUN 模式将在服务启动时自动启用');
+        state.tunModeEnabled = true;
+        setTunModeEnabled(true);
+      } catch {
+        console.warn('[TUN] 未获得管理员权限，TUN 模式无法启用');
+        state.tunModeEnabled = false;
+        setTunModeEnabled(false);
+      }
+    }
   } catch (error) {
     console.error('检查TUN模式状态失败:', error);
   }
@@ -3203,12 +3342,18 @@ app.whenReady().then(() => {
         return { success: false, error: '安全校验失败，请重试' };
       }
 
+      console.log('[IPC toggleTunMode] 收到请求，目标状态:', enabled);
       const menuItem = { checked: Boolean(enabled) };
-      toggleTunMode(menuItem);
 
-      return state.tunModeEnabled;
+      // toggleTunMode 现在是异步函数，需要 await
+      await toggleTunMode(menuItem);
+
+      console.log('[IPC toggleTunMode] 操作完成，当前状态:', state.tunModeEnabled);
+      // 返回成功对象，而不是布尔值
+      return { success: true, enabled: state.tunModeEnabled };
     } catch (error) {
-      console.error('切换TUN模式失败:', error);
+      console.error('[IPC toggleTunMode] 切换TUN模式失败:', error);
+      console.error('[IPC toggleTunMode] 错误堆栈:', error.stack);
       return { success: false, error: error?.message || String(error) };
     }
   });
@@ -3218,9 +3363,119 @@ app.whenReady().then(() => {
     return state.tunModeEnabled;
   });
 
-  // 授予 TUN 模式权限 (macOS/Linux)
+  ipcMain.handle('check-elevate-task', async () => {
+    try {
+      if (context.checkElevateTask) {
+        return await context.checkElevateTask();
+      }
+      return false;
+    } catch (error) {
+      console.error('[check-elevate-task] Error:', error);
+      return false;
+    }
+  });
+
+  ipcMain.handle('delete-elevate-task', async () => {
+    try {
+      if (context.deleteElevateTask) {
+        await context.deleteElevateTask();
+        return { success: true };
+      }
+      return { success: false, error: 'Function not available' };
+    } catch (error) {
+      console.error('[delete-elevate-task] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('grant-tun-permissions', async () => {
     try {
+      // Windows 平台：显示确认对话框，然后创建任务并重启
+      if (isWindows) {
+        console.log('[TUN] Windows: Showing permission grant dialog');
+
+        // 开发环境下的特殊处理
+        if (isDev) {
+          console.log('[TUN] Development mode detected');
+          const { dialog } = require('electron');
+          const choice = dialog.showMessageBoxSync(state.mainWindow, {
+            type: 'warning',
+            title: 'TUN 模式授权 - 开发环境',
+            message: '开发环境下无法自动重启',
+            detail: '在开发环境下，请手动以管理员权限运行 npm run electron:dev。\n\n或者使用打包后的应用进行 TUN 模式测试。',
+            buttons: ['我知道了'],
+            defaultId: 0,
+            noLink: true
+          });
+          return { success: false, error: '开发环境下请手动以管理员权限运行' };
+        }
+
+        // 显示自定义对话框
+        const { dialog } = require('electron');
+        const choice = dialog.showMessageBoxSync(state.mainWindow, {
+          type: 'info',
+          title: 'TUN 模式授权',
+          message: '首次启动 TUN 模式需要获取管理员权限',
+          detail: '应用将创建一个计划任务，以便在需要时以管理员权限运行。\n\n点击"授权"后，应用将自动重启以完成授权。',
+          buttons: ['授权', '取消'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true
+        });
+
+        if (choice !== 0) {
+          console.log('[TUN] User cancelled permission grant');
+          return { success: false, error: '用户取消授权' };
+        }
+
+        console.log('[TUN] User confirmed, creating elevated task and restarting...');
+
+        // 创建计划任务
+        const PermissionManager = require('./main-process/permission-manager');
+        const permissionManager = new PermissionManager();
+
+        try {
+          // 尝试直接创建任务（如果当前已有管理员权限）
+          permissionManager.createElevateTask();
+          console.log('[TUN] Task created successfully with current privileges');
+          return { success: true, message: 'TUN 模式权限已成功授予', needRestart: false };
+        } catch (createError) {
+          console.log('[TUN] Cannot create task with current privileges, need to restart as admin');
+
+          // 没有管理员权限，需要以管理员身份重启
+          const { spawn } = require('child_process');
+          const exePath = process.execPath;
+          const args = process.argv.slice(1).filter(arg => !arg.startsWith('--inspect'));
+
+          console.log('[TUN] Restarting as admin...');
+          console.log('[TUN] exePath:', exePath);
+          console.log('[TUN] args:', args);
+
+          const psCommand = args.length > 0
+            ? `Start-Process -FilePath "${exePath}" -ArgumentList "${args.join(' ')}" -Verb RunAs`
+            : `Start-Process -FilePath "${exePath}" -Verb RunAs`;
+
+          const child = spawn('powershell.exe', ['-Command', psCommand], {
+            detached: true,
+            stdio: 'ignore'
+          });
+
+          child.unref();
+
+          // 延迟退出，让重启命令执行
+          setTimeout(() => {
+            app.quit();
+          }, 500);
+
+          return { success: true, message: '正在重启应用以获取管理员权限...', needRestart: true };
+        }
+      }
+
+      // macOS 和 Linux 保持原有逻辑
+      if (context.grantCorePermission) {
+        return await context.grantCorePermission();
+      }
+
       if (isMac) {
         const { promisify } = require('util');
         const execFile = promisify(require('child_process').execFile);
@@ -3260,9 +3515,6 @@ app.whenReady().then(() => {
 
         console.log('[TUN] Linux 权限授予成功');
         return { success: true, message: 'TUN 模式权限已成功授予' };
-      } else if (isWindows) {
-        // Windows 需要以管理员身份运行应用
-        return { success: false, error: 'Windows 平台需要以管理员身份运行应用才能使用 TUN 模式' };
       }
     } catch (error) {
       console.error('[TUN] 授予权限失败:', error);
@@ -3270,11 +3522,34 @@ app.whenReady().then(() => {
     }
   });
 
-  // 获取 TUN 配置
+  ipcMain.handle('check-core-permission', async () => {
+    try {
+      if (context.checkCorePermission) {
+        return await context.checkCorePermission();
+      }
+      return { success: false, hasPermission: false };
+    } catch (error) {
+      console.error('[check-core-permission] Error:', error);
+      return { success: false, hasPermission: false };
+    }
+  });
+
+  ipcMain.handle('revoke-core-permission', async () => {
+    try {
+      if (context.revokeCorePermission) {
+        return await context.revokeCorePermission();
+      }
+      return { success: false, error: 'Function not available' };
+    } catch (error) {
+      console.error('[revoke-core-permission] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('get-tun-config', async () => {
     try {
       const config = dbManager.getSetting('tunConfig', {
-        device: isMac ? 'utun1500' : 'Mihomo',
+        device: isMac ? 'utun1500' : 'mihomo',
         stack: 'mixed',
         autoRoute: true,
         autoRedirect: false,

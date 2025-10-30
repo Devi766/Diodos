@@ -66,7 +66,9 @@ export default function MatchRules() {
               {rule.type}
             </span>
             <span className="text-muted-foreground">→</span>
-            <span className="text-primary font-medium">{rule.proxy}</span>
+            <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium">
+              {rule.proxy}
+            </span>
           </div>
         </div>
       </div>

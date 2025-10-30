@@ -416,16 +416,13 @@ export default function SubscriptionManager() {
         })
       );
 
-      // 从本地存储中获取排序信息
-      const savedOrder = getSavedOrder();
-
-      // 应用排序
-      const sortedSubs = sortSubscriptionsByOrder(subsWithIcons, savedOrder);
-      setSubscriptions(sortedSubs);
+      // 后端已经按照 sort_order 排序返回数据，直接使用即可
+      // 不再需要从 localStorage 获取排序并重新排序
+      setSubscriptions(subsWithIcons);
 
       // 保存到sessionStorage缓存
       try {
-        sessionStorage.setItem('subscriptionsCache', JSON.stringify(sortedSubs));
+        sessionStorage.setItem('subscriptionsCache', JSON.stringify(subsWithIcons));
       } catch (error) {
         console.error('Failed to cache subscriptions:', error);
       }
@@ -434,40 +431,29 @@ export default function SubscriptionManager() {
       showToast('错误', '加载配置失败', 'error');
     }
   };
-  
-  // 新增: 获取保存的排序
-  const getSavedOrder = (): Record<string, number> => {
+
+  // 保存排序到数据库
+  const saveOrder = useCallback(async (subs: Subscription[]) => {
     try {
-      const saved = localStorage.getItem('subscriptionOrder');
-      return saved ? JSON.parse(saved) : {};
-    } catch (error) {
-      console.error('加载排序信息失败:', error);
-      return {};
-    }
-  };
-  
-  // 新增: 保存排序到本地存储
-  const saveOrder = useCallback((subs: Subscription[]) => {
-    try {
-      const orderMap: Record<string, number> = {};
+      const orderList: Array<{ path: string; order: number }> = [];
+
       subs.forEach((sub, index) => {
-        orderMap[sub.path] = index;
+        orderList.push({ path: sub.path, order: index });
       });
 
-      localStorage.setItem('subscriptionOrder', JSON.stringify(orderMap));
+      // 保存到数据库
+      if (window.electronAPI) {
+        const result = await window.electronAPI.saveSubscriptionOrder(orderList);
+        if (result.success) {
+          console.log('排序已保存到数据库');
+        } else {
+          console.error('保存排序到数据库失败:', result.error);
+        }
+      }
     } catch (error) {
       console.error('保存排序信息失败:', error);
     }
   }, []);
-  
-  // 新增: 根据排序信息排序配置
-  const sortSubscriptionsByOrder = (subs: Subscription[], orderMap: Record<string, number>): Subscription[] => {
-    return [...subs].sort((a, b) => {
-      const orderA = orderMap[a.path] !== undefined ? orderMap[a.path] : Number.MAX_SAFE_INTEGER;
-      const orderB = orderMap[b.path] !== undefined ? orderMap[b.path] : Number.MAX_SAFE_INTEGER;
-      return orderA - orderB;
-    });
-  };
   
   // 长按开始拖拽
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>, item: Subscription) => {

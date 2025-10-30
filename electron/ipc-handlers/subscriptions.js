@@ -593,4 +593,16 @@ module.exports = function registerSubscriptionHandlers(context) {
       return { success: false, interval: 0 };
     }
   });
+
+  // 保存订阅排序
+  ipcMain.handle('save-subscription-order', async (event, orderList) => {
+    try {
+      // orderList 格式: [{ path: string, order: number }, ...]
+      dbManager.updateSubscriptionOrder(orderList);
+      return { success: true };
+    } catch (error) {
+      console.error('保存订阅排序失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
 };

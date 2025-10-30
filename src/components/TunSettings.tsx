@@ -20,7 +20,7 @@ interface TunConfig {
 const TunSettings: React.FC = () => {
   const { t } = useTranslation();
   const [config, setConfig] = useState<TunConfig>({
-    device: process.platform === 'darwin' ? 'utun1500' : 'Mihomo',
+    device: process.platform === 'darwin' ? 'utun1500' : 'mihomo',
     stack: 'mixed',
     autoRoute: true,
     autoRedirect: false,
@@ -33,8 +33,8 @@ const TunSettings: React.FC = () => {
   });
   const [loading, setLoading] = useState(false);
   const [changed, setChanged] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState<string>('unknown');
 
-  // Toast 状态
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
@@ -42,7 +42,33 @@ const TunSettings: React.FC = () => {
 
   useEffect(() => {
     loadConfig();
+    checkPermissionStatus();
   }, []);
+
+  const checkPermissionStatus = async () => {
+    if (!window.electronAPI) return;
+
+    try {
+      const isWindows = process.platform === 'win32';
+
+      if (isWindows) {
+        if (window.electronAPI.checkElevateTask) {
+          const hasTask = await window.electronAPI.checkElevateTask();
+          console.log('[TunSettings] Windows checkElevateTask result:', hasTask);
+          setPermissionStatus(hasTask ? 'granted' : 'not_granted');
+        }
+      } else {
+        if (window.electronAPI.checkCorePermission) {
+          const result = await window.electronAPI.checkCorePermission();
+          console.log('[TunSettings] macOS/Linux checkCorePermission result:', result);
+          setPermissionStatus(result.hasPermission ? 'granted' : 'not_granted');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check permission:', error);
+      setPermissionStatus('unknown');
+    }
+  };
 
   const showToast = (title: string, description: string, type: 'success' | 'error') => {
     setToastTitle(title);
@@ -91,8 +117,40 @@ const TunSettings: React.FC = () => {
       const result = await window.electronAPI.grantTunPermissions();
       if (result.success) {
         showToast(t('tunSettings.success'), result.message || t('tunSettings.tunPermissionGranted'), 'success');
+        await checkPermissionStatus();
       } else {
         showToast(t('tunSettings.error'), result.error || t('tunSettings.unknownError'), 'error');
+      }
+    } catch (error) {
+      showToast(t('tunSettings.error'), String(error), 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRevokePermissions = async () => {
+    if (!window.electronAPI) return;
+
+    setLoading(true);
+    try {
+      const isWindows = process.platform === 'win32';
+
+      if (isWindows && window.electronAPI.deleteElevateTask) {
+        const result = await window.electronAPI.deleteElevateTask();
+        if (result.success) {
+          showToast(t('tunSettings.success'), 'Permission task removed', 'success');
+          await checkPermissionStatus();
+        } else {
+          showToast(t('tunSettings.error'), result.error || 'Failed to remove task', 'error');
+        }
+      } else if (window.electronAPI.revokeCorePermission) {
+        const result = await window.electronAPI.revokeCorePermission();
+        if (result.success) {
+          showToast(t('tunSettings.success'), 'Permissions revoked', 'success');
+          await checkPermissionStatus();
+        } else {
+          showToast(t('tunSettings.error'), result.error || 'Failed to revoke permissions', 'error');
+        }
       }
     } catch (error) {
       showToast(t('tunSettings.error'), String(error), 'error');
@@ -129,33 +187,50 @@ const TunSettings: React.FC = () => {
   return (
     <Toast.Provider swipeDirection="right">
       <div className="space-y-6">
-        {/* 权限设置 */}
-        {!isWindows && (
-          <div>
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-              {t('tunSettings.tunPermission')}
-            </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-              {isMac && t('tunSettings.tunPermissionDescMac')}
-              {isLinux && t('tunSettings.tunPermissionDescLinux')}
-            </p>
-            <button
-              className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={handleGrantPermissions}
-              disabled={loading}
-            >
-              {t('tunSettings.grantPermission')}
-            </button>
-          </div>
-        )}
+        <div>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
+            TUN 模式权限
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
+            {isMac && 'macOS 需要授予内核 root 权限才能启用 TUN 模式。'}
+            {isLinux && 'Linux 需要授予内核 root 权限才能启用 TUN 模式。'}
+            {isWindows && 'Windows 需要创建计划任务以管理员权限运行，首次授权后应用会自动重启。'}
+          </p>
 
-        {isWindows && (
-          <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-            <p className="text-xs text-yellow-800 dark:text-yellow-200">
-              {t('tunSettings.windowsAdminRequired')}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              {permissionStatus === 'granted' && (
+                <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-xs">
+                    {isWindows && '已授权管理员权限'}
+                    {isMac && '已授权（内核已获得 root 权限）'}
+                    {isLinux && '已授权（内核已获得 root 权限）'}
+                  </span>
+                </div>
+              )}
+              {permissionStatus === 'not_granted' && (
+                <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-xs">
+                    {isWindows && '未授权 TUN 模式权限，请退出应用，然后用管理员权限启动'}
+                    {isMac && '未授权（需要授予内核 root 权限）'}
+                    {isLinux && '未授权（需要授予内核 root 权限）'}
+                  </span>
+                </div>
+              )}
+              {permissionStatus === 'unknown' && (
+                <div className="text-xs text-gray-500 dark:text-gray-400">正在检查授权状态...</div>
+              )}
+            </div>
+
+
           </div>
-        )}
+        </div>
 
         {/* macOS DNS 设置 */}
         {isMac && (

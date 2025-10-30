@@ -1,3 +1,5 @@
+const PermissionManager = require('./permission-manager');
+
 module.exports = function initSystemIntegration(context) {
   const {
     dialog,
@@ -8,6 +10,8 @@ module.exports = function initSystemIntegration(context) {
     userDataPath,
     dbManager
   } = context;
+
+  const permissionManager = new PermissionManager();
 
   function ensureUpdateSettingsFn() {
     return context.updateUserSettings || context.updateUserSettingsRaw;
@@ -129,93 +133,200 @@ module.exports = function initSystemIntegration(context) {
     }
   }
 
-  function toggleTunMode(menuItem) {
-    if (!state.mihomoProcess) {
-      console.warn('[toggleTunMode] Mihomo 服务未运行');
+  async function checkAdminPrivileges() {
+    return await permissionManager.checkAdminPrivileges();
+  }
+
+  async function checkElevateTask() {
+    return await permissionManager.checkElevateTask();
+  }
+
+  async function createElevateTask() {
+    try {
+      return permissionManager.createElevateTask();
+    } catch (error) {
+      console.error('[createElevateTask] Failed:', error);
+      return false;
+    }
+  }
+
+  async function deleteElevateTask() {
+    await permissionManager.deleteElevateTask();
+  }
+
+  async function restartWithElevatedTask() {
+    return await restartAsAdmin();
+  }
+
+  async function restartAsAdmin() {
+    if (process.platform !== 'win32') {
       return;
     }
 
+    const { app } = require('electron');
+    const { spawn } = require('child_process');
+
+    const exePath = process.execPath;
+    const args = process.argv.slice(1).filter(arg => !arg.startsWith('--inspect'));
+
+    console.log('[restartAsAdmin] Preparing to restart as admin');
+    console.log('[restartAsAdmin] exePath:', exePath);
+    console.log('[restartAsAdmin] args:', args);
+
+    const psCommand = args.length > 0
+      ? `Start-Process -FilePath "${exePath}" -ArgumentList "${args.join(' ')}" -Verb RunAs`
+      : `Start-Process -FilePath "${exePath}" -Verb RunAs`;
+
+    const child = spawn('powershell.exe', ['-Command', psCommand], {
+      detached: true,
+      stdio: 'ignore'
+    });
+
+    child.unref();
+
+    setTimeout(() => {
+      app.quit();
+    }, 500);
+  }
+
+  async function toggleTunMode(menuItem) {
+    const targetEnabled = menuItem.checked;
+    console.log(`[toggleTunMode] Target state: ${targetEnabled ? 'enabled' : 'disabled'}`);
+
     try {
-      const getSettings = context.getUserSettings || (() => ({}));
-      const userSettings = getSettings();
+      const tunConfig = buildTunConfig(targetEnabled, dbManager);
 
-      if (!userSettings.tun || typeof userSettings.tun !== 'object') {
-        userSettings.tun = {};
+      const updateUserSettingsRaw = context.updateUserSettingsRaw;
+      if (!updateUserSettingsRaw) {
+        throw new Error('Update settings function not available');
       }
 
-      userSettings.tun.enable = menuItem.checked;
+      console.log('[toggleTunMode] Saving TUN config...');
+      updateUserSettingsRaw({ tun: tunConfig });
 
-      if (menuItem.checked) {
-        // 从数据库加载保存的 TUN 配置
-        const savedTunConfig = dbManager.getSetting('tunConfig', null);
+      const setTunModeEnabled = context.setTunModeEnabled;
+      if (setTunModeEnabled) {
+        setTunModeEnabled(targetEnabled);
+      }
+      state.tunModeEnabled = targetEnabled;
 
-        if (savedTunConfig) {
-          // 使用保存的配置
-          userSettings.tun = {
-            enable: true,
-            device: savedTunConfig.device,
-            stack: savedTunConfig.stack,
-            'auto-route': savedTunConfig.autoRoute,
-            'auto-redirect': savedTunConfig.autoRedirect,
-            'auto-detect-interface': savedTunConfig.autoDetectInterface,
-            'dns-hijack': savedTunConfig.dnsHijack,
-            'strict-route': savedTunConfig.strictRoute,
-            'route-exclude-address': savedTunConfig.routeExcludeAddress,
-            mtu: savedTunConfig.mtu
-          };
+      if (!state.mihomoProcess || !state.configFilePath) {
+        console.warn('[toggleTunMode] Mihomo not running, config saved only');
+        state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
+        return;
+      }
 
-          // macOS 特有配置
-          if (process.platform === 'darwin' && savedTunConfig.autoSetDNS !== undefined) {
-            userSettings.tun['auto-set-dns'] = savedTunConfig.autoSetDNS;
-          }
+      console.log('[toggleTunMode] Restarting Mihomo to apply TUN config...');
+      const restartMihomo = context.mihomoService?.restartMihomo;
+      if (!restartMihomo) {
+        throw new Error('Restart function not available');
+      }
 
-          console.log('启用TUN模式，使用保存的配置:', userSettings.tun);
-        } else {
-          // 使用默认配置
-          userSettings.tun = {
-            enable: true,
-            device: process.platform === 'darwin' ? 'utun1500' : 'Mihomo',
-            stack: 'mixed',
-            'auto-route': true,
-            'auto-redirect': false,
-            'auto-detect-interface': true,
-            'dns-hijack': ['any:53'],
-            'strict-route': false,
-            'route-exclude-address': [],
-            mtu: 1500
-          };
+      const success = await restartMihomo(state.configFilePath);
 
-          if (process.platform === 'darwin') {
-            userSettings.tun['auto-set-dns'] = true;
-          }
-
-          console.log('启用TUN模式，使用默认配置:', userSettings.tun);
-        }
+      if (success) {
+        console.log('[toggleTunMode] Mihomo restarted successfully');
+        state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
       } else {
-        userSettings.tun.enable = false;
-        console.log('禁用TUN模式');
-      }
-
-      const updater = ensureUpdateSettingsFn();
-      if (updater && updater(userSettings)) {
-        state.tunModeEnabled = menuItem.checked;
-        dbManager.setSetting('tunModeEnabled', state.tunModeEnabled);
+        console.warn('[toggleTunMode] Mihomo restart failed, but config was saved');
         state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
       }
     } catch (error) {
-      console.error('设置TUN模式失败:', error);
-      dialog.showErrorBox('TUN模式错误', `设置TUN模式失败: ${error.message}`);
+      console.error('[toggleTunMode] Failed to toggle TUN mode:', error);
+
+      dialog.showErrorBox('TUN 模式错误', `设置 TUN 模式失败: ${error.message}`);
 
       menuItem.checked = !menuItem.checked;
       state.tunModeEnabled = !menuItem.checked;
 
       try {
-        dbManager.setSetting('tunModeEnabled', state.tunModeEnabled);
+        const setTunModeEnabled = context.setTunModeEnabled;
+        if (setTunModeEnabled) {
+          setTunModeEnabled(state.tunModeEnabled);
+        }
       } catch (saveError) {
-        console.error('保存TUN模式状态失败:', saveError);
+        console.error('[toggleTunMode] Failed to save TUN mode state:', saveError);
       }
 
       state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
+    }
+  }
+
+  function buildTunConfig(enabled, dbManager) {
+    if (!enabled) {
+      return { enable: false };
+    }
+
+    const savedTunConfig = dbManager.getSetting('tunConfig', null);
+
+    if (savedTunConfig) {
+      const config = {
+        enable: true,
+        device: savedTunConfig.device,
+        stack: savedTunConfig.stack,
+        'auto-route': savedTunConfig.autoRoute,
+        'auto-redirect': savedTunConfig.autoRedirect,
+        'auto-detect-interface': savedTunConfig.autoDetectInterface,
+        'dns-hijack': savedTunConfig.dnsHijack,
+        'strict-route': savedTunConfig.strictRoute,
+        'route-exclude-address': savedTunConfig.routeExcludeAddress,
+        mtu: savedTunConfig.mtu
+      };
+
+      if (process.platform === 'darwin' && savedTunConfig.autoSetDNS !== undefined) {
+        config['auto-set-dns'] = savedTunConfig.autoSetDNS;
+      }
+
+      return config;
+    } else {
+      const config = {
+        enable: true,
+        device: process.platform === 'darwin' ? 'utun1500' : 'mihomo',
+        stack: 'mixed',
+        'auto-route': true,
+        'auto-redirect': false,
+        'auto-detect-interface': true,
+        'dns-hijack': ['any:53'],
+        'strict-route': false,
+        'route-exclude-address': [],
+        mtu: 1500
+      };
+
+      if (process.platform === 'darwin') {
+        config['auto-set-dns'] = true;
+      }
+
+      return config;
+    }
+  }
+
+  async function grantCorePermission() {
+    try {
+      await permissionManager.grantCorePermission();
+      return { success: true };
+    } catch (error) {
+      console.error('[grantCorePermission] Failed:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async function checkCorePermission() {
+    try {
+      const hasPermission = await permissionManager.checkCorePermission();
+      return { success: true, hasPermission };
+    } catch (error) {
+      console.error('[checkCorePermission] Failed:', error);
+      return { success: false, hasPermission: false };
+    }
+  }
+
+  async function revokeCorePermission() {
+    try {
+      await permissionManager.revokeCorePermission();
+      return { success: true };
+    } catch (error) {
+      console.error('[revokeCorePermission] Failed:', error);
+      return { success: false, error: error.message };
     }
   }
 
@@ -224,7 +335,12 @@ module.exports = function initSystemIntegration(context) {
     enableSystemProxy,
     disableSystemProxy,
     updateSystemProxyIfEnabled,
-    toggleTunMode
+    toggleTunMode,
+    checkElevateTask,
+    deleteElevateTask,
+    grantCorePermission,
+    checkCorePermission,
+    revokeCorePermission
   };
 
   context.toggleSystemProxy = toggleSystemProxy;
@@ -232,4 +348,9 @@ module.exports = function initSystemIntegration(context) {
   context.disableSystemProxy = disableSystemProxy;
   context.updateSystemProxyIfEnabled = updateSystemProxyIfEnabled;
   context.toggleTunMode = toggleTunMode;
+  context.checkElevateTask = checkElevateTask;
+  context.deleteElevateTask = deleteElevateTask;
+  context.grantCorePermission = grantCorePermission;
+  context.checkCorePermission = checkCorePermission;
+  context.revokeCorePermission = revokeCorePermission;
 };

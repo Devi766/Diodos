@@ -34,7 +34,16 @@ module.exports = function initUserSettings(context) {
 
       // 从数据库读取设置
       if (dbManager) {
-        settings = dbManager.getAllSettings();
+        const allSettings = dbManager.getAllSettings();
+
+        // 过滤掉非 Mihomo 配置字段
+        const stateFields = ['tunModeEnabled', 'tunConfig', 'systemProxyEnabled'];
+        settings = {};
+        for (const [key, value] of Object.entries(allSettings)) {
+          if (!stateFields.includes(key)) {
+            settings[key] = value;
+          }
+        }
       } else {
         // 降级方案:从YAML文件读取
         ensureUserSettingsFile();
@@ -145,6 +154,32 @@ module.exports = function initUserSettings(context) {
     }
   }
 
+  function getTunModeEnabled() {
+    try {
+      if (dbManager) {
+        return dbManager.getSetting('tunModeEnabled', false);
+      }
+      return false;
+    } catch (error) {
+      console.error('读取 TUN 模式状态失败:', error);
+      return false;
+    }
+  }
+
+  function setTunModeEnabled(enabled) {
+    try {
+      if (dbManager) {
+        dbManager.setSetting('tunModeEnabled', enabled);
+        console.log('[setTunModeEnabled] TUN 模式状态已保存:', enabled);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('保存 TUN 模式状态失败:', error);
+      return false;
+    }
+  }
+
   context.userSettings = {
     path: userSettingsPath,
     ensureUserSettingsFile,
@@ -155,4 +190,6 @@ module.exports = function initUserSettings(context) {
   context.ensureUserSettingsFile = ensureUserSettingsFile;
   context.getUserSettings = getUserSettings;
   context.updateUserSettingsRaw = updateUserSettings;
+  context.getTunModeEnabled = getTunModeEnabled;
+  context.setTunModeEnabled = setTunModeEnabled;
 };

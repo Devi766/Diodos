@@ -684,7 +684,12 @@ module.exports = function initMihomoService(context) {
           return false;
         }
 
-        return reloadMihomoConfig(overrideConfigPath);
+        // 直接发送热重载请求，不要修改 state.configFilePath 和 state.preferredConfig
+        // 因为我们只是重新生成了 override 文件，原始配置文件路径不应该改变
+        const port = 9090;
+        const success = sendReloadRequest(overrideConfigPath, port);
+        console.log('[regenerateAndReloadConfig] 热重载请求已发送，结果:', success);
+        return success;
       } catch (error) {
         console.error('合并配置失败:', error);
         return false;
@@ -777,6 +782,7 @@ module.exports = function initMihomoService(context) {
       console.log('已读取用户设置:', userSettings);
       console.log('[调试] userSettings["external-controller"]:', userSettings['external-controller']);
       console.log('[调试] userSettings["external-controller"] 类型:', typeof userSettings['external-controller']);
+      console.log('[调试] userSettings.tun:', JSON.stringify(userSettings.tun, null, 2));
 
       const configFilename = path.basename(configPath);
       const configContent = fs.readFileSync(configPath, 'utf8');
@@ -806,8 +812,11 @@ module.exports = function initMihomoService(context) {
         // 然后应用用户设置(优先级最高)
         console.log('[调试] deepMerge 前 configWithOverrides["external-controller"]:', configWithOverrides['external-controller']);
         console.log('[调试] deepMerge 前 userSettings["external-controller"]:', userSettings['external-controller']);
+        console.log('[调试] deepMerge 前 configWithOverrides.tun:', JSON.stringify(configWithOverrides.tun, null, 2));
+        console.log('[调试] deepMerge 前 userSettings.tun:', JSON.stringify(userSettings.tun, null, 2));
         mergedConfig = deepMergeConfig(configWithOverrides, userSettings);
         console.log('[调试] deepMerge 后 mergedConfig["external-controller"]:', mergedConfig['external-controller']);
+        console.log('[调试] deepMerge 后 mergedConfig.tun:', JSON.stringify(mergedConfig.tun, null, 2));
         console.log('[startMihomo] 应用用户设置后proxy-groups前3个:',
           mergedConfig['proxy-groups'] ? mergedConfig['proxy-groups'].slice(0, 3).map(g => g.name) : []);
 
@@ -888,6 +897,31 @@ module.exports = function initMihomoService(context) {
         const logContent = data.toString();
         stdoutOutput += logContent;  // 收集 stdout 输出
         console.log(`mihomo stdout: ${logContent}`);
+
+        // 检测 TUN 启动失败
+        if (logContent.includes('Start TUN listening error') &&
+            logContent.includes('operation not permitted')) {
+          console.error('[startMihomo] TUN mode failed due to insufficient permissions');
+
+          const updateUserSettingsRaw = context.updateUserSettingsRaw;
+          if (updateUserSettingsRaw) {
+            updateUserSettingsRaw({ tun: { enable: false } });
+          }
+
+          const setTunModeEnabled = context.setTunModeEnabled;
+          if (setTunModeEnabled) {
+            setTunModeEnabled(false);
+          }
+
+          state.tunModeEnabled = false;
+          state.mainWindow?.webContents.send('tun-status', false);
+
+          const { dialog } = require('electron');
+          dialog.showErrorBox(
+            'TUN 模式启动失败',
+            'TUN 模式需要管理员权限。\n\n请以管理员身份运行应用，或在 TUN 设置页面授予权限。'
+          );
+        }
 
         // 检测 fatal 错误
         if (!fatalErrorDetected && logContent.includes('level=fatal')) {
@@ -1357,6 +1391,43 @@ module.exports = function initMihomoService(context) {
     }
   }
 
+  async function restartMihomo(configPath) {
+    try {
+      console.log('[restartMihomo] 开始重启 Mihomo，配置文件:', configPath);
+
+      if (state.mihomoProcess) {
+        console.log('[restartMihomo] 停止当前进程...');
+        state.mihomoProcess.kill();
+        state.mihomoProcess = null;
+        if (typeof context.stopTrafficStatsUpdate === 'function') {
+          context.stopTrafficStatsUpdate();
+        }
+        if (typeof context.stopConnectionsWebSocket === 'function') {
+          context.stopConnectionsWebSocket();
+        }
+        if (typeof context.stopMihomoLogs === 'function') {
+          context.stopMihomoLogs();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        console.log('[restartMihomo] 进程已停止');
+      }
+
+      console.log('[restartMihomo] 启动新进程...');
+      const result = await startMihomo(configPath);
+
+      if (result && result.success) {
+        console.log('[restartMihomo] Mihomo 重启成功');
+        return true;
+      } else {
+        console.error('[restartMihomo] Mihomo 重启失败:', result);
+        return false;
+      }
+    } catch (error) {
+      console.error('[restartMihomo] 重启失败:', error);
+      return false;
+    }
+  }
+
   // 获取内核路径 (用于 TUN 模式权限授予)
   function getKernelPath() {
     try {
@@ -1383,6 +1454,7 @@ module.exports = function initMihomoService(context) {
     checkMihomoService,
     getConfig,
     restartMihomoService,
+    restartMihomo,
     getKernelPath
   };
 };

@@ -117,6 +117,15 @@ class DatabaseManager {
         console.error('添加icon_url列失败:', error);
       }
     }
+
+    // 添加 sort_order 列（兼容已有数据库）
+    try {
+      this.db.exec(`ALTER TABLE subscriptions ADD COLUMN sort_order INTEGER DEFAULT 0`);
+    } catch (error) {
+      if (!error.message.includes('duplicate column name')) {
+        console.error('添加sort_order列失败:', error);
+      }
+    }
   }
 
   /**
@@ -236,7 +245,7 @@ class DatabaseManager {
       SELECT s.*, si.used_traffic, si.total_traffic, si.expiry_timestamp
       FROM subscriptions s
       LEFT JOIN subscription_info si ON s.id = si.subscription_id
-      ORDER BY s.created_at DESC
+      ORDER BY s.sort_order ASC, s.created_at DESC
     `);
 
     return stmt.all();
@@ -430,6 +439,24 @@ class DatabaseManager {
       ORDER BY updated_at ASC
     `);
     return stmt.all();
+  }
+
+  /**
+   * 批量更新订阅排序
+   * @param {Array<{path: string, order: number}>} orderList - 排序列表
+   */
+  updateSubscriptionOrder(orderList) {
+    const updateStmt = this.db.prepare(`
+      UPDATE subscriptions SET sort_order = ? WHERE file_path = ?
+    `);
+
+    const transaction = this.db.transaction((orders) => {
+      for (const item of orders) {
+        updateStmt.run(item.order, item.path);
+      }
+    });
+
+    transaction(orderList);
   }
 
   /**

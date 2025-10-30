@@ -1867,9 +1867,9 @@ export default function ProxyNodes() {
                   </div>
 
                   <div
-                    className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-150 ease-out overflow-hidden ${
-                      isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[1500px] opacity-100 pt-3'
-                    }`}
+                    className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-150 ease-out ${
+                      isCollapsed ? 'max-h-0 opacity-0 overflow-hidden' : 'max-h-[600px] opacity-100 pt-3 overflow-y-auto'
+                    } custom-scrollbar`}
                     style={{ willChange: isCollapsed ? 'auto' : 'max-height, opacity' }}
                   >
                     <GroupNodes
@@ -1943,6 +1943,31 @@ export default function ProxyNodes() {
         }
         .dark .fancy-scrollbar::-webkit-scrollbar-thumb:hover {
           background: #4b5563;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(0, 0, 0, 0.05);
+          border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.05);
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #475569;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #64748b;
         }
 
         .group-content {
