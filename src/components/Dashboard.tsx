@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityLogIcon,
   BarChartIcon,
@@ -58,6 +58,14 @@ type BannerState = {
   message: string;
 };
 
+const GROUP_PROXY_TYPE_REGEX = /(selector|test|fallback|balance|relay|chain|auto|lazy|switch)/i;
+const KNOWN_GROUPS = new Set(['PROXY', 'GLOBAL', 'AUTO']);
+const KNOWN_BUILTINS = new Set(['DIRECT', 'REJECT', 'PASS']);
+const isLikelyGroupOrBuiltin = (name: string) => {
+  const upper = String(name || '').toUpperCase();
+  return KNOWN_GROUPS.has(upper) || KNOWN_BUILTINS.has(upper);
+};
+
 const formatBytes = (value: number, fractionDigits = 1) => {
   if (!Number.isFinite(value)) return '0 B';
   if (value <= 0) return '0 B';
@@ -85,8 +93,8 @@ const formatSpeed = (value: number) => {
   return `${speed.toFixed(decimals)} ${units[index]}`;
 };
 
-const getFileName = (path?: string | null, t: any) => {
-  if (!path) return t('dashboard.noConfigSelected');
+const getFileName = (path?: string | null, t?: any) => {
+  if (!path) return t ? t('dashboard.noConfigSelected') : 'No config';
   const parts = path.split(/[/\\]/);
   const name = parts[parts.length - 1];
   return name || path;
@@ -141,7 +149,7 @@ export default function Dashboard() {
   const [activeConfig, setActiveConfig] = useState<string | null>(null);
   const [preferredConfig, setPreferredConfig] = useState<string | null>(null);
   const [activeConfigIcon, setActiveConfigIcon] = useState<string | null>(null);
-  const [currentNode, setCurrentNode] = useState<string>('DIRECT');
+  const [currentNode, setCurrentNode] = useState<string>('');
   const [primaryProxyGroup, setPrimaryProxyGroup] = useState<string>('PROXY');
   const [connectionCount, setConnectionCount] = useState(0);
   const [totalUpload, setTotalUpload] = useState(0);
@@ -159,6 +167,173 @@ export default function Dashboard() {
   const [downloadTotal, setDownloadTotal] = useState(0);
 
   const electron = useMemo(resolveElectron, []);
+
+  const proxiesSnapshotRef = useRef<{ timestamp: number; data: Record<string, any> | null }>(
+    {
+      timestamp: 0,
+      data: null
+    }
+  );
+
+  const getProxiesSnapshot = useCallback(
+    async (force = false): Promise<Record<string, any>> => {
+      if (!electron?.requestMihomoAPI) {
+        return {};
+      }
+
+      const now = Date.now();
+      const snapshot = proxiesSnapshotRef.current;
+      if (!force && snapshot.data && now - snapshot.timestamp < 1500) {
+        return snapshot.data;
+      }
+
+      try {
+        const response = await electron.requestMihomoAPI('/proxies');
+        const payload: any = response?.data ?? response;
+        const proxies = payload?.proxies ?? payload;
+        const normalized =
+          proxies && typeof proxies === 'object' && !Array.isArray(proxies) ? { ...proxies } : {};
+        proxiesSnapshotRef.current = { timestamp: now, data: normalized };
+        return normalized;
+      } catch {
+        if (!snapshot.data) {
+          proxiesSnapshotRef.current = { timestamp: now, data: {} };
+        } else {
+          proxiesSnapshotRef.current = { timestamp: now, data: snapshot.data };
+        }
+        return proxiesSnapshotRef.current.data ?? {};
+      }
+    },
+    [electron]
+  );
+
+  const resolveEffectiveNode = useCallback(
+    async (
+      rawName?: string | null,
+      fallbackGroup?: string,
+      options?: { forceRefresh?: boolean }
+    ): Promise<string | null> => {
+      const base = typeof rawName === 'string' ? rawName.trim() : '';
+      const fallback = typeof fallbackGroup === 'string' ? fallbackGroup.trim() : '';
+      const start = base || fallback;
+
+      if (!start) {
+        return null;
+      }
+
+      if (!electron?.requestMihomoAPI) {
+        return start;
+      }
+
+      const snapshot = await getProxiesSnapshot(options?.forceRefresh === true);
+      const visited = new Set<string>();
+
+      const ensureDetail = async (name: string) => {
+        const normalized = name.trim();
+        if (!normalized) return null;
+
+        let info = snapshot[normalized];
+        if (!info) {
+          try {
+            const response = await electron.requestMihomoAPI(`/proxies/${encodeURIComponent(normalized)}`);
+            const payload: any = response?.data ?? response;
+            if (payload && typeof payload === 'object') {
+              const merged = { ...(snapshot[normalized] || {}), ...payload };
+              snapshot[normalized] = merged;
+              if (proxiesSnapshotRef.current.data) {
+                proxiesSnapshotRef.current.data[normalized] = merged;
+              }
+              info = merged;
+            }
+          } catch {
+            info = snapshot[normalized];
+          }
+        }
+        return info;
+      };
+
+      const isGroupInfo = (info: any) => {
+        if (!info || typeof info !== 'object') return false;
+        const type = typeof info.type === 'string' ? info.type : '';
+        if (GROUP_PROXY_TYPE_REGEX.test(type)) return true;
+        if (Array.isArray(info.all) || Array.isArray(info.proxies)) return true;
+        if (Array.isArray(info.history)) return true;
+        return false;
+      };
+
+      const traverse = async (name: string): Promise<string> => {
+        const normalized = name.trim();
+        if (!normalized) return normalized;
+        if (visited.has(normalized)) return normalized;
+        visited.add(normalized);
+
+        const info = await ensureDetail(normalized);
+        if (!info) return normalized;
+
+        const next = typeof info.now === 'string' ? info.now.trim() : '';
+        if (next && next !== normalized && isGroupInfo(info)) {
+          return traverse(next);
+        }
+
+        return normalized;
+      };
+
+      try {
+        const result = await traverse(start);
+        return result || start;
+      } catch {
+        return start;
+      }
+    },
+    [electron, getProxiesSnapshot]
+  );
+
+  const commitCurrentNode = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      setCurrentNode((prev) => {
+        if (trimmed && trimmed !== prev) {
+          try {
+            electron?.notifyNodeChanged?.(trimmed);
+          } catch {}
+        }
+        return trimmed;
+      });
+    },
+    [electron]
+  );
+
+  const updateCurrentNodeDisplay = useCallback(
+    (rawNodeName?: string | null, fallbackGroup?: string, options?: { forceRefresh?: boolean }) => {
+      const base = typeof rawNodeName === 'string' ? rawNodeName.trim() : '';
+      const fallback = typeof fallbackGroup === 'string' ? fallbackGroup.trim() : '';
+
+      if (!electron?.requestMihomoAPI) {
+        if (base && !isLikelyGroupOrBuiltin(base)) {
+          commitCurrentNode(base);
+        } else if (fallback && !isLikelyGroupOrBuiltin(fallback)) {
+          commitCurrentNode(fallback);
+        }
+        return;
+      }
+
+      if (!base && !fallback) {
+        return;
+      }
+
+      void (async () => {
+        const resolved = await resolveEffectiveNode(base || null, fallback || undefined, options);
+        if (resolved && resolved.length > 0) {
+          commitCurrentNode(resolved);
+        } else if (base && !isLikelyGroupOrBuiltin(base)) {
+          commitCurrentNode(base);
+        } else if (fallback && !isLikelyGroupOrBuiltin(fallback)) {
+          commitCurrentNode(fallback);
+        }
+      })();
+    },
+    [commitCurrentNode, electron, resolveEffectiveNode]
+  );
 
   const MODE_LABELS: Record<ProxyMode, string> = {
     rule: t('dashboard.ruleMode'),
@@ -184,79 +359,104 @@ export default function Dashboard() {
     }
   ];
 
-  const hydrateConnections = useCallback((snapshot: ConnectionsSnapshot | null | undefined) => {
-    if (!snapshot) return;
-    if (typeof snapshot.activeConnections === 'number') {
-      setConnectionCount(snapshot.activeConnections);
-    }
-    if (typeof snapshot.downloadTotal === 'number') {
-      setTotalDownload(snapshot.downloadTotal);
-      setDownloadTotal(snapshot.downloadTotal);
-    }
-    if (typeof snapshot.uploadTotal === 'number') {
-      setTotalUpload(snapshot.uploadTotal);
-      setUploadTotal(snapshot.uploadTotal);
-    }
-    if (snapshot.currentNode) {
-      setCurrentNode(snapshot.currentNode);
-    }
-  }, []);
+  const hydrateConnections = useCallback(
+    (snapshot: ConnectionsSnapshot | null | undefined) => {
+      if (!snapshot) return;
+      if (typeof snapshot.activeConnections === 'number') {
+        setConnectionCount(snapshot.activeConnections);
+      }
+      if (typeof snapshot.downloadTotal === 'number') {
+        setTotalDownload(snapshot.downloadTotal);
+        setDownloadTotal(snapshot.downloadTotal);
+      }
+      if (typeof snapshot.uploadTotal === 'number') {
+        setTotalUpload(snapshot.uploadTotal);
+        setUploadTotal(snapshot.uploadTotal);
+      }
+      if (snapshot.currentNode) {
+        updateCurrentNodeDisplay(snapshot.currentNode, primaryProxyGroup);
+      }
+    },
+    [primaryProxyGroup, updateCurrentNodeDisplay]
+  );
 
   const syncCurrentNode = useCallback(async () => {
-    if (!electron) return;
+    if (!electron || !isRunning) return;
     try {
-      let nextNode: string | null = null;
+      await getProxiesSnapshot(true);
+      if (!proxiesSnapshotRef.current.data) {
+        proxiesSnapshotRef.current.data = {};
+      }
+
+      const snapshotCache = proxiesSnapshotRef.current.data;
+      const candidateGroups = Array.from(new Set([primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean)));
+      let resolvedNode: string | null = null;
 
       if (electron.requestMihomoAPI) {
-        const candidateGroups = Array.from(new Set([primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean)));
         for (const groupName of candidateGroups) {
-          if (nextNode) break;
+          if (resolvedNode) break;
           try {
             const response = await electron.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`);
             const payload: any = response?.data ?? response;
-            if (payload && typeof payload.now === 'string' && payload.now.length > 0) {
-              nextNode = payload.now;
-            }
-          } catch {}
-        }
+            if (payload && typeof payload === 'object') {
+              const merged = { ...(snapshotCache[groupName] || {}), ...payload };
+              snapshotCache[groupName] = merged;
+              if (proxiesSnapshotRef.current.data) {
+                proxiesSnapshotRef.current.data[groupName] = merged;
+              }
 
-        if (!nextNode) {
-          try {
-            const listResponse = await electron.requestMihomoAPI('/proxies');
-            const listPayload: any = listResponse?.data ?? listResponse;
-            const proxyNow = listPayload?.proxies?.PROXY?.now;
-            const globalNow = listPayload?.proxies?.GLOBAL?.now;
-            if (typeof proxyNow === 'string' && proxyNow.length > 0) {
-              nextNode = proxyNow;
-            } else if (typeof globalNow === 'string' && globalNow.length > 0) {
-              nextNode = globalNow;
+              const finalNode = await resolveEffectiveNode(
+                typeof payload.now === 'string' && payload.now.length > 0 ? payload.now : null,
+                groupName
+              );
+              if (finalNode && finalNode.length > 0) {
+                resolvedNode = finalNode;
+              }
             }
           } catch {}
         }
       }
 
-      if (!nextNode && electron.fetchConnectionsInfo) {
+      if (!resolvedNode) {
+        for (const groupName of candidateGroups) {
+          const finalNode = await resolveEffectiveNode(null, groupName);
+          if (finalNode && finalNode.length > 0) {
+            resolvedNode = finalNode;
+            break;
+          }
+        }
+      }
+
+      if (!resolvedNode && electron.fetchConnectionsInfo) {
         try {
           const snapshot = await electron.fetchConnectionsInfo();
-          if (snapshot?.currentNode && typeof snapshot.currentNode === 'string') {
-            nextNode = snapshot.currentNode;
+          if (snapshot) {
             hydrateConnections(snapshot);
+            if (snapshot.currentNode) {
+              const finalNode = await resolveEffectiveNode(snapshot.currentNode);
+              if (finalNode && finalNode.length > 0) {
+                resolvedNode = finalNode;
+              }
+            }
           }
         } catch {}
       }
 
-      if (nextNode) {
-        setCurrentNode((prev) => {
-          if (nextNode && nextNode !== prev) {
-            try {
-              electron.notifyNodeChanged?.(nextNode);
-            } catch {}
+      if (resolvedNode && !isLikelyGroupOrBuiltin(resolvedNode) && !candidateGroups.includes(resolvedNode)) {
+        commitCurrentNode(resolvedNode);
+      } else {
+        // 不提交分组/内置名称，稍后重试一次解析
+        setTimeout(() => {
+          // 仅当仍在运行时重试
+          if (electron && isRunning) {
+            syncCurrentNode();
           }
-          return nextNode;
-        });
+        }, 800);
       }
-    } catch {}
-  }, [electron, hydrateConnections, primaryProxyGroup]);
+    } catch (error) {
+      console.error('Failed to sync current node:', error);
+    }
+  }, [commitCurrentNode, electron, getProxiesSnapshot, hydrateConnections, isRunning, primaryProxyGroup, resolveEffectiveNode]);
 
   const fetchProxyMode = useCallback(async (): Promise<ProxyMode | null> => {
     if (!electron?.requestMihomoAPI) return null;
@@ -380,6 +580,8 @@ export default function Dashboard() {
           const groupName = order.data.proxyGroups[0]?.name;
           if (typeof groupName === 'string' && groupName.length > 0) {
             setPrimaryProxyGroup(groupName);
+            // 立刻尝试解析一次，避免初渲染显示组名
+            updateCurrentNodeDisplay(undefined, groupName, { forceRefresh: true });
           }
         }
       } catch {}
@@ -517,7 +719,9 @@ export default function Dashboard() {
 
     const handler = (payload: { nodeName?: string }) => {
       if (payload?.nodeName) {
-        setCurrentNode(payload.nodeName);
+        updateCurrentNodeDisplay(payload.nodeName, primaryProxyGroup, { forceRefresh: true });
+      } else {
+        updateCurrentNodeDisplay(undefined, primaryProxyGroup, { forceRefresh: true });
       }
     };
 
@@ -526,13 +730,13 @@ export default function Dashboard() {
     return () => {
       electron.removeAllListeners?.('node-changed');
     };
-  }, [electron]);
+  }, [electron, primaryProxyGroup, updateCurrentNodeDisplay]);
 
   useEffect(() => {
     if (!electron || !isRunning) return;
     syncCurrentNode();
     syncProxyMode();
-  }, [electron, isRunning, activeConfig, syncCurrentNode, syncProxyMode]);
+  }, [electron, isRunning, activeConfig, primaryProxyGroup, syncCurrentNode, syncProxyMode]);
 
   // 获取连接列表
   useEffect(() => {
@@ -619,6 +823,8 @@ export default function Dashboard() {
             const groupName = order.data.proxyGroups[0]?.name;
             if (typeof groupName === 'string' && groupName.length > 0) {
               setPrimaryProxyGroup(groupName);
+              // 主代理组确定后尝试立即解析一次
+              updateCurrentNodeDisplay(undefined, groupName, { forceRefresh: true });
             }
           }
         } catch {}
@@ -646,7 +852,7 @@ export default function Dashboard() {
       const result = await electron.stopMihomo();
       if (result) {
         setIsRunning(false);
-        setCurrentNode('DIRECT');
+        commitCurrentNode('');
         setTrafficSamples([]);
         // 停止服务时自动关闭TUN模式
         if (tunEnabled) {
@@ -754,8 +960,7 @@ export default function Dashboard() {
     }
     if (isTunUpdating) return;
     if (value) {
-      // Windows 下检查是否有管理员权限（通过检查计划任务是否存在）
-      // 使用 checkElevateTask 方法的存在来判断是否为 Windows
+      // Windows: 检查计划任务
       if (electron?.checkElevateTask) {
         try {
           const hasTask = await electron.checkElevateTask();
@@ -763,6 +968,16 @@ export default function Dashboard() {
           setHasAdminPermission(hasTask);
         } catch (error) {
           console.error('Failed to check admin permission:', error);
+          setHasAdminPermission(false);
+        }
+      } else if (electron?.checkCorePermission) {
+        // macOS/Linux: 检查核心权限
+        try {
+          const result = await electron.checkCorePermission();
+          console.log('[Dashboard] Unix checkCorePermission result:', result);
+          setHasAdminPermission(!!result?.hasPermission);
+        } catch (error) {
+          console.error('Failed to check core permission:', error);
           setHasAdminPermission(false);
         }
       } else {
@@ -973,9 +1188,11 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
             <DialogDescription>
-              {electron?.checkElevateTask && !hasAdminPermission
+              {(!hasAdminPermission && electron?.checkElevateTask)
                 ? '首次启动 TUN 模式需要管理员权限。点击"授权"后，应用将创建一个计划任务并自动重启以获取管理员权限。'
-                : t('dashboard.tunModeWarning')}
+                : (!hasAdminPermission
+                    ? '首次启用 TUN 模式需要系统授权（macOS/Linux）。点击“授权”后将请求管理员权限为内核授予所需权限（setcap 或 setuid）。'
+                    : t('dashboard.tunModeWarning'))}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -986,7 +1203,7 @@ export default function Dashboard() {
             >
               {t('dashboard.reconsider')}
             </Button>
-            {electron?.checkElevateTask && !hasAdminPermission ? (
+            {!hasAdminPermission ? (
               <button
                 type="button"
                 onClick={async () => {
@@ -1000,8 +1217,13 @@ export default function Dashboard() {
                         } else {
                           showBanner({ type: 'success', message: 'TUN 模式权限已成功授予' });
                           // 刷新权限状态
-                          const hasTask = await electron.checkElevateTask();
-                          setHasAdminPermission(hasTask);
+                          if (electron.checkElevateTask) {
+                            const hasTask = await electron.checkElevateTask();
+                            setHasAdminPermission(hasTask);
+                          } else if (electron.checkCorePermission) {
+                            const check = await electron.checkCorePermission();
+                            setHasAdminPermission(!!check?.hasPermission);
+                          }
                         }
                       } else {
                         showBanner({ type: 'error', message: result.error || '授权失败' });

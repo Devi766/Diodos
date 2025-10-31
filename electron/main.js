@@ -3561,8 +3561,8 @@ exit /b %errorlevel%
   ipcMain.handle('get-tun-config', async () => {
     try {
       const config = dbManager.getSetting('tunConfig', {
-        device: isMac ? 'utun1500' : 'mihomo',
-        stack: 'mixed',
+        device: isMac ? 'utun' : 'mihomo',
+        stack: 'system',
         autoRoute: true,
         autoRedirect: false,
         autoDetectInterface: true,

@@ -211,12 +211,20 @@ class PermissionManager {
 
     try {
       if (process.platform === 'darwin') {
-        const shell = `chown root:admin ${corePath.replace(' ', '\\\\ ')}\nchmod +sx ${corePath.replace(' ', '\\\\ ')}`;
+        const shell = `chown root:admin ${corePath.replace(/ /g, '\\ ')}\nchmod +sx ${corePath.replace(/ /g, '\\ ')}`;
         const command = `do shell script "${shell}" with administrator privileges`;
         await execPromise(`osascript -e '${command}'`);
       } else if (process.platform === 'linux') {
-        await execFilePromise('pkexec', ['chown', 'root:root', corePath]);
-        await execFilePromise('pkexec', ['chmod', '+sx', corePath]);
+        // 优先尝试为内核设置能力, 失败则回退到 setuid root
+        try {
+          await execFilePromise('pkexec', ['setcap', 'cap_net_admin,cap_net_bind_service=+eip', corePath]);
+          console.log('[PermissionManager] Linux capabilities granted via setcap');
+        } catch (capError) {
+          console.warn('[PermissionManager] setcap failed, falling back to setuid root:', capError?.message || capError);
+          await execFilePromise('pkexec', ['chown', 'root:root', corePath]);
+          await execFilePromise('pkexec', ['chmod', '+sx', corePath]);
+          console.log('[PermissionManager] Linux setuid root applied');
+        }
       }
       console.log('[PermissionManager] Core permission granted');
     } catch (error) {
@@ -240,6 +248,18 @@ class PermissionManager {
     const corePath = this.getCorePath();
 
     try {
+      if (process.platform === 'darwin') {
+        const { stdout } = await execPromise(`ls -l "${corePath}"`);
+        const permissions = stdout.trim().split(/\s+/)[0];
+        return permissions.includes('s') || permissions.includes('S');
+      }
+      // Linux: 先检查 capabilities, 再检查 setuid
+      try {
+        const { stdout: capOut } = await execPromise(`getcap "${corePath}" || true`);
+        if (capOut && /cap_net_admin/i.test(capOut)) {
+          return true;
+        }
+      } catch {}
       const { stdout } = await execPromise(`ls -l "${corePath}"`);
       const permissions = stdout.trim().split(/\s+/)[0];
       return permissions.includes('s') || permissions.includes('S');
@@ -270,7 +290,11 @@ class PermissionManager {
         const command = `do shell script "${shell}" with administrator privileges`;
         await execPromise(`osascript -e '${command}'`);
       } else if (process.platform === 'linux') {
-        await execFilePromise('pkexec', ['chmod', 'a-s', corePath]);
+        try {
+          await execFilePromise('pkexec', ['setcap', '-r', corePath]);
+        } catch {
+          await execFilePromise('pkexec', ['chmod', 'a-s', corePath]);
+        }
       }
       console.log('[PermissionManager] Core permission revoked');
     } catch (error) {
@@ -283,12 +307,58 @@ class PermissionManager {
    * 获取核心文件路径
    */
   getCorePath() {
-    // 根据平台返回核心文件路径
-    const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..');
-    const coreName = process.platform === 'win32' ? 'mihomo.exe' : 'mihomo';
-    return path.join(resourcesPath, 'core', coreName);
+    const isWin = process.platform === 'win32';
+    const isMac = process.platform === 'darwin';
+    const isLinux = process.platform === 'linux';
+
+    // 搜索 cores 目录（与运行时启动一致）
+    const roots = [
+      path.join(process.resourcesPath || '', 'cores'),
+      path.join(app.getAppPath(), 'cores'),
+      path.join(process.cwd(), 'cores')
+    ];
+
+    for (const root of roots) {
+      try {
+        if (!fs.existsSync(root)) continue;
+        const files = fs.readdirSync(root);
+        let candidates = files.filter((file) => file.toLowerCase().includes('mihomo'));
+        if (isWin) candidates = candidates.filter((f) => f.endsWith('.exe'));
+        if (isMac) candidates = candidates.filter((f) => f.toLowerCase().includes('darwin'));
+        if (isLinux) candidates = candidates.filter((f) => f.toLowerCase().includes('linux'));
+
+        // 尝试匹配架构
+        const arch = process.arch;
+        const archFiltered = candidates.filter((file) => {
+          const lower = file.toLowerCase();
+          if (arch === 'x64' || arch === 'amd64') return lower.includes('amd64') || lower.includes('x64');
+          if (arch === 'arm64') return lower.includes('arm64');
+          if (arch === 'ia32' || arch === 'x86') return lower.includes('386') || lower.includes('ia32') || lower.includes('x86');
+          return true;
+        });
+
+        const pick = archFiltered[0] || candidates[0];
+        if (pick) {
+          return path.join(root, pick);
+        }
+      } catch {}
+    }
+
+    // 回退到通用路径（可能在 dev extra/sidecar）
+    const genericName = isWin ? 'mihomo.exe' : 'mihomo';
+    const fallbacks = [
+      path.join(process.resourcesPath || '', 'extra', 'sidecar', genericName),
+      path.join(app.getAppPath(), '..', 'extra', 'sidecar', genericName),
+      path.join(process.resourcesPath || '', genericName)
+    ];
+    for (const p of fallbacks) {
+      if (fs.existsSync(p)) return p;
+    }
+
+    // 最后回退到旧逻辑 (不一定存在)
+    const legacy = path.join(process.resourcesPath || path.join(app.getAppPath(), '..'), 'core', genericName);
+    return legacy;
   }
 }
 
 module.exports = PermissionManager;
-

@@ -281,8 +281,8 @@ module.exports = function initSystemIntegration(context) {
     } else {
       const config = {
         enable: true,
-        device: process.platform === 'darwin' ? 'utun1500' : 'mihomo',
-        stack: 'mixed',
+        device: process.platform === 'darwin' ? 'utun' : 'mihomo',
+        stack: 'system',
         'auto-route': true,
         'auto-redirect': false,
         'auto-detect-interface': true,

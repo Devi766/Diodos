@@ -20,8 +20,8 @@ interface TunConfig {
 const TunSettings: React.FC = () => {
   const { t } = useTranslation();
   const [config, setConfig] = useState<TunConfig>({
-    device: process.platform === 'darwin' ? 'utun1500' : 'mihomo',
-    stack: 'mixed',
+    device: process.platform === 'darwin' ? 'utun' : 'mihomo',
+    stack: 'system',
     autoRoute: true,
     autoRedirect: false,
     autoDetectInterface: true,
