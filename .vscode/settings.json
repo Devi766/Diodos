@@ -17,6 +17,30 @@
     "**/out": true,
     "**/node_modules": true,
     "**/.next": true
+  },
+  // 防止TypeScript服务器扫描这些目录
+  "typescript.tsserver.watchOptions": {
+    "excludeDirectories": [
+      "**/node_modules",
+      "**/dist",
+      "**/release",
+      "**/out",
+      "**/.next"
+    ]
+  },
+  // 防止ESLint扫描这些目录
+  "eslint.workingDirectories": [
+    {
+      "mode": "auto"
+    }
+  ],
+  "eslint.options": {
+    "ignorePattern": [
+      "**/dist/**",
+      "**/release/**",
+      "**/out/**",
+      "**/.next/**"
+    ]
   }
 }
 

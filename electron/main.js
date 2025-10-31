@@ -1700,7 +1700,7 @@ ipcMain.handle('reset-kernel-path', async () => {
   }
 });
 
-// Windows 权限初始化 - 像 Sparkle 一样自动通过计划任务获取管理员权限
+// Windows 权限初始化 - 用户手动授权模式
 if (process.platform === 'win32' && !isDev) {
   const PermissionManager = require('./main-process/permission-manager');
   const permissionManager = new PermissionManager();
@@ -1712,6 +1712,7 @@ if (process.platform === 'win32' && !isDev) {
   // 将 PermissionManager 方法添加到 context
   context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
   context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
+  context.permissionManager = permissionManager; // 保存实例供后续使用
 
   console.log('[Startup] Checking admin privileges...');
 
@@ -1756,59 +1757,8 @@ if (process.platform === 'win32' && !isDev) {
       }
     } else {
       console.log('[Startup] ✗ No elevated task found');
-      console.log('[Startup] → First time setup required');
-      console.log('[Startup] → Attempting to create task with UAC prompt...');
-
-      // 首次启动，需要创建任务
-      try {
-        // 尝试通过 PowerShell 以管理员权限创建任务
-        const taskDir = permissionManager.taskDir;
-        const taskName = permissionManager.taskName;
-
-        // 确保任务目录存在
-        permissionManager.ensureTaskDir();
-
-        // 生成任务 XML
-        const taskFilePath = path.join(taskDir, 'flycast-task.xml');
-        const xmlContent = permissionManager.getElevateTaskXml();
-        fs.writeFileSync(taskFilePath, Buffer.from(`\ufeff${xmlContent}`, 'utf-16le'));
-
-        // 使用 PowerShell 以管理员权限创建任务
-        const psCommand = `Start-Process -FilePath "schtasks.exe" -ArgumentList "/create", "/tn", "${taskName}", "/xml", "${taskFilePath}", "/f" -Verb RunAs -Wait`;
-
-        console.log('[Startup] → Requesting admin privileges to create task...');
-
-        execSync(`powershell -Command "${psCommand}"`, {
-          stdio: 'inherit',
-          windowsHide: false
-        });
-
-        console.log('[Startup] ✓ Task created successfully!');
-        console.log('[Startup] → Restarting with elevated privileges...');
-
-        // 任务创建成功，通过任务运行自己
-        execSync(`%SystemRoot%\\System32\\schtasks.exe /run /tn "${taskName}"`, {
-          stdio: 'ignore'
-        });
-
-        // 退出当前实例
-        setTimeout(() => {
-          app.quit();
-        }, 1000);
-
-        return;
-      } catch (createError) {
-        console.error('[Startup] ✗ Failed to create task:', createError.message);
-        console.log('[Startup] → User may have declined UAC prompt');
-        console.log('[Startup] → Continuing without admin privileges');
-        console.log('[Startup] → TUN mode will NOT work');
-
-        // 显示提示（可选）
-        // dialog.showErrorBox(
-        //   '首次启动需要管理员权限',
-        //   'TUN 模式需要管理员权限。\n\n请右键应用图标，选择"以管理员身份运行"。'
-        // );
-      }
+      console.log('[Startup] → User needs to grant TUN permissions manually');
+      console.log('[Startup] → Continuing without admin privileges');
     }
   }
 
@@ -1820,6 +1770,7 @@ if (process.platform === 'win32' && !isDev) {
 
   context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
   context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
+  context.permissionManager = permissionManager;
 }
 
 // 应用启动时执行
@@ -3390,15 +3341,15 @@ app.whenReady().then(() => {
 
   ipcMain.handle('grant-tun-permissions', async () => {
     try {
-      // Windows 平台：显示确认对话框，然后创建任务并重启
+      // Windows 平台：创建任务并重启
       if (isWindows) {
-        console.log('[TUN] Windows: Showing permission grant dialog');
+        console.log('[TUN] Windows: Processing permission grant request');
 
         // 开发环境下的特殊处理
         if (isDev) {
           console.log('[TUN] Development mode detected');
           const { dialog } = require('electron');
-          const choice = dialog.showMessageBoxSync(state.mainWindow, {
+          dialog.showMessageBoxSync(state.mainWindow, {
             type: 'warning',
             title: 'TUN 模式授权 - 开发环境',
             message: '开发环境下无法自动重启',
@@ -3410,65 +3361,126 @@ app.whenReady().then(() => {
           return { success: false, error: '开发环境下请手动以管理员权限运行' };
         }
 
-        // 显示自定义对话框
-        const { dialog } = require('electron');
-        const choice = dialog.showMessageBoxSync(state.mainWindow, {
-          type: 'info',
-          title: 'TUN 模式授权',
-          message: '首次启动 TUN 模式需要获取管理员权限',
-          detail: '应用将创建一个计划任务，以便在需要时以管理员权限运行。\n\n点击"授权"后，应用将自动重启以完成授权。',
-          buttons: ['授权', '取消'],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true
+        console.log('[TUN] Creating elevated task and restarting...');
+
+        // 获取 PermissionManager 实例
+        const permissionManager = context.permissionManager;
+        if (!permissionManager) {
+          throw new Error('PermissionManager not initialized');
+        }
+
+        const { spawn } = require('child_process');
+        const path = require('path');
+        const fs = require('fs');
+
+        const taskDir = permissionManager.taskDir;
+        const taskName = permissionManager.taskName;
+        const exePath = permissionManager.getExePath();
+
+        // 确保任务目录存在
+        permissionManager.ensureTaskDir();
+
+        // 标记待完成的 TUN 启用请求，管理员实例启动后自动处理
+        try {
+          dbManager.setSetting('pendingTunEnable', true);
+        } catch (error) {
+          console.warn('[TUN] Failed to set pendingTunEnable flag:', error);
+        }
+
+        // 生成任务 XML（添加BOM以确保UTF-16LE格式正确）
+        const taskFilePath = path.join(taskDir, 'flycast-task.xml');
+        const xmlContent = permissionManager.getElevateTaskXml();
+        // 添加UTF-16LE BOM
+        const xmlBuffer = Buffer.concat([
+          Buffer.from([0xFF, 0xFE]), // UTF-16LE BOM
+          Buffer.from(xmlContent, 'utf16le')
+        ]);
+        fs.writeFileSync(taskFilePath, xmlBuffer);
+
+        console.log('[TUN] Task XML created at:', taskFilePath);
+        console.log('[TUN] Task name:', taskName);
+        console.log('[TUN] Executable path:', exePath);
+
+        // 创建标记文件路径，用于检测授权是否成功
+        const successMarkerPath = path.join(taskDir, 'grant-success.marker');
+        if (fs.existsSync(successMarkerPath)) {
+          fs.unlinkSync(successMarkerPath);
+        }
+
+        // 创建 CMD 批处理脚本文件（替代PowerShell）
+        const batScriptPath = path.join(taskDir, 'create-task.bat');
+        const batScript = `@echo off
+chcp 65001 >nul
+setlocal enableextensions
+
+echo [TUN] Creating scheduled task...
+schtasks.exe /create /tn "${taskName}" /xml "${taskFilePath}" /f
+if %errorlevel% neq 0 goto _error
+
+echo [TUN] Starting application with elevated privileges...
+schtasks.exe /run /tn "${taskName}"
+if %errorlevel% neq 0 goto _error
+
+echo success > "${successMarkerPath.replace(/\\/g, '\\\\')}"
+exit /b 0
+
+:_error
+exit /b %errorlevel%
+`;
+
+        fs.writeFileSync(batScriptPath, batScript, 'utf8');
+        console.log('[TUN] Batch script created at:', batScriptPath);
+        console.log('[TUN] Requesting admin privileges...');
+
+        // 释放单实例锁，确保提升后的实例能够正常启动
+        if (typeof app.hasSingleInstanceLock === 'function' && app.hasSingleInstanceLock()) {
+          app.releaseSingleInstanceLock();
+          console.log('[TUN] Released single instance lock before elevated restart');
+        }
+
+        const escapedBatPathForCmd = batScriptPath.replace(/"/g, '""');
+        const psCommand = `Start-Process -FilePath "cmd.exe" -ArgumentList '/c', '"${escapedBatPathForCmd}"' -Verb RunAs -Wait -WindowStyle Normal`;
+
+        // 使用 PowerShell 请求管理员权限执行批处理脚本
+        const child = spawn('powershell.exe', [
+          '-NoProfile',
+          '-ExecutionPolicy', 'Bypass',
+          '-Command',
+          psCommand
+        ], {
+          detached: false,
+          stdio: 'pipe',
+          windowsHide: false
         });
 
-        if (choice !== 0) {
-          console.log('[TUN] User cancelled permission grant');
-          return { success: false, error: '用户取消授权' };
-        }
+        // 监听进程退出
+        child.on('exit', (code) => {
+          console.log('[TUN] PowerShell process exited with code:', code);
 
-        console.log('[TUN] User confirmed, creating elevated task and restarting...');
+          const hasSuccessMarker = fs.existsSync(successMarkerPath);
+          if (!hasSuccessMarker && code === 0) {
+            console.log('[TUN] Success marker missing but exit code indicates success, proceeding to quit');
+          }
 
-        // 创建计划任务
-        const PermissionManager = require('./main-process/permission-manager');
-        const permissionManager = new PermissionManager();
+          if (hasSuccessMarker || code === 0) {
+            console.log('[TUN] Success detected, quitting current instance...');
+            // 延迟退出，确保新实例已启动
+            setTimeout(() => {
+              app.quit();
+            }, 1000);
+          } else {
+            console.log('[TUN] Success marker not found and exit code is non-zero; user may have cancelled UAC or script failed');
+            // 不退出应用，让用户可以重试
+          }
+        });
 
-        try {
-          // 尝试直接创建任务（如果当前已有管理员权限）
-          permissionManager.createElevateTask();
-          console.log('[TUN] Task created successfully with current privileges');
-          return { success: true, message: 'TUN 模式权限已成功授予', needRestart: false };
-        } catch (createError) {
-          console.log('[TUN] Cannot create task with current privileges, need to restart as admin');
+        child.on('error', (error) => {
+          console.error('[TUN] PowerShell process error:', error);
+        });
 
-          // 没有管理员权限，需要以管理员身份重启
-          const { spawn } = require('child_process');
-          const exePath = process.execPath;
-          const args = process.argv.slice(1).filter(arg => !arg.startsWith('--inspect'));
+        console.log('[TUN] PowerShell process spawned, waiting for completion...');
 
-          console.log('[TUN] Restarting as admin...');
-          console.log('[TUN] exePath:', exePath);
-          console.log('[TUN] args:', args);
-
-          const psCommand = args.length > 0
-            ? `Start-Process -FilePath "${exePath}" -ArgumentList "${args.join(' ')}" -Verb RunAs`
-            : `Start-Process -FilePath "${exePath}" -Verb RunAs`;
-
-          const child = spawn('powershell.exe', ['-Command', psCommand], {
-            detached: true,
-            stdio: 'ignore'
-          });
-
-          child.unref();
-
-          // 延迟退出，让重启命令执行
-          setTimeout(() => {
-            app.quit();
-          }, 500);
-
-          return { success: true, message: '正在重启应用以获取管理员权限...', needRestart: true };
-        }
+        return { success: true, message: '正在请求管理员权限创建任务并重启应用...', needRestart: true };
       }
 
       // macOS 和 Linux 保持原有逻辑

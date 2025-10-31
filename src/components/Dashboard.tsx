@@ -974,7 +974,7 @@ export default function Dashboard() {
             <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
             <DialogDescription>
               {electron?.checkElevateTask && !hasAdminPermission
-                ? '首次启动 TUN 模式需要管理员权限，请退出应用并以管理员权限启动'
+                ? '首次启动 TUN 模式需要管理员权限。点击"授权"后，应用将创建一个计划任务并自动重启以获取管理员权限。'
                 : t('dashboard.tunModeWarning')}
             </DialogDescription>
           </DialogHeader>
@@ -986,7 +986,47 @@ export default function Dashboard() {
             >
               {t('dashboard.reconsider')}
             </Button>
-            {(!electron?.checkElevateTask || hasAdminPermission) && (
+            {electron?.checkElevateTask && !hasAdminPermission ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  setTunConfirmOpen(false);
+                  try {
+                    if (electron?.grantTunPermissions) {
+                      const result = await electron.grantTunPermissions();
+                      if (result.success) {
+                        if (result.needRestart) {
+                          showBanner({ type: 'info', message: '正在重启应用以获取管理员权限...' });
+                        } else {
+                          showBanner({ type: 'success', message: 'TUN 模式权限已成功授予' });
+                          // 刷新权限状态
+                          const hasTask = await electron.checkElevateTask();
+                          setHasAdminPermission(hasTask);
+                        }
+                      } else {
+                        showBanner({ type: 'error', message: result.error || '授权失败' });
+                      }
+                    }
+                  } catch (error) {
+                    console.error('Failed to grant TUN permissions:', error);
+                    showBanner({ type: 'error', message: '授权失败，请重试' });
+                  }
+                }}
+                className="relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-11 px-5 transition-all hover:brightness-110"
+                style={{
+                  backgroundColor: themeColor,
+                  boxShadow: `0 20px 42px -22px ${themeColor}70`
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.boxShadow = `0 24px 52px -20px ${themeColor}90`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = `0 20px 42px -22px ${themeColor}70`;
+                }}
+              >
+                授权
+              </button>
+            ) : (
               <button
                 type="button"
                 onClick={async () => {

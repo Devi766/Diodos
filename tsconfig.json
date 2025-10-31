@@ -37,6 +37,10 @@
     "src/types/electron.d.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "release",
+    "dist",
+    "out",
+    ".next"
   ]
 }

@@ -190,7 +190,7 @@ export interface ElectronAPI {
 
   checkElevateTask: () => Promise<boolean>;
   deleteElevateTask: () => Promise<{ success: boolean; error?: string }>;
-  grantTunPermissions: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  grantTunPermissions: () => Promise<{ success: boolean; message?: string; error?: string; needRestart?: boolean }>;
   checkCorePermission: () => Promise<{ success: boolean; hasPermission: boolean }>;
   revokeCorePermission: () => Promise<{ success: boolean; error?: string }>;
   getTunConfig: () => Promise<{ success: boolean; config?: TunConfig; error?: string }>;
