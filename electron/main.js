@@ -3485,32 +3485,13 @@ exit /b %errorlevel%
         return { success: true, message: '正在请求管理员权限创建任务并重启应用...', needRestart: true };
       }
 
-      // macOS 和 Linux 保持原有逻辑
+      // macOS 和 Linux 统一委托给 tunManager（grantCorePermission）
       if (context.grantCorePermission) {
         return await context.grantCorePermission();
       }
 
       if (isMac) {
-        const { promisify } = require('util');
-        const execFile = promisify(require('child_process').execFile);
-
-        // 获取 mihomo 内核路径
-        const kernelPath = context.mihomoService?.getKernelPath?.();
-        if (!kernelPath) {
-          throw new Error('无法获取 Mihomo 内核路径');
-        }
-
-        // 验证内核文件存在
-        if (!fs.existsSync(kernelPath)) {
-          throw new Error(`内核文件不存在: ${kernelPath}`);
-        }
-
-        // 使用 osascript 请求管理员权限
-        const script = `do shell script "chown root:admin '${kernelPath}' && chmod +sx '${kernelPath}'" with administrator privileges`;
-        await execFile('osascript', ['-e', script]);
-
-        console.log('[TUN] macOS 权限授予成功');
-        return { success: true, message: 'TUN 模式权限已成功授予' };
+        throw new Error('无法完成授权: grantCorePermission 未初始化');
       } else if (process.platform === 'linux') {
         const { promisify } = require('util');
         const execFile = promisify(require('child_process').execFile);
