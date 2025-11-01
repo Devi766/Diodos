@@ -1215,7 +1215,7 @@ export default function Dashboard() {
                         if (result.needRestart) {
                           showBanner({ type: 'info', message: '正在重启应用以获取管理员权限...' });
                         } else {
-                          showBanner({ type: 'success', message: 'TUN 模式权限已成功授予' });
+                          showBanner({ type: 'success', message: 'TUN 模式权限已成功授予，正在启用...' });
                           // 刷新权限状态
                           if (electron.checkElevateTask) {
                             const hasTask = await electron.checkElevateTask();
@@ -1224,6 +1224,8 @@ export default function Dashboard() {
                             const check = await electron.checkCorePermission();
                             setHasAdminPermission(!!check?.hasPermission);
                           }
+                          // 授权成功后自动启用 TUN 模式
+                          await runTunToggle(true);
                         }
                       } else {
                         showBanner({ type: 'error', message: result.error || '授权失败' });
