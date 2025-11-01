@@ -28,6 +28,31 @@ module.exports = function initSystemIntegration(context) {
     }
   }
 
+  // macOS: 检查是否存在活跃的 utun 设备（mihomo TUN）
+  function isTunActive() {
+    try {
+      if (process.platform !== 'darwin') return false;
+      const { execSync } = require('child_process');
+      const out = execSync('/sbin/ifconfig -l', { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      // 只要存在任意 utunX 即认为 TUN 已启动
+      return /\butun\d+\b/.test(out);
+    } catch {
+      return false;
+    }
+  }
+
+  // 等待 TUN 接口状态到目标值，带超时
+  async function waitForTunActive(expected, timeoutMs = 4000) {
+    const start = Date.now();
+    const interval = 200;
+    while (Date.now() - start < timeoutMs) {
+      const active = isTunActive();
+      if (active === expected) return true;
+      await new Promise((r) => setTimeout(r, interval));
+    }
+    return false;
+  }
+
   function ensureUpdateSettingsFn() {
     return context.updateUserSettings || context.updateUserSettingsRaw;
   }
@@ -253,6 +278,7 @@ module.exports = function initSystemIntegration(context) {
       if (success) {
         console.log('[toggleTunMode] Mihomo restarted successfully');
         // 重启成功后再更新状态，但需确认内核未回退禁用 TUN
+        // 并检测实际 utun 接口是否就绪
         try {
           const getSettings = context.getUserSettings || (() => ({}));
           const current = getSettings() || {};
@@ -264,6 +290,19 @@ module.exports = function initSystemIntegration(context) {
             if (setTunModeEnabled) setTunModeEnabled(false);
             safeSend('tun-status', false);
             return;
+          }
+          if (process.platform === 'darwin') {
+            const ok = await waitForTunActive(targetEnabled, 5000);
+            if (!ok) {
+              console.warn('[toggleTunMode] utun did not reach expected state, rolling back');
+              updateUserSettingsRaw({ tun: { enable: false } });
+              const setTunModeEnabled = context.setTunModeEnabled;
+              if (setTunModeEnabled) setTunModeEnabled(false);
+              state.tunModeEnabled = false;
+              safeSend('tun-status', false);
+              dialog.showErrorBox('TUN 模式未生效', '未检测到 utun 接口，请确认权限已正确授予（或在设置页重新授权）。');
+              return;
+            }
           }
         } catch {}
 
@@ -393,22 +432,38 @@ module.exports = function initSystemIntegration(context) {
         const { execFile, exec } = require('child_process');
         const execFilePromise = promisify(execFile);
         const execPromise = promisify(exec);
-        // shell-escape 核心路径（处理空格/引号/反斜杠）
         const shEscape = (s) => String(s).replace(/([\\`"$])/g, '\\$1').replace(/ /g, '\\ ');
-        const escPath = shEscape(corePath);
-        // 使用 root:wheel 更符合 macOS 约定，并仅设置 u+s
-        const applescript = `do shell script "chown root:wheel ${escPath} && chmod u+s ${escPath}" with administrator privileges`;
-        await execFilePromise('osascript', ['-e', applescript]);
+
+        // 将内核安装到系统位置，避免每次更新或 App Translocation 造成路径变化
+        const targetDir = '/Library/Application Support/FlyClash';
+        const targetPath = `${targetDir}/mihomo`;
+        const escSrc = shEscape(corePath);
+        const escDir = shEscape(targetDir);
+        const escDst = shEscape(targetPath);
+
+        // 使用 AppleScript 申请管理员权限后执行安装与授权，并去除隔离标记
+        const script = `do shell script "mkdir -p ${escDir} && cp -f ${escSrc} ${escDst} && xattr -d com.apple.quarantine ${escDst} || true && chown root:wheel ${escDst} && chmod u+s ${escDst}" with administrator privileges`;
+        await execFilePromise('osascript', ['-e', script]);
+
+        // 将内核路径固定为系统路径，避免后续再次授权
+        try {
+          if (typeof context.saveKernelPreference === 'function') {
+            context.saveKernelPreference({ customPath: targetPath });
+          }
+        } catch (e) {
+          console.warn('[grantCorePermission] Failed to save kernel preference:', e?.message || e);
+        }
+
         // 验证权限是否生效
         try {
-          const { stdout } = await execPromise(`ls -l "${corePath}"`);
+          const { stdout } = await execPromise(`ls -l "${targetPath}"`);
           const perm = stdout.trim().split(/\s+/)[0] || '';
           if (!/[sS]/.test(perm)) {
             return { success: false, error: '权限设置未生效，请重试或手动运行命令：\n\n' +
-              `sudo chown root:wheel \"${corePath}\" && sudo chmod u+s \"${corePath}\"` };
+              `sudo mkdir -p \"${targetDir}\" && sudo cp -f \"${corePath}\" \"${targetPath}\" && sudo chown root:wheel \"${targetPath}\" && sudo chmod u+s \"${targetPath}\"` };
           }
         } catch {}
-        return { success: true };
+        return { success: true, message: '已安装到系统路径并授权' };
       }
 
       if (process.platform === 'linux') {
@@ -461,7 +516,8 @@ module.exports = function initSystemIntegration(context) {
     deleteElevateTask,
     grantCorePermission,
     checkCorePermission,
-    revokeCorePermission
+    revokeCorePermission,
+    isTunActive
   };
 
   context.toggleSystemProxy = toggleSystemProxy;
@@ -474,4 +530,5 @@ module.exports = function initSystemIntegration(context) {
   context.grantCorePermission = grantCorePermission;
   context.checkCorePermission = checkCorePermission;
   context.revokeCorePermission = revokeCorePermission;
+  context.isTunActive = isTunActive;
 };
