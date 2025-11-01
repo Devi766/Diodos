@@ -48,52 +48,45 @@ module.exports = function initTunManager(context) {
   }
   function buildASAuthorizeCustom(p) {
     const qp = asQuotedPath(p);
-    // Wrap concatenation in parentheses so 'with administrator privileges' binds to do shell script
-    return `do shell script ("xattr -d com.apple.quarantine " & ${qp} & " || true && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp}) with administrator privileges`;
+    // Wrap each command properly to ensure all steps execute
+    // Use subshell for xattr to ensure || true doesn't affect subsequent commands
+    return `do shell script ("(xattr -d com.apple.quarantine " & ${qp} & " || true) && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp}) with administrator privileges`;
   }
   function buildASInstallAuthorize(src, dir, dst) {
     const qsrc = asQuotedPath(src);
     const qdir = asQuotedPath(dir);
     const qdst = asQuotedPath(dst);
-    return `do shell script ("mkdir -p " & ${qdir} & " && cp -f " & ${qsrc} & " " & ${qdst} & " && xattr -d com.apple.quarantine " & ${qdst} & " || true && chown root:wheel " & ${qdst} & " && chmod u+s " & ${qdst}) with administrator privileges`;
+    return `do shell script ("mkdir -p " & ${qdir} & " && cp -f " & ${qsrc} & " " & ${qdst} & " && (xattr -d com.apple.quarantine " & ${qdst} & " || true) && chown root:wheel " & ${qdst} & " && chmod u+s " & ${qdst}) with administrator privileges`;
   }
 
   function getKernelPath() {
-    // macOS: 优先使用系统路径（如果已授权）
-    if (isMac) {
-      try {
-        const systemPath = '/Library/Application Support/FlyClash/mihomo';
-        if (fs.existsSync(systemPath)) {
-          const st = statInfo(systemPath);
-          // 检查是否已授权（uid=0, gid=0, setuid, 无quarantine）
-          if (st.exists && st.uid === 0 && st.gid === 0 && st.isSetuid && !hasQuarantine(systemPath)) {
-            console.log('[TunManager] Using authorized system kernel:', systemPath);
-            return systemPath;
-          }
-        }
-      } catch (e) {
-        console.warn('[TunManager] Failed to check system kernel path:', e);
-      }
-    }
-
-    // 按原顺序查找
     try {
       if (typeof context.getKernelExecutablePath === 'function') {
         const p = context.getKernelExecutablePath();
-        if (p && fs.existsSync(p)) return p;
+        if (p && fs.existsSync(p)) {
+          console.log('[TunManager] Using kernel path:', p);
+          return p;
+        }
       }
     } catch {}
     try {
       const p = context.mihomoService?.getKernelPath?.();
-      if (p && fs.existsSync(p)) return p;
+      if (p && fs.existsSync(p)) {
+        console.log('[TunManager] Using kernel path:', p);
+        return p;
+      }
     } catch {}
     try {
       // Fallback to permissionManager scan
       const PermissionManager = require('./permission-manager');
       const pm = new PermissionManager();
       const p = pm.getCorePath();
-      if (p && fs.existsSync(p)) return p;
+      if (p && fs.existsSync(p)) {
+        console.log('[TunManager] Using kernel path:', p);
+        return p;
+      }
     } catch {}
+    console.warn('[TunManager] No kernel path found');
     return '';
   }
 
@@ -224,13 +217,22 @@ module.exports = function initTunManager(context) {
 
     // If functional probe says ok, prefer it
     if (ok) {
+      console.log('[TunManager] Functional probe passed');
       result.ok = true;
       return result;
     }
 
     // Else fall back to metadata heuristic
     if (isMac) {
-      result.ok = st.uid === 0 && st.gid === 0 && st.isSetuid && !hasQuarantine(kernelPath);
+      const quarantine = hasQuarantine(kernelPath);
+      result.ok = st.uid === 0 && st.gid === 0 && st.isSetuid && !quarantine;
+      console.log('[TunManager] Metadata check:', {
+        uid: st.uid,
+        gid: st.gid,
+        isSetuid: st.isSetuid,
+        hasQuarantine: quarantine,
+        ok: result.ok
+      });
     } else if (isLinux) {
       try {
         const cap = execSync(`getcap "${kernelPath}" || true`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
@@ -247,56 +249,33 @@ module.exports = function initTunManager(context) {
       return { success: false, error: '未找到内核文件，请检查配置' };
     }
 
-    // New macOS flow (robust quoting via AppleScript 'quoted form of "…"')
+    // macOS: 直接在原地授权，不复制文件
     if (isMac) {
-      const aq = (s) => String(s).replace(/\"/g, '\\"');
-      const q = (p) => `quoted form of \"${aq(p)}\"`;
       try {
-        console.log('[TunManager] Grant permissions for:', kernelPath);
+        console.log('[TunManager] Granting permissions for kernel at:', kernelPath);
 
-        // Prefer authorizing custom kernel in place
-        try {
-          const pref = context.kernelPreference || (typeof context.loadKernelPreference === 'function' ? context.loadKernelPreference() : {});
-          const isUserCustom = preferCustom && pref && pref.customPath && fs.existsSync(pref.customPath) && path.resolve(pref.customPath) === path.resolve(kernelPath);
-          if (isUserCustom) {
-            console.log('[TunManager] Authorizing user custom kernel in place');
-            const script = buildASAuthorizeCustom(kernelPath);
-            await execFilePromise('osascript', ['-e', script]);
-            const probe = await probeAuthorization(kernelPath);
-            if (probe.ok) {
-              console.log('[TunManager] Custom kernel authorized successfully');
-              return { success: true, message: 'Authorized custom kernel' };
-            }
-          }
-        } catch (e) {
-          console.warn('[TunManager] Failed to authorize custom kernel, will install to system path:', e.message);
-        }
+        const script = buildASAuthorizeCustom(kernelPath);
+        await execFilePromise('osascript', ['-e', script]);
 
-        // Fallback: install to system path once
-        const targetDir = '/Library/Application Support/FlyClash';
-        const targetPath = `${targetDir}/mihomo`;
-        console.log('[TunManager] Installing kernel to system path:', targetPath);
-        const script2 = buildASInstallAuthorize(kernelPath, targetDir, targetPath);
-        await execFilePromise('osascript', ['-e', script2]);
-
-        // Verify installation
-        const st = statInfo(targetPath);
-        console.log('[TunManager] System kernel stat:', {
-          exists: st.exists,
+        // 验证授权是否成功
+        const st = statInfo(kernelPath);
+        const quarantine = hasQuarantine(kernelPath);
+        console.log('[TunManager] After authorization, kernel stat:', {
+          path: kernelPath,
           uid: st.uid,
           gid: st.gid,
           mode: st.mode?.toString(8),
           isSetuid: st.isSetuid,
-          hasQuarantine: hasQuarantine(targetPath)
+          hasQuarantine: quarantine
         });
 
-        try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
-        const probe2 = await probeAuthorization(targetPath);
-        if (probe2.ok) {
-          console.log('[TunManager] System kernel authorized successfully');
-          return { success: true, message: 'Installed and authorized system kernel' };
+        const probe = await probeAuthorization(kernelPath);
+        if (probe.ok) {
+          console.log('[TunManager] Kernel authorized successfully');
+          return { success: true, message: 'Kernel authorized' };
         }
-        console.error('[TunManager] System kernel probe failed:', probe2.issues);
+
+        console.error('[TunManager] Authorization probe failed:', probe.issues);
         return { success: false, error: '授权验证失败，请重试' };
       } catch (e) {
         console.error('[TunManager] Grant permissions failed:', e);
@@ -352,11 +331,15 @@ module.exports = function initTunManager(context) {
   async function toggleTun(enabled) {
     try {
       if (enabled) {
+        console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
         const kernelPath = getKernelPath();
         const probe = await probeAuthorization(kernelPath);
+        console.log('[TunManager] Authorization probe result:', { ok: probe.ok, issues: probe.issues });
         if (!probe.ok) {
+          console.warn('[TunManager] Missing permissions, cannot enable TUN');
           return { success: false, error: '缺少必要权限，请先进行授权' };
         }
+        console.log('[TunManager] Authorization check passed, proceeding to enable TUN');
       }
 
       const updateUserSettingsRaw = context.updateUserSettingsRaw;
