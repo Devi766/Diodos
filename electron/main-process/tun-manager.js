@@ -16,6 +16,22 @@ module.exports = function initTunManager(context) {
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
 
+  // AppleScript helpers (macOS)
+  function asQuotedPath(p) {
+    const s = String(p).replace(/\"/g, '\\"');
+    return `quoted form of POSIX path \"${s}\"`;
+  }
+  function buildASAuthorizeCustom(p) {
+    const qp = asQuotedPath(p);
+    return `do shell script "xattr -d com.apple.quarantine " & ${qp} & " || true && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp} with administrator privileges`;
+  }
+  function buildASInstallAuthorize(src, dir, dst) {
+    const qsrc = asQuotedPath(src);
+    const qdir = asQuotedPath(dir);
+    const qdst = asQuotedPath(dst);
+    return `do shell script "mkdir -p " & ${qdir} & " && cp -f " & ${qsrc} & " " & ${qdst} & " && xattr -d com.apple.quarantine " & ${qdst} & " || true && chown root:wheel " & ${qdst} & " && chmod u+s " & ${qdst} with administrator privileges`;
+  }
+
   function getKernelPath() {
     try {
       if (typeof context.getKernelExecutablePath === 'function') {
@@ -185,6 +201,37 @@ module.exports = function initTunManager(context) {
     let kernelPath = getKernelPath();
     if (!kernelPath || !fs.existsSync(kernelPath)) {
       return { success: false, error: 'Kernel path not found' };
+    }
+
+    // New macOS flow (robust quoting via 'quoted form of POSIX path')
+    if (isMac) {
+      const aq = (s) => String(s).replace(/\"/g, '\\"');
+      const q = (p) => `quoted form of POSIX path \"${aq(p)}\"`;
+      try {
+        // Prefer authorizing custom kernel in place
+        try {
+          const pref = context.kernelPreference || (typeof context.loadKernelPreference === 'function' ? context.loadKernelPreference() : {});
+          const isUserCustom = preferCustom && pref && pref.customPath && fs.existsSync(pref.customPath) && path.resolve(pref.customPath) === path.resolve(kernelPath);
+          if (isUserCustom) {
+            const script = `do shell script \"xattr -d com.apple.quarantine \" & ${q(kernelPath)} & \" || true && chown root:wheel \" & ${q(kernelPath)} & \" && chmod u+s \" & ${q(kernelPath)} with administrator privileges`;
+            await execFilePromise('osascript', ['-e', script]);
+            const probe = await probeAuthorization(kernelPath);
+            if (probe.ok) return { success: true, message: 'Authorized custom kernel' };
+          }
+        } catch {}
+
+        // Fallback: install to system path once
+        const targetDir = '/Library/Application Support/FlyClash';
+        const targetPath = `${targetDir}/mihomo`;
+        const script2 = `do shell script \"mkdir -p \" & ${q(targetDir)} & \" && cp -f \" & ${q(kernelPath)} & \" \" & ${q(targetPath)} & \" && xattr -d com.apple.quarantine \" & ${q(targetPath)} & \" || true && chown root:wheel \" & ${q(targetPath)} & \" && chmod u+s \" & ${q(targetPath)} with administrator privileges`;
+        await execFilePromise('osascript', ['-e', script2]);
+        try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
+        const probe2 = await probeAuthorization(targetPath);
+        if (probe2.ok) return { success: true, message: 'Installed and authorized system kernel' };
+        return { success: false, error: 'Authorization did not pass probe' };
+      } catch (e) {
+        return { success: false, error: e?.message || String(e) };
+      }
     }
 
     if (isMac) {
