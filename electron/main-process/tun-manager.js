@@ -206,7 +206,7 @@ module.exports = function initTunManager(context) {
     }
 
     // New macOS flow (robust quoting via AppleScript 'quoted form of "…"')
-    if (isMac) {
+    if (false && isMac) {
       const aq = (s) => String(s).replace(/\"/g, '\\"');
       const q = (p) => `quoted form of \"${aq(p)}\"`;
       try {
