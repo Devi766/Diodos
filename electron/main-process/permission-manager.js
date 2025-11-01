@@ -367,9 +367,15 @@ class PermissionManager {
       if (fs.existsSync(p)) return p;
     }
 
-    // 最后回退到旧逻辑 (不一定存在)
-    const legacy = path.join(process.resourcesPath || path.join(app.getAppPath(), '..'), 'core', genericName);
-    return legacy;
+    // 最后回退: 优先尝试历史的 cores 目录；仅当路径存在时返回
+    try {
+      const legacyCores = path.join(process.resourcesPath || path.join(app.getAppPath(), '..'), 'cores', genericName);
+      if (fs.existsSync(legacyCores)) return legacyCores;
+      const legacyCore = path.join(process.resourcesPath || path.join(app.getAppPath(), '..'), 'core', genericName);
+      if (fs.existsSync(legacyCore)) return legacyCore;
+    } catch {}
+    // 未找到有效路径
+    return '';
   }
 }
 
