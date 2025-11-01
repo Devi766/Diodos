@@ -302,7 +302,62 @@ module.exports = function initSystemIntegration(context) {
 
   async function grantCorePermission() {
     try {
-      await permissionManager.grantCorePermission();
+      const fsExists = (p) => {
+        try { return fs.existsSync(p); } catch { return false; }
+      };
+
+      let corePath = null;
+      // 1) 优先使用“系统设置 → 内核”里配置的路径
+      try {
+        if (typeof context.getKernelExecutablePath === 'function') {
+          const preferred = context.getKernelExecutablePath();
+          if (preferred && fsExists(preferred)) corePath = preferred;
+        }
+      } catch {}
+
+      // 2) 再尝试 PermissionManager 推断的路径
+      if (!corePath) {
+        try {
+          const guessed = permissionManager.getCorePath();
+          if (guessed && fsExists(guessed)) corePath = guessed;
+        } catch {}
+      }
+
+      // 3) 最后使用运行时实际使用的内核路径
+      if (!corePath) {
+        const runtime = context.mihomoService?.getKernelPath?.();
+        if (runtime && fsExists(runtime)) corePath = runtime;
+      }
+
+      if (!corePath || !fsExists(corePath)) {
+        const msg = `无法定位内核文件。请在 系统设置 → 内核 中确认路径存在。尝试路径: ${corePath || '未知'}`;
+        console.error('[grantCorePermission] Kernel path not found:', corePath);
+        return { success: false, error: msg };
+      }
+
+      if (process.platform === 'darwin') {
+        const { promisify } = require('util');
+        const execPromise = promisify(require('child_process').exec);
+        const esc = (p) => p.replace(/ /g, '\\ ');
+        const shell = `chown root:admin ${esc(corePath)}\nchmod +sx ${esc(corePath)}`;
+        const command = `do shell script "${shell}" with administrator privileges`;
+        await execPromise(`osascript -e '${command}'`);
+        return { success: true };
+      }
+
+      if (process.platform === 'linux') {
+        const { promisify } = require('util');
+        const execFile = promisify(require('child_process').execFile);
+        try {
+          await execFile('pkexec', ['setcap', 'cap_net_admin,cap_net_bind_service=+eip', corePath]);
+        } catch (e) {
+          await execFile('pkexec', ['chown', 'root:root', corePath]);
+          await execFile('pkexec', ['chmod', '+sx', corePath]);
+        }
+        return { success: true };
+      }
+
+      // Windows 不需要
       return { success: true };
     } catch (error) {
       console.error('[grantCorePermission] Failed:', error);

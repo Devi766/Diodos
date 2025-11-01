@@ -311,6 +311,18 @@ class PermissionManager {
     const isMac = process.platform === 'darwin';
     const isLinux = process.platform === 'linux';
 
+    // 0) 优先读取用户设置的自定义内核路径
+    try {
+      const prefPath = path.join(app.getPath('userData'), 'kernel-config.json');
+      if (fs.existsSync(prefPath)) {
+        const pref = JSON.parse(fs.readFileSync(prefPath, 'utf8')) || {};
+        const customPath = pref?.customPath ? String(pref.customPath).trim() : '';
+        if (customPath && fs.existsSync(customPath)) {
+          return customPath;
+        }
+      }
+    } catch {}
+
     // 搜索 cores 目录（与运行时启动一致）
     const roots = [
       path.join(process.resourcesPath || '', 'cores'),
