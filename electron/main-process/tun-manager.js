@@ -19,7 +19,8 @@ module.exports = function initTunManager(context) {
   // AppleScript helpers (macOS)
   function asQuotedPath(p) {
     const s = String(p).replace(/\"/g, '\\"');
-    return `quoted form of POSIX path \"${s}\"`;
+    // Simply quote the raw path as text for shell; AppleScript will escape it safely
+    return `quoted form of \"${s}\"`;
   }
   function buildASAuthorizeCustom(p) {
     const qp = asQuotedPath(p);
@@ -116,7 +117,7 @@ module.exports = function initTunManager(context) {
 
     const st = statInfo(kernelPath);
     result.details.stat = st;
-    if (isMac) {
+    if (false && isMac) { // legacy block disabled; robust mac flow handled above
       if (hasQuarantine(kernelPath)) result.issues.push('quarantine_present');
       if (st.uid !== 0) result.issues.push('owner_not_root');
       // wheel gid is 0 on macOS
