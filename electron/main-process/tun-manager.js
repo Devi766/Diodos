@@ -402,21 +402,16 @@ module.exports = function initTunManager(context) {
   async function checkPermission() {
     try {
       const kernelPath = getKernelPath();
-      const st = statInfo(kernelPath);
+      console.log('[TunManager] Checking permission for:', kernelPath);
+
       if (isMac) {
-        // 简化检查：只检查uid和setuid位
-        // gid和quarantine检查可能不准确
-        const ok = st.exists && st.uid === 0 && st.isSetuid;
-        console.log('[TunManager] Check permission:', {
-          path: kernelPath,
-          exists: st.exists,
-          uid: st.uid,
-          gid: st.gid,
-          mode: st.mode?.toString(8),
-          isSetuid: st.isSetuid,
-          hasPermission: ok
+        // 使用 functional probe 来验证权限（更准确）
+        const probe = await probeAuthorization(kernelPath);
+        console.log('[TunManager] Functional probe result:', {
+          ok: probe.ok,
+          issues: probe.issues
         });
-        return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
+        return { success: true, hasPermission: probe.ok, details: { path: kernelPath } };
       }
       if (isLinux) {
         let ok = false;
