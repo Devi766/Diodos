@@ -187,7 +187,7 @@ module.exports = function initTunManager(context) {
     }
 
     // Else fall back to metadata heuristic
-    else if (false) {
+    if (isMac) {
       result.ok = st.uid === 0 && st.gid === 0 && st.isSetuid && !hasQuarantine(kernelPath);
     } else if (isLinux) {
       try {
@@ -206,7 +206,7 @@ module.exports = function initTunManager(context) {
     }
 
     // New macOS flow (robust quoting via AppleScript 'quoted form of "…"')
-    if (false && isMac) {
+    if (isMac) {
       const aq = (s) => String(s).replace(/\"/g, '\\"');
       const q = (p) => `quoted form of \"${aq(p)}\"`;
       try {
@@ -236,7 +236,8 @@ module.exports = function initTunManager(context) {
       }
     }
 
-    if (isMac) {
+    // Legacy macOS flow with buggy escaping (disabled)
+    if (false && isMac) {
       const escape = (s) => String(s).replace(/([\\`"$])/g, '\\$1').replace(/ /g, '\\ ');
       // If user explicitly chose custom path, authorize in place
       try {
@@ -357,7 +358,7 @@ module.exports = function initTunManager(context) {
       const kernelPath = getKernelPath();
       const st = statInfo(kernelPath);
       if (isMac) {
-        const ok = st.exists && st.uid === 0 && st.isSetuid;
+        const ok = st.exists && st.uid === 0 && st.gid === 0 && st.isSetuid && !hasQuarantine(kernelPath);
         return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
       }
       if (isLinux) {
