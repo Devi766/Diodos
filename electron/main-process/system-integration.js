@@ -13,6 +13,21 @@ module.exports = function initSystemIntegration(context) {
 
   const permissionManager = new PermissionManager();
 
+  // 安全向渲染进程发送消息，避免在窗口销毁后触发异常
+  function safeSend(channel, ...args) {
+    try {
+      const win = state.mainWindow;
+      if (!win || win.isDestroyed()) return false;
+      const wc = win.webContents;
+      if (!wc || wc.isDestroyed()) return false;
+      wc.send(channel, ...args);
+      return true;
+    } catch (e) {
+      console.warn('[system-integration] safeSend failed:', e && e.message ? e.message : e);
+      return false;
+    }
+  }
+
   function ensureUpdateSettingsFn() {
     return context.updateUserSettings || context.updateUserSettingsRaw;
   }
@@ -49,7 +64,7 @@ module.exports = function initSystemIntegration(context) {
 
         state.systemProxyEnabled = true;
         dbManager.setSetting('systemProxyEnabled', true);
-        state.mainWindow?.webContents.send('proxy-status', true);
+        safeSend('proxy-status', true);
       } else {
         console.log('禁用系统代理');
         if (process.platform === 'win32') {
@@ -70,7 +85,7 @@ module.exports = function initSystemIntegration(context) {
 
         state.systemProxyEnabled = false;
         dbManager.setSetting('systemProxyEnabled', false);
-        state.mainWindow?.webContents.send('proxy-status', false);
+        safeSend('proxy-status', false);
       }
     } catch (error) {
       console.error('设置系统代理失败:', error);
@@ -85,7 +100,7 @@ module.exports = function initSystemIntegration(context) {
         console.error('保存代理状态失败:', saveError);
       }
 
-      state.mainWindow?.webContents.send('proxy-status', state.systemProxyEnabled);
+      safeSend('proxy-status', state.systemProxyEnabled);
     }
   }
 
@@ -202,17 +217,13 @@ module.exports = function initSystemIntegration(context) {
       }
 
       console.log('[toggleTunMode] Saving TUN config...');
+      // 先保存配置，但不要急于更新状态，待重启结果确认
       updateUserSettingsRaw({ tun: tunConfig });
-
-      const setTunModeEnabled = context.setTunModeEnabled;
-      if (setTunModeEnabled) {
-        setTunModeEnabled(targetEnabled);
-      }
-      state.tunModeEnabled = targetEnabled;
 
       if (!state.mihomoProcess || !state.configFilePath) {
         console.warn('[toggleTunMode] Mihomo not running, config saved only');
-        state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
+        // 仅在未运行时，直接反映目标状态（下次启动生效）
+        safeSend('tun-status', targetEnabled);
         return;
       }
 
@@ -222,14 +233,56 @@ module.exports = function initSystemIntegration(context) {
         throw new Error('Restart function not available');
       }
 
+      // 在 macOS/Linux 上，启用前再次确认权限
+      if (targetEnabled && process.platform !== 'win32') {
+        try {
+          const perm = await permissionManager.checkCorePermission();
+          if (!perm) {
+            console.warn('[toggleTunMode] Permission missing on Unix, abort enabling');
+            dialog.showErrorBox('TUN 模式错误', '缺少内核权限，请在 TUN 设置页面先授权。');
+            // 回滚配置为禁用
+            updateUserSettingsRaw({ tun: { enable: false } });
+            safeSend('tun-status', false);
+            return;
+          }
+        } catch {}
+      }
+
       const success = await restartMihomo(state.configFilePath);
 
       if (success) {
         console.log('[toggleTunMode] Mihomo restarted successfully');
-        state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
+        // 重启成功后再更新状态，但需确认内核未回退禁用 TUN
+        try {
+          const getSettings = context.getUserSettings || (() => ({}));
+          const current = getSettings() || {};
+          const actuallyEnabled = !!current?.tun?.enable;
+          if (!actuallyEnabled && targetEnabled) {
+            console.warn('[toggleTunMode] Kernel reported TUN disabled after restart');
+            state.tunModeEnabled = false;
+            const setTunModeEnabled = context.setTunModeEnabled;
+            if (setTunModeEnabled) setTunModeEnabled(false);
+            safeSend('tun-status', false);
+            return;
+          }
+        } catch {}
+
+        const setTunModeEnabled = context.setTunModeEnabled;
+        if (setTunModeEnabled) {
+          setTunModeEnabled(targetEnabled);
+        }
+        state.tunModeEnabled = targetEnabled;
+        safeSend('tun-status', state.tunModeEnabled);
       } else {
-        console.warn('[toggleTunMode] Mihomo restart failed, but config was saved');
-        state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
+        console.warn('[toggleTunMode] Mihomo restart failed, rolling back tun flag');
+        // 回滚配置为禁用，避免前端误判
+        updateUserSettingsRaw({ tun: { enable: false } });
+        const setTunModeEnabled = context.setTunModeEnabled;
+        if (setTunModeEnabled) {
+          setTunModeEnabled(false);
+        }
+        state.tunModeEnabled = false;
+        safeSend('tun-status', false);
       }
     } catch (error) {
       console.error('[toggleTunMode] Failed to toggle TUN mode:', error);
@@ -248,7 +301,7 @@ module.exports = function initSystemIntegration(context) {
         console.error('[toggleTunMode] Failed to save TUN mode state:', saveError);
       }
 
-      state.mainWindow?.webContents.send('tun-status', state.tunModeEnabled);
+      safeSend('tun-status', state.tunModeEnabled);
     }
   }
 
@@ -337,11 +390,24 @@ module.exports = function initSystemIntegration(context) {
 
       if (process.platform === 'darwin') {
         const { promisify } = require('util');
-        const execPromise = promisify(require('child_process').exec);
-        const esc = (p) => p.replace(/ /g, '\\ ');
-        const shell = `chown root:admin ${esc(corePath)}\nchmod +sx ${esc(corePath)}`;
-        const command = `do shell script "${shell}" with administrator privileges`;
-        await execPromise(`osascript -e '${command}'`);
+        const { execFile, exec } = require('child_process');
+        const execFilePromise = promisify(execFile);
+        const execPromise = promisify(exec);
+        // shell-escape 核心路径（处理空格/引号/反斜杠）
+        const shEscape = (s) => String(s).replace(/([\\`"$])/g, '\\$1').replace(/ /g, '\\ ');
+        const escPath = shEscape(corePath);
+        // 使用 root:wheel 更符合 macOS 约定，并仅设置 u+s
+        const applescript = `do shell script "chown root:wheel ${escPath} && chmod u+s ${escPath}" with administrator privileges`;
+        await execFilePromise('osascript', ['-e', applescript]);
+        // 验证权限是否生效
+        try {
+          const { stdout } = await execPromise(`ls -l "${corePath}"`);
+          const perm = stdout.trim().split(/\s+/)[0] || '';
+          if (!/[sS]/.test(perm)) {
+            return { success: false, error: '权限设置未生效，请重试或手动运行命令：\n\n' +
+              `sudo chown root:wheel \"${corePath}\" && sudo chmod u+s \"${corePath}\"` };
+          }
+        } catch {}
         return { success: true };
       }
 

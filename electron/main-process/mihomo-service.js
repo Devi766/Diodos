@@ -18,6 +18,22 @@ module.exports = function initMihomoService(context) {
   const { getMihomoSocketPath, getMihomoControllerArg, getMihomoControllerParam, cleanupSocketFile } = require('../utils/socket-path');
   console.log('[mihomo-service] applyOverrides函数已导入:', typeof applyOverrides);
 
+  // 安全向渲染进程发送消息，避免在窗口销毁后触发“Object has been destroyed”异常
+  function safeSend(channel, ...args) {
+    try {
+      const win = state.mainWindow;
+      if (!win || win.isDestroyed()) return false;
+      const wc = win.webContents;
+      if (!wc || wc.isDestroyed()) return false;
+      wc.send(channel, ...args);
+      return true;
+    } catch (e) {
+      // 在应用退出阶段，窗口可能已经销毁，这里只记录告警不抛出
+      console.warn('[mihomo-service] safeSend failed:', e && e.message ? e.message : e);
+      return false;
+    }
+  }
+
   const fetchWithFallback = (...args) => {
     if (typeof fetch === 'function') {
       return fetch(...args);
@@ -914,7 +930,7 @@ module.exports = function initMihomoService(context) {
           }
 
           state.tunModeEnabled = false;
-          state.mainWindow?.webContents.send('tun-status', false);
+          safeSend('tun-status', false);
 
           const { dialog } = require('electron');
           dialog.showErrorBox(
@@ -932,17 +948,11 @@ module.exports = function initMihomoService(context) {
             console.error(`[startMihomo] 检测到 fatal 错误: ${fatalMatch[1]}`);
 
             // 立即发送错误信息到前端
-            if (state.mainWindow) {
-              state.mainWindow.webContents.send('mihomo-start-failed', {
-                error: errorMessage
-              });
-            }
+            safeSend('mihomo-start-failed', { error: errorMessage });
           }
         }
 
-        if (state.mainWindow) {
-          state.mainWindow.webContents.send('mihomo-log', logContent);
-        }
+        safeSend('mihomo-log', logContent);
 
         process.stdout.write(data);
       });
@@ -951,9 +961,7 @@ module.exports = function initMihomoService(context) {
         const errorText = data.toString();
         stderrOutput += errorText;  // 收集 stderr 输出
         console.error(`mihomo stderr: ${errorText}`);
-        if (state.mainWindow) {
-          state.mainWindow.webContents.send('mihomo-error', errorText);
-        }
+        safeSend('mihomo-error', errorText);
         process.stderr.write(data);
       });
 
@@ -1007,12 +1015,7 @@ module.exports = function initMihomoService(context) {
           }
 
           // 发送错误信息到前端,使用 Toast 显示
-          if (state.mainWindow) {
-            state.mainWindow.webContents.send('mihomo-start-failed', {
-              error: errorMessage,
-              exitCode: state.mihomoProcess.exitCode
-            });
-          }
+          safeSend('mihomo-start-failed', { error: errorMessage, exitCode: state.mihomoProcess.exitCode });
 
           return { success: false, error: errorMessage };
         }
@@ -1051,11 +1054,7 @@ module.exports = function initMihomoService(context) {
             }
 
             // 发送错误信息到前端
-            if (state.mainWindow) {
-              state.mainWindow.webContents.send('mihomo-start-failed', {
-                error: errorMessage
-              });
-            }
+            safeSend('mihomo-start-failed', { error: errorMessage });
 
             // 停止内核进程
             if (state.mihomoProcess) {
@@ -1099,11 +1098,7 @@ module.exports = function initMihomoService(context) {
       const errorMessage = `无法启动Mihomo: ${error.message}`;
 
       // 发送错误信息到前端,使用 Toast 显示
-      if (state.mainWindow) {
-        state.mainWindow.webContents.send('mihomo-start-failed', {
-          error: errorMessage
-        });
-      }
+      safeSend('mihomo-start-failed', { error: errorMessage });
 
       return { success: false, error: errorMessage };
     }
@@ -1211,14 +1206,12 @@ module.exports = function initMihomoService(context) {
 
             state.configFilePath = configData.path || '已连接到现有内核';
 
-            if (state.mainWindow) {
-              state.mainWindow.webContents.send('mihomo-autostart', {
-                success: true,
-                configPath: state.configFilePath,
-                existing: true,
-                configData
-              });
-            }
+            safeSend('mihomo-autostart', {
+              success: true,
+              configPath: state.configFilePath,
+              existing: true,
+              configData
+            });
 
             if (typeof context.startTrafficStatsUpdate === 'function') {
               context.startTrafficStatsUpdate();
@@ -1241,13 +1234,11 @@ module.exports = function initMihomoService(context) {
           console.error('获取现有内核配置信息失败:', error);
         }
 
-        if (state.mainWindow) {
-          state.mainWindow.webContents.send('mihomo-autostart', {
-            success: true,
-            configPath: '已连接到现有内核',
-            existing: true
-          });
-        }
+        safeSend('mihomo-autostart', {
+          success: true,
+          configPath: '已连接到现有内核',
+          existing: true
+        });
 
         if (typeof context.startTrafficStatsUpdate === 'function') {
           context.startTrafficStatsUpdate();
@@ -1294,11 +1285,8 @@ module.exports = function initMihomoService(context) {
 
       const success = await startMihomo(configPath);
 
-      if (success && state.mainWindow) {
-        state.mainWindow.webContents.send('mihomo-autostart', {
-          success: true,
-          configPath
-        });
+      if (success) {
+        safeSend('mihomo-autostart', { success: true, configPath });
 
         try {
           const proxyEnabled = dbManager.getSetting('systemProxyEnabled', false);
@@ -1308,16 +1296,12 @@ module.exports = function initMihomoService(context) {
             if (typeof context.enableSystemProxy === 'function') {
               await context.enableSystemProxy();
             }
-            if (state.mainWindow) {
-              state.mainWindow.webContents.send('proxy-status', true);
-            }
+            safeSend('proxy-status', true);
           } else {
             if (typeof context.disableSystemProxy === 'function') {
               await context.disableSystemProxy();
             }
-            if (state.mainWindow) {
-              state.mainWindow.webContents.send('proxy-status', false);
-            }
+            safeSend('proxy-status', false);
           }
         } catch (error) {
           console.error('应用上次代理状态失败:', error);
@@ -1325,12 +1309,7 @@ module.exports = function initMihomoService(context) {
       }
     } catch (error) {
       console.error('自动启动Mihomo失败:', error);
-      if (state.mainWindow) {
-        state.mainWindow.webContents.send('mihomo-autostart', {
-          success: false,
-          error: error.message
-        });
-      }
+      safeSend('mihomo-autostart', { success: false, error: error.message });
     }
   }
 
