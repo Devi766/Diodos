@@ -960,29 +960,60 @@ export default function Dashboard() {
     }
     if (isTunUpdating) return;
     if (value) {
-      // Windows: 检查计划任务
+      // Windows: 检查计划任务，需要显示对话框（因为需要重启应用）
       if (electron?.checkElevateTask) {
         try {
           const hasTask = await electron.checkElevateTask();
           console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
           setHasAdminPermission(hasTask);
+          setTunConfirmOpen(true);
         } catch (error) {
           console.error('Failed to check admin permission:', error);
           setHasAdminPermission(false);
+          setTunConfirmOpen(true);
         }
-      } else if (electron?.checkCorePermission) {
-        // macOS/Linux: 检查核心权限
+        return;
+      }
+
+      // macOS/Linux: 直接处理授权和启用
+      if (electron?.checkCorePermission) {
         try {
           const result = await electron.checkCorePermission();
           console.log('[Dashboard] Unix checkCorePermission result:', result);
-          setHasAdminPermission(!!result?.hasPermission);
+          const hasPermission = !!result?.hasPermission;
+
+          if (!hasPermission) {
+            // 没有权限，直接弹出系统密码框授权
+            console.log('[Dashboard] No permission, requesting authorization...');
+            showBanner({ type: 'info', message: '正在请求授权，请输入管理员密码...' });
+
+            try {
+              const authResult = await electron.grantTunPermissions();
+              if (authResult.success) {
+                showBanner({ type: 'success', message: 'TUN 模式权限已成功授予，正在启用...' });
+                // 授权成功，自动开启 TUN 模式
+                await runTunToggle(true);
+              } else {
+                showBanner({ type: 'error', message: authResult.error || '授权失败' });
+              }
+            } catch (error) {
+              console.error('Failed to grant TUN permissions:', error);
+              showBanner({ type: 'error', message: '授权失败，请重试' });
+            }
+          } else {
+            // 已有权限，显示确认对话框
+            setHasAdminPermission(true);
+            setTunConfirmOpen(true);
+          }
         } catch (error) {
           console.error('Failed to check core permission:', error);
-          setHasAdminPermission(false);
+          showBanner({ type: 'error', message: '权限检查失败' });
         }
-      } else {
-        setHasAdminPermission(true);
+        return;
       }
+
+      // 其他平台（不应该到这里）
+      setHasAdminPermission(true);
       setTunConfirmOpen(true);
       return;
     }
@@ -1190,9 +1221,7 @@ export default function Dashboard() {
             <DialogDescription>
               {(!hasAdminPermission && electron?.checkElevateTask)
                 ? '首次启动 TUN 模式需要管理员权限。点击"授权"后，应用将创建一个计划任务并自动重启以获取管理员权限。'
-                : (!hasAdminPermission
-                    ? '首次启用 TUN 模式需要系统授权（macOS/Linux）。点击“授权”后将请求管理员权限为内核授予所需权限（setcap 或 setuid）。'
-                    : t('dashboard.tunModeWarning'))}
+                : t('dashboard.tunModeWarning')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

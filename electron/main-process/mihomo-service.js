@@ -44,8 +44,45 @@ module.exports = function initMihomoService(context) {
   function findMihomoExecutable() {
     let binPath = null;
 
+    // 获取用户配置的路径
     const preferredPath = context.getKernelExecutablePath ? context.getKernelExecutablePath() : null;
+
+    // macOS 特殊处理：对于应用包内的默认内核，使用已授权的系统副本
+    if (process.platform === 'darwin' && preferredPath) {
+      const isInAppBundle = preferredPath.includes('.app/Contents/Resources') ||
+                           preferredPath.includes('.app\\Contents\\Resources') ||
+                           preferredPath.includes(process.resourcesPath);
+
+      if (isInAppBundle) {
+        // 应用包内的内核，检查系统副本
+        try {
+          const userDataPath = app.getPath('userData');
+          const systemKernelPath = path.join(userDataPath, 'mihomo-kernel', 'mihomo');
+          if (fs.existsSync(systemKernelPath)) {
+            const stat = fs.statSync(systemKernelPath);
+            const isAuthorized = stat.uid === 0 && stat.gid === 0 && (stat.mode & 0o4000);
+            if (isAuthorized) {
+              console.log('[MihomoService] Using authorized system copy instead of app bundle kernel');
+              console.log('[MihomoService] System kernel:', systemKernelPath);
+              return systemKernelPath;
+            }
+          }
+        } catch (e) {
+          console.warn('[MihomoService] Failed to check system kernel:', e);
+        }
+        // 系统副本不存在或未授权，使用应用包内的
+        console.log('[MihomoService] Using app bundle kernel:', preferredPath);
+        return preferredPath;
+      } else {
+        // 用户自定义路径（应用包外），直接使用
+        console.log('[MihomoService] Using custom kernel:', preferredPath);
+        return preferredPath;
+      }
+    }
+
+    // 其他情况
     if (preferredPath && fs.existsSync(preferredPath)) {
+      console.log('[MihomoService] Using preferred kernel:', preferredPath);
       return preferredPath;
     }
 
