@@ -24,13 +24,14 @@ module.exports = function initTunManager(context) {
   }
   function buildASAuthorizeCustom(p) {
     const qp = asQuotedPath(p);
-    return `do shell script "xattr -d com.apple.quarantine " & ${qp} & " || true && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp} with administrator privileges`;
+    // Wrap concatenation in parentheses so 'with administrator privileges' binds to do shell script
+    return `do shell script ("xattr -d com.apple.quarantine " & ${qp} & " || true && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp}) with administrator privileges`;
   }
   function buildASInstallAuthorize(src, dir, dst) {
     const qsrc = asQuotedPath(src);
     const qdir = asQuotedPath(dir);
     const qdst = asQuotedPath(dst);
-    return `do shell script "mkdir -p " & ${qdir} & " && cp -f " & ${qsrc} & " " & ${qdst} & " && xattr -d com.apple.quarantine " & ${qdst} & " || true && chown root:wheel " & ${qdst} & " && chmod u+s " & ${qdst} with administrator privileges`;
+    return `do shell script ("mkdir -p " & ${qdir} & " && cp -f " & ${qsrc} & " " & ${qdst} & " && xattr -d com.apple.quarantine " & ${qdst} & " || true && chown root:wheel " & ${qdst} & " && chmod u+s " & ${qdst}) with administrator privileges`;
   }
 
   function getKernelPath() {
@@ -214,8 +215,8 @@ module.exports = function initTunManager(context) {
           const pref = context.kernelPreference || (typeof context.loadKernelPreference === 'function' ? context.loadKernelPreference() : {});
           const isUserCustom = preferCustom && pref && pref.customPath && fs.existsSync(pref.customPath) && path.resolve(pref.customPath) === path.resolve(kernelPath);
           if (isUserCustom) {
-            const script = `do shell script \"xattr -d com.apple.quarantine \" & ${q(kernelPath)} & \" || true && chown root:wheel \" & ${q(kernelPath)} & \" && chmod u+s \" & ${q(kernelPath)} with administrator privileges`;
-            await execFilePromise('osascript', ['-e', script]);
+          const script = buildASAuthorizeCustom(kernelPath);
+          await execFilePromise('osascript', ['-e', script]);
             const probe = await probeAuthorization(kernelPath);
             if (probe.ok) return { success: true, message: 'Authorized custom kernel' };
           }
@@ -224,7 +225,7 @@ module.exports = function initTunManager(context) {
         // Fallback: install to system path once
         const targetDir = '/Library/Application Support/FlyClash';
         const targetPath = `${targetDir}/mihomo`;
-        const script2 = `do shell script \"mkdir -p \" & ${q(targetDir)} & \" && cp -f \" & ${q(kernelPath)} & \" \" & ${q(targetPath)} & \" && xattr -d com.apple.quarantine \" & ${q(targetPath)} & \" || true && chown root:wheel \" & ${q(targetPath)} & \" && chmod u+s \" & ${q(targetPath)} with administrator privileges`;
+        const script2 = buildASInstallAuthorize(kernelPath, targetDir, targetPath);
         await execFilePromise('osascript', ['-e', script2]);
         try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
         const probe2 = await probeAuthorization(targetPath);
