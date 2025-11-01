@@ -186,7 +186,7 @@ module.exports = function initTunManager(context) {
     }
 
     // Else fall back to metadata heuristic
-    if (isMac) {
+    else if (false) {
       result.ok = st.uid === 0 && st.gid === 0 && st.isSetuid && !hasQuarantine(kernelPath);
     } else if (isLinux) {
       try {
@@ -204,10 +204,10 @@ module.exports = function initTunManager(context) {
       return { success: false, error: 'Kernel path not found' };
     }
 
-    // New macOS flow (robust quoting via 'quoted form of POSIX path')
+    // New macOS flow (robust quoting via AppleScript 'quoted form of "…"')
     if (isMac) {
       const aq = (s) => String(s).replace(/\"/g, '\\"');
-      const q = (p) => `quoted form of POSIX path \"${aq(p)}\"`;
+      const q = (p) => `quoted form of \"${aq(p)}\"`;
       try {
         // Prefer authorizing custom kernel in place
         try {
