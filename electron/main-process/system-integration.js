@@ -230,117 +230,32 @@ module.exports = function initSystemIntegration(context) {
   }
 
   async function toggleTunMode(menuItem) {
-    const targetEnabled = menuItem.checked;
+    const targetEnabled = Boolean(menuItem.checked);
     console.log(`[toggleTunMode] Target state: ${targetEnabled ? 'enabled' : 'disabled'}`);
-
     try {
-      const tunConfig = buildTunConfig(targetEnabled, dbManager);
-
-      const updateUserSettingsRaw = context.updateUserSettingsRaw;
-      if (!updateUserSettingsRaw) {
-        throw new Error('Update settings function not available');
-      }
-
-      console.log('[toggleTunMode] Saving TUN config...');
-      // 先保存配置，但不要急于更新状态，待重启结果确认
-      updateUserSettingsRaw({ tun: tunConfig });
-
-      if (!state.mihomoProcess || !state.configFilePath) {
-        console.warn('[toggleTunMode] Mihomo not running, config saved only');
-        // 仅在未运行时，直接反映目标状态（下次启动生效）
-        safeSend('tun-status', targetEnabled);
+      const tun = context.tunManager || require('./tun-manager')(context);
+      const res = await tun.toggleTun(targetEnabled);
+      if (!res?.success) {
+        console.warn('[toggleTunMode] toggle failed:', res?.error);
+        menuItem.checked = false;
+        state.tunModeEnabled = false;
+        const setTunModeEnabled = context.setTunModeEnabled;
+        if (setTunModeEnabled) setTunModeEnabled(false);
+        safeSend('tun-status', false);
+        if (res?.error) dialog.showErrorBox('TUN 模式错误', String(res.error));
         return;
       }
-
-      console.log('[toggleTunMode] Restarting Mihomo to apply TUN config...');
-      const restartMihomo = context.mihomoService?.restartMihomo;
-      if (!restartMihomo) {
-        throw new Error('Restart function not available');
-      }
-
-      // 在 macOS/Linux 上，启用前再次确认权限
-      if (targetEnabled && process.platform !== 'win32') {
-        try {
-          const perm = await permissionManager.checkCorePermission();
-          if (!perm) {
-            console.warn('[toggleTunMode] Permission missing on Unix, abort enabling');
-            dialog.showErrorBox('TUN 模式错误', '缺少内核权限，请在 TUN 设置页面先授权。');
-            // 回滚配置为禁用
-            updateUserSettingsRaw({ tun: { enable: false } });
-            safeSend('tun-status', false);
-            return;
-          }
-        } catch {}
-      }
-
-      const success = await restartMihomo(state.configFilePath);
-
-      if (success) {
-        console.log('[toggleTunMode] Mihomo restarted successfully');
-        // 重启成功后再更新状态，但需确认内核未回退禁用 TUN
-        // 并检测实际 utun 接口是否就绪
-        try {
-          const getSettings = context.getUserSettings || (() => ({}));
-          const current = getSettings() || {};
-          const actuallyEnabled = !!current?.tun?.enable;
-          if (!actuallyEnabled && targetEnabled) {
-            console.warn('[toggleTunMode] Kernel reported TUN disabled after restart');
-            state.tunModeEnabled = false;
-            const setTunModeEnabled = context.setTunModeEnabled;
-            if (setTunModeEnabled) setTunModeEnabled(false);
-            safeSend('tun-status', false);
-            return;
-          }
-          if (process.platform === 'darwin') {
-            const ok = await waitForTunActive(targetEnabled, 5000);
-            if (!ok) {
-              console.warn('[toggleTunMode] utun did not reach expected state, rolling back');
-              updateUserSettingsRaw({ tun: { enable: false } });
-              const setTunModeEnabled = context.setTunModeEnabled;
-              if (setTunModeEnabled) setTunModeEnabled(false);
-              state.tunModeEnabled = false;
-              safeSend('tun-status', false);
-              dialog.showErrorBox('TUN 模式未生效', '未检测到 utun 接口，请确认权限已正确授予（或在设置页重新授权）。');
-              return;
-            }
-          }
-        } catch {}
-
-        const setTunModeEnabled = context.setTunModeEnabled;
-        if (setTunModeEnabled) {
-          setTunModeEnabled(targetEnabled);
-        }
-        state.tunModeEnabled = targetEnabled;
-        safeSend('tun-status', state.tunModeEnabled);
-      } else {
-        console.warn('[toggleTunMode] Mihomo restart failed, rolling back tun flag');
-        // 回滚配置为禁用，避免前端误判
-        updateUserSettingsRaw({ tun: { enable: false } });
-        const setTunModeEnabled = context.setTunModeEnabled;
-        if (setTunModeEnabled) {
-          setTunModeEnabled(false);
-        }
-        state.tunModeEnabled = false;
-        safeSend('tun-status', false);
-      }
+      state.tunModeEnabled = targetEnabled;
+      const setTunModeEnabled = context.setTunModeEnabled;
+      if (setTunModeEnabled) setTunModeEnabled(targetEnabled);
+      safeSend('tun-status', targetEnabled);
     } catch (error) {
-      console.error('[toggleTunMode] Failed to toggle TUN mode:', error);
-
+      console.error('[toggleTunMode] Failed:', error);
+      menuItem.checked = false;
+      state.tunModeEnabled = false;
+      try { context.setTunModeEnabled?.(false); } catch {}
+      safeSend('tun-status', false);
       dialog.showErrorBox('TUN 模式错误', `设置 TUN 模式失败: ${error.message}`);
-
-      menuItem.checked = !menuItem.checked;
-      state.tunModeEnabled = !menuItem.checked;
-
-      try {
-        const setTunModeEnabled = context.setTunModeEnabled;
-        if (setTunModeEnabled) {
-          setTunModeEnabled(state.tunModeEnabled);
-        }
-      } catch (saveError) {
-        console.error('[toggleTunMode] Failed to save TUN mode state:', saveError);
-      }
-
-      safeSend('tun-status', state.tunModeEnabled);
     }
   }
 
@@ -394,92 +309,8 @@ module.exports = function initSystemIntegration(context) {
 
   async function grantCorePermission() {
     try {
-      const fsExists = (p) => {
-        try { return fs.existsSync(p); } catch { return false; }
-      };
-
-      let corePath = null;
-      // 1) 优先使用“系统设置 → 内核”里配置的路径
-      try {
-        if (typeof context.getKernelExecutablePath === 'function') {
-          const preferred = context.getKernelExecutablePath();
-          if (preferred && fsExists(preferred)) corePath = preferred;
-        }
-      } catch {}
-
-      // 2) 再尝试 PermissionManager 推断的路径
-      if (!corePath) {
-        try {
-          const guessed = permissionManager.getCorePath();
-          if (guessed && fsExists(guessed)) corePath = guessed;
-        } catch {}
-      }
-
-      // 3) 最后使用运行时实际使用的内核路径
-      if (!corePath) {
-        const runtime = context.mihomoService?.getKernelPath?.();
-        if (runtime && fsExists(runtime)) corePath = runtime;
-      }
-
-      if (!corePath || !fsExists(corePath)) {
-        const msg = `无法定位内核文件。请在 系统设置 → 内核 中确认路径存在。尝试路径: ${corePath || '未知'}`;
-        console.error('[grantCorePermission] Kernel path not found:', corePath);
-        return { success: false, error: msg };
-      }
-
-      if (process.platform === 'darwin') {
-        const { promisify } = require('util');
-        const { execFile, exec } = require('child_process');
-        const execFilePromise = promisify(execFile);
-        const execPromise = promisify(exec);
-        const shEscape = (s) => String(s).replace(/([\\`"$])/g, '\\$1').replace(/ /g, '\\ ');
-
-        // 将内核安装到系统位置，避免每次更新或 App Translocation 造成路径变化
-        const targetDir = '/Library/Application Support/FlyClash';
-        const targetPath = `${targetDir}/mihomo`;
-        const escSrc = shEscape(corePath);
-        const escDir = shEscape(targetDir);
-        const escDst = shEscape(targetPath);
-
-        // 使用 AppleScript 申请管理员权限后执行安装与授权，并去除隔离标记
-        const script = `do shell script "mkdir -p ${escDir} && cp -f ${escSrc} ${escDst} && xattr -d com.apple.quarantine ${escDst} || true && chown root:wheel ${escDst} && chmod u+s ${escDst}" with administrator privileges`;
-        await execFilePromise('osascript', ['-e', script]);
-
-        // 将内核路径固定为系统路径，避免后续再次授权
-        try {
-          if (typeof context.saveKernelPreference === 'function') {
-            context.saveKernelPreference({ customPath: targetPath });
-          }
-        } catch (e) {
-          console.warn('[grantCorePermission] Failed to save kernel preference:', e?.message || e);
-        }
-
-        // 验证权限是否生效
-        try {
-          const { stdout } = await execPromise(`ls -l "${targetPath}"`);
-          const perm = stdout.trim().split(/\s+/)[0] || '';
-          if (!/[sS]/.test(perm)) {
-            return { success: false, error: '权限设置未生效，请重试或手动运行命令：\n\n' +
-              `sudo mkdir -p \"${targetDir}\" && sudo cp -f \"${corePath}\" \"${targetPath}\" && sudo chown root:wheel \"${targetPath}\" && sudo chmod u+s \"${targetPath}\"` };
-          }
-        } catch {}
-        return { success: true, message: '已安装到系统路径并授权' };
-      }
-
-      if (process.platform === 'linux') {
-        const { promisify } = require('util');
-        const execFile = promisify(require('child_process').execFile);
-        try {
-          await execFile('pkexec', ['setcap', 'cap_net_admin,cap_net_bind_service=+eip', corePath]);
-        } catch (e) {
-          await execFile('pkexec', ['chown', 'root:root', corePath]);
-          await execFile('pkexec', ['chmod', '+sx', corePath]);
-        }
-        return { success: true };
-      }
-
-      // Windows 不需要
-      return { success: true };
+      const tun = context.tunManager || require('./tun-manager')(context);
+      return await tun.grantPermissions({ preferCustom: true });
     } catch (error) {
       console.error('[grantCorePermission] Failed:', error);
       return { success: false, error: error.message };
@@ -488,8 +319,8 @@ module.exports = function initSystemIntegration(context) {
 
   async function checkCorePermission() {
     try {
-      const hasPermission = await permissionManager.checkCorePermission();
-      return { success: true, hasPermission };
+      const tun = context.tunManager || require('./tun-manager')(context);
+      return await tun.checkPermission();
     } catch (error) {
       console.error('[checkCorePermission] Failed:', error);
       return { success: false, hasPermission: false };

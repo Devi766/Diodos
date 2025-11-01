@@ -430,6 +430,8 @@ context.formatTraffic = formatTraffic;
 
 require('./main-process/user-settings')(context);
 require('./main-process/mihomo-service')(context);
+// Initialize TUN manager first so system-integration can delegate
+require('./main-process/tun-manager')(context);
 require('./main-process/system-integration')(context);
 require('./main-process/tray-manager')(context);
 require('./ipc-handlers/subscriptions')(context);
