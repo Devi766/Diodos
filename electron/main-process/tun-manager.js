@@ -352,9 +352,26 @@ module.exports = function initTunManager(context) {
   }
 
   async function checkPermission() {
-    const kernelPath = getKernelPath();
-    const probe = await probeAuthorization(kernelPath);
-    return { success: true, hasPermission: !!probe.ok, details: probe };
+    try {
+      const kernelPath = getKernelPath();
+      const st = statInfo(kernelPath);
+      if (isMac) {
+        const ok = st.exists && st.uid === 0 && st.isSetuid;
+        return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
+      }
+      if (isLinux) {
+        let ok = false;
+        try {
+          const cap = execSync(`getcap "${kernelPath}" || true`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+          ok = /cap_net_admin/i.test(cap);
+        } catch {}
+        if (!ok) ok = st.exists && st.uid === 0 && st.isSetuid;
+        return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
+      }
+      return { success: false, hasPermission: false };
+    } catch (e) {
+      return { success: false, hasPermission: false, error: e?.message || String(e) };
+    }
   }
 
   context.tunManager = {
