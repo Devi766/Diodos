@@ -52,82 +52,32 @@ module.exports = function initTunManager(context) {
     // Use subshell for xattr to ensure || true doesn't affect subsequent commands
     return `do shell script ("(xattr -d com.apple.quarantine " & ${qp} & " || true) && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp}) with administrator privileges`;
   }
-  function buildASInstallAuthorize(src, dir, dst) {
-    const qsrc = asQuotedPath(src);
-    const qdir = asQuotedPath(dir);
-    const qdst = asQuotedPath(dst);
-    return `do shell script ("mkdir -p " & ${qdir} & " && cp -f " & ${qsrc} & " " & ${qdst} & " && (xattr -d com.apple.quarantine " & ${qdst} & " || true) && chown root:wheel " & ${qdst} & " && chmod u+s " & ${qdst}) with administrator privileges`;
-  }
-
-  function getSystemKernelPath() {
-    // 使用用户目录下的固定路径，作为应用包内内核的授权副本
-    const userDataPath = context.get('userDataPath');
-    return path.join(userDataPath, 'mihomo-kernel', 'mihomo');
-  }
-
-  function isKernelInAppBundle(kernelPath) {
-    if (!kernelPath) return false;
-    // 检查路径是否在应用包内
-    return kernelPath.includes('.app/Contents/Resources') ||
-           kernelPath.includes('.app\\Contents\\Resources') ||
-           kernelPath.includes(process.resourcesPath);
-  }
 
   function getKernelPath() {
-    // 获取用户配置的路径或默认路径
-    let kernelPath = '';
+    // 调用 mihomo-service 的方法，确保路径一致
+    try {
+      const kernelPath = context.mihomoService?.findMihomoExecutable?.();
+      if (kernelPath && fs.existsSync(kernelPath)) {
+        console.log('[TunManager] Using kernel path:', kernelPath);
+        return kernelPath;
+      }
+    } catch (e) {
+      console.error('[TunManager] Failed to get kernel path from mihomoService:', e);
+    }
+
+    // Fallback: 尝试直接获取
     try {
       if (typeof context.getKernelExecutablePath === 'function') {
-        kernelPath = context.getKernelExecutablePath();
+        const kernelPath = context.getKernelExecutablePath();
+        if (kernelPath && fs.existsSync(kernelPath)) {
+          console.log('[TunManager] Using kernel path from context:', kernelPath);
+          return kernelPath;
+        }
       }
     } catch {}
-    if (!kernelPath || !fs.existsSync(kernelPath)) {
-      try {
-        kernelPath = context.mihomoService?.getKernelPath?.();
-      } catch {}
-    }
-    if (!kernelPath || !fs.existsSync(kernelPath)) {
-      try {
-        const PermissionManager = require('./permission-manager');
-        const pm = new PermissionManager();
-        kernelPath = pm.getCorePath();
-      } catch {}
-    }
 
-    if (!kernelPath || !fs.existsSync(kernelPath)) {
-      console.warn('[TunManager] No kernel path found');
-      return '';
-    }
-
-    // macOS 特殊处理
-    if (isMac) {
-      const inAppBundle = isKernelInAppBundle(kernelPath);
-
-      if (inAppBundle) {
-        // 应用包内的内核，检查是否有授权的系统副本
-        const systemPath = getSystemKernelPath();
-        if (fs.existsSync(systemPath)) {
-          const st = statInfo(systemPath);
-          const quarantine = hasQuarantine(systemPath);
-          if (st.exists && st.uid === 0 && st.gid === 0 && st.isSetuid && !quarantine) {
-            console.log('[TunManager] Using authorized system copy:', systemPath);
-            return systemPath;
-          }
-        }
-        console.log('[TunManager] Using app bundle kernel (needs authorization):', kernelPath);
-        return kernelPath;
-      } else {
-        // 用户自定义路径（应用包外），直接使用
-        const st = statInfo(kernelPath);
-        const quarantine = hasQuarantine(kernelPath);
-        const isAuthorized = st.exists && st.uid === 0 && st.gid === 0 && st.isSetuid && !quarantine;
-        console.log('[TunManager] Using custom kernel:', kernelPath, isAuthorized ? '(authorized)' : '(needs authorization)');
-        return kernelPath;
-      }
-    }
-
-    console.log('[TunManager] Using kernel path:', kernelPath);
-    return kernelPath;
+    console.warn('[TunManager] No kernel path found');
+    return '';
   }
 
   function statInfo(file) {
@@ -285,91 +235,44 @@ module.exports = function initTunManager(context) {
   async function grantPermissions(opts = {}) {
     const { preferCustom = true } = opts;
 
-    // macOS 授权
+    // macOS 授权 - 直接在原地授权
     if (isMac) {
       try {
         // 获取当前内核路径
-        let kernelPath = null;
-        try {
-          if (typeof context.getKernelExecutablePath === 'function') {
-            kernelPath = context.getKernelExecutablePath();
-          }
-        } catch {}
-        if (!kernelPath || !fs.existsSync(kernelPath)) {
-          try {
-            kernelPath = context.mihomoService?.getKernelPath?.();
-          } catch {}
-        }
+        const kernelPath = getKernelPath();
 
         if (!kernelPath || !fs.existsSync(kernelPath)) {
           console.error('[TunManager] Kernel not found');
           return { success: false, error: '未找到内核文件' };
         }
 
-        console.log('[TunManager] Kernel path:', kernelPath);
+        console.log('[TunManager] Authorizing kernel at:', kernelPath);
 
-        const inAppBundle = isKernelInAppBundle(kernelPath);
-        console.log('[TunManager] Kernel in app bundle:', inAppBundle);
+        // 直接在原地授权
+        const script = buildASAuthorizeCustom(kernelPath);
+        await execFilePromise('osascript', ['-e', script]);
 
-        if (inAppBundle) {
-          // 应用包内的内核 → 复制到系统路径并授权
-          const systemPath = getSystemKernelPath();
-          const systemDir = path.dirname(systemPath);
+        // 验证授权
+        const st = statInfo(kernelPath);
+        const quarantine = hasQuarantine(kernelPath);
+        console.log('[TunManager] After authorization, kernel stat:', {
+          path: kernelPath,
+          exists: st.exists,
+          uid: st.uid,
+          gid: st.gid,
+          mode: st.mode?.toString(8),
+          isSetuid: st.isSetuid,
+          hasQuarantine: quarantine
+        });
 
-          console.log('[TunManager] Copying to system path:', systemPath);
-
-          const script = buildASInstallAuthorize(kernelPath, systemDir, systemPath);
-          await execFilePromise('osascript', ['-e', script]);
-
-          // 验证授权
-          const st = statInfo(systemPath);
-          const quarantine = hasQuarantine(systemPath);
-          console.log('[TunManager] System kernel stat:', {
-            path: systemPath,
-            exists: st.exists,
-            uid: st.uid,
-            gid: st.gid,
-            mode: st.mode?.toString(8),
-            isSetuid: st.isSetuid,
-            hasQuarantine: quarantine
-          });
-
-          const probe = await probeAuthorization(systemPath);
-          if (probe.ok) {
-            console.log('[TunManager] System kernel authorized successfully');
-            return { success: true, message: 'System kernel authorized' };
-          }
-
-          console.error('[TunManager] Authorization probe failed:', probe.issues);
-          return { success: false, error: '授权验证失败，请重试' };
-        } else {
-          // 用户自定义路径（应用包外） → 直接在原地授权
-          console.log('[TunManager] Authorizing custom kernel in place');
-
-          const script = buildASAuthorizeCustom(kernelPath);
-          await execFilePromise('osascript', ['-e', script]);
-
-          // 验证授权
-          const st = statInfo(kernelPath);
-          const quarantine = hasQuarantine(kernelPath);
-          console.log('[TunManager] Custom kernel stat:', {
-            path: kernelPath,
-            uid: st.uid,
-            gid: st.gid,
-            mode: st.mode?.toString(8),
-            isSetuid: st.isSetuid,
-            hasQuarantine: quarantine
-          });
-
-          const probe = await probeAuthorization(kernelPath);
-          if (probe.ok) {
-            console.log('[TunManager] Custom kernel authorized successfully');
-            return { success: true, message: 'Custom kernel authorized' };
-          }
-
-          console.error('[TunManager] Authorization probe failed:', probe.issues);
-          return { success: false, error: '授权验证失败，请重试' };
+        const probe = await probeAuthorization(kernelPath);
+        if (probe.ok) {
+          console.log('[TunManager] Kernel authorized successfully');
+          return { success: true, message: 'Kernel authorized' };
         }
+
+        console.error('[TunManager] Authorization probe failed:', probe.issues);
+        return { success: false, error: '授权验证失败，请重试' };
       } catch (e) {
         console.error('[TunManager] Grant permissions failed:', e);
         return { success: false, error: getUserFriendlyError(e, 'authorization') };
