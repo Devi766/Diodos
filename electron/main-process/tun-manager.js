@@ -16,6 +16,30 @@ module.exports = function initTunManager(context) {
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
 
+  // 将技术性错误转换为用户友好的提示
+  function getUserFriendlyError(error, operation = 'authorization') {
+    const errStr = String(error?.message || error || '');
+    const errCode = error?.code;
+
+    // 用户取消授权
+    if (errCode === -128 || /user cancel|cancelled|canceled/i.test(errStr)) {
+      return '授权已取消';
+    }
+
+    // 权限被拒绝
+    if (/permission denied|not permitted|authentication failed/i.test(errStr)) {
+      return '授权失败，请确保输入了正确的管理员密码';
+    }
+
+    // 通用错误提示，不暴露技术细节
+    if (operation === 'authorization') {
+      return '授权失败，请重试';
+    } else if (operation === 'toggle') {
+      return 'TUN 模式切换失败，请重试';
+    }
+    return '操作失败，请重试';
+  }
+
   // AppleScript helpers (macOS)
   function asQuotedPath(p) {
     const s = String(p).replace(/\"/g, '\\"');
@@ -202,7 +226,7 @@ module.exports = function initTunManager(context) {
     const { preferCustom = true } = opts;
     let kernelPath = getKernelPath();
     if (!kernelPath || !fs.existsSync(kernelPath)) {
-      return { success: false, error: 'Kernel path not found' };
+      return { success: false, error: '未找到内核文件，请检查配置' };
     }
 
     // New macOS flow (robust quoting via AppleScript 'quoted form of "…"')
@@ -230,9 +254,9 @@ module.exports = function initTunManager(context) {
         try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
         const probe2 = await probeAuthorization(targetPath);
         if (probe2.ok) return { success: true, message: 'Installed and authorized system kernel' };
-        return { success: false, error: 'Authorization did not pass probe' };
+        return { success: false, error: '授权验证失败，请重试' };
       } catch (e) {
-        return { success: false, error: e?.message || String(e) };
+        return { success: false, error: getUserFriendlyError(e, 'authorization') };
       }
     }
 
@@ -260,7 +284,7 @@ module.exports = function initTunManager(context) {
       try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
       const probe2 = await probeAuthorization(targetPath);
       if (probe2.ok) return { success: true, message: 'Installed and authorized system kernel' };
-      return { success: false, error: 'Authorization did not pass probe' };
+      return { success: false, error: '授权验证失败，请重试' };
     }
 
     if (isLinux) {
@@ -271,14 +295,14 @@ module.exports = function initTunManager(context) {
           execSync(`pkexec chown root:root "${kernelPath}"`, { stdio: 'ignore' });
           execSync(`pkexec chmod +sx "${kernelPath}"`, { stdio: 'ignore' });
         } catch (e) {
-          return { success: false, error: e?.message || String(e) };
+          return { success: false, error: getUserFriendlyError(e, 'authorization') };
         }
       }
       const probe = await probeAuthorization(kernelPath);
-      return probe.ok ? { success: true } : { success: false, error: 'Authorization did not pass probe' };
+      return probe.ok ? { success: true } : { success: false, error: '授权验证失败，请重试' };
     }
 
-    return { success: false, error: 'Unsupported platform' };
+    return { success: false, error: '不支持的操作系统' };
   }
 
   async function toggleTun(enabled) {
@@ -287,12 +311,12 @@ module.exports = function initTunManager(context) {
         const kernelPath = getKernelPath();
         const probe = await probeAuthorization(kernelPath);
         if (!probe.ok) {
-          return { success: false, error: 'Permission missing. Please grant TUN permissions first.' };
+          return { success: false, error: '缺少必要权限，请先进行授权' };
         }
       }
 
       const updateUserSettingsRaw = context.updateUserSettingsRaw;
-      if (!updateUserSettingsRaw) return { success: false, error: 'Settings handler not available' };
+      if (!updateUserSettingsRaw) return { success: false, error: 'TUN 模式切换失败' };
 
       // Persist tun config (keep user’s saved fields)
       const savedTun = context.dbManager.getSetting('tunConfig', null);
@@ -333,7 +357,7 @@ module.exports = function initTunManager(context) {
       if (!ok) {
         // rollback
         updateUserSettingsRaw({ tun: { enable: false } });
-        return { success: false, error: 'Kernel restart failed' };
+        return { success: false, error: '内核重启失败，请检查配置' };
       }
 
       // Verify runtime
@@ -341,7 +365,7 @@ module.exports = function initTunManager(context) {
         const ready = await waitForTun(true, 6000);
         if (!ready) {
           updateUserSettingsRaw({ tun: { enable: false } });
-          return { success: false, error: 'TUN did not become active' };
+          return { success: false, error: 'TUN 模式启动失败，请重试' };
         }
       } else {
         await waitForTun(false, 4000); // best effort
@@ -349,7 +373,7 @@ module.exports = function initTunManager(context) {
 
       return { success: true };
     } catch (e) {
-      return { success: false, error: e?.message || String(e) };
+      return { success: false, error: getUserFriendlyError(e, 'toggle') };
     }
   }
 
@@ -372,7 +396,7 @@ module.exports = function initTunManager(context) {
       }
       return { success: false, hasPermission: false };
     } catch (e) {
-      return { success: false, hasPermission: false, error: e?.message || String(e) };
+      return { success: false, hasPermission: false, error: '权限检查失败' };
     }
   }
 
