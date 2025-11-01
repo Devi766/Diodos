@@ -1884,8 +1884,35 @@ app.whenReady().then(() => {
 
   // 检查TUN模式状态
   try {
-    state.tunModeEnabled = getTunModeEnabled();
-    console.log('TUN模式状态:', state.tunModeEnabled ? '已启用' : '未启用');
+    // 先从数据库读取上次的状态
+    const savedState = getTunModeEnabled();
+    console.log('[TUN] 数据库保存的状态:', savedState ? '已启用' : '未启用');
+
+    // macOS/Linux: 检测实际的TUN接口状态
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      try {
+        const tunManager = require('./main-process/tun-manager')(context);
+        const actuallyActive = tunManager.isTunActive();
+        console.log('[TUN] 实际TUN接口状态:', actuallyActive ? '运行中' : '未运行');
+
+        // 使用实际状态，并同步到数据库
+        if (actuallyActive !== savedState) {
+          console.log('[TUN] 状态不一致，使用实际状态并同步到数据库');
+          state.tunModeEnabled = actuallyActive;
+          setTunModeEnabled(actuallyActive);
+        } else {
+          state.tunModeEnabled = savedState;
+        }
+      } catch (e) {
+        console.warn('[TUN] 无法检测实际状态，使用数据库状态:', e.message);
+        state.tunModeEnabled = savedState;
+      }
+    } else {
+      // Windows: 使用数据库状态
+      state.tunModeEnabled = savedState;
+    }
+
+    console.log('[TUN] 最终状态:', state.tunModeEnabled ? '已启用' : '未启用');
 
     // 检查是否有待处理的 TUN 启用请求（从管理员重启后）
     const pendingTunEnable = dbManager.getSetting('pendingTunEnable', false);

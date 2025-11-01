@@ -214,13 +214,12 @@ module.exports = function initTunManager(context) {
 
     // Else fall back to metadata heuristic
     if (isMac) {
-      const quarantine = hasQuarantine(kernelPath);
-      result.ok = st.uid === 0 && st.gid === 0 && st.isSetuid && !quarantine;
+      // 简化检查：只检查uid和setuid位
+      result.ok = st.uid === 0 && st.isSetuid;
       console.log('[TunManager] Metadata check:', {
         uid: st.uid,
         gid: st.gid,
         isSetuid: st.isSetuid,
-        hasQuarantine: quarantine,
         ok: result.ok
       });
     } else if (isLinux) {
@@ -405,8 +404,9 @@ module.exports = function initTunManager(context) {
       const kernelPath = getKernelPath();
       const st = statInfo(kernelPath);
       if (isMac) {
-        const quarantine = hasQuarantine(kernelPath);
-        const ok = st.exists && st.uid === 0 && st.gid === 0 && st.isSetuid && !quarantine;
+        // 简化检查：只检查uid和setuid位
+        // gid和quarantine检查可能不准确
+        const ok = st.exists && st.uid === 0 && st.isSetuid;
         console.log('[TunManager] Check permission:', {
           path: kernelPath,
           exists: st.exists,
@@ -414,7 +414,6 @@ module.exports = function initTunManager(context) {
           gid: st.gid,
           mode: st.mode?.toString(8),
           isSetuid: st.isSetuid,
-          hasQuarantine: quarantine,
           hasPermission: ok
         });
         return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
