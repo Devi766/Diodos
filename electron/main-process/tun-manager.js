@@ -9,6 +9,9 @@
 
 module.exports = function initTunManager(context) {
   const { fs, path, spawn, execSync } = context;
+  const { promisify } = require('util');
+  const { execFile } = require('child_process');
+  const execFilePromise = promisify(execFile);
 
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
@@ -192,7 +195,7 @@ module.exports = function initTunManager(context) {
         const isUserCustom = preferCustom && pref && pref.customPath && fs.existsSync(pref.customPath) && path.resolve(pref.customPath) === path.resolve(kernelPath);
         if (isUserCustom) {
           const as = `do shell script \"xattr -d com.apple.quarantine ${escape(kernelPath)} || true && chown root:wheel ${escape(kernelPath)} && chmod u+s ${escape(kernelPath)}\" with administrator privileges`;
-          execSync(`osascript -e '${as}'`, { stdio: 'ignore' });
+          await execFilePromise('osascript', ['-e', as]);
           const probe = await probeAuthorization(kernelPath);
           if (probe.ok) return { success: true, message: 'Authorized custom kernel' };
         }
@@ -203,7 +206,7 @@ module.exports = function initTunManager(context) {
       const targetDir = '/Library/Application Support/FlyClash';
       const targetPath = `${targetDir}/mihomo`;
       const as = `do shell script \"mkdir -p ${escape(targetDir)} && cp -f ${escape(kernelPath)} ${escape(targetPath)} && xattr -d com.apple.quarantine ${escape(targetPath)} || true && chown root:wheel ${escape(targetPath)} && chmod u+s ${escape(targetPath)}\" with administrator privileges`;
-      execSync(`osascript -e '${as}'`, { stdio: 'ignore' });
+      await execFilePromise('osascript', ['-e', as]);
       try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
       const probe2 = await probeAuthorization(targetPath);
       if (probe2.ok) return { success: true, message: 'Installed and authorized system kernel' };
@@ -317,4 +320,3 @@ module.exports = function initTunManager(context) {
 
   return context.tunManager;
 };
-
