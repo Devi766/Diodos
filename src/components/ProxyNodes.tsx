@@ -186,15 +186,16 @@ export default function ProxyNodes() {
     };
   }
   
+  const LAYOUT_SETTING_KEY = 'proxyGroupsLayoutMode';
+
   const [currentMode, setCurrentMode] = useState<string>('rule');
   const [layoutMode, setLayoutMode] = useState<'single' | 'double'>(() => {
-    // 检查是否在浏览器环境
     if (typeof window === 'undefined') {
       return 'single';
     }
 
     try {
-      const saved = localStorage.getItem('proxyGroupsLayoutMode');
+      const saved = localStorage.getItem(LAYOUT_SETTING_KEY);
       return (saved === 'double' ? 'double' : 'single') as 'single' | 'double';
     } catch {
       return 'single';
@@ -216,6 +217,35 @@ export default function ProxyNodes() {
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const router = useRouter();
   let mihomoAPI = useMihomoAPI();
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.getSetting) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadLayoutPreference = async () => {
+      try {
+        const result = await window.electronAPI.getSetting(LAYOUT_SETTING_KEY, 'single');
+        if (!cancelled && result?.success) {
+          const value = result.value === 'double' ? 'double' : 'single';
+          setLayoutMode(value);
+          try {
+            localStorage.setItem(LAYOUT_SETTING_KEY, value);
+          } catch {}
+        }
+      } catch (error) {
+        console.error('加载代理组布局设置失败:', error);
+      }
+    };
+
+    loadLayoutPreference();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 获取节点的动画高度，用于折叠/展开动画
   const getNodeRef = useRef<{[key: string]: HTMLDivElement | null}>({});
@@ -1674,9 +1704,22 @@ export default function ProxyNodes() {
                     const newMode = layoutMode === 'single' ? 'double' : 'single';
                     setLayoutMode(newMode);
                     try {
-                      localStorage.setItem('proxyGroupsLayoutMode', newMode);
+                      localStorage.setItem(LAYOUT_SETTING_KEY, newMode);
                     } catch (error) {
                       console.error('保存布局模式失败:', error);
+                    }
+                    try {
+                      window.electronAPI?.setSetting?.(LAYOUT_SETTING_KEY, newMode)
+                        .then((result) => {
+                          if (result && result.success === false) {
+                            console.error('保存代理组布局设置失败:', result.error);
+                          }
+                        })
+                        .catch((error) => {
+                          console.error('保存代理组布局设置失败:', error);
+                        });
+                    } catch (error) {
+                      console.error('保存代理组布局设置失败:', error);
                     }
                   }}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"

@@ -506,6 +506,18 @@ export default function Dashboard() {
     } catch {}
   }, [electron]);
 
+  useEffect(() => {
+    if (!electron?.onTunStatus) return;
+    const unsubscribe = electron.onTunStatus((enabled: boolean) => {
+      setTunEnabled(Boolean(enabled));
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [electron]);
+
   // 保存运行状态到sessionStorage，避免页面刷新时闪烁
   useEffect(() => {
     if (typeof window === 'undefined') return;

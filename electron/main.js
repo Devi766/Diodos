@@ -1914,6 +1914,15 @@ app.whenReady().then(() => {
     console.error('检查TUN模式状态失败:', error);
   }
 
+  // 启动时广播一次 TUN 状态，确保渲染进程与持久化状态保持一致
+  try {
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+      state.mainWindow.webContents.send('tun-status', state.tunModeEnabled);
+    }
+  } catch (broadcastError) {
+    console.warn('[TUN] 初始化状态广播失败:', broadcastError?.message || broadcastError);
+  }
+
   // 创建窗口和其他初始化操作
   context.trayManager.ensureTray()
     .then(() => context.trayManager.updateTrayMenu())
@@ -3317,6 +3326,19 @@ app.whenReady().then(() => {
 
   // 新增: 获取TUN模式状态
   ipcMain.handle('getTunStatus', async () => {
+    try {
+      const persisted = typeof context.getTunModeEnabled === 'function'
+        ? context.getTunModeEnabled()
+        : undefined;
+      if (typeof persisted === 'boolean') {
+        if (persisted !== state.tunModeEnabled) {
+          state.tunModeEnabled = persisted;
+        }
+        return persisted;
+      }
+    } catch (error) {
+      console.warn('[IPC getTunStatus] 读取持久化状态失败:', error?.message || error);
+    }
     return state.tunModeEnabled;
   });
 
