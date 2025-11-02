@@ -91,6 +91,10 @@
     "systemProxyDesc": "切换操作系统级代理开关",
     "tunMode": "TUN 模式",
     "tunModeDesc": "接管设备的所有网络流量",
+    "tunModeWindowsAuthorizePrompt": "首次开启 TUN 模式需要管理员权限。点击授权后应用将自动重启以获取管理员权限。",
+    "tunModeWindowsConfirmPrompt": "确定要开启 TUN 模式吗，将重启内核开启 TUN 模式",
+    "tunModeMacWarning": "macOS 开启 TUN 模式需要输入管理员密码进行授权。点击\"确认启用\"后请按照系统提示操作。",
+    "tunModeLinuxWarning": "Linux 开启 TUN 模式需要 root 权限。点击\"确认启用\"后将尝试自动申请所需权限。",
     "proxyMode": "代理模式",
     "loading": "读取中...",
     "trafficRanking": "流量排行",
@@ -829,4 +833,3 @@
     }
   }
 }
-

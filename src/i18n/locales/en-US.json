@@ -91,6 +91,10 @@
     "systemProxyDesc": "Toggle system-level proxy switch",
     "tunMode": "TUN Mode",
     "tunModeDesc": "Take over all network traffic on the device",
+    "tunModeWindowsAuthorizePrompt": "Windows requires administrator approval before enabling TUN mode. Please follow the prompts to grant access.",
+    "tunModeWindowsConfirmPrompt": "The first time you enable TUN mode on Windows, administrator rights are required. Click Authorize and the app will restart to gain elevated access.",
+    "tunModeMacWarning": "On macOS, enabling TUN mode requires your administrator password. Click \"Confirm Enable\" and follow the system prompt.",
+    "tunModeLinuxWarning": "On Linux, TUN mode needs root privileges. Click \"Confirm Enable\" to request the required permissions automatically.",
     "proxyMode": "Proxy Mode",
     "loading": "Loading...",
     "trafficRanking": "Traffic Ranking",
@@ -831,4 +835,3 @@
     }
   }
 }
-

@@ -15,6 +15,7 @@ module.exports = function initTunManager(context) {
 
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
+  const isWindows = process.platform === 'win32';
 
   // 将技术性错误转换为用户友好的提示
   function getUserFriendlyError(error, operation = 'authorization') {
@@ -567,31 +568,35 @@ module.exports = function initTunManager(context) {
   async function toggleTun(enabled) {
     try {
       if (enabled) {
-        console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
-        const kernelPath = getKernelPath();
-        const probe = await probeAuthorization(kernelPath);
-        console.log('[TunManager] Authorization probe result:', { ok: probe.ok, issues: probe.issues });
+        if (isWindows) {
+          console.log('[TunManager] Windows detected, skipping authorization probe');
+        } else {
+          console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
+          const kernelPath = getKernelPath();
+          const probe = await probeAuthorization(kernelPath);
+          console.log('[TunManager] Authorization probe result:', { ok: probe.ok, issues: probe.issues });
 
-        if (!probe.ok) {
-          console.warn('[TunManager] Missing permissions, cannot enable TUN');
-          return { success: false, error: '缺少必要权限，请先进行授权' };
+          if (!probe.ok) {
+            console.warn('[TunManager] Missing permissions, cannot enable TUN');
+            return { success: false, error: '缺少必要权限，请先进行授权' };
+          }
+
+          const syncResult = await autoSyncKernel();
+          if (syncResult.needsManualAuth) {
+            console.warn('[TunManager] Custom kernel updated, manual authorization required');
+            return {
+              success: false,
+              error: '检测到自定义内核已更新，请重新授权以同步到系统目录',
+              needsAuth: true
+            };
+          }
+
+          if (syncResult.synced) {
+            console.log('[TunManager] Custom kernel auto-synced');
+          }
+
+          console.log('[TunManager] Authorization check passed, proceeding to enable TUN');
         }
-
-        const syncResult = await autoSyncKernel();
-        if (syncResult.needsManualAuth) {
-          console.warn('[TunManager] Custom kernel updated, manual authorization required');
-          return {
-            success: false,
-            error: '检测到自定义内核已更新，请重新授权以同步到系统目录',
-            needsAuth: true
-          };
-        }
-
-        if (syncResult.synced) {
-          console.log('[TunManager] Custom kernel auto-synced');
-        }
-
-        console.log('[TunManager] Authorization check passed, proceeding to enable TUN');
       }
 
       const updateUserSettingsRaw = context.updateUserSettingsRaw;
@@ -659,13 +664,13 @@ module.exports = function initTunManager(context) {
       }
 
       // Verify runtime
-      if (enabled) {
+      if (enabled && !isWindows) {
         const ready = await waitForTun(true, 6000);
         if (!ready) {
           updateUserSettingsRaw({ tun: { enable: false } });
           return { success: false, error: 'TUN 模式启动失败，请重试' };
         }
-      } else {
+      } else if (!enabled && !isWindows) {
         await waitForTun(false, 4000); // best effort
       }
 

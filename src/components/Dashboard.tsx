@@ -167,6 +167,36 @@ export default function Dashboard() {
   const [downloadTotal, setDownloadTotal] = useState(0);
 
   const electron = useMemo(resolveElectron, []);
+  const platformFlags = useMemo(() => {
+    if (typeof navigator === 'undefined') {
+      return { isWindows: false, isMac: false, isLinux: false };
+    }
+    const ua = navigator.userAgent || '';
+    const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
+    const isWindows = /windows/i.test(ua) || /win/.test(platform);
+    const isMac = /macintosh|mac os x/i.test(ua) || /mac/.test(platform);
+    const isLinux = /linux/i.test(ua) || (!isWindows && /linux/.test(platform));
+    return { isWindows, isMac, isLinux };
+  }, []);
+  const { isWindows: isWindowsPlatform, isMac: isMacPlatform, isLinux: isLinuxPlatform } = platformFlags;
+
+  const tunDialogDescription = useMemo(() => {
+    if (electron?.checkElevateTask) {
+      return !hasAdminPermission
+        ? t('dashboard.tunModeWindowsAuthorizePrompt')
+        : t('dashboard.tunModeWindowsConfirmPrompt');
+    }
+    if (isWindowsPlatform) {
+      return t('dashboard.tunModeWindowsConfirmPrompt');
+    }
+    if (isMacPlatform) {
+      return t('dashboard.tunModeMacWarning');
+    }
+    if (isLinuxPlatform) {
+      return t('dashboard.tunModeLinuxWarning');
+    }
+    return t('dashboard.tunModeWarning');
+  }, [electron, hasAdminPermission, isWindowsPlatform, isMacPlatform, isLinuxPlatform, t]);
 
   const proxiesSnapshotRef = useRef<{ timestamp: number; data: Record<string, any> | null }>(
     {
@@ -1230,18 +1260,12 @@ export default function Dashboard() {
       />
 
       <Dialog open={tunConfirmOpen} onOpenChange={setTunConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="gap-6">
+          <DialogHeader className="space-y-4">
             <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
-            <DialogDescription>
-              {electron?.checkElevateTask
-                ? (!hasAdminPermission
-                    ? '确定要启动TUN模式吗，请根据提示完成授权'
-                    : 'Windows TUN 模式需要以管理员身份运行。点击"确认启用"后，应用将自动重启并以管理员权限运行。')
-                : t('dashboard.tunModeWarning')}
-            </DialogDescription>
+            <DialogDescription>{tunDialogDescription}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="mt-6 gap-3 sm:gap-2">
             <Button
               type="button"
               variant="outline"
