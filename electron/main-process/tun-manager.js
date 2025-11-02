@@ -41,20 +41,35 @@ module.exports = function initTunManager(context) {
   }
 
   // AppleScript helpers (macOS)
-  function asQuotedPath(p) {
-    const s = String(p).replace(/\"/g, '\\"');
-    // Simply quote the raw path as text for shell; AppleScript will escape it safely
-    return `quoted form of \"${s}\"`;
+  function escapeForShell(p) {
+    return String(p).replace(/'/g, "'\\''");
   }
-  function buildASAuthorizeCustom(p) {
-    const qp = asQuotedPath(p);
-    // Wrap each command properly to ensure all steps execute
-    // Use subshell for xattr to ensure || true doesn't affect subsequent commands
-    return `do shell script ("(xattr -d com.apple.quarantine " & ${qp} & " || true) && chown root:wheel " & ${qp} & " && chmod u+s " & ${qp}) with administrator privileges`;
+
+  function buildASAuthorize(targetDir, targetPath) {
+    const escTargetDir = escapeForShell(targetDir);
+    const escTarget = escapeForShell(targetPath);
+
+    return `do shell script "mkdir -p '${escTargetDir}' && xattr -d com.apple.quarantine '${escTarget}' 2>/dev/null || true && chown root:wheel '${escTarget}' && chmod u+s '${escTarget}'" with administrator privileges`;
+  }
+
+  function getSystemKernelPath() {
+    const systemDir = '/Library/Application Support/Flycast';
+    const systemPath = path.join(systemDir, 'mihomo');
+    return systemPath;
   }
 
   function getKernelPath() {
-    // 调用 mihomo-service 的方法，确保路径一致
+    if (isMac) {
+      const systemPath = getSystemKernelPath();
+      if (fs.existsSync(systemPath)) {
+        const st = statInfo(systemPath);
+        if (st.uid === 0 && st.isSetuid) {
+          console.log('[TunManager] Using authorized system kernel:', systemPath);
+          return systemPath;
+        }
+      }
+    }
+
     try {
       const kernelPath = context.mihomoService?.findMihomoExecutable?.();
       if (kernelPath && fs.existsSync(kernelPath)) {
@@ -65,7 +80,6 @@ module.exports = function initTunManager(context) {
       console.error('[TunManager] Failed to get kernel path from mihomoService:', e);
     }
 
-    // Fallback: 尝试直接获取
     try {
       if (typeof context.getKernelExecutablePath === 'function') {
         const kernelPath = context.getKernelExecutablePath();
@@ -77,6 +91,28 @@ module.exports = function initTunManager(context) {
     } catch {}
 
     console.warn('[TunManager] No kernel path found');
+    return '';
+  }
+
+  function getSourceKernelPath() {
+    try {
+      const kernelPath = context.mihomoService?.findMihomoExecutable?.();
+      if (kernelPath && fs.existsSync(kernelPath)) {
+        return kernelPath;
+      }
+    } catch (e) {
+      console.error('[TunManager] Failed to get kernel path from mihomoService:', e);
+    }
+
+    try {
+      if (typeof context.getKernelExecutablePath === 'function') {
+        const kernelPath = context.getKernelExecutablePath();
+        if (kernelPath && fs.existsSync(kernelPath)) {
+          return kernelPath;
+        }
+      }
+    } catch {}
+
     return '';
   }
 
@@ -113,11 +149,105 @@ module.exports = function initTunManager(context) {
       }
       if (isLinux) {
         const out = execSync('ip link show', { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
-        // mihomo 默认设备名可能是 mihomo 或 tunX，这里做一个宽松匹配
         return /(mihomo|tun\d+)/.test(out);
       }
       return false;
     } catch { return false; }
+  }
+
+  function getActiveNetworkService() {
+    if (!isMac) return null;
+    try {
+      const route = execSync('route -n get default', { encoding: 'utf8' });
+      const match = route.match(/interface:\s+(\S+)/);
+      if (!match) return null;
+      const iface = match[1];
+      const services = execSync('networksetup -listallnetworkservices', { encoding: 'utf8' });
+      const serviceLines = services.split('\n').filter(l => l && !l.startsWith('*'));
+      for (const service of serviceLines) {
+        try {
+          const hw = execSync(`networksetup -listallhardwareports | grep -A 1 "${service}"`, { encoding: 'utf8' });
+          if (hw.includes(iface)) return service;
+        } catch {}
+      }
+      return serviceLines[0] || 'Wi-Fi';
+    } catch {
+      return 'Wi-Fi';
+    }
+  }
+
+  async function setSystemDns(dns) {
+    if (!isMac) return;
+    const service = getActiveNetworkService();
+    if (!service) return;
+
+    const userDataPath = context.get('userDataPath');
+    const dnsBackupFile = path.join(userDataPath, '.original_dns.txt');
+
+    try {
+      const current = execSync(`networksetup -getdnsservers "${service}"`, { encoding: 'utf8' }).trim();
+      if (current && !current.includes('error') && current !== dns) {
+        fs.writeFileSync(dnsBackupFile, current, 'utf8');
+      }
+    } catch {}
+
+    try {
+      const serviceManager = context.serviceManager;
+      const useService = serviceManager && await serviceManager.isServiceRunning();
+
+      if (useService) {
+        const result = await serviceManager.setSystemDns(service, dns);
+        if (result.success) {
+          return;
+        }
+        console.warn('[TunManager] Service setDns failed, falling back to osascript');
+      }
+
+      const escapedService = service.replace(/"/g, '\\"');
+      const script = `do shell script "networksetup -setdnsservers \\"${escapedService}\\" ${dns}" with administrator privileges`;
+      await execFilePromise('osascript', ['-e', script]);
+    } catch (e) {
+      console.error('[TunManager] Failed to set DNS:', e);
+    }
+  }
+
+  async function restoreSystemDns() {
+    if (!isMac) return;
+    const service = getActiveNetworkService();
+    if (!service) return;
+
+    const userDataPath = context.get('userDataPath');
+    const dnsBackupFile = path.join(userDataPath, '.original_dns.txt');
+
+    if (fs.existsSync(dnsBackupFile)) {
+      try {
+        const original = fs.readFileSync(dnsBackupFile, 'utf8').trim();
+        const serviceManager = context.serviceManager;
+        const useService = serviceManager && await serviceManager.isServiceRunning();
+
+        if (useService) {
+          const dns = original || 'empty';
+          const result = await serviceManager.setSystemDns(service, dns);
+          if (result.success) {
+            fs.unlinkSync(dnsBackupFile);
+            return;
+          }
+          console.warn('[TunManager] Service restore DNS failed, falling back to osascript');
+        }
+
+        const escapedService = service.replace(/"/g, '\\"');
+        let script;
+        if (original) {
+          script = `do shell script "networksetup -setdnsservers \\"${escapedService}\\" ${original}" with administrator privileges`;
+        } else {
+          script = `do shell script "networksetup -setdnsservers \\"${escapedService}\\" empty" with administrator privileges`;
+        }
+        await execFilePromise('osascript', ['-e', script]);
+        fs.unlinkSync(dnsBackupFile);
+      } catch (e) {
+        console.error('[TunManager] Failed to restore DNS:', e);
+      }
+    }
   }
 
   async function waitForTun(expected, timeoutMs = 5000) {
@@ -234,28 +364,86 @@ module.exports = function initTunManager(context) {
   async function grantPermissions(opts = {}) {
     const { preferCustom = true } = opts;
 
-    // macOS 授权 - 直接在原地授权
     if (isMac) {
       try {
-        // 获取当前内核路径
-        const kernelPath = getKernelPath();
+        const sourceKernelPath = getSourceKernelPath();
 
-        if (!kernelPath || !fs.existsSync(kernelPath)) {
-          console.error('[TunManager] Kernel not found');
+        if (!sourceKernelPath || !fs.existsSync(sourceKernelPath)) {
+          console.error('[TunManager] Source kernel not found');
           return { success: false, error: '未找到内核文件' };
         }
 
-        console.log('[TunManager] Authorizing kernel at:', kernelPath);
+        console.log('[TunManager] Source kernel at:', sourceKernelPath);
 
-        // 直接在原地授权
-        const script = buildASAuthorizeCustom(kernelPath);
-        await execFilePromise('osascript', ['-e', script]);
+        const serviceManager = context.serviceManager;
+        const useService = serviceManager && await serviceManager.isServiceRunning();
 
-        // 验证授权
-        const st = statInfo(kernelPath);
-        const quarantine = hasQuarantine(kernelPath);
+        const systemDir = '/Library/Application Support/Flycast';
+        const systemPath = getSystemKernelPath();
+
+        const existingProbe = await probeAuthorization(systemPath);
+        if (existingProbe.ok) {
+          console.log('[TunManager] System kernel already authorized, no password needed');
+          return { success: true, message: 'Kernel already authorized' };
+        }
+
+        const needsCopy = !fs.existsSync(systemPath) ||
+                         (fs.existsSync(systemPath) &&
+                          fs.readFileSync(sourceKernelPath).compare(fs.readFileSync(systemPath)) !== 0);
+
+        if (useService) {
+          console.log('[TunManager] Using service mode for authorization');
+
+          if (needsCopy) {
+            const tmpPath = '/tmp/flycast-mihomo-' + Date.now();
+            try {
+              fs.copyFileSync(sourceKernelPath, tmpPath);
+              fs.chmodSync(tmpPath, 0o755);
+
+              const escTmp = escapeForShell(tmpPath);
+              const escTargetDir = escapeForShell(systemDir);
+              const escTarget = escapeForShell(systemPath);
+              const moveScript = `do shell script "mkdir -p '${escTargetDir}' && mv -f '${escTmp}' '${escTarget}'" with administrator privileges`;
+              await execFilePromise('osascript', ['-e', moveScript]);
+            } catch (copyErr) {
+              console.warn('[TunManager] Copy to tmp failed:', copyErr);
+              try { fs.unlinkSync(tmpPath); } catch {}
+            }
+          }
+
+          const result = await serviceManager.authorizeBinary(systemPath);
+          if (result.success) {
+            console.log('[TunManager] Kernel authorized via service');
+            return { success: true, message: 'Kernel authorized' };
+          }
+          console.warn('[TunManager] Service authorization failed, falling back to osascript');
+        }
+
+        console.log('[TunManager] Using osascript to copy and authorize kernel');
+
+        const tmpPath = '/tmp/flycast-mihomo-' + Date.now();
+        try {
+          fs.copyFileSync(sourceKernelPath, tmpPath);
+          fs.chmodSync(tmpPath, 0o755);
+
+          const escTmp = escapeForShell(tmpPath);
+          const escTargetDir = escapeForShell(systemDir);
+          const escTarget = escapeForShell(systemPath);
+
+          const combinedScript = `do shell script "mkdir -p '${escTargetDir}' && mv -f '${escTmp}' '${escTarget}' && xattr -d com.apple.quarantine '${escTarget}' 2>/dev/null || true && chown root:wheel '${escTarget}' && chmod u+s '${escTarget}'" with administrator privileges`;
+          await execFilePromise('osascript', ['-e', combinedScript]);
+
+          try { fs.unlinkSync(tmpPath); } catch {}
+        } catch (copyErr) {
+          console.error('[TunManager] Copy and authorize failed:', copyErr);
+          try { fs.unlinkSync(tmpPath); } catch {}
+          throw copyErr;
+        }
+
+        const st = statInfo(systemPath);
+        const quarantine = hasQuarantine(systemPath);
         console.log('[TunManager] After authorization, kernel stat:', {
-          path: kernelPath,
+          path: systemPath,
           exists: st.exists,
           uid: st.uid,
           gid: st.gid,
@@ -264,7 +452,7 @@ module.exports = function initTunManager(context) {
           hasQuarantine: quarantine
         });
 
-        const probe = await probeAuthorization(kernelPath);
+        const probe = await probeAuthorization(systemPath);
         if (probe.ok) {
           console.log('[TunManager] Kernel authorized successfully');
           return { success: true, message: 'Kernel authorized' };
@@ -278,49 +466,102 @@ module.exports = function initTunManager(context) {
       }
     }
 
-    // Legacy macOS flow with buggy escaping (disabled)
-    if (false && isMac) {
-      const escape = (s) => String(s).replace(/([\\`"$])/g, '\\$1').replace(/ /g, '\\ ');
-      // If user explicitly chose custom path, authorize in place
-      try {
-        const pref = context.kernelPreference || (typeof context.loadKernelPreference === 'function' ? context.loadKernelPreference() : {});
-        const isUserCustom = preferCustom && pref && pref.customPath && fs.existsSync(pref.customPath) && path.resolve(pref.customPath) === path.resolve(kernelPath);
-        if (isUserCustom) {
-          const as = `do shell script \"xattr -d com.apple.quarantine ${escape(kernelPath)} || true && chown root:wheel ${escape(kernelPath)} && chmod u+s ${escape(kernelPath)}\" with administrator privileges`;
-          await execFilePromise('osascript', ['-e', as]);
-          const probe = await probeAuthorization(kernelPath);
-          if (probe.ok) return { success: true, message: 'Authorized custom kernel' };
-        }
-      } catch (e) {
-        // fallback to system install
-      }
-      // Install into system path once
-      const targetDir = '/Library/Application Support/FlyClash';
-      const targetPath = `${targetDir}/mihomo`;
-      const as = `do shell script \"mkdir -p ${escape(targetDir)} && cp -f ${escape(kernelPath)} ${escape(targetPath)} && xattr -d com.apple.quarantine ${escape(targetPath)} || true && chown root:wheel ${escape(targetPath)} && chmod u+s ${escape(targetPath)}\" with administrator privileges`;
-      await execFilePromise('osascript', ['-e', as]);
-      try { context.saveKernelPreference?.({ customPath: targetPath }); } catch {}
-      const probe2 = await probeAuthorization(targetPath);
-      if (probe2.ok) return { success: true, message: 'Installed and authorized system kernel' };
-      return { success: false, error: '授权验证失败，请重试' };
-    }
-
     if (isLinux) {
       try {
-        execSync(`pkexec setcap cap_net_admin,cap_net_bind_service=+eip "${kernelPath}"`, { stdio: 'ignore' });
-      } catch {
-        try {
-          execSync(`pkexec chown root:root "${kernelPath}"`, { stdio: 'ignore' });
-          execSync(`pkexec chmod +sx "${kernelPath}"`, { stdio: 'ignore' });
-        } catch (e) {
-          return { success: false, error: getUserFriendlyError(e, 'authorization') };
+        const kernelPath = getKernelPath();
+        if (!kernelPath || !fs.existsSync(kernelPath)) {
+          console.error('[TunManager] Kernel not found');
+          return { success: false, error: '未找到内核文件' };
         }
+
+        const serviceManager = context.serviceManager;
+        const useService = serviceManager && await serviceManager.isServiceRunning();
+
+        if (useService) {
+          console.log('[TunManager] Using service mode for authorization on Linux');
+          const result = await serviceManager.authorizeBinary(kernelPath);
+          if (result.success) {
+            console.log('[TunManager] Kernel authorized via service');
+            return { success: true, message: 'Kernel authorized' };
+          }
+          console.warn('[TunManager] Service authorization failed, falling back to pkexec');
+        }
+
+        try {
+          execSync(`pkexec setcap cap_net_admin,cap_net_bind_service=+eip "${kernelPath}"`, { stdio: 'ignore' });
+        } catch {
+          try {
+            execSync(`pkexec chown root:root "${kernelPath}"`, { stdio: 'ignore' });
+            execSync(`pkexec chmod +sx "${kernelPath}"`, { stdio: 'ignore' });
+          } catch (e) {
+            return { success: false, error: getUserFriendlyError(e, 'authorization') };
+          }
+        }
+        const probe = await probeAuthorization(kernelPath);
+        return probe.ok ? { success: true } : { success: false, error: '授权验证失败，请重试' };
+      } catch (e) {
+        console.error('[TunManager] Grant permissions failed:', e);
+        return { success: false, error: getUserFriendlyError(e, 'authorization') };
       }
-      const probe = await probeAuthorization(kernelPath);
-      return probe.ok ? { success: true } : { success: false, error: '授权验证失败，请重试' };
     }
 
     return { success: false, error: '不支持的操作系统' };
+  }
+
+  async function checkKernelUpdate() {
+    if (!isMac && !isLinux) return { needsUpdate: false };
+
+    const sourceKernelPath = getSourceKernelPath();
+    const systemPath = getSystemKernelPath();
+
+    if (!sourceKernelPath || !fs.existsSync(sourceKernelPath)) {
+      return { needsUpdate: false };
+    }
+
+    if (!fs.existsSync(systemPath)) {
+      return { needsUpdate: true, reason: 'system_kernel_missing' };
+    }
+
+    try {
+      const sourceContent = fs.readFileSync(sourceKernelPath);
+      const systemContent = fs.readFileSync(systemPath);
+
+      if (sourceContent.compare(systemContent) !== 0) {
+        const sourceStat = fs.statSync(sourceKernelPath);
+        const systemStat = fs.statSync(systemPath);
+        console.log('[TunManager] Kernel update detected:', {
+          source: { path: sourceKernelPath, size: sourceStat.size, mtime: sourceStat.mtime },
+          system: { path: systemPath, size: systemStat.size, mtime: systemStat.mtime }
+        });
+        return { needsUpdate: true, reason: 'kernel_updated' };
+      }
+    } catch (e) {
+      console.warn('[TunManager] Failed to compare kernels:', e);
+    }
+
+    return { needsUpdate: false };
+  }
+
+  async function autoSyncKernel() {
+    const updateCheck = await checkKernelUpdate();
+    if (!updateCheck.needsUpdate) {
+      return { success: true, synced: false };
+    }
+
+    console.log('[TunManager] Auto-syncing custom kernel to system directory...');
+    const serviceManager = context.serviceManager;
+    const useService = serviceManager && await serviceManager.isServiceRunning();
+
+    if (useService) {
+      console.log('[TunManager] Using service mode for password-free sync');
+      const result = await grantPermissions();
+      if (result.success) {
+        console.log('[TunManager] Kernel synced successfully via service');
+        return { success: true, synced: true, viaService: true };
+      }
+    }
+
+    return { success: false, needsManualAuth: true, reason: updateCheck.reason };
   }
 
   async function toggleTun(enabled) {
@@ -330,17 +571,32 @@ module.exports = function initTunManager(context) {
         const kernelPath = getKernelPath();
         const probe = await probeAuthorization(kernelPath);
         console.log('[TunManager] Authorization probe result:', { ok: probe.ok, issues: probe.issues });
+
         if (!probe.ok) {
           console.warn('[TunManager] Missing permissions, cannot enable TUN');
           return { success: false, error: '缺少必要权限，请先进行授权' };
         }
+
+        const syncResult = await autoSyncKernel();
+        if (syncResult.needsManualAuth) {
+          console.warn('[TunManager] Custom kernel updated, manual authorization required');
+          return {
+            success: false,
+            error: '检测到自定义内核已更新，请重新授权以同步到系统目录',
+            needsAuth: true
+          };
+        }
+
+        if (syncResult.synced) {
+          console.log('[TunManager] Custom kernel auto-synced');
+        }
+
         console.log('[TunManager] Authorization check passed, proceeding to enable TUN');
       }
 
       const updateUserSettingsRaw = context.updateUserSettingsRaw;
       if (!updateUserSettingsRaw) return { success: false, error: 'TUN 模式切换失败' };
 
-      // Persist tun config (keep user’s saved fields)
       const savedTun = context.dbManager.getSetting('tunConfig', null);
       const baseTun = savedTun ? {
         enable: enabled,
@@ -367,7 +623,27 @@ module.exports = function initTunManager(context) {
         mtu: 1500,
         ...(isMac ? { 'auto-set-dns': true } : {})
       };
-      updateUserSettingsRaw({ tun: baseTun });
+
+      const updatePayload = { tun: baseTun };
+
+      if (enabled) {
+        const currentSettings = context.getUserSettings();
+        const currentDns = currentSettings.dns || {};
+        const currentMode = currentDns['enhanced-mode'];
+
+        if (!currentMode || currentMode === 'fake-ip') {
+          const ipv6 = currentSettings.ipv6 || false;
+          updatePayload.dns = {
+            enable: true,
+            ipv6: ipv6,
+            'enhanced-mode': 'fake-ip',
+            'fake-ip-range': '198.18.0.1/16',
+            ...currentDns
+          };
+        }
+      }
+
+      updateUserSettingsRaw(updatePayload);
 
       // Restart kernel via service
       if (!context.state.mihomoProcess || !context.state.configFilePath) {
@@ -434,7 +710,9 @@ module.exports = function initTunManager(context) {
     grantPermissions,
     toggleTun,
     checkPermission,
-    isTunActive
+    isTunActive,
+    checkKernelUpdate,
+    autoSyncKernel
   };
 
   return context.tunManager;

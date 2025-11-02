@@ -44,7 +44,27 @@ module.exports = function initMihomoService(context) {
   function findMihomoExecutable() {
     let binPath = null;
 
-    // 获取用户配置的路径
+    const isMac = process.platform === 'darwin';
+    const isLinux = process.platform === 'linux';
+
+    const tunEnabled = dbManager ? dbManager.getSetting('tunModeEnabled', false) : false;
+
+    if ((isMac || isLinux) && tunEnabled) {
+      if (context.tunManager && typeof context.tunManager.getKernelPath === 'function') {
+        const systemKernel = context.tunManager.getKernelPath();
+        if (systemKernel && fs.existsSync(systemKernel)) {
+          const stat = fs.statSync(systemKernel);
+          const mode = stat.mode & 0o7777;
+          const isSetuid = !!(mode & 0o4000);
+          if (stat.uid === 0 && isSetuid) {
+            console.log('[MihomoService] TUN mode enabled, using authorized system kernel:', systemKernel);
+            return systemKernel;
+          }
+        }
+        console.warn('[MihomoService] TUN enabled but system kernel not authorized, falling back to preferred kernel');
+      }
+    }
+
     const preferredPath = context.getKernelExecutablePath ? context.getKernelExecutablePath() : null;
     if (preferredPath && fs.existsSync(preferredPath)) {
       console.log('[MihomoService] Using preferred kernel:', preferredPath);
@@ -57,8 +77,6 @@ module.exports = function initMihomoService(context) {
     }
 
     const isWin = process.platform === 'win32';
-    const isMac = process.platform === 'darwin';
-    const isLinux = process.platform === 'linux';
 
     if (isDev) {
       const devDirPath = process.cwd();

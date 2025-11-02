@@ -1008,10 +1008,9 @@ export default function Dashboard() {
             showBanner({ type: 'error', message: '授权失败，请重试' });
           }
         } else {
-          // 已有权限，显示确认对话框
-          console.log('[Dashboard] Has permission, showing confirmation dialog');
-          setHasAdminPermission(true);
-          setTunConfirmOpen(true);
+          // 已有权限，直接启用，不显示确认对话框
+          console.log('[Dashboard] Has permission, directly enabling TUN mode');
+          await runTunToggle(true);
         }
       } catch (error) {
         console.error('Failed to check core permission:', error);
@@ -1020,9 +1019,8 @@ export default function Dashboard() {
       return;
     }
 
-    // 其他平台，直接显示确认对话框
-    setHasAdminPermission(true);
-    setTunConfirmOpen(true);
+    // 其他平台，直接启用
+    await runTunToggle(true);
   };
 
   const handleModeSwitch = useCallback(
@@ -1224,8 +1222,10 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
             <DialogDescription>
-              {(!hasAdminPermission && electron?.checkElevateTask)
-                ? '首次启动 TUN 模式需要管理员权限。点击"授权"后，应用将创建一个计划任务并自动重启以获取管理员权限。'
+              {electron?.checkElevateTask
+                ? (!hasAdminPermission
+                    ? '确定要启动TUN模式吗，请根据提示完成授权'
+                    : 'Windows TUN 模式需要以管理员身份运行。点击"确认启用"后，应用将自动重启并以管理员权限运行。')
                 : t('dashboard.tunModeWarning')}
             </DialogDescription>
           </DialogHeader>

@@ -431,6 +431,7 @@ context.formatTraffic = formatTraffic;
 require('./main-process/user-settings')(context);
 require('./main-process/mihomo-service')(context);
 // Initialize TUN manager first so system-integration can delegate
+require('./main-process/service-manager')(context);
 require('./main-process/tun-manager')(context);
 require('./main-process/system-integration')(context);
 require('./main-process/tray-manager')(context);
@@ -1884,35 +1885,11 @@ app.whenReady().then(() => {
 
   // 检查TUN模式状态
   try {
-    // 先从数据库读取上次的状态
     const savedState = getTunModeEnabled();
     console.log('[TUN] 数据库保存的状态:', savedState ? '已启用' : '未启用');
 
-    // macOS/Linux: 检测实际的TUN接口状态
-    if (process.platform === 'darwin' || process.platform === 'linux') {
-      try {
-        const tunManager = require('./main-process/tun-manager')(context);
-        const actuallyActive = tunManager.isTunActive();
-        console.log('[TUN] 实际TUN接口状态:', actuallyActive ? '运行中' : '未运行');
-
-        // 使用实际状态，并同步到数据库
-        if (actuallyActive !== savedState) {
-          console.log('[TUN] 状态不一致，使用实际状态并同步到数据库');
-          state.tunModeEnabled = actuallyActive;
-          setTunModeEnabled(actuallyActive);
-        } else {
-          state.tunModeEnabled = savedState;
-        }
-      } catch (e) {
-        console.warn('[TUN] 无法检测实际状态，使用数据库状态:', e.message);
-        state.tunModeEnabled = savedState;
-      }
-    } else {
-      // Windows: 使用数据库状态
-      state.tunModeEnabled = savedState;
-    }
-
-    console.log('[TUN] 最终状态:', state.tunModeEnabled ? '已启用' : '未启用');
+    state.tunModeEnabled = savedState;
+    console.log('[TUN] 启动状态:', state.tunModeEnabled ? '已启用' : '未启用');
 
     // 检查是否有待处理的 TUN 启用请求（从管理员重启后）
     const pendingTunEnable = dbManager.getSetting('pendingTunEnable', false);
@@ -3564,6 +3541,43 @@ exit /b %errorlevel%
       return { success: false, error: 'Function not available' };
     } catch (error) {
       console.error('[revoke-core-permission] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('service-is-running', async () => {
+    try {
+      if (context.serviceManager) {
+        const running = await context.serviceManager.isServiceRunning();
+        return { success: true, running };
+      }
+      return { success: true, running: false };
+    } catch (error) {
+      console.error('[service-is-running] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('service-install', async () => {
+    try {
+      if (context.serviceManager) {
+        return await context.serviceManager.installService();
+      }
+      return { success: false, error: 'Service manager not available' };
+    } catch (error) {
+      console.error('[service-install] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('service-uninstall', async () => {
+    try {
+      if (context.serviceManager) {
+        return await context.serviceManager.uninstallService();
+      }
+      return { success: false, error: 'Service manager not available' };
+    } catch (error) {
+      console.error('[service-uninstall] Error:', error);
       return { success: false, error: error.message };
     }
   });

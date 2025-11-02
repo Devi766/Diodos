@@ -249,6 +249,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   grantTunPermissions: () => ipcRenderer.invoke('grant-tun-permissions'),
   checkCorePermission: () => ipcRenderer.invoke('check-core-permission'),
   revokeCorePermission: () => ipcRenderer.invoke('revoke-core-permission'),
+  serviceIsRunning: () => ipcRenderer.invoke('service-is-running'),
+  serviceInstall: () => ipcRenderer.invoke('service-install'),
+  serviceUninstall: () => ipcRenderer.invoke('service-uninstall'),
   getTunConfig: () => ipcRenderer.invoke('get-tun-config'),
   saveTunConfig: (config) => ipcRenderer.invoke('save-tun-config', config),
   
