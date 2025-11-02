@@ -1260,12 +1260,12 @@ export default function Dashboard() {
       />
 
       <Dialog open={tunConfirmOpen} onOpenChange={setTunConfirmOpen}>
-        <DialogContent className="gap-6">
-          <DialogHeader className="space-y-4">
+        <DialogContent>
+          <DialogHeader>
             <DialogTitle>{t('dashboard.enableTunMode')}</DialogTitle>
             <DialogDescription>{tunDialogDescription}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="mt-6 gap-3 sm:gap-2">
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
