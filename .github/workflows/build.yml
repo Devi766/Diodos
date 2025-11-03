@@ -63,6 +63,7 @@ jobs:
           files: |
             dist/*-setup.exe
             dist/*.7z
+          fail_on_unmatched_files: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Dev Release
@@ -73,6 +74,7 @@ jobs:
           files: |
             dist/*-setup.exe
             dist/*.7z
+          fail_on_unmatched_files: false
           prerelease: true
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -128,6 +130,7 @@ jobs:
           files: |
             dist/*.deb
             dist/*.rpm
+          fail_on_unmatched_files: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Dev Release
@@ -138,6 +141,7 @@ jobs:
           files: |
             dist/*.deb
             dist/*.rpm
+          fail_on_unmatched_files: false
           prerelease: true
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -200,6 +204,7 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
+          fail_on_unmatched_files: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Dev Release
@@ -210,6 +215,7 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
+          fail_on_unmatched_files: false
           prerelease: true
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
