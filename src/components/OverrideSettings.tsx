@@ -181,8 +181,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   };
 
   const updateArrayDnsConfig = (key: keyof DnsConfig, value: string) => {
-    // 不过滤空行，保留用户输入的所有行（包括空行）
-    // 只在保存时才过滤空行
+    // 保留用户输入的所有行（包括空行），在保存时才过滤空行
     const items = value.split('\n');
     setDnsConfig(prev => ({ ...prev, [key]: items }));
   };

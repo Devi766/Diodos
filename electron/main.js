@@ -2775,9 +2775,55 @@ app.whenReady().then(() => {
       const userSettings = context.getUserSettings ? context.getUserSettings() : {};
       console.log('[get-dns-config] 从用户设置读取DNS配置:', userSettings.dns);
 
+      // DNS 默认配置
+      const defaultDnsConfig = {
+        enable: true,
+        ipv6: false,
+        'enhanced-mode': 'fake-ip',
+        'fake-ip-range': '198.18.0.1/16',
+        'fake-ip-filter': [
+          '*.lan',
+          '*.local',
+          'localhost.ptlogin2.qq.com',
+          '+.srv.nintendo.net',
+          '+.stun.playstation.net',
+          'xbox.*.microsoft.com',
+          '+.xboxlive.com'
+        ],
+        'use-hosts': false,
+        'use-system-hosts': true,
+        'respect-rules': false,
+        'default-nameserver': [
+          '114.114.114.114',
+          '223.5.5.5',
+          '8.8.8.8'
+        ],
+        nameserver: [
+          'https://doh.pub/dns-query',
+          'https://dns.alidns.com/dns-query'
+        ],
+        'proxy-server-nameserver': [
+          'https://doh.pub/dns-query'
+        ],
+        'direct-nameserver': [
+          'https://doh.pub/dns-query',
+          'https://dns.alidns.com/dns-query'
+        ]
+      };
+
+      // 如果用户还没有配置 DNS，使用默认值
+      // 如果已经配置过，则不修改（包括用户删除为空的情况）
+      let dnsConfig = userSettings.dns;
+
+      if (!dnsConfig || Object.keys(dnsConfig).length === 0) {
+        // 新用户，使用默认配置
+        console.log('[get-dns-config] 检测到新用户，应用默认DNS配置');
+        dnsConfig = defaultDnsConfig;
+      }
+
       return {
         success: true,
-        config: userSettings.dns || {},
+        config: dnsConfig,
         hosts: userSettings.hosts || {}
       };
     } catch (error) {

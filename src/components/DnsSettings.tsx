@@ -108,8 +108,7 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
   };
 
   const updateArrayConfig = (key: keyof DnsConfig, value: string) => {
-    // 不过滤空行，保留用户输入的所有行（包括空行）
-    // 只在保存时才过滤空行
+    // 保留用户输入的所有行（包括空行），在保存时才过滤空行
     const items = value.split('\n');
     setConfig(prev => ({ ...prev, [key]: items }));
   };
