@@ -66,9 +66,12 @@ interface MihomoApiResponse {
 export interface ElectronAPI {
   // 导航相关
   loadPage: (pageName: string) => Promise<{ success: boolean, error?: string }>;
-  
+
   // 版本号
   getAppVersion: () => Promise<string>;
+
+  // 平台信息
+  getPlatform?: () => Promise<string>;
   
   // Mihomo API请求
   requestMihomoAPI: (endpoint: string, options?: RequestInit) => Promise<MihomoApiResponse>;

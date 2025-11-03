@@ -35,12 +35,15 @@ async function getSecurityToken() {
 contextBridge.exposeInMainWorld('electronAPI', {
   // 不直接暴露令牌获取方法
   getAuthToken: null,
-  
+
   // 导航相关 - 新的页面加载方法
   loadPage: (pageName) => ipcRenderer.invoke('loadPage', pageName),
-  
+
   // 版本号
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  // 平台信息
+  getPlatform: () => Promise.resolve(process.platform),
   
   // Mihomo 管理
   startMihomo: (configPath) => ipcRenderer.invoke('start-mihomo', configPath),

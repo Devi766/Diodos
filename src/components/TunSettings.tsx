@@ -39,29 +39,54 @@ const TunSettings: React.FC = () => {
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  const [platform, setPlatform] = useState<string>('');
 
   useEffect(() => {
     loadConfig();
     checkPermissionStatus();
+    getPlatformInfo();
   }, []);
+
+  const getPlatformInfo = async () => {
+    if (!window.electronAPI) return;
+
+    try {
+      const platformInfo = await window.electronAPI.getPlatform?.() || process.platform;
+      setPlatform(platformInfo);
+      console.log('[TunSettings] Platform info:', platformInfo);
+    } catch (error) {
+      console.error('Failed to get platform info:', error);
+      setPlatform(process.platform);
+    }
+  };
 
   const checkPermissionStatus = async () => {
     if (!window.electronAPI) return;
 
     try {
-      const isWindows = process.platform === 'win32';
+      // 从 Electron API 获取平台信息，而不是依赖 process.platform
+      const platform = await window.electronAPI.getPlatform?.() || process.platform;
+      const isWindows = platform === 'win32';
+
+      console.log('[TunSettings] Platform:', platform, 'isWindows:', isWindows);
 
       if (isWindows) {
         if (window.electronAPI.checkElevateTask) {
           const hasTask = await window.electronAPI.checkElevateTask();
           console.log('[TunSettings] Windows checkElevateTask result:', hasTask);
           setPermissionStatus(hasTask ? 'granted' : 'not_granted');
+        } else {
+          console.warn('[TunSettings] checkElevateTask API not available');
+          setPermissionStatus('unknown');
         }
       } else {
         if (window.electronAPI.checkCorePermission) {
           const result = await window.electronAPI.checkCorePermission();
           console.log('[TunSettings] macOS/Linux checkCorePermission result:', result);
           setPermissionStatus(result.hasPermission ? 'granted' : 'not_granted');
+        } else {
+          console.warn('[TunSettings] checkCorePermission API not available');
+          setPermissionStatus('unknown');
         }
       }
     } catch (error) {
@@ -133,7 +158,8 @@ const TunSettings: React.FC = () => {
 
     setLoading(true);
     try {
-      const isWindows = process.platform === 'win32';
+      const currentPlatform = await window.electronAPI.getPlatform?.() || process.platform;
+      const isWindows = currentPlatform === 'win32';
 
       if (isWindows && window.electronAPI.deleteElevateTask) {
         const result = await window.electronAPI.deleteElevateTask();
@@ -180,9 +206,9 @@ const TunSettings: React.FC = () => {
     });
   };
 
-  const isMac = process.platform === 'darwin';
-  const isLinux = process.platform === 'linux';
-  const isWindows = process.platform === 'win32';
+  const isMac = platform === 'darwin';
+  const isLinux = platform === 'linux';
+  const isWindows = platform === 'win32';
 
   return (
     <Toast.Provider swipeDirection="right">
