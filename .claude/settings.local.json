@@ -4,7 +4,9 @@
       "Bash(npm run dev:*)",
       "Read(//f/code/FlyClash-PC/**)",
       "Bash(dir)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "WebSearch",
+      "Bash(cd:*)"
     ],
     "deny": [],
     "ask": []

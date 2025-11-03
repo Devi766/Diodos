@@ -126,9 +126,19 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         }
       }
 
-      // 保存DNS配置
+      // 保存DNS配置（过滤掉空行）
       if (window.electronAPI?.saveDnsConfig) {
-        const dnsResult = await window.electronAPI.saveDnsConfig(dnsConfig);
+        // 创建一个副本，过滤掉数组字段中的空行
+        const cleanedDnsConfig = { ...dnsConfig };
+        const arrayFields: (keyof DnsConfig)[] = ['default-nameserver', 'nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter'];
+
+        arrayFields.forEach(field => {
+          if (Array.isArray(cleanedDnsConfig[field])) {
+            cleanedDnsConfig[field] = (cleanedDnsConfig[field] as string[]).filter(item => item.trim());
+          }
+        });
+
+        const dnsResult = await window.electronAPI.saveDnsConfig(cleanedDnsConfig);
         if (!dnsResult.success) {
           const errorMsg = t('overrideSettings.dnsConfigSaveFailed') + ': ' + dnsResult.error;
           showToast({ message: errorMsg, type: 'error' });
@@ -171,7 +181,9 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   };
 
   const updateArrayDnsConfig = (key: keyof DnsConfig, value: string) => {
-    const items = value.split('\n').filter(item => item.trim());
+    // 不过滤空行，保留用户输入的所有行（包括空行）
+    // 只在保存时才过滤空行
+    const items = value.split('\n');
     setDnsConfig(prev => ({ ...prev, [key]: items }));
   };
 

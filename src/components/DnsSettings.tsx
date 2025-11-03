@@ -67,7 +67,17 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
     try {
       setSaving(true);
       if (window.electronAPI?.saveDnsConfig) {
-        const result = await window.electronAPI.saveDnsConfig(config);
+        // 创建一个副本，过滤掉数组字段中的空行
+        const cleanedConfig = { ...config };
+        const arrayFields: (keyof DnsConfig)[] = ['default-nameserver', 'nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter'];
+
+        arrayFields.forEach(field => {
+          if (Array.isArray(cleanedConfig[field])) {
+            cleanedConfig[field] = (cleanedConfig[field] as string[]).filter(item => item.trim());
+          }
+        });
+
+        const result = await window.electronAPI.saveDnsConfig(cleanedConfig);
         if (result.success) {
           if (config['use-hosts'] && window.electronAPI?.saveHostsConfig) {
             await window.electronAPI.saveHostsConfig(hostsConfig.hosts || []);
@@ -98,7 +108,9 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
   };
 
   const updateArrayConfig = (key: keyof DnsConfig, value: string) => {
-    const items = value.split('\n').filter(item => item.trim());
+    // 不过滤空行，保留用户输入的所有行（包括空行）
+    // 只在保存时才过滤空行
+    const items = value.split('\n');
     setConfig(prev => ({ ...prev, [key]: items }));
   };
 
