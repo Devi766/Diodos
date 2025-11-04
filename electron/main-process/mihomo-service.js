@@ -1242,9 +1242,10 @@ module.exports = function initMihomoService(context) {
             if (typeof context.startMihomoLogs === 'function') {
               context.startMihomoLogs();
             }
-            if (typeof context.updateCurrentNodeInfo === 'function') {
-              context.updateCurrentNodeInfo();
-            }
+            // 注释掉 updateCurrentNodeInfo 调用，避免在没有 PROXY 组时报错
+            // if (typeof context.updateCurrentNodeInfo === 'function') {
+            //   context.updateCurrentNodeInfo();
+            // }
 
             return;
           } else {

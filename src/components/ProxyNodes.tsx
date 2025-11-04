@@ -1888,7 +1888,7 @@ export default function ProxyNodes() {
                         <div>
                           <div className="text-sm font-semibold text-foreground">{group.name}</div>
                           <div className="mt-0.5 text-xs text-muted-foreground">
-                            {t('nodes.groupSubtitle', { groupType, selectedNode })}
+                            {groupType} · <EmojiText text={selectedNode} className="inline" />
                           </div>
                         </div>
                       </div>

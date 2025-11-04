@@ -419,7 +419,17 @@ export default function Dashboard() {
       }
 
       const snapshotCache = proxiesSnapshotRef.current.data;
-      const candidateGroups = Array.from(new Set([primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean)));
+      // 只使用实际存在的代理组，不使用硬编码的 PROXY 和 GLOBAL
+      const allCandidates = [primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean);
+      const candidateGroups = allCandidates.filter(groupName =>
+        snapshotCache && typeof snapshotCache[groupName] !== 'undefined'
+      );
+
+      // 如果没有找到任何候选组，使用主代理组
+      if (candidateGroups.length === 0 && primaryProxyGroup) {
+        candidateGroups.push(primaryProxyGroup);
+      }
+
       let resolvedNode: string | null = null;
 
       if (electron.requestMihomoAPI) {

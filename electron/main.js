@@ -1457,55 +1457,10 @@ async function startConnectionsWebSocket() {
 }
 
 // 更新当前节点信息
+// 注意：此函数已废弃，保留只是为了兼容性
 async function updateCurrentNodeInfo() {
-  try {
-    if (!state.activeApiConfig) {
-      console.error('无法获取节点信息: API配置不可用');
-      return;
-    }
-
-    // Socket 模式: 使用 fetchMihomoAPI
-    console.log(`[调试] 请求节点信息: /proxies/PROXY`);
-
-    const response = await fetchMihomoAPI('/proxies/PROXY');
-    if (response.ok) {
-      const data = await response.json();
-      console.log('[调试] 获取到PROXY组信息:', data);
-      
-      if (data && data.now) {
-        state.currentNode = data.now;
-        console.log('[调试] 更新当前节点为:', state.currentNode);
-        
-        // 更新state.lastConnectionsInfo中的节点信息
-    state.lastConnectionsInfo = {
-      ...state.lastConnectionsInfo,
-      currentNode: state.currentNode
-    };
-        
-        // 通知主窗口节点已更新
-        if (state.mainWindow && state.mainWindow.webContents && !state.mainWindow.isDestroyed()) {
-          console.log('[调试] 发送节点变更事件:', state.currentNode);
-          
-          // 立即发送节点更新
-          state.mainWindow.webContents.send('node-changed', { nodeName: state.currentNode });
-          
-          // 添加延迟，确保前端有足够时间处理节点更新
-          setTimeout(() => {
-            if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-              console.log('[调试] 延迟发送连接信息更新:', state.lastConnectionsInfo);
-              state.mainWindow.webContents.send('connections-update', state.lastConnectionsInfo);
-            }
-          }, 500);
-        }
-      } else {
-        console.warn('[调试] 无法获取当前节点信息:', data);
-      }
-    } else {
-      console.error('[调试] 获取节点信息请求失败:', response.status, response.statusText);
-    }
-  } catch (error) {
-    console.error('[调试] 更新节点信息失败:', error);
-  }
+  // 不再执行任何操作，静默返回
+  return;
 }
 
 // 停止连接管理WebSocket
@@ -1800,16 +1755,6 @@ if (process.platform === 'win32' && !isDev) {
 
 // 应用启动时执行
 app.whenReady().then(() => {
-  // 配置 session 以支持 emoji 字体渲染
-  const { session } = require('electron');
-  session.defaultSession.setSpellCheckerEnabled(false);
-
-  // 设置字体渲染选项
-  if (process.platform === 'win32') {
-    // Windows: 确保使用 Segoe UI Emoji 渲染国旗emoji
-    app.commandLine.appendSwitch('font-render-hinting', 'full');
-  }
-
   // 注册协议处理器
   if (process.platform === 'win32') {
     app.setAsDefaultProtocolClient('clash');
