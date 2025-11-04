@@ -32,15 +32,15 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
 
   return (
     <div className={cn(
-      "fixed top-4 right-4 z-50 flex items-center gap-3 px-6 py-4 rounded-xl shadow-lg backdrop-blur-md text-white animate-in slide-in-from-top-5",
+      "fixed top-4 right-4 z-50 flex items-start gap-3 px-6 py-4 rounded-xl shadow-lg backdrop-blur-md text-white animate-in slide-in-from-top-5 max-w-md",
       bgColor
     )}>
-      <span className="text-xl font-bold">{icon}</span>
-      <span className="text-sm font-medium">{message}</span>
+      <span className="text-xl font-bold flex-shrink-0">{icon}</span>
+      <span className="text-sm font-medium break-words flex-1 min-w-0">{message}</span>
       {onClose && (
         <button
           onClick={onClose}
-          className="ml-4 text-white/80 hover:text-white transition-colors"
+          className="ml-2 text-white/80 hover:text-white transition-colors flex-shrink-0"
         >
           ✕
         </button>

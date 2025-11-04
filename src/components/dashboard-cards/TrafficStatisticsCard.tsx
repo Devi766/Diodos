@@ -112,7 +112,7 @@ export function TrafficStatisticsCard() {
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t('dashboard.trafficStatistics')}
         </p>
-        <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+        <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-[#1f1f1f]">
           <button
             onClick={() => {
               setViewMode('day');
@@ -124,8 +124,8 @@ export function TrafficStatisticsCard() {
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'day'
-                ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+                ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
+                : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'
             }`}
           >
             <Calendar className="h-3 w-3" />
@@ -142,8 +142,8 @@ export function TrafficStatisticsCard() {
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'month'
-                ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+                ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
+                : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'
             }`}
           >
             <Calendar className="h-3 w-3" />

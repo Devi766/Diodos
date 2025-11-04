@@ -6,7 +6,11 @@
       "Bash(dir)",
       "Bash(dir:*)",
       "WebSearch",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(npm run electron:dev:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []

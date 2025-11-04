@@ -422,10 +422,52 @@ export default function Settings() {
     { name: '靛青色', value: '#6366f1' },
   ];
 
+  // 将hex颜色转换为HSL格式
+  const hexToHSL = (hex: string) => {
+    // 移除#号
+    hex = hex.replace('#', '');
+
+    // 转换为RGB
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    let h = 0, s = 0, l = (max + min) / 2;
+
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+      switch (max) {
+        case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+        case g: h = ((b - r) / d + 2) / 6; break;
+        case b: h = ((r - g) / d + 4) / 6; break;
+      }
+    }
+
+    h = Math.round(h * 360);
+    s = Math.round(s * 100);
+    l = Math.round(l * 100);
+
+    return `${h} ${s}% ${l}%`;
+  };
+
+  // 应用主题色到CSS变量
+  const applyThemeColor = (color: string) => {
+    if (typeof document !== 'undefined') {
+      const hsl = hexToHSL(color);
+      document.documentElement.style.setProperty('--primary', hsl);
+      document.documentElement.style.setProperty('--ring', hsl);
+    }
+  };
+
   // 处理主题色变化
   const handleThemeColorChange = async (color: string) => {
     setThemeColor(color);
     setCustomColor(color);
+    applyThemeColor(color);
 
     try {
       if (typeof window !== 'undefined' && window.electronAPI) {
@@ -473,6 +515,7 @@ export default function Settings() {
           if (colorResult.success && colorResult.color) {
             setThemeColor(colorResult.color);
             setCustomColor(colorResult.color);
+            applyThemeColor(colorResult.color);
           }
         }
       } catch (error) {
@@ -601,19 +644,6 @@ export default function Settings() {
             
             <Tabs.Content value="general" className="w-full">
               <div className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.language')}</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.languageDesc')}</p>
-                  <select
-                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
-                    value={language}
-                    onChange={(e) => handleLanguageChange(e.target.value)}
-                  >
-                    <option value="zh-CN">{t('settings.simplifiedChinese')}</option>
-                    <option value="en-US">{t('settings.english')}</option>
-                  </select>
-                </div>
-
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.startWithSystem')}</h3>
@@ -656,6 +686,19 @@ export default function Settings() {
                     checked={autoCheckUpdate}
                     onCheckedChange={setAutoCheckUpdate}
                   />
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.language')}</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.languageDesc')}</p>
+                  <select
+                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                    value={language}
+                    onChange={(e) => handleLanguageChange(e.target.value)}
+                  >
+                    <option value="zh-CN">{t('settings.simplifiedChinese')}</option>
+                    <option value="en-US">{t('settings.english')}</option>
+                  </select>
                 </div>
 
                 <div>
@@ -907,13 +950,21 @@ export default function Settings() {
                     <label className="text-xs font-medium text-gray-700 dark:text-gray-200">
                       {t('settings.customColor')}
                     </label>
-                    <div className="flex items-center gap-2 flex-1">
-                      <input
-                        type="color"
-                        value={customColor}
-                        onChange={(e) => handleThemeColorChange(e.target.value)}
-                        className="w-10 h-10 rounded cursor-pointer border border-gray-300 dark:border-gray-600"
-                      />
+                    <div className="flex items-center gap-3 flex-1">
+                      {/* 圆形颜色选择器 */}
+                      <label className="relative group cursor-pointer">
+                        <input
+                          type="color"
+                          value={customColor}
+                          onChange={(e) => handleThemeColorChange(e.target.value)}
+                          className="absolute opacity-0 w-0 h-0"
+                        />
+                        <div
+                          className="w-10 h-10 rounded-full border-2 border-white dark:border-gray-700 shadow-md transition-transform group-hover:scale-110"
+                          style={{ backgroundColor: customColor }}
+                        />
+                      </label>
+                      {/* 颜色值输入框 */}
                       <input
                         type="text"
                         value={customColor}
@@ -926,7 +977,7 @@ export default function Settings() {
                           }
                         }}
                         placeholder="#3b82f6"
-                        className="flex-1 py-1.5 px-3 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                        className="flex-1 py-2 px-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                       />
                     </div>
                   </div>
@@ -1063,24 +1114,51 @@ export default function Settings() {
         
         {/* Toast提示组件 */}
         <Toast.Root
-          open={toastOpen} 
+          open={toastOpen}
           onOpenChange={setToastOpen}
-          className={`fixed bottom-4 right-4 p-4 rounded-md shadow-md ${
-            toastType === 'success' 
-              ? 'bg-green-500 text-white' 
-              : 'bg-red-500 text-white'
-          }`}
+          duration={3000}
+          className="fixed bottom-6 right-6 w-80 rounded-2xl shadow-lg backdrop-blur-sm z-[9999] transition-all bg-white/95 dark:bg-[#2a2a2a]/95"
         >
-          <Toast.Title className="font-medium">{toastTitle}</Toast.Title>
-          <Toast.Description>{toastDescription}</Toast.Description>
-          <Toast.Close asChild>
-            <button 
-              className="absolute top-2 right-2 text-white" 
-              aria-label="Close"
-            >
-              <Cross2Icon />
-            </button>
-          </Toast.Close>
+          <div className="p-4">
+            <div className="flex items-start gap-3">
+              {/* 图标 */}
+              <div className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+                toastType === 'success'
+                  ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                  : 'bg-red-500/10 text-red-600 dark:text-red-400'
+              }`}>
+                {toastType === 'success' ? (
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                ) : (
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </div>
+
+              {/* 内容 */}
+              <div className="flex-1 min-w-0">
+                <Toast.Title className="text-sm font-semibold text-foreground mb-1">
+                  {toastTitle}
+                </Toast.Title>
+                <Toast.Description className="text-xs text-muted-foreground">
+                  {toastDescription}
+                </Toast.Description>
+              </div>
+
+              {/* 关闭按钮 */}
+              <Toast.Close asChild>
+                <button
+                  className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Close"
+                >
+                  <Cross2Icon className="w-4 h-4" />
+                </button>
+              </Toast.Close>
+            </div>
+          </div>
         </Toast.Root>
         
         <Toast.Viewport />

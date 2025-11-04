@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PlusIcon, TrashIcon, Pencil1Icon } from '@radix-ui/react-icons';
+import { PlusIcon, TrashIcon, Pencil1Icon, CheckIcon } from '@radix-ui/react-icons';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Button } from './ui/button';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -27,6 +27,41 @@ const ProxyIconSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [editingRule, setEditingRule] = useState<ProxyIconRule | null>(null);
   const [showRuleDialog, setShowRuleDialog] = useState(false);
+
+  const resolvedThemeColor = useMemo(() => {
+    if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(themeColor)) {
+      if (themeColor.length === 4) {
+        const r = themeColor[1];
+        const g = themeColor[2];
+        const b = themeColor[3];
+        return `#${r}${r}${g}${g}${b}${b}`;
+      }
+      return themeColor;
+    }
+    return '#3b82f6';
+  }, [themeColor]);
+
+  const semiTransparentThemeColor = useMemo(() => {
+    if (/^#([0-9a-fA-F]{6})$/.test(resolvedThemeColor)) {
+      const r = parseInt(resolvedThemeColor.slice(1, 3), 16);
+      const g = parseInt(resolvedThemeColor.slice(3, 5), 16);
+      const b = parseInt(resolvedThemeColor.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, 0.16)`;
+    }
+    return 'rgba(59, 130, 246, 0.16)';
+  }, [resolvedThemeColor]);
+
+  const subtleBorderColor = useMemo(() => {
+    if (/^#([0-9a-fA-F]{6})$/.test(resolvedThemeColor)) {
+      return `${resolvedThemeColor}33`;
+    }
+    return 'rgba(59, 130, 246, 0.3)';
+  }, [resolvedThemeColor]);
+
+  const allRulesEnabled = useMemo(
+    () => config.rules.length > 0 && config.rules.every((rule) => rule.enabled),
+    [config.rules],
+  );
 
   // 加载配置
   useEffect(() => {
@@ -102,6 +137,17 @@ const ProxyIconSettings: React.FC = () => {
     }
   };
 
+  const handleToggleAllRules = async () => {
+    if (config.rules.length === 0) return;
+
+    const updatedConfig: ProxyIconConfig = {
+      ...config,
+      rules: config.rules.map((rule) => ({ ...rule, enabled: allRulesEnabled ? false : true })),
+    };
+
+    await saveConfig(updatedConfig);
+  };
+
   const handleSaveRule = async () => {
     if (!editingRule) return;
 
@@ -174,17 +220,34 @@ const ProxyIconSettings: React.FC = () => {
       </div>
 
       {/* 规则列表标题 */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-medium text-gray-700 dark:text-gray-200">
           {t('proxyIcon.rules')}
         </h3>
-        <button
-          onClick={handleAddRule}
-          className="flex items-center gap-2 rounded-lg bg-blue-500 hover:bg-blue-600 px-4 py-2 text-sm font-medium text-white transition"
-        >
-          <PlusIcon className="h-4 w-4" />
-          {t('proxyIcon.addRule')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleToggleAllRules}
+            disabled={config.rules.length === 0}
+            className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60 hover:opacity-90"
+            style={{
+              backgroundColor: semiTransparentThemeColor,
+              color: resolvedThemeColor,
+              boxShadow: `inset 0 0 0 1px ${subtleBorderColor}`,
+            }}
+          >
+            <CheckIcon className="h-3 w-3" />
+            {allRulesEnabled
+              ? t('proxyIcon.selectNone', { defaultValue: '反选' })
+              : t('proxyIcon.selectAll', { defaultValue: '全选' })}
+          </button>
+          <button
+            onClick={handleAddRule}
+            className="flex items-center gap-2 rounded-lg bg-blue-500 hover:bg-blue-600 px-4 py-2 text-sm font-medium text-white transition"
+          >
+            <PlusIcon className="h-4 w-4" />
+            {t('proxyIcon.addRule')}
+          </button>
+        </div>
       </div>
 
       {/* 规则列表 */}

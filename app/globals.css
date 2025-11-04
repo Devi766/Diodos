@@ -120,6 +120,16 @@
     color: hsl(var(--foreground));
     font-feature-settings: "rlig" 1, "calt" 1;
     overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", "Twemoji Mozilla", Roboto, Helvetica, Arial, sans-serif;
+    /* 确保emoji使用彩色字体 */
+    font-variant-emoji: emoji;
+  }
+
+  /* 为emoji添加额外的渲染支持 */
+  * {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* macOS 默认模式：使用透明背景让 vibrancy 毛玻璃效果显示 */
@@ -262,6 +272,32 @@
 }
 
 @layer components {
+  /* Emoji 渲染支持 - 确保国旗等emoji正确显示 */
+  .emoji,
+  [class*="emoji"],
+  span:has(img.emoji) {
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", "EmojiOne Color", "Android Emoji", sans-serif;
+    font-variant-emoji: emoji;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Twemoji 样式 - 将emoji渲染为内联SVG图片 */
+  .emoji-text img.emoji {
+    height: 1.2em;
+    width: 1.2em;
+    margin: 0 0.05em 0 0.1em;
+    vertical-align: -0.2em;
+    display: inline-block;
+  }
+
+  /* 确保emoji图片在不同大小的文本中正确显示 */
+  .text-xs img.emoji { height: 0.75rem; width: 0.75rem; }
+  .text-sm img.emoji { height: 0.875rem; width: 0.875rem; }
+  .text-base img.emoji { height: 1rem; width: 1rem; }
+  .text-lg img.emoji { height: 1.125rem; width: 1.125rem; }
+  .text-xl img.emoji { height: 1.25rem; width: 1.25rem; }
+  .text-2xl img.emoji { height: 1.5rem; width: 1.5rem; }
+
   .glass-app-shell {
     position: relative;
     background: hsl(var(--glass-surface));

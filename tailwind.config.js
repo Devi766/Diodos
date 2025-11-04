@@ -16,6 +16,9 @@ module.exports = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', '"Segoe UI Emoji"', '"Segoe UI Symbol"', '"Apple Color Emoji"', '"Noto Color Emoji"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

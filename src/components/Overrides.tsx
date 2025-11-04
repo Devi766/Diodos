@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { ReloadIcon, PlusIcon, TrashIcon, Pencil1Icon, FileTextIcon, DotsVerticalIcon, DragHandleDots2Icon } from '@radix-ui/react-icons';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { ReloadIcon, PlusIcon, TrashIcon, Pencil1Icon, FileTextIcon, DotsVerticalIcon, DragHandleDots2Icon, Cross2Icon } from '@radix-ui/react-icons';
+import * as Toast from '@radix-ui/react-toast';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
 import { useTranslation } from 'react-i18next';
+import { useThemeColor } from '../hooks/useThemeColor';
 import {
   DndContext,
   closestCenter,
@@ -20,6 +22,32 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+const DEFAULT_THEME_COLOR = '#3b82f6';
+
+const normalizeHexColor = (color?: string | null) => {
+  if (!color) return DEFAULT_THEME_COLOR;
+  const trimmed = color.trim();
+  if (/^#([0-9a-fA-F]{6})$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^#([0-9a-fA-F]{3})$/.test(trimmed)) {
+    const r = trimmed[1];
+    const g = trimmed[2];
+    const b = trimmed[3];
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return DEFAULT_THEME_COLOR;
+};
+
+const hexToRgb = (hex: string) => {
+  const normalized = normalizeHexColor(hex);
+  const value = normalized.slice(1);
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return { r, g, b };
+};
 
 type OverrideItem = {
   id: string;
@@ -234,6 +262,19 @@ export default function Overrides() {
   const [editingFile, setEditingFile] = useState<OverrideItem | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
 
+  // Toast 状态
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTitle, setToastTitle] = useState('');
+  const [toastDescription, setToastDescription] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  const showToast = (title: string, description: string, type: 'success' | 'error') => {
+    setToastTitle(title);
+    setToastDescription(description);
+    setToastType(type);
+    setToastOpen(true);
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -332,10 +373,11 @@ export default function Overrides() {
       if (typeof window !== 'undefined' && window.electronAPI?.updateRemoteOverride) {
         await window.electronAPI.updateRemoteOverride(id);
         await fetchItems();
+        showToast(t('common.success'), t('overrides.updateSuccess'), 'success');
       }
     } catch (error: any) {
       console.error('更新覆写失败:', error);
-      alert(t('overrides.updateError', { error: error.message || '未知错误' }));
+      showToast(t('common.error'), t('overrides.updateError', { error: error.message || '未知错误' }), 'error');
     }
   };
 
@@ -419,12 +461,13 @@ export default function Overrides() {
   }
 
   return (
-    <div 
-      className="space-y-4"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
+    <Toast.Provider swipeDirection="right">
+      <div
+        className="space-y-4"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
       {/* 拖拽提示 */}
       {fileOver && (
         <div className="fixed inset-0 z-50 bg-primary/10 backdrop-blur-sm flex items-center justify-center">
@@ -652,7 +695,59 @@ export default function Overrides() {
           }}
         />
       )}
-    </div>
+      </div>
+
+      {/* Toast 提示 */}
+      <Toast.Root
+        open={toastOpen}
+        onOpenChange={setToastOpen}
+        duration={3000}
+        className="fixed bottom-6 right-6 w-80 rounded-2xl shadow-lg backdrop-blur-sm z-[9999] transition-all bg-white/95 dark:bg-[#2a2a2a]/95"
+      >
+        <div className="p-4">
+          <div className="flex items-start gap-3">
+            {/* 图标 */}
+            <div className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+              toastType === 'success'
+                ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                : 'bg-red-500/10 text-red-600 dark:text-red-400'
+            }`}>
+              {toastType === 'success' ? (
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+
+            {/* 内容 */}
+            <div className="flex-1 min-w-0">
+              <Toast.Title className="text-sm font-semibold text-foreground mb-1">
+                {toastTitle}
+              </Toast.Title>
+              <Toast.Description className="text-xs text-muted-foreground">
+                {toastDescription}
+              </Toast.Description>
+            </div>
+
+            {/* 关闭按钮 */}
+            <Toast.Close asChild>
+              <button
+                className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Close"
+              >
+                <Cross2Icon className="w-4 h-4" />
+              </button>
+            </Toast.Close>
+          </div>
+        </div>
+      </Toast.Root>
+
+      <Toast.Viewport />
+    </Toast.Provider>
   );
 }
 
@@ -748,6 +843,15 @@ function EditFileDialog({
   const { t } = useTranslation();
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
+  const themeColor = useThemeColor();
+
+  const resolvedThemeColor = useMemo(() => normalizeHexColor(themeColor), [themeColor]);
+
+  const { r, g, b } = useMemo(() => hexToRgb(resolvedThemeColor), [resolvedThemeColor]);
+
+  const buttonBackground = useMemo(() => `rgba(${r}, ${g}, ${b}, 0.18)`, [r, g, b]);
+  const buttonBorder = useMemo(() => `rgba(${r}, ${g}, ${b}, 0.32)`, [r, g, b]);
+  const buttonShadow = useMemo(() => `0 18px 38px -22px rgba(${r}, ${g}, ${b}, 0.45)`, [r, g, b]);
 
   useEffect(() => {
     const loadContent = async () => {
@@ -794,7 +898,18 @@ function EditFileDialog({
           <Button variant="ghost" onClick={onClose}>
             {t('overrides.cancel')}
           </Button>
-          <Button onClick={() => onSave(content)} disabled={loading}>
+          <Button
+            variant="primary"
+            className="transition-opacity hover:opacity-95"
+            style={{
+              backgroundColor: buttonBackground,
+              color: resolvedThemeColor,
+              border: `1px solid ${buttonBorder}`,
+              boxShadow: buttonShadow,
+            }}
+            onClick={() => onSave(content)}
+            disabled={loading}
+          >
             {t('overrides.save')}
           </Button>
         </div>

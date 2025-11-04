@@ -23,6 +23,7 @@ import { useRouter } from 'next/navigation';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
+import { EmojiText } from './ui/emoji';
 
 // 定义类型
 type ProxyNode = {
@@ -201,19 +202,7 @@ export default function ProxyNodes() {
       return 'single';
     }
   });
-  const [sortMode, setSortMode] = useState<'default' | 'latency'>(() => {
-    // 检查是否在浏览器环境
-    if (typeof window === 'undefined') {
-      return 'default';
-    }
-
-    try {
-      const saved = localStorage.getItem('nodesSortMode');
-      return (saved === 'latency' ? 'latency' : 'default') as 'default' | 'latency';
-    } catch {
-      return 'default';
-    }
-  });
+  const [sortMode, setSortMode] = useState<'default' | 'latency'>('default');
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const router = useRouter();
   let mihomoAPI = useMihomoAPI();
@@ -241,6 +230,21 @@ export default function ProxyNodes() {
     };
 
     loadLayoutPreference();
+
+    // 加载排序模式设置
+    const loadSortModePreference = async () => {
+      try {
+        const result = await window.electronAPI.getSetting('nodesSortMode');
+        if (!cancelled && result?.success && result?.value) {
+          const value = result.value === 'latency' ? 'latency' : 'default';
+          setSortMode(value);
+        }
+      } catch (error) {
+        console.error('加载排序模式设置失败:', error);
+      }
+    };
+
+    loadSortModePreference();
 
     return () => {
       cancelled = true;
@@ -1068,13 +1072,13 @@ export default function ProxyNodes() {
     const totalLength = nodes.reduce((sum, node) => sum + node.name.length, 0);
     const averageLength = totalLength / nodes.length;
 
-    // 双列模式下减少列数
+    // 双列模式下减少列数，但不强制单列 - 让卡片更宽以适应长名称
     if (isDoubleLayout) {
-      if (averageLength > 25) return 1; // 超长节点名
-      if (averageLength > 20) return 2; // 长节点名
-      if (averageLength > 15) return 2; // 中等长度节点名
-      if (averageLength > 10) return 3; // 短节点名
-      return 3; // 很短的节点名
+      if (averageLength > 30) return 1; // 极长节点名才使用单列
+      if (averageLength > 20) return 2; // 长节点名使用双列
+      if (averageLength > 15) return 2; // 中等长度节点名使用双列
+      if (averageLength > 10) return 3; // 短节点名使用三列
+      return 3; // 很短的节点名使用三列
     }
 
     // 单列模式保持原有逻辑
@@ -1152,9 +1156,10 @@ export default function ProxyNodes() {
                 className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate max-w-[85%] group"
                 title={node.name}
               >
-                <span className="truncate inline-block w-full group-hover:whitespace-normal group-hover:break-words">
-                  {node.name}
-                </span>
+                <EmojiText
+                  text={node.name}
+                  className="truncate inline-block w-full group-hover:whitespace-normal group-hover:break-words"
+                />
               </h3>
               <div className="flex space-x-1 shrink-0">
                 <button
@@ -1219,6 +1224,7 @@ export default function ProxyNodes() {
               {({ width }: { height: number, width: number }) => {
                 // 计算每个单元格的宽度和高度
                 const columnCount = Math.min(optimalColumns, 6);
+
                 const columnWidth = width / columnCount;
                 const rowCount = Math.ceil(group.nodes.length / columnCount);
                 // 卡片固定高度
@@ -1263,38 +1269,41 @@ export default function ProxyNodes() {
       // 对于少量节点使用传统的网格布局
       let gridClass = "";
 
-      // 双列布局模式下使用更少的列数
+      // 双列布局模式下使用更少的列数，让卡片更宽以容纳长名称
       if (layoutMode === 'double') {
         switch(optimalColumns) {
           case 1:
+            // 极长节点名：所有断点都是单列
             gridClass = "grid grid-cols-1 gap-2 mt-3";
             break;
           case 2:
-            gridClass = "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
+            // 长节点名：大屏幕才显示双列，让每个卡片有足够宽度
+            gridClass = "grid grid-cols-1 xl:grid-cols-2 gap-2 mt-3";
             break;
           case 3:
           default:
-            gridClass = "grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-2 mt-3";
+            // 中短节点名：根据屏幕宽度自适应1-3列
+            gridClass = "grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-2 mt-3";
             break;
         }
       } else {
-        // 单列布局模式保持原有逻辑
+        // 单列布局模式 - 减少列数让卡片更宽
         switch(optimalColumns) {
           case 2:
-            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-2 mt-3";
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3";
             break;
           case 3:
-            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2 mt-3";
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 mt-3";
             break;
           case 4:
-            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2 mt-3";
             break;
           case 5:
-            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mt-3";
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
             break;
           case 6:
           default:
-            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2 mt-3";
+            gridClass = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-2 mt-3";
             break;
         }
       }
@@ -1785,9 +1794,12 @@ export default function ProxyNodes() {
                         </button>
                         <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             setSortMode('default');
                             try {
+                              if (window.electronAPI?.saveSetting) {
+                                await window.electronAPI.saveSetting('nodesSortMode', 'default');
+                              }
                               localStorage.setItem('nodesSortMode', 'default');
                             } catch (error) {
                               console.error('保存排序模式失败:', error);
@@ -1804,9 +1816,12 @@ export default function ProxyNodes() {
                           <span>{t('nodes.defaultSort')}</span>
                         </button>
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             setSortMode('latency');
                             try {
+                              if (window.electronAPI?.saveSetting) {
+                                await window.electronAPI.saveSetting('nodesSortMode', 'latency');
+                              }
                               localStorage.setItem('nodesSortMode', 'latency');
                             } catch (error) {
                               console.error('保存排序模式失败:', error);

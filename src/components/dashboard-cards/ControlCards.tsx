@@ -107,7 +107,7 @@ export function ProxyModeCard({ mode, updating, onModeSwitch }: ProxyModeCardPro
           {t('dashboard.proxyMode')}
         </p>
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/20 dark:text-blue-100">
+          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary dark:bg-primary/20">
             {mode ? MODE_LABELS[mode] : t('dashboard.loading')}
           </span>
         </div>
@@ -123,10 +123,10 @@ export function ProxyModeCard({ mode, updating, onModeSwitch }: ProxyModeCardPro
               onClick={() => onModeSwitch(option.key)}
               disabled={updating || isActive}
               className={cn(
-                'flex h-11 w-full flex-1 items-center justify-center rounded-xl border text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 bg-white dark:bg-[#222222]',
+                'flex h-11 w-full flex-1 items-center justify-center rounded-xl border text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 bg-white dark:bg-[#222222]',
                 isActive
-                  ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-100'
-                  : 'border-slate-200 text-slate-700 hover:border-blue-300 hover:bg-blue-50/40 dark:border-slate-700 dark:text-slate-200 dark:hover:border-blue-400/60 dark:hover:bg-blue-500/10',
+                  ? 'border-primary text-primary'
+                  : 'border-slate-200 text-slate-700 hover:border-primary/40 hover:bg-primary/5 dark:border-slate-700 dark:text-slate-200 dark:hover:border-primary/60 dark:hover:bg-primary/10',
               )}
             >
               <option.Icon className="h-6 w-6" />

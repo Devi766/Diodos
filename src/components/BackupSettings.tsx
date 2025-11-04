@@ -430,14 +430,14 @@ export default function BackupSettings() {
 
         {/* WebDAV设置 */}
         {showWebDAVSettings && (
-          <div className="space-y-3 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-md">
+          <div className="space-y-3 mb-4 p-3 bg-gray-50 dark:bg-[#1a1a1a] rounded-md">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
                 {t('backup.webdavUri')}
               </label>
               <input
                 type="text"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="https://dav.example.com"
                 value={webdavConfig.uri}
                 onChange={(e) => setWebdavConfig({ ...webdavConfig, uri: e.target.value })}
@@ -453,7 +453,7 @@ export default function BackupSettings() {
                 </label>
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   value={webdavConfig.username}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, username: e.target.value })}
                   autoComplete="off"
@@ -467,7 +467,7 @@ export default function BackupSettings() {
                 </label>
                 <input
                   type="password"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   value={webdavConfig.password}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, password: e.target.value })}
                   autoComplete="off"
@@ -482,7 +482,7 @@ export default function BackupSettings() {
                 </label>
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="FlyClash"
                   value={webdavConfig.backupDirectory}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, backupDirectory: e.target.value })}
@@ -497,7 +497,7 @@ export default function BackupSettings() {
                 </label>
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="flyclash_backup.zip"
                   value={webdavConfig.fileName}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, fileName: e.target.value })}
@@ -535,7 +535,7 @@ export default function BackupSettings() {
         {/* 进度条 */}
         {backupProgress > 0 && (
           <div className="mb-4">
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+            <div className="w-full bg-gray-200 dark:bg-[#3a3a3a] rounded-full h-2">
               <div
                 className="bg-blue-500 h-2 rounded-full transition-all"
                 style={{ width: `${backupProgress}%` }}
@@ -587,7 +587,7 @@ export default function BackupSettings() {
 
         {/* 备份列表 */}
         {showBackupList && (
-          <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-md">
+          <div className="mt-4 p-3 bg-gray-50 dark:bg-[#1a1a1a] rounded-md">
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-200">
                 {t('backup.backupList')}
@@ -617,7 +617,7 @@ export default function BackupSettings() {
                 {backupList.map((backup) => (
                   <div
                     key={backup.name}
-                    className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-600"
+                    className="flex items-center justify-between p-3 bg-white dark:bg-[#2a2a2a] rounded border border-gray-200 dark:border-gray-700"
                   >
                     <div className="flex-1">
                       <p className="text-sm font-medium text-gray-700 dark:text-gray-200">

@@ -570,33 +570,41 @@ export default function SubscriptionManager() {
     
     try {
       const configData = await window.electronAPI.fetchSubscription(subUrl);
-      console.log('获取订阅内容结果:', configData ? '成功' : '失败');
-      
-      if (configData) {
+      console.log('获取订阅内容结果:', configData);
+
+      // 检查是否成功获取订阅内容
+      if (configData && configData.success && configData.content) {
         const customName = subName.trim() || '';
         console.log('准备保存订阅 - URL:', subUrl);
         console.log('准备保存订阅 - 自定义名称:', customName);
         console.log('准备保存订阅 - 流量信息:', configData.subscriptionInfo);
-        
+
         // 确保传递订阅信息
         const filePath = await window.electronAPI.saveSubscription(
-          subUrl, 
-          configData.content, 
-          customName, 
+          subUrl,
+          configData.content,
+          customName,
           configData.subscriptionInfo
         );
-        
-        console.log('订阅保存成功，文件路径:', filePath);
-        showToast('成功', '订阅添加成功', 'success');
-        setSubUrl('');
-        setSubName('');
-        setIsDialogOpen(false);
-        
-        // 立即重新加载订阅列表以显示最新信息（包括流量信息）
-        await loadSubscriptions();
+
+        // 检查保存是否成功
+        if (filePath) {
+          console.log('订阅保存成功，文件路径:', filePath);
+          showToast('成功', '订阅添加成功', 'success');
+          setSubUrl('');
+          setSubName('');
+          setIsDialogOpen(false);
+
+          // 立即重新加载订阅列表以显示最新信息（包括流量信息）
+          await loadSubscriptions();
+        } else {
+          console.error('保存订阅失败，返回值为空');
+          showToast('错误', '保存订阅失败', 'error');
+        }
       } else {
-        console.error('获取订阅内容失败');
-        showToast('错误', '获取订阅内容失败', 'error');
+        const errorMsg = configData?.error || '获取订阅内容失败';
+        console.error('获取订阅内容失败:', errorMsg);
+        showToast('错误', errorMsg, 'error');
       }
     } catch (error) {
       console.error('添加订阅失败:', error);
@@ -626,12 +634,12 @@ export default function SubscriptionManager() {
   
   const refreshSubscription = async (filePath: string) => {
     if (!window.electronAPI) return;
-    
+
     setUpdatingSubPath(filePath);
-    
+
     try {
       const result = await window.electronAPI.refreshSubscription(filePath);
-      
+
       if (result && result.success) {
         showToast('成功', '订阅更新成功', 'success');
         await loadSubscriptions();
@@ -643,6 +651,50 @@ export default function SubscriptionManager() {
       showToast('错误', `更新订阅失败: ${error}`, 'error');
     } finally {
       setUpdatingSubPath(null);
+    }
+  };
+
+  // 批量更新所有订阅
+  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const updateAllSubscriptions = async () => {
+    if (!window.electronAPI) return;
+
+    // 过滤出有URL的订阅(远程订阅)
+    const remoteSubscriptions = subscriptions.filter(sub => sub.url);
+
+    if (remoteSubscriptions.length === 0) {
+      showToast('提示', '没有可更新的远程订阅', 'error');
+      return;
+    }
+
+    setIsUpdatingAll(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const sub of remoteSubscriptions) {
+      try {
+        const result = await window.electronAPI.refreshSubscription(sub.path);
+        if (result && result.success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (error) {
+        console.error(`更新订阅 ${sub.name} 失败:`, error);
+        failCount++;
+      }
+    }
+
+    setIsUpdatingAll(false);
+    await loadSubscriptions();
+
+    // 显示更新结果
+    if (failCount === 0) {
+      showToast('成功', `所有订阅更新成功 (${successCount}个)`, 'success');
+    } else if (successCount === 0) {
+      showToast('错误', `所有订阅更新失败 (${failCount}个)`, 'error');
+    } else {
+      showToast('完成', `更新完成: 成功${successCount}个, 失败${failCount}个`, 'success');
     }
   };
 
@@ -973,6 +1025,20 @@ export default function SubscriptionManager() {
             <p className="text-sm text-muted-foreground">{t('subscriptions.dragToImport')}</p>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* 批量更新按钮 */}
+              {subscriptions.some(sub => sub.url) && (
+                <button
+                  type="button"
+                  onClick={updateAllSubscriptions}
+                  disabled={isUpdatingAll}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={t('subscriptions.updateAll')}
+                >
+                  <ReloadIcon className={`h-5 w-5 ${isUpdatingAll ? 'animate-spin' : ''}`} />
+                  <span className="sr-only">{t('subscriptions.updateAll')}</span>
+                </button>
+              )}
+
               <Link
                 href="/providers"
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
@@ -1424,26 +1490,53 @@ export default function SubscriptionManager() {
         </div>
         
         <Toast.Root
-          open={toastOpen} 
+          open={toastOpen}
           onOpenChange={setToastOpen}
-          className={`fixed bottom-4 right-4 p-4 rounded-md shadow-md ${
-            toastType === 'success' 
-              ? 'bg-green-500 text-white' 
-              : 'bg-red-500 text-white'
-          }`}
+          duration={3000}
+          className="fixed bottom-6 right-6 w-80 rounded-2xl shadow-lg backdrop-blur-sm z-[9999] transition-all bg-white/95 dark:bg-[#2a2a2a]/95"
         >
-          <Toast.Title className="font-medium">{toastTitle}</Toast.Title>
-          <Toast.Description>{toastDescription}</Toast.Description>
-          <Toast.Close asChild>
-            <button 
-              className="absolute top-2 right-2 text-white" 
-              aria-label="Close"
-            >
-              <Cross2Icon />
-            </button>
-          </Toast.Close>
+          <div className="p-4">
+            <div className="flex items-start gap-3">
+              {/* 图标 */}
+              <div className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+                toastType === 'success'
+                  ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                  : 'bg-red-500/10 text-red-600 dark:text-red-400'
+              }`}>
+                {toastType === 'success' ? (
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                ) : (
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </div>
+
+              {/* 内容 */}
+              <div className="flex-1 min-w-0">
+                <Toast.Title className="text-sm font-semibold text-foreground mb-1">
+                  {toastTitle}
+                </Toast.Title>
+                <Toast.Description className="text-xs text-muted-foreground">
+                  {toastDescription}
+                </Toast.Description>
+              </div>
+
+              {/* 关闭按钮 */}
+              <Toast.Close asChild>
+                <button
+                  className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Close"
+                >
+                  <Cross2Icon className="w-4 h-4" />
+                </button>
+              </Toast.Close>
+            </div>
+          </div>
         </Toast.Root>
-        
+
         <Toast.Viewport />
       </Toast.Provider>
 

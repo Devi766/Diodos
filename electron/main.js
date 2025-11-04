@@ -96,6 +96,25 @@ if (!migrationManager.isMigrated()) {
   console.log('[启动] 数据已迁移,跳过迁移步骤');
 }
 
+// 性能优化和字体渲染: 启用GPU加速、DirectWrite和Emoji支持
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('disable-gpu-driver-bug-workarounds');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+// 启用 DirectWrite 字体渲染 (Windows) 用于更好的字体渲染和 emoji 支持
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('enable-features', 'DirectWriteFontCache,PlatformHEVCDecoderSupport');
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  // Windows 强制使用 DirectWrite 渲染以支持彩色 emoji
+  app.commandLine.appendSwitch('enable-color-emoji');
+  app.commandLine.appendSwitch('disable-features', 'FontCacheScaling');
+} else if (process.platform === 'darwin') {
+  // macOS 启用 Core Text 字体渲染以支持 emoji
+  app.commandLine.appendSwitch('enable-features', 'CoreTextFontCache');
+}
+// 禁用硬件媒体键处理以避免性能问题
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
+
 let cachedFetchFn = null;
 
 async function resolveFetchFn() {
@@ -826,6 +845,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webgl: true,
+      enableWebSQL: false,
+      backgroundThrottling: false,
     },
     show: false,
     frame: false,
@@ -1778,6 +1800,16 @@ if (process.platform === 'win32' && !isDev) {
 
 // 应用启动时执行
 app.whenReady().then(() => {
+  // 配置 session 以支持 emoji 字体渲染
+  const { session } = require('electron');
+  session.defaultSession.setSpellCheckerEnabled(false);
+
+  // 设置字体渲染选项
+  if (process.platform === 'win32') {
+    // Windows: 确保使用 Segoe UI Emoji 渲染国旗emoji
+    app.commandLine.appendSwitch('font-render-hinting', 'full');
+  }
+
   // 注册协议处理器
   if (process.platform === 'win32') {
     app.setAsDefaultProtocolClient('clash');
