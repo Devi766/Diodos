@@ -178,13 +178,14 @@ module.exports = function initTunManager(context) {
   }
 
   async function setSystemDns(dns) {
-    if (!isMac) return;
+    if (!isMac) return { success: false, reason: 'not_mac' };
     const service = getActiveNetworkService();
-    if (!service) return;
+    if (!service) return { success: false, reason: 'no_service' };
 
     const userDataPath = context.get('userDataPath');
     const dnsBackupFile = path.join(userDataPath, '.original_dns.txt');
 
+    // 备份当前 DNS
     try {
       const current = execSync(`networksetup -getdnsservers "${service}"`, { encoding: 'utf8' }).trim();
       if (current && !current.includes('error') && current !== dns) {
@@ -192,6 +193,8 @@ module.exports = function initTunManager(context) {
       }
     } catch {}
 
+    // 只通过 service 设置 DNS（无需密码）
+    // 如果 service 不可用，则依赖 TUN 的 DNS 劫持，不弹密码框
     try {
       const serviceManager = context.serviceManager;
       const useService = serviceManager && await serviceManager.isServiceRunning();
@@ -199,55 +202,62 @@ module.exports = function initTunManager(context) {
       if (useService) {
         const result = await serviceManager.setSystemDns(service, dns);
         if (result.success) {
-          return;
+          console.log('[TunManager] System DNS set via service (no password needed)');
+          return { success: true, via: 'service' };
         }
-        console.warn('[TunManager] Service setDns failed, falling back to osascript');
+        console.warn('[TunManager] Service setDns failed, will rely on DNS hijacking');
+        return { success: false, reason: 'service_failed', fallback: 'dns_hijack' };
       }
 
-      const escapedService = service.replace(/"/g, '\\"');
-      const script = `do shell script "networksetup -setdnsservers \\"${escapedService}\\" ${dns}" with administrator privileges`;
-      await execFilePromise('osascript', ['-e', script]);
+      // Service 不可用，不弹密码框，依赖 TUN 的 DNS 劫持
+      console.log('[TunManager] Service not running, relying on TUN DNS hijacking (no password needed)');
+      return { success: false, reason: 'no_service', fallback: 'dns_hijack' };
     } catch (e) {
       console.error('[TunManager] Failed to set DNS:', e);
+      return { success: false, reason: 'error', error: e.message };
     }
   }
 
   async function restoreSystemDns() {
-    if (!isMac) return;
+    if (!isMac) return { success: false, reason: 'not_mac' };
     const service = getActiveNetworkService();
-    if (!service) return;
+    if (!service) return { success: false, reason: 'no_service' };
 
     const userDataPath = context.get('userDataPath');
     const dnsBackupFile = path.join(userDataPath, '.original_dns.txt');
 
-    if (fs.existsSync(dnsBackupFile)) {
-      try {
-        const original = fs.readFileSync(dnsBackupFile, 'utf8').trim();
-        const serviceManager = context.serviceManager;
-        const useService = serviceManager && await serviceManager.isServiceRunning();
+    if (!fs.existsSync(dnsBackupFile)) {
+      console.log('[TunManager] No DNS backup file, nothing to restore');
+      return { success: false, reason: 'no_backup' };
+    }
 
-        if (useService) {
-          const dns = original || 'empty';
-          const result = await serviceManager.setSystemDns(service, dns);
-          if (result.success) {
-            fs.unlinkSync(dnsBackupFile);
-            return;
-          }
-          console.warn('[TunManager] Service restore DNS failed, falling back to osascript');
-        }
+    try {
+      const original = fs.readFileSync(dnsBackupFile, 'utf8').trim();
+      const serviceManager = context.serviceManager;
+      const useService = serviceManager && await serviceManager.isServiceRunning();
 
-        const escapedService = service.replace(/"/g, '\\"');
-        let script;
-        if (original) {
-          script = `do shell script "networksetup -setdnsservers \\"${escapedService}\\" ${original}" with administrator privileges`;
-        } else {
-          script = `do shell script "networksetup -setdnsservers \\"${escapedService}\\" empty" with administrator privileges`;
+      if (useService) {
+        const dns = original || 'empty';
+        const result = await serviceManager.setSystemDns(service, dns);
+        if (result.success) {
+          fs.unlinkSync(dnsBackupFile);
+          console.log('[TunManager] System DNS restored via service (no password needed)');
+          return { success: true, via: 'service' };
         }
-        await execFilePromise('osascript', ['-e', script]);
-        fs.unlinkSync(dnsBackupFile);
-      } catch (e) {
-        console.error('[TunManager] Failed to restore DNS:', e);
+        console.warn('[TunManager] Service restore DNS failed');
       }
+
+      // Service 不可用，不弹密码框
+      // DNS 会在用户重启系统或手动修改后自动恢复
+      console.log('[TunManager] Service not running, DNS will restore naturally (no password needed)');
+      // 删除备份文件，避免下次误恢复
+      try {
+        fs.unlinkSync(dnsBackupFile);
+      } catch {}
+      return { success: false, reason: 'no_service', note: 'dns_will_restore_naturally' };
+    } catch (e) {
+      console.error('[TunManager] Failed to restore DNS:', e);
+      return { success: false, reason: 'error', error: e.message };
     }
   }
 
@@ -572,13 +582,39 @@ module.exports = function initTunManager(context) {
           console.log('[TunManager] Windows detected, skipping authorization probe');
         } else {
           console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
-          const kernelPath = getKernelPath();
-          const probe = await probeAuthorization(kernelPath);
-          console.log('[TunManager] Authorization probe result:', { ok: probe.ok, issues: probe.issues });
 
-          if (!probe.ok) {
-            console.warn('[TunManager] Missing permissions, cannot enable TUN');
-            return { success: false, error: '缺少必要权限，请先进行授权' };
+          // 首先检查系统内核是否已授权
+          const systemKernelPath = getSystemKernelPath();
+          let useSystemKernel = false;
+
+          if (fs.existsSync(systemKernelPath)) {
+            const systemProbe = await probeAuthorization(systemKernelPath);
+            console.log('[TunManager] System kernel authorization probe:', {
+              path: systemKernelPath,
+              ok: systemProbe.ok,
+              issues: systemProbe.issues
+            });
+
+            if (systemProbe.ok) {
+              useSystemKernel = true;
+              console.log('[TunManager] Will use authorized system kernel');
+            }
+          }
+
+          if (!useSystemKernel) {
+            // 系统内核不可用，检查当前内核
+            const kernelPath = getKernelPath();
+            const probe = await probeAuthorization(kernelPath);
+            console.log('[TunManager] Current kernel authorization probe:', {
+              path: kernelPath,
+              ok: probe.ok,
+              issues: probe.issues
+            });
+
+            if (!probe.ok) {
+              console.warn('[TunManager] Missing permissions, cannot enable TUN');
+              return { success: false, error: '缺少必要权限，请先进行授权' };
+            }
           }
 
           const syncResult = await autoSyncKernel();
@@ -650,6 +686,20 @@ module.exports = function initTunManager(context) {
 
       updateUserSettingsRaw(updatePayload);
 
+      // 关键修改：只在启用 TUN 时设置 tunModeEnabled = true
+      // 关闭 TUN 时不修改 tunModeEnabled，这样 mihomo 仍然使用已授权的系统内核
+      // tunModeEnabled 表示"是否已授权 TUN"，而 tun.enable 表示"是否当前启用 TUN"
+      if (enabled) {
+        if (context.setTunModeEnabled) {
+          context.setTunModeEnabled(true);
+          console.log('[TunManager] Set tunModeEnabled to true (授权状态)');
+        }
+        if (context.state) {
+          context.state.tunModeEnabled = true;
+        }
+      }
+      // 注意：关闭 TUN 时不修改 tunModeEnabled，保持授权状态
+
       // Restart kernel via service
       if (!context.state.mihomoProcess || !context.state.configFilePath) {
         // No process yet; reflect target state only
@@ -660,6 +710,15 @@ module.exports = function initTunManager(context) {
       if (!ok) {
         // rollback
         updateUserSettingsRaw({ tun: { enable: false } });
+        // 启动失败时才回滚 tunModeEnabled（只在本次是启用操作时）
+        if (enabled) {
+          if (context.setTunModeEnabled) {
+            context.setTunModeEnabled(false);
+          }
+          if (context.state) {
+            context.state.tunModeEnabled = false;
+          }
+        }
         return { success: false, error: '内核重启失败，请检查配置' };
       }
 
@@ -668,9 +727,39 @@ module.exports = function initTunManager(context) {
         const ready = await waitForTun(true, 6000);
         if (!ready) {
           updateUserSettingsRaw({ tun: { enable: false } });
+          // TUN 接口启动失败，回滚授权状态
+          if (context.setTunModeEnabled) {
+            context.setTunModeEnabled(false);
+          }
+          if (context.state) {
+            context.state.tunModeEnabled = false;
+          }
           return { success: false, error: 'TUN 模式启动失败，请重试' };
         }
+
+        // 尝试设置系统 DNS（仅通过 service，不弹密码框）
+        if (isMac) {
+          console.log('[TunManager] Attempting to set system DNS for TUN mode...');
+          const dnsResult = await setSystemDns('198.18.0.1');
+          if (dnsResult.success) {
+            console.log('[TunManager] ✓ System DNS set to 198.18.0.1 via service');
+          } else {
+            console.log('[TunManager] ℹ DNS not set via system (using TUN DNS hijacking):', dnsResult.reason);
+            // 这是正常的，TUN 的 DNS 劫持会处理所有 DNS 请求
+          }
+        }
       } else if (!enabled && !isWindows) {
+        // 禁用 TUN 时恢复原始 DNS（仅通过 service，不弹密码框）
+        if (isMac) {
+          console.log('[TunManager] Attempting to restore original system DNS...');
+          const restoreResult = await restoreSystemDns();
+          if (restoreResult.success) {
+            console.log('[TunManager] ✓ System DNS restored via service');
+          } else {
+            console.log('[TunManager] ℹ DNS not restored via service:', restoreResult.reason);
+            // DNS 会在用户下次手动修改或重启系统后自动恢复
+          }
+        }
         await waitForTun(false, 4000); // best effort
       }
 
@@ -682,29 +771,61 @@ module.exports = function initTunManager(context) {
 
   async function checkPermission() {
     try {
-      const kernelPath = getKernelPath();
-      console.log('[TunManager] Checking permission for:', kernelPath);
-
       if (isMac) {
-        // 使用 functional probe 来验证权限（更准确）
+        // 优先检查系统内核是否已授权
+        const systemKernelPath = getSystemKernelPath();
+        console.log('[TunManager] Checking permission...');
+        console.log('[TunManager] System kernel path:', systemKernelPath);
+
+        if (fs.existsSync(systemKernelPath)) {
+          const systemProbe = await probeAuthorization(systemKernelPath);
+          console.log('[TunManager] System kernel probe result:', {
+            path: systemKernelPath,
+            ok: systemProbe.ok,
+            issues: systemProbe.issues
+          });
+
+          if (systemProbe.ok) {
+            console.log('[TunManager] ✓ System kernel is authorized');
+            return {
+              success: true,
+              hasPermission: true,
+              details: { path: systemKernelPath, type: 'system' }
+            };
+          }
+        }
+
+        // 系统内核不可用，检查当前内核
+        const kernelPath = getKernelPath();
+        console.log('[TunManager] Checking current kernel:', kernelPath);
         const probe = await probeAuthorization(kernelPath);
-        console.log('[TunManager] Functional probe result:', {
+        console.log('[TunManager] Current kernel probe result:', {
           ok: probe.ok,
           issues: probe.issues
         });
-        return { success: true, hasPermission: probe.ok, details: { path: kernelPath } };
+
+        return {
+          success: true,
+          hasPermission: probe.ok,
+          details: { path: kernelPath, type: 'current' }
+        };
       }
+
       if (isLinux) {
+        const kernelPath = getKernelPath();
         let ok = false;
         try {
           const cap = execSync(`getcap "${kernelPath}" || true`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
           ok = /cap_net_admin/i.test(cap);
         } catch {}
+        const st = statInfo(kernelPath);
         if (!ok) ok = st.exists && st.uid === 0 && st.isSetuid;
         return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
       }
+
       return { success: false, hasPermission: false };
     } catch (e) {
+      console.error('[TunManager] checkPermission failed:', e);
       return { success: false, hasPermission: false, error: '权限检查失败' };
     }
   }
@@ -717,7 +838,9 @@ module.exports = function initTunManager(context) {
     checkPermission,
     isTunActive,
     checkKernelUpdate,
-    autoSyncKernel
+    autoSyncKernel,
+    setSystemDns,
+    restoreSystemDns
   };
 
   return context.tunManager;

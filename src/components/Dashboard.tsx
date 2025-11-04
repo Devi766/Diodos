@@ -1019,8 +1019,9 @@ export default function Dashboard() {
     }
 
     // 开启 TUN 模式
-    // Windows: 检查计划任务，需要显示对话框（因为需要重启应用）
+    // Windows: 检查计划任务，总是显示确认对话框（可能需要重启应用）
     if (electron?.checkElevateTask) {
+      console.log('[Dashboard] Windows platform detected, showing confirmation dialog');
       try {
         const hasTask = await electron.checkElevateTask();
         console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
@@ -1034,16 +1035,17 @@ export default function Dashboard() {
       return;
     }
 
-    // macOS/Linux: 直接处理授权和启用
+    // macOS/Linux: 检查权限后直接处理，不显示确认对话框
     if (electron?.checkCorePermission) {
+      console.log('[Dashboard] macOS/Linux platform detected, checking permission');
       try {
         const result = await electron.checkCorePermission();
-        console.log('[Dashboard] Unix checkCorePermission result:', result);
+        console.log('[Dashboard] checkCorePermission result:', result);
         const hasPermission = !!result?.hasPermission;
 
         if (!hasPermission) {
-          // 没有权限，直接弹出系统密码框授权
-          console.log('[Dashboard] No permission, requesting authorization...');
+          // 没有权限，直接弹出系统密码框授权（无自定义对话框）
+          console.log('[Dashboard] No permission, requesting authorization via system dialog...');
           showBanner({ type: 'info', message: '正在请求授权，请输入管理员密码...' });
 
           try {
@@ -1060,8 +1062,8 @@ export default function Dashboard() {
             showBanner({ type: 'error', message: '授权失败，请重试' });
           }
         } else {
-          // 已有权限，直接启用，不显示确认对话框
-          console.log('[Dashboard] Has permission, directly enabling TUN mode');
+          // 已有权限，直接启用 TUN，不显示任何对话框
+          console.log('[Dashboard] ✓ Has permission, directly enabling TUN mode (no dialog)');
           await runTunToggle(true);
         }
       } catch (error) {
@@ -1072,6 +1074,7 @@ export default function Dashboard() {
     }
 
     // 其他平台，直接启用
+    console.log('[Dashboard] Other platform, directly enabling TUN mode');
     await runTunToggle(true);
   };
 
