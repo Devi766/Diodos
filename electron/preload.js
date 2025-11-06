@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTheme: () => ipcRenderer.invoke('get-theme'),
   setAppearanceMode: (mode) => ipcRenderer.invoke('set-appearance-mode', mode),
   getAppearanceMode: () => ipcRenderer.invoke('get-appearance-mode'),
+  supportsAdvancedBackdrop: () => ipcRenderer.invoke('supports-advanced-backdrop'),
 
   // 自定义背景设置
   selectBackgroundImage: () => ipcRenderer.invoke('select-background-image'),

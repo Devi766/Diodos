@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn, execSync, exec } = require('child_process');
 const crypto = require('crypto');
 const isDev = process.env.NODE_ENV === 'development';
@@ -2068,6 +2069,54 @@ app.whenReady().then(() => {
       console.error('设置主题失败:', error);
       return { success: false, error: error.message };
     }
+  });
+
+  // 检测系统是否支持 Acrylic/Dynamic 效果
+  function supportsAdvancedBackdrop() {
+    // macOS 支持
+    if (process.platform === 'darwin') {
+      return true;
+    }
+
+    // Linux 不支持
+    if (process.platform === 'linux') {
+      return false;
+    }
+
+    // Windows: 只有 Windows 11 及以上版本支持
+    if (process.platform === 'win32') {
+      try {
+        const release = os.release();
+        const parts = release.split('.');
+        const major = parseInt(parts[0], 10);
+        const build = parseInt(parts[2], 10);
+
+        // Windows 11 的版本号是 10.0.22000 或更高
+        // major = 10, build >= 22000 表示 Windows 11
+        if (major === 10 && build >= 22000) {
+          return true;
+        }
+
+        // Windows 12 或更高版本（如果存在）
+        if (major > 10) {
+          return true;
+        }
+
+        return false;
+      } catch (error) {
+        console.error('检测 Windows 版本失败:', error);
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  ipcMain.handle('supports-advanced-backdrop', () => {
+    return {
+      success: true,
+      supported: supportsAdvancedBackdrop()
+    };
   });
 
   ipcMain.handle('get-appearance-mode', () => {

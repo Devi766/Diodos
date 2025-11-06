@@ -31,6 +31,7 @@ export default function Settings() {
   const [kernelPath, setKernelPath] = useState('');
   const [kernelIsDefault, setKernelIsDefault] = useState(true);
   const [kernelExists, setKernelExists] = useState(true);
+  const [supportsAdvancedBackdrop, setSupportsAdvancedBackdrop] = useState(true);
   const isFirstRender = useRef(true);
 
   // Refs for override settings components
@@ -85,9 +86,24 @@ export default function Settings() {
             setTheme(themeResult.theme);
           }
 
+          // 获取系统是否支持高级背景效果
+          const backdropSupport = await window.electronAPI.supportsAdvancedBackdrop?.();
+          const supportsAdvanced = backdropSupport?.success ? backdropSupport.supported : true;
+          setSupportsAdvancedBackdrop(supportsAdvanced);
+
           const appearanceResult = await window.electronAPI.getAppearanceMode?.();
           if (appearanceResult?.success && appearanceResult.mode) {
-            setAppearanceMode(appearanceResult.mode as 'acrylic' | 'dynamic' | 'solid');
+            let mode = appearanceResult.mode as 'acrylic' | 'dynamic' | 'solid' | 'custom';
+            // 如果系统不支持高级背景效果，且当前模式是 dynamic 或 acrylic，则改为 solid
+            if (!supportsAdvanced && (mode === 'dynamic' || mode === 'acrylic')) {
+              mode = 'solid';
+              // 保存新的默认值
+              await window.electronAPI.setAppearanceMode?.(mode);
+            }
+            setAppearanceMode(mode);
+          } else if (!supportsAdvanced) {
+            // 如果没有保存的外观模式且系统不支持高级背景，默认使用 solid
+            setAppearanceMode('solid');
           }
 
           // 获取应用版本号
@@ -776,18 +792,28 @@ export default function Settings() {
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.appearanceMode')}</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('settings.appearanceModeDesc')}</p>
                   <div className="flex flex-wrap gap-2">
-                    {/* macOS 只显示默认和纯色背景 */}
-                    {typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac') ? (
+                    {/* 如果系统支持高级背景效果，显示所有选项 */}
+                    {supportsAdvancedBackdrop ? (
                       <>
                         <button
                           className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                            appearanceMode === 'dynamic' || appearanceMode === 'acrylic'
+                            appearanceMode === 'dynamic'
                               ? 'bg-blue-500 text-white shadow-sm'
                               : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
                           }`}
                           onClick={() => handleAppearanceModeChange('dynamic')}
                         >
                           {t('settings.defaultMode')}
+                        </button>
+                        <button
+                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
+                            appearanceMode === 'acrylic'
+                              ? 'bg-blue-500 text-white shadow-sm'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                          }`}
+                          onClick={() => handleAppearanceModeChange('acrylic')}
+                        >
+                          {t('settings.dynamicBlur')}
                         </button>
                         <button
                           className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
@@ -812,26 +838,7 @@ export default function Settings() {
                       </>
                     ) : (
                       <>
-                        <button
-                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                            appearanceMode === 'dynamic'
-                              ? 'bg-blue-500 text-white shadow-sm'
-                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                          }`}
-                          onClick={() => handleAppearanceModeChange('dynamic')}
-                        >
-                          {t('settings.defaultMode')}
-                        </button>
-                        <button
-                          className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
-                            appearanceMode === 'acrylic'
-                              ? 'bg-blue-500 text-white shadow-sm'
-                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                          }`}
-                          onClick={() => handleAppearanceModeChange('acrylic')}
-                        >
-                          {t('settings.dynamicBlur')}
-                        </button>
+                        {/* 不支持高级背景效果的系统（Win11以下和Linux）只显示纯色和自定义背景 */}
                         <button
                           className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
                             appearanceMode === 'solid'

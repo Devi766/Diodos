@@ -130,6 +130,7 @@ export interface ElectronAPI {
   removeThemeListener: () => void;
   setAppearanceMode: (mode: 'acrylic' | 'dynamic' | 'solid' | 'custom') => Promise<{ success: boolean; mode?: string; error?: string }>;
   getAppearanceMode: () => Promise<{ success: boolean; mode: string; error?: string }>;
+  supportsAdvancedBackdrop: () => Promise<{ success: boolean; supported: boolean }>;
   onAppearanceModeChanged?: (callback: (mode: 'acrylic' | 'dynamic' | 'solid' | 'custom') => void) => (() => void);
 
   // 自定义背景设置

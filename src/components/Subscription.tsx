@@ -593,10 +593,9 @@ export default function SubscriptionManager() {
           showToast('成功', '订阅添加成功', 'success');
           setSubUrl('');
           setSubName('');
-          setIsDialogOpen(false);
 
-          // 立即重新加载订阅列表以显示最新信息（包括流量信息）
-          await loadSubscriptions();
+          // 在后台重新加载订阅列表以显示最新信息（包括流量信息）
+          loadSubscriptions();
         } else {
           console.error('保存订阅失败，返回值为空');
           showToast('错误', '保存订阅失败', 'error');
@@ -610,7 +609,9 @@ export default function SubscriptionManager() {
       console.error('添加订阅失败:', error);
       showToast('错误', `添加订阅失败: ${error}`, 'error');
     } finally {
+      // 确保在所有情况下都重置加载状态和关闭弹窗，让用户能看到 Toast 提示
       setIsLoading(false);
+      setIsDialogOpen(false);
     }
   };
 
