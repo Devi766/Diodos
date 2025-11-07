@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchConnectionsInfo: () => ipcRenderer.invoke('fetch-connections-info'),
   // 重启Mihomo服务（用于端口更改后）
   restartService: () => ipcRenderer.invoke('restart-service'),
+
+  // 轻量模式
+  enterLightweightMode: () => ipcRenderer.invoke('enter-lightweight-mode'),
   // 获取API配置信息
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   
@@ -99,6 +102,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 静默启动设置
   getSilentStart: () => ipcRenderer.invoke('get-silent-start'),
   setSilentStart: (enabled) => ipcRenderer.invoke('set-silent-start', enabled),
+
+  // 轻量模式设置
+  getLightweightModeSettings: () => ipcRenderer.invoke('get-lightweight-mode-settings'),
+  setLightweightModeSettings: (settings) => ipcRenderer.invoke('set-lightweight-mode-settings', settings),
 
   // 通用设置处理器
   getSetting: (key, defaultValue) => ipcRenderer.invoke('get-setting', key, defaultValue),

@@ -1438,6 +1438,184 @@ module.exports = function initMihomoService(context) {
     }
   }
 
+  // ==================== 轻量模式功能 ====================
+
+  /**
+   * 启动轻量模式 - 完全退出应用，只保留内核进程运行
+   * 跨平台支持: Windows, macOS, Linux
+   */
+  async function startLightweightMode() {
+    try {
+      console.log('[LightweightMode] 开始进入轻量模式...');
+      console.log('[LightweightMode] 平台:', process.platform);
+
+      const binPath = findMihomoExecutable();
+      if (!binPath) {
+        throw new Error('无法找到 Mihomo 内核');
+      }
+
+      const configPath = state.configFilePath;
+      if (!configPath || !fs.existsSync(configPath)) {
+        throw new Error('配置文件不存在');
+      }
+
+      // 停止当前的 mihomo 进程（如果有）
+      if (state.mihomoProcess) {
+        console.log('[LightweightMode] 停止当前内核进程...');
+        state.mihomoProcess.kill();
+        state.mihomoProcess = null;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      const mihomoDir = path.join(userDataPath, 'mihomo');
+      const pidFilePath = path.join(userDataPath, 'mihomo.pid');
+
+      // 使用 detached 模式启动内核进程，使其独立于主进程
+      console.log('[LightweightMode] 启动独立内核进程...');
+      console.log('[LightweightMode] 内核路径:', binPath);
+      console.log('[LightweightMode] 配置文件:', configPath);
+
+      const controllerParam = getMihomoControllerParam();
+      const controllerArg = getMihomoControllerArg();
+
+      const detachedProcess = spawn(binPath, [
+        '-d', mihomoDir,
+        '-f', configPath,
+        controllerParam, controllerArg
+      ], {
+        cwd: mihomoDir,
+        env: {
+          ...process.env,
+          MIHOMO_HOME_DIR: mihomoDir,
+          MIHOMO_CORE_PATH: mihomoDir
+        },
+        detached: true,  // 关键：使进程独立运行
+        stdio: 'ignore',  // 忽略 stdio，避免管道依赖
+        windowsHide: process.platform === 'win32'  // Windows 下隐藏窗口
+      });
+
+      // 解除父进程对子进程的引用，使其真正独立
+      detachedProcess.unref();
+
+      // 保存 PID 到文件
+      if (detachedProcess.pid) {
+        fs.writeFileSync(pidFilePath, detachedProcess.pid.toString(), 'utf8');
+        console.log('[LightweightMode] 内核进程已启动，PID:', detachedProcess.pid);
+        console.log('[LightweightMode] PID 已保存到:', pidFilePath);
+      } else {
+        throw new Error('无法获取内核进程 PID');
+      }
+
+      console.log('[LightweightMode] 轻量模式启动成功，主进程即将退出');
+      return true;
+
+    } catch (error) {
+      console.error('[LightweightMode] 启动轻量模式失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 检查并清理遗留的轻量模式进程
+   * 在应用启动时调用，杀掉之前轻量模式留下的内核进程
+   */
+  async function cleanupLightweightProcess() {
+    try {
+      const pidFilePath = path.join(userDataPath, 'mihomo.pid');
+
+      if (!fs.existsSync(pidFilePath)) {
+        console.log('[LightweightMode] 没有遗留的 PID 文件');
+        return;
+      }
+
+      const pidStr = fs.readFileSync(pidFilePath, 'utf8').trim();
+      const pid = parseInt(pidStr, 10);
+
+      if (isNaN(pid)) {
+        console.warn('[LightweightMode] PID 文件内容无效:', pidStr);
+        fs.unlinkSync(pidFilePath);
+        return;
+      }
+
+      console.log('[LightweightMode] 发现遗留的内核进程，PID:', pid);
+
+      // 跨平台进程检查和终止
+      if (await isProcessRunning(pid)) {
+        console.log('[LightweightMode] 终止遗留的内核进程...');
+        await killProcess(pid);
+        console.log('[LightweightMode] 遗留进程已终止');
+      } else {
+        console.log('[LightweightMode] 进程已不存在');
+      }
+
+      // 删除 PID 文件
+      fs.unlinkSync(pidFilePath);
+      console.log('[LightweightMode] PID 文件已清理');
+
+    } catch (error) {
+      console.error('[LightweightMode] 清理遗留进程失败:', error);
+      // 不抛出错误，继续启动应用
+    }
+  }
+
+  /**
+   * 跨平台检查进程是否运行
+   */
+  async function isProcessRunning(pid) {
+    try {
+      if (process.platform === 'win32') {
+        // Windows: 使用 tasklist
+        const { exec } = require('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+
+        const { stdout } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH`);
+        return stdout.includes(pid.toString());
+      } else {
+        // Unix (macOS, Linux): 使用 kill -0 信号
+        process.kill(pid, 0);
+        return true;
+      }
+    } catch (error) {
+      // 进程不存在或无权限
+      return false;
+    }
+  }
+
+  /**
+   * 跨平台终止进程
+   */
+  async function killProcess(pid) {
+    try {
+      if (process.platform === 'win32') {
+        // Windows: 使用 taskkill
+        const { exec } = require('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+
+        await execAsync(`taskkill /PID ${pid} /F`);
+      } else {
+        // Unix (macOS, Linux): 使用 SIGTERM，然后 SIGKILL
+        try {
+          process.kill(pid, 'SIGTERM');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
+          // 检查是否还在运行
+          if (await isProcessRunning(pid)) {
+            process.kill(pid, 'SIGKILL');
+          }
+        } catch (error) {
+          // 进程可能已经终止
+        }
+      }
+    } catch (error) {
+      console.error('[LightweightMode] 终止进程失败:', error);
+      throw error;
+    }
+  }
+
+  // ==================== 轻量模式功能结束 ====================
+
   context.mihomoService = {
     findMihomoExecutable,
     ensureMihomoDataFiles,
@@ -1455,6 +1633,9 @@ module.exports = function initMihomoService(context) {
     getConfig,
     restartMihomoService,
     restartMihomo,
-    getKernelPath
+    getKernelPath,
+    // 轻量模式功能
+    startLightweightMode,
+    cleanupLightweightProcess
   };
 };

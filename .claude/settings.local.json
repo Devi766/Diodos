@@ -10,7 +10,11 @@
       "Bash(npm run electron:dev:*)",
       "Bash(tasklist:*)",
       "Bash(findstr:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path ''F:\\code\\FlyClash-PC'' -Force\")",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path ''F:\\code\\FlyClash-PC'' -Recurse -Include ''*.md'',''*.config.*'' -File 2>/dev/null | Select-Object -First 20\")",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path ''F:\\code\\FlyClash-PC\\.claude'' -Recurse -File | Select-Object -ExpandProperty FullName\")",
+      "Bash(powershell -NoProfile -Command:*)"
     ],
     "deny": [],
     "ask": []

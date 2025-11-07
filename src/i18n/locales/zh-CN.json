@@ -529,7 +529,15 @@
     "clashForWindows": "Clash for Windows",
     "mihomo": "Mihomo",
     "clashMetaDefault": "Clash Meta(默认)",
-    "chromeBrowser": "Chrome浏览器"
+    "chromeBrowser": "Chrome浏览器",
+    "lightweightMode": "轻量模式",
+    "autoEnterLightweightMode": "自动进入轻量模式",
+    "autoEnterLightweightModeDesc": "关闭窗口后指定时间自动进入轻量模式，只保留内核运行。",
+    "enterNow": "立即进入",
+    "lightweightModeDelay": "轻量模式延迟时间",
+    "lightweightModeDelayDesc": "关闭窗口后多长时间自动进入轻量模式（秒）",
+    "seconds": "秒",
+    "lightweightModeFailed": "进入轻量模式失败: {{error}}"
   },
   "toast": {
     "settingsSaved": "设置已保存",

@@ -137,7 +137,20 @@ module.exports = function initTrayManager(context) {
       // Windows/Linux: 左键点击显示/隐藏窗口
       state.tray.on('click', () => {
         if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-        state.mainWindow.isVisible() ? state.mainWindow.hide() : state.mainWindow.show();
+
+        if (state.mainWindow.isVisible()) {
+          state.mainWindow.hide();
+          // 窗口隐藏时，启动自动轻量模式定时器
+          if (context.lightweightModeManager) {
+            context.lightweightModeManager.startAutoLightweightTimer();
+          }
+        } else {
+          state.mainWindow.show();
+          // 窗口显示时，取消自动轻量模式定时器
+          if (context.lightweightModeManager) {
+            context.lightweightModeManager.cancelAutoLightweightTimer();
+          }
+        }
       });
     }
 
@@ -176,7 +189,18 @@ module.exports = function initTrayManager(context) {
       const proxyEnabled = state.systemProxyEnabled;
 
       const menuItems = [
-        { label: '显示主窗口', click: () => state.mainWindow && state.mainWindow.show() },
+        {
+          label: '显示主窗口',
+          click: () => {
+            if (state.mainWindow) {
+              state.mainWindow.show();
+              // 窗口显示时，取消自动轻量模式定时器
+              if (context.lightweightModeManager) {
+                context.lightweightModeManager.cancelAutoLightweightTimer();
+              }
+            }
+          }
+        },
         { type: 'separator' },
         { label: '启用系统代理', type: 'checkbox', checked: proxyEnabled, click: (menuItem) => context.toggleSystemProxy(menuItem) },
         { label: '启用TUN模式', type: 'checkbox', checked: state.tunModeEnabled, click: (menuItem) => context.toggleTunMode(menuItem) },
@@ -562,6 +586,19 @@ module.exports = function initTrayManager(context) {
         ...nodeMenuItems,
         { type: 'separator' },
         {
+          label: '轻量模式',
+          click: async () => {
+            try {
+              if (context.lightweightModeManager) {
+                await context.lightweightModeManager.enterLightweightMode();
+                setTimeout(() => app.exit(0), 500);
+              }
+            } catch (error) {
+              console.error('[托盘] 进入轻量模式失败:', error);
+            }
+          }
+        },
+        {
           label: '退出',
           click: () => {
             state.isQuitting = true;
@@ -581,7 +618,18 @@ module.exports = function initTrayManager(context) {
     } catch (error) {
       console.error('更新托盘菜单失败:', error);
       const basicMenu = Menu.buildFromTemplate([
-        { label: '显示主窗口', click: () => state.mainWindow?.show() },
+        {
+          label: '显示主窗口',
+          click: () => {
+            if (state.mainWindow) {
+              state.mainWindow.show();
+              // 窗口显示时，取消自动轻量模式定时器
+              if (context.lightweightModeManager) {
+                context.lightweightModeManager.cancelAutoLightweightTimer();
+              }
+            }
+          }
+        },
         { type: 'separator' },
         {
           label: '退出',

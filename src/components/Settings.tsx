@@ -19,6 +19,8 @@ export default function Settings() {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [autoCheckInitialized, setAutoCheckInitialized] = useState(false);
+  const [autoEnterLightweightMode, setAutoEnterLightweightMode] = useState(false);
+  const [lightweightModeDelay, setLightweightModeDelay] = useState(60);
   const [theme, setTheme] = useState('system');
   const [language, setLanguage] = useState(i18n.language || 'zh-CN');
   const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid' | 'custom'>('dynamic');
@@ -36,6 +38,7 @@ export default function Settings() {
   const [supportsAdvancedBackdrop, setSupportsAdvancedBackdrop] = useState(true);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const isFirstRender = useRef(true);
+  const dataLoaded = useRef(false);
 
   // Refs for override settings components
   const overrideSettingsRef = useRef<OverrideSettingsRef>(null);
@@ -123,6 +126,13 @@ export default function Settings() {
             setSilentStart(silentStartResult.silentStart);
           }
 
+          // 获取轻量模式设置
+          const lightweightModeResult = await window.electronAPI.getLightweightModeSettings();
+          if (lightweightModeResult.success && lightweightModeResult.settings) {
+            setAutoEnterLightweightMode(lightweightModeResult.settings.autoEnter);
+            setLightweightModeDelay(lightweightModeResult.settings.delay);
+          }
+
           // 获取订阅UA设置
           const userSettings = await window.electronAPI.getProxySettings();
           if (userSettings.success && userSettings.settings && userSettings.settings['subscription-ua']) {
@@ -136,7 +146,14 @@ export default function Settings() {
     }
   };
 
-    fetchData();
+    fetchData().then(() => {
+      // 数据加载完成后，标记为已加载
+      // 使用 setTimeout 确保所有状态更新完成
+      setTimeout(() => {
+        dataLoaded.current = true;
+        console.log('[Settings] 数据加载完成，现在可以保存用户修改');
+      }, 100);
+    });
 
     // 监听主题变更事件
     const handleThemeChanged = async (_event: any, newTheme: string) => {
@@ -284,13 +301,37 @@ export default function Settings() {
   }, [updateAutoLaunch]);
 
   useEffect(() => {
-    // 组件首次加载时不调用，只在状态变化时调用
-    if (isFirstRender.current) {
+    // 数据未加载完成时不保存
+    if (!dataLoaded.current) {
       return;
     }
 
     updateSilentStart();
   }, [updateSilentStart]);
+
+  // 监听轻量模式设置变化
+  useEffect(() => {
+    // 数据未加载完成时不保存
+    if (!dataLoaded.current) {
+      return;
+    }
+
+    const saveLightweightModeSettings = async () => {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        try {
+          await window.electronAPI.setLightweightModeSettings({
+            autoEnter: autoEnterLightweightMode,
+            delay: lightweightModeDelay
+          });
+          console.log('[Settings] 轻量模式设置已保存:', { autoEnter: autoEnterLightweightMode, delay: lightweightModeDelay });
+        } catch (error) {
+          console.error('[Settings] 保存轻量模式设置失败:', error);
+        }
+      }
+    };
+
+    saveLightweightModeSettings();
+  }, [autoEnterLightweightMode, lightweightModeDelay]);
 
   // 处理主题切换
   const handleThemeChange = async (newTheme: string) => {
@@ -833,6 +874,64 @@ export default function Settings() {
                     disabled={!autoCheckInitialized}
                     onCheckedChange={setAutoCheckUpdate}
                   />
+                </div>
+
+                {/* 轻量模式设置 */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('settings.autoEnterLightweightMode')}</h3>
+                        <button
+                          onClick={async () => {
+                            try {
+                              if (window.electronAPI?.enterLightweightMode) {
+                                const result = await window.electronAPI.enterLightweightMode();
+                                if (!result.success) {
+                                  showToast(
+                                    t('settings.lightweightMode'),
+                                    t('settings.lightweightModeFailed', { error: result.error || t('common.unknown') }),
+                                    'error'
+                                  );
+                                }
+                              }
+                            } catch (error) {
+                              console.error('进入轻量模式失败:', error);
+                            }
+                          }}
+                          className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50 transition-colors cursor-pointer"
+                        >
+                          {t('settings.enterNow')}
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-300 mt-1">
+                        {t('settings.autoEnterLightweightModeDesc')}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={autoEnterLightweightMode}
+                      onCheckedChange={setAutoEnterLightweightMode}
+                    />
+                  </div>
+
+                  {autoEnterLightweightMode && (
+                    <div className="mt-4">
+                      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.lightweightModeDelay')}</h3>
+                      <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.lightweightModeDelayDesc')}</p>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="number"
+                          min="10"
+                          max="600"
+                          step="10"
+                          value={lightweightModeDelay}
+                          onChange={(e) => setLightweightModeDelay(Math.max(10, Math.min(600, parseInt(e.target.value) || 60)))}
+                          className="w-24 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                        />
+                        <span className="text-sm text-gray-600 dark:text-gray-300">{t('settings.seconds')}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>

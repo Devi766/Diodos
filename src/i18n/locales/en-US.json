@@ -529,7 +529,15 @@
     "clashForWindows": "Clash for Windows",
     "mihomo": "Mihomo",
     "clashMetaDefault": "Clash Meta (Default)",
-    "chromeBrowser": "Chrome Browser"
+    "chromeBrowser": "Chrome Browser",
+    "lightweightMode": "Lightweight Mode",
+    "autoEnterLightweightMode": "Auto Enter Lightweight Mode",
+    "autoEnterLightweightModeDesc": "Automatically enter lightweight mode after closing the window for a specified time, keeping only the core running.",
+    "enterNow": "Enter Now",
+    "lightweightModeDelay": "Lightweight Mode Delay",
+    "lightweightModeDelayDesc": "Time to wait before automatically entering lightweight mode after closing the window (seconds)",
+    "seconds": "seconds",
+    "lightweightModeFailed": "Failed to enter lightweight mode: {{error}}"
   },
   "toast": {
     "settingsSaved": "Settings saved",

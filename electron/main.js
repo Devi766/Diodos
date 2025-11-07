@@ -574,6 +574,7 @@ require('./main-process/service-manager')(context);
 require('./main-process/tun-manager')(context);
 require('./main-process/system-integration')(context);
 require('./main-process/tray-manager')(context);
+require('./main-process/lightweight-mode-manager')(context);
 require('./ipc-handlers/subscriptions')(context);
 require('./ipc-handlers/providers')(context);
 
@@ -1126,11 +1127,21 @@ function createWindow() {
     if (!state.isQuitting) {
       event.preventDefault();
       state.mainWindow.hide();
+
+      // 窗口隐藏时，启动自动轻量模式定时器
+      if (context.lightweightModeManager) {
+        context.lightweightModeManager.startAutoLightweightTimer();
+      }
     }
   });
 
   state.mainWindow.on('show', () => {
     refreshWindowsBackdrop(state.mainWindow, 0);
+
+    // 窗口显示时，取消自动轻量模式定时器
+    if (context.lightweightModeManager) {
+      context.lightweightModeManager.cancelAutoLightweightTimer();
+    }
   });
 
   state.mainWindow.on('focus', () => {
@@ -1148,6 +1159,11 @@ function createWindow() {
     state.trafficStatsInterval = setInterval(() => {
       updateTrafficStats();
     }, 10000); // 每10秒更新一次
+
+    // 窗口最小化时，启动自动轻量模式定时器
+    if (context.lightweightModeManager) {
+      context.lightweightModeManager.startAutoLightweightTimer();
+    }
   });
 
   state.mainWindow.on('restore', () => {
@@ -1155,6 +1171,11 @@ function createWindow() {
     // 恢复正常更新频率
     stopTrafficStatsUpdate();
     startTrafficStatsUpdate();
+
+    // 窗口恢复时，取消自动轻量模式定时器
+    if (context.lightweightModeManager) {
+      context.lightweightModeManager.cancelAutoLightweightTimer();
+    }
   });
 }
 
@@ -1876,15 +1897,25 @@ if (process.platform === 'win32' && !isDev) {
 }
 
 // 应用启动时执行
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // 清理轻量模式遗留进程
+  if (context.lightweightModeManager) {
+    try {
+      await context.lightweightModeManager.cleanupLightweightProcess();
+      console.log('[启动] 轻量模式遗留进程清理完成');
+    } catch (error) {
+      console.error('[启动] 清理轻量模式遗留进程失败:', error);
+    }
+  }
+
   // 注册协议处理器
   if (process.platform === 'win32') {
     app.setAsDefaultProtocolClient('clash');
     app.setAsDefaultProtocolClient('flyclash');
-    
+
     console.log('已注册协议处理器: clash://, flyclash://');
     console.log('启动参数:', process.argv);
-    
+
     // 处理启动时传入的命令行参数
     const gotTheLock = app.requestSingleInstanceLock();
     if (!gotTheLock) {
@@ -1892,11 +1923,11 @@ app.whenReady().then(() => {
       app.quit();
       return;
     }
-    
+
     // 检查启动参数是否包含协议URL
     let foundProtocolArg = false;
     for (const arg of process.argv) {
-      if (arg.includes('clash://') || 
+      if (arg.includes('clash://') ||
           arg.includes('flyclash://') ||
           arg.includes('?url=')) {
         console.log('检测到可能的协议URL参数:', arg);
@@ -1904,12 +1935,12 @@ app.whenReady().then(() => {
         handleProtocolUrl(arg);
       }
     }
-    
+
     if (!foundProtocolArg) {
       console.log('启动参数中未找到协议URL');
     }
   }
-  
+
   createWindow();
   
   app.on('activate', function () {
