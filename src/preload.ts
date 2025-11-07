@@ -37,7 +37,7 @@ interface ElectronAPI {
   saveLogs: (logContent: string) => Promise<any>;
   
   // 外部资源相关
-  openExternal: (url: string) => Promise<any>;
+  openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openFile: (filePath: string) => Promise<any>;
   openFileLocation: (filePath: string) => Promise<any>;
   

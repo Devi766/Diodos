@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import classNames from 'classnames';
@@ -23,6 +23,24 @@ import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 import TitleBar from '@/components/TitleBar';
 import { showToast } from '@/components/ui/toast';
 import { useTranslation } from 'react-i18next';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import {
+  RELEASES_PAGE_URL,
+  ReleaseInfo,
+  fetchLatestRelease,
+  compareVersions,
+  UPDATE_AVAILABLE_EVENT,
+  UpdateEventDetail,
+} from '@/utils/update-check';
+
+declare global {
+  interface Window {
+    __flyclashPendingUpdate?: UpdateEventDetail;
+  }
+}
+
+let hasRunAutoUpdateCheck = false;
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -42,7 +60,14 @@ export default function Layout({ children }: LayoutProps) {
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('0.1.7');
+  const [pendingUpdate, setPendingUpdate] = useState<(ReleaseInfo & { currentVersion: string }) | null>(null);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const hasCheckedUpdatesRef = useRef(false);
   const { hasProviders } = useProviderAvailability();
+  const showUpdateDialog = useCallback((release: ReleaseInfo, currentVersion: string) => {
+    setPendingUpdate({ ...release, currentVersion });
+    setUpdateDialogOpen(true);
+  }, []);
 
   // 避免 SSR hydration 不匹配
   useEffect(() => {
@@ -150,6 +175,102 @@ export default function Layout({ children }: LayoutProps) {
 
     fetchVersion();
   }, []);
+
+  const handleOpenReleasePage = useCallback(async () => {
+    if (!pendingUpdate) return;
+    const targetUrl = pendingUpdate.url || RELEASES_PAGE_URL;
+
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.openExternal) {
+        await window.electronAPI.openExternal(targetUrl);
+      } else if (typeof window !== 'undefined') {
+        window.open(targetUrl, '_blank');
+      }
+    } catch (error) {
+      console.error('打开更新链接失败:', error);
+      if (typeof window !== 'undefined') {
+        window.open(targetUrl, '_blank');
+      }
+    }
+  }, [pendingUpdate]);
+
+  const releaseVersionLabel = pendingUpdate
+    ? pendingUpdate.displayVersion || `v${pendingUpdate.version}`
+    : '';
+
+  const releasePublishedAt = useMemo(() => {
+    if (!pendingUpdate?.publishedAt) return null;
+    try {
+      const date = new Date(pendingUpdate.publishedAt);
+      return Number.isNaN(date.getTime()) ? pendingUpdate.publishedAt : date.toLocaleString();
+    } catch {
+      return pendingUpdate.publishedAt;
+    }
+  }, [pendingUpdate?.publishedAt]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (hasCheckedUpdatesRef.current || hasRunAutoUpdateCheck) return;
+    hasCheckedUpdatesRef.current = true;
+    hasRunAutoUpdateCheck = true;
+
+    let canceled = false;
+
+    const autoCheckUpdates = async () => {
+      try {
+        const settingResult = await window.electronAPI?.getSetting?.('autoCheckUpdate', true);
+        const shouldCheck = settingResult === undefined ? true : settingResult.value !== false;
+        if (!shouldCheck) return;
+
+        const currentVersion = await window.electronAPI?.getAppVersion?.();
+        if (!currentVersion) return;
+
+        const { release: latestRelease, error: fetchError } = await fetchLatestRelease();
+        if (!latestRelease || canceled) {
+          if (fetchError) {
+            console.warn('[UpdateCheck] 自动检查更新失败:', fetchError);
+          }
+          return;
+        }
+
+        if (compareVersions(latestRelease.version, currentVersion) > 0) {
+          showUpdateDialog(latestRelease, currentVersion);
+        }
+      } catch (error) {
+        console.error('[UpdateCheck] 自动检查更新失败:', error);
+      }
+    };
+
+    autoCheckUpdates();
+
+    return () => {
+      canceled = true;
+    };
+  }, [showUpdateDialog]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<UpdateEventDetail>).detail;
+      if (detail?.release && detail?.currentVersion) {
+        showUpdateDialog(detail.release, detail.currentVersion);
+        window.__flyclashPendingUpdate = undefined;
+      }
+    };
+
+    window.addEventListener(UPDATE_AVAILABLE_EVENT, handler as EventListener);
+
+    const pending = window.__flyclashPendingUpdate;
+    if (pending?.release && pending?.currentVersion) {
+      showUpdateDialog(pending.release, pending.currentVersion);
+      window.__flyclashPendingUpdate = undefined;
+    }
+
+    return () => {
+      window.removeEventListener(UPDATE_AVAILABLE_EVENT, handler as EventListener);
+    };
+  }, [showUpdateDialog]);
 
   // 监听 Mihomo 启动失败事件
   useEffect(() => {
@@ -623,10 +744,11 @@ export default function Layout({ children }: LayoutProps) {
     pathname.startsWith('/proxy-icon-settings');
 
   return (
-    <div className="relative h-screen overflow-hidden bg-transparent">
-      <TitleBar />
+    <>
+      <div className="relative h-screen overflow-hidden bg-transparent">
+        <TitleBar />
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
+        <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
         {/* Sidebar - Desktop */}
         <aside
           className={classNames(
@@ -747,5 +869,57 @@ export default function Layout({ children }: LayoutProps) {
         </div>
       </div>
     </div>
+
+      {pendingUpdate && (
+        <Dialog open={updateDialogOpen} onOpenChange={setUpdateDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{t('settings.updateAvailableTitle')}</DialogTitle>
+              <DialogDescription>
+                {t('settings.updateAvailableDesc', {
+                  latest: releaseVersionLabel,
+                  current: pendingUpdate.currentVersion,
+                })}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {releasePublishedAt && (
+                <p className="text-xs text-muted-foreground">
+                  {t('settings.updatePublishedAt', { date: releasePublishedAt })}
+                </p>
+              )}
+
+              <div>
+                <h4 className="text-sm font-semibold text-foreground mb-2">
+                  {t('settings.updateChangelog')}
+                </h4>
+                <div className="max-h-72 overflow-y-auto rounded-2xl bg-muted/30 p-4 text-left text-sm whitespace-pre-wrap font-mono text-foreground/90">
+                  {pendingUpdate.body?.trim()
+                    ? pendingUpdate.body.trim()
+                    : t('settings.updateNoChangelog')}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setUpdateDialogOpen(false)}
+                className="border border-blue-200 text-blue-600 hover:bg-blue-50 dark:border-blue-400/50 dark:text-blue-300 dark:hover:bg-blue-500/10"
+              >
+                {t('settings.updateLater')}
+              </Button>
+              <Button
+                onClick={handleOpenReleasePage}
+                className="bg-blue-500 hover:bg-blue-600 text-white"
+              >
+                {t('settings.updateViewRelease')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }

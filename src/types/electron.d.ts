@@ -212,7 +212,7 @@ export interface ElectronAPI {
   minimizeWindow: () => Promise<{ success: boolean }>;
   maximizeWindow: () => Promise<{ success: boolean; maximized?: boolean }>;
   closeWindow: () => Promise<{ success: boolean }>;
-  openExternal: (url: string) => Promise<{ success: boolean }>;
+  openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openFile: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   openFileLocation: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   

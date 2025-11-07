@@ -601,3 +601,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 // ipcRenderer.on('connections-update', (event, data) => {
 //   event.sender.send('dashboard', { type: 'connections-update', data });
 // }); 
+
+const UPDATE_AVAILABLE_EVENT = 'flyclash-update-available';
+
+ipcRenderer.on('auto-update-available', (_event, payload) => {
+  try {
+    if (typeof window !== 'undefined') {
+      window.__flyclashPendingUpdate = payload;
+      window.dispatchEvent(new CustomEvent(UPDATE_AVAILABLE_EVENT, { detail: payload }));
+    }
+  } catch (error) {
+    console.error('[AutoUpdate] 派发更新事件失败:', error);
+  }
+});

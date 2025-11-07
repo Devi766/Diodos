@@ -10,6 +10,7 @@ import { Button } from './ui/button';
 import TunSettings from './TunSettings';
 import BackupSettings from './BackupSettings';
 import { useTranslation } from 'react-i18next';
+import { compareVersions, fetchLatestRelease, emitUpdateAvailableEvent } from '@/utils/update-check';
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
@@ -17,6 +18,7 @@ export default function Settings() {
   const [silentStart, setSilentStart] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
+  const [autoCheckInitialized, setAutoCheckInitialized] = useState(false);
   const [theme, setTheme] = useState('system');
   const [language, setLanguage] = useState(i18n.language || 'zh-CN');
   const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid' | 'custom'>('dynamic');
@@ -32,6 +34,7 @@ export default function Settings() {
   const [kernelIsDefault, setKernelIsDefault] = useState(true);
   const [kernelExists, setKernelExists] = useState(true);
   const [supportsAdvancedBackdrop, setSupportsAdvancedBackdrop] = useState(true);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const isFirstRender = useRef(true);
 
   // Refs for override settings components
@@ -42,7 +45,7 @@ export default function Settings() {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
-  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('success');
 
   const refreshKernelPath = useCallback(async () => {
     if (typeof window === 'undefined' || !window.electronAPI) {
@@ -217,6 +220,58 @@ export default function Settings() {
       }
     }
   }, [silentStart]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAutoCheckSetting = async () => {
+      if (typeof window === 'undefined' || !window.electronAPI?.getSetting) {
+        setAutoCheckInitialized(true);
+        return;
+      }
+
+      try {
+        const result = await window.electronAPI.getSetting('autoCheckUpdate', true);
+        if (!isMounted) return;
+        if (result.success) {
+          setAutoCheckUpdate(result.value !== false);
+        } else {
+          setAutoCheckUpdate(true);
+        }
+      } catch (error) {
+        console.error('加载自动检查更新设置失败:', error);
+        if (isMounted) {
+          setAutoCheckUpdate(true);
+        }
+      } finally {
+        if (isMounted) {
+          setAutoCheckInitialized(true);
+        }
+      }
+    };
+
+    loadAutoCheckSetting();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!autoCheckInitialized || typeof window === 'undefined' || !window.electronAPI?.setSetting) {
+      return;
+    }
+
+    const saveSetting = async () => {
+      try {
+        await window.electronAPI.setSetting('autoCheckUpdate', autoCheckUpdate);
+      } catch (error) {
+        console.error('保存自动检查更新设置失败:', error);
+      }
+    };
+
+    saveSetting();
+  }, [autoCheckInitialized, autoCheckUpdate]);
   
   useEffect(() => {
     // 组件首次加载时不调用，只在状态变化时调用
@@ -544,12 +599,87 @@ export default function Settings() {
   }, []);
 
   // 显示Toast提示
-  const showToast = (title: string, description: string, type: 'success' | 'error') => {
+  const showToast = (title: string, description: string, type: 'success' | 'error' | 'info') => {
     setToastTitle(title);
     setToastDescription(description);
     setToastType(type);
     setToastOpen(true);
   };
+
+  const handleManualUpdateCheck = async () => {
+    if (typeof window === 'undefined' || isCheckingUpdate) {
+      return;
+    }
+
+    try {
+      setIsCheckingUpdate(true);
+      const currentVersion = await window.electronAPI?.getAppVersion?.();
+
+      if (!currentVersion) {
+        showToast(t('settings.checkUpdate'), t('settings.updateCheckFailed', { error: t('common.unknown') }), 'error');
+        return;
+      }
+
+      const { release: latestRelease, error: fetchError } = await fetchLatestRelease();
+
+      if (!latestRelease) {
+        showToast(
+          t('settings.checkUpdate'),
+          t('settings.updateCheckNetworkErrorDetailed', { error: fetchError || t('common.unknown') }),
+          'error'
+        );
+        return;
+      }
+
+      if (compareVersions(latestRelease.version, currentVersion) > 0) {
+        emitUpdateAvailableEvent(latestRelease, currentVersion);
+      } else {
+        showToast(t('settings.checkUpdate'), t('settings.updateUpToDate'), 'info');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast(t('settings.checkUpdate'), t('settings.updateCheckFailed', { error: message }), 'error');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  const toastStatusMap = {
+    success: {
+      className: 'bg-green-500/10 text-green-600 dark:text-green-400',
+      icon: (
+        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+          <path
+            fillRule="evenodd"
+            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            clipRule="evenodd"
+          />
+        </svg>
+      ),
+    },
+    error: {
+      className: 'bg-red-500/10 text-red-600 dark:text-red-400',
+      icon: (
+        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+          <path
+            fillRule="evenodd"
+            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+            clipRule="evenodd"
+          />
+        </svg>
+      ),
+    },
+    info: {
+      className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+      icon: (
+        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 3a1.1 1.1 0 110 2.2A1.1 1.1 0 0110 5zm1 9H9V9h2v5z" />
+        </svg>
+      ),
+    },
+  } as const;
+
+  const currentToastStatus = toastStatusMap[toastType];
 
   const handleSelectKernel = async () => {
     if (typeof window === 'undefined' || !window.electronAPI) {
@@ -700,6 +830,7 @@ export default function Settings() {
                   </div>
                   <Switch
                     checked={autoCheckUpdate}
+                    disabled={!autoCheckInitialized}
                     onCheckedChange={setAutoCheckUpdate}
                   />
                 </div>
@@ -1096,7 +1227,7 @@ export default function Settings() {
                   </p>
                 </div>
                 
-                <div className="flex gap-4">
+                <div className="flex flex-wrap gap-3 w-full max-w-lg justify-center">
                   <a
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-gray-200 to-gray-300 hover:from-gray-300 hover:to-gray-400 dark:from-gray-700 dark:to-gray-800 dark:hover:from-gray-600 dark:hover:to-gray-700 text-gray-800 dark:text-gray-200 rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
                     href="https://t.me/flyclash"
@@ -1113,6 +1244,13 @@ export default function Settings() {
                   >
                     {t('settings.flyclashProject')}
                   </a>
+                  <Button
+                    onClick={handleManualUpdateCheck}
+                    disabled={isCheckingUpdate}
+                    className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:opacity-60 disabled:cursor-not-allowed text-sm font-medium"
+                  >
+                    {isCheckingUpdate ? t('settings.updateChecking') : t('settings.checkUpdate')}
+                  </Button>
                 </div>
               </div>
             </Tabs.Content>
@@ -1129,20 +1267,8 @@ export default function Settings() {
           <div className="p-4">
             <div className="flex items-start gap-3">
               {/* 图标 */}
-              <div className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
-                toastType === 'success'
-                  ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                  : 'bg-red-500/10 text-red-600 dark:text-red-400'
-              }`}>
-                {toastType === 'success' ? (
-                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                ) : (
-                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                  </svg>
-                )}
+              <div className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${currentToastStatus.className}`}>
+                {currentToastStatus.icon}
               </div>
 
               {/* 内容 */}
