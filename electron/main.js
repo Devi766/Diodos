@@ -3123,6 +3123,132 @@ app.whenReady().then(async () => {
     }
   });
 
+  // 获取 Sniffer 配置
+  ipcMain.handle('get-sniffer-config', () => {
+    try {
+      // 从用户设置中读取 Sniffer 配置
+      const userSettings = context.getUserSettings ? context.getUserSettings() : {};
+      console.log('[get-sniffer-config] 从用户设置读取Sniffer配置:', userSettings.sniffer);
+
+      // Sniffer 默认配置
+      const defaultSnifferConfig = {
+        enable: true,
+        'parse-pure-ip': true,
+        'force-dns-mapping': true,
+        'override-destination': false,
+        sniff: {
+          HTTP: {
+            ports: [80, 443],
+            'override-destination': false
+          },
+          TLS: {
+            ports: [443]
+          }
+        },
+        'skip-domain': ['+.push.apple.com'],
+        'skip-dst-address': [
+          '91.105.192.0/23',
+          '91.108.4.0/22',
+          '91.108.8.0/21',
+          '91.108.16.0/21',
+          '91.108.56.0/22',
+          '95.161.64.0/20',
+          '149.154.160.0/20',
+          '185.76.151.0/24',
+          '2001:67c:4e8::/48',
+          '2001:b28:f23c::/47',
+          '2001:b28:f23f::/48',
+          '2a0a:f280:203::/48'
+        ]
+      };
+
+      // 如果用户还没有配置 Sniffer，使用默认值
+      let snifferConfig = userSettings.sniffer;
+
+      if (!snifferConfig || Object.keys(snifferConfig).length === 0) {
+        console.log('[get-sniffer-config] 检测到新用户，应用默认Sniffer配置');
+        snifferConfig = defaultSnifferConfig;
+      }
+
+      return {
+        success: true,
+        config: snifferConfig
+      };
+    } catch (error) {
+      console.error('获取 Sniffer 配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 保存 Sniffer 配置
+  ipcMain.handle('save-sniffer-config', async (event, snifferConfig) => {
+    try {
+      console.log('[save-sniffer-config] ========== 开始保存Sniffer配置 ==========');
+      console.log('[save-sniffer-config] 接收到Sniffer配置:', JSON.stringify(snifferConfig, null, 2));
+
+      // 获取当前用户设置
+      console.log('[save-sniffer-config] 正在获取当前用户设置...');
+      const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
+      console.log('[save-sniffer-config] 当前用户设置:', JSON.stringify(currentSettings, null, 2));
+
+      // 合并新的 Sniffer 配置
+      const newSettings = { ...currentSettings, sniffer: snifferConfig };
+      console.log('[save-sniffer-config] 合并后的设置:', JSON.stringify(newSettings, null, 2));
+
+      // 保存到用户设置（会同时保存到数据库和 user-settings.yaml）
+      console.log('[save-sniffer-config] 正在保存到用户设置...');
+      if (context.updateUserSettingsRaw) {
+        try {
+          await context.updateUserSettingsRaw(newSettings);
+          console.log('[save-sniffer-config] 用户设置保存成功');
+        } catch (saveError) {
+          console.error('[save-sniffer-config] 保存用户设置失败:', saveError);
+          throw new Error('保存用户设置失败: ' + saveError.message);
+        }
+      } else {
+        console.error('[save-sniffer-config] updateUserSettingsRaw 函数不可用');
+        throw new Error('updateUserSettingsRaw 函数不可用');
+      }
+
+      // 保存成功后，重启 Mihomo 服务以应用新配置
+      console.log('[save-sniffer-config] Sniffer配置已保存到用户设置，准备重启服务');
+      if (context.mihomoService && typeof context.mihomoService.restartMihomoService === 'function') {
+        try {
+          console.log('[save-sniffer-config] 正在重启服务...');
+          const restartResult = await context.mihomoService.restartMihomoService();
+          console.log('[save-sniffer-config] 服务重启结果:', restartResult);
+          console.log('[save-sniffer-config] ========== Sniffer配置保存完成 ==========');
+          return {
+            success: true,
+            restarted: restartResult.success,
+            message: restartResult.success ? 'Sniffer配置已保存并应用' : 'Sniffer配置已保存，但重启失败'
+          };
+        } catch (restartError) {
+          console.error('[save-sniffer-config] 重启服务失败:', restartError);
+          console.error('[save-sniffer-config] 错误堆栈:', restartError.stack);
+          return {
+            success: true,
+            restarted: false,
+            message: 'Sniffer配置已保存，但重启失败: ' + restartError.message
+          };
+        }
+      } else {
+        console.warn('[save-sniffer-config] mihomoService 不可用，无法重启');
+        console.warn('[save-sniffer-config] context.mihomoService:', context.mihomoService);
+        return {
+          success: true,
+          restarted: false,
+          message: 'Sniffer配置已保存，但需要手动重启服务'
+        };
+      }
+    } catch (error) {
+      console.error('[save-sniffer-config] ========== Sniffer配置保存失败 ==========');
+      console.error('[save-sniffer-config] 错误:', error);
+      console.error('[save-sniffer-config] 错误堆栈:', error.stack);
+      return { success: false, error: error.message };
+    }
+  });
+
   // 节点收藏管理
   ipcMain.handle('get-favorite-nodes', () => {
     try {

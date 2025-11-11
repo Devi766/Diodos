@@ -60,19 +60,44 @@ interface HostsConfig {
   hosts?: Array<{ domain: string; value: string | string[] }>;
 }
 
+interface SnifferConfig {
+  enable?: boolean;
+  'parse-pure-ip'?: boolean;
+  'override-destination'?: boolean;
+  'force-dns-mapping'?: boolean;
+  'force-domain'?: string[];
+  'skip-domain'?: string[];
+  'skip-dst-address'?: string[];
+  'skip-src-address'?: string[];
+  sniff?: {
+    HTTP?: {
+      ports: (number | string)[];
+      'override-destination'?: boolean;
+    };
+    TLS?: {
+      ports: (number | string)[];
+    };
+    QUIC?: {
+      ports: (number | string)[];
+    };
+  };
+}
+
 const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   const { t } = useTranslation();
   const [config, setConfig] = useState<KernelConfig>({});
   const [dnsConfig, setDnsConfig] = useState<DnsConfig>({});
   const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
+  const [snifferConfig, setSnifferConfig] = useState<SnifferConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'basic' | 'port' | 'controller' | 'dns' | 'advanced'>('basic');
+  const [activeTab, setActiveTab] = useState<'basic' | 'port' | 'controller' | 'dns' | 'sniffer' | 'advanced'>('basic');
 
   // 加载配置
   useEffect(() => {
     loadConfig();
     loadDnsConfig();
+    loadSnifferConfig();
   }, []);
 
   const loadConfig = async () => {
@@ -109,6 +134,19 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
       }
     } catch (error) {
       console.error(t('overrideSettings.loadDnsConfigFailed'), error);
+    }
+  };
+
+  const loadSnifferConfig = async () => {
+    try {
+      if (window.electronAPI?.getSnifferConfig) {
+        const result = await window.electronAPI.getSnifferConfig();
+        if (result.success) {
+          setSnifferConfig(result.config || {});
+        }
+      }
+    } catch (error) {
+      console.error(t('overrideSettings.loadSnifferConfigFailed'), error);
     }
   };
 
@@ -151,6 +189,16 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         }
       }
 
+      // 保存Sniffer配置
+      if (window.electronAPI?.saveSnifferConfig) {
+        const snifferResult = await window.electronAPI.saveSnifferConfig(snifferConfig);
+        if (!snifferResult.success) {
+          const errorMsg = t('overrideSettings.snifferConfigSaveFailed') + ': ' + snifferResult.error;
+          showToast({ message: errorMsg, type: 'error' });
+          throw new Error(errorMsg);
+        }
+      }
+
       showToast({ message: t('overrideSettings.allConfigSaved'), type: 'success' });
     } catch (error) {
       console.error(t('overrideSettings.saveConfigFailed'), error);
@@ -184,6 +232,28 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
     // 保留用户输入的所有行（包括空行），在保存时才过滤空行
     const items = value.split('\n');
     setDnsConfig(prev => ({ ...prev, [key]: items }));
+  };
+
+  const updateSnifferConfig = (key: keyof SnifferConfig, value: any) => {
+    setSnifferConfig(prev => ({ ...prev, [key]: value }));
+  };
+
+  const updateArraySnifferConfig = (key: keyof SnifferConfig, value: string) => {
+    const items = value.split('\n').filter(item => item.trim());
+    setSnifferConfig(prev => ({ ...prev, [key]: items }));
+  };
+
+  const updateSnifferProtocol = (protocol: 'HTTP' | 'TLS' | 'QUIC', key: string, value: any) => {
+    setSnifferConfig(prev => ({
+      ...prev,
+      sniff: {
+        ...prev.sniff,
+        [protocol]: {
+          ...(prev.sniff?.[protocol] || {}),
+          [key]: value
+        }
+      }
+    }));
   };
 
   // 暴露 saveConfig 方法给父组件
@@ -242,6 +312,16 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
           onClick={() => setActiveTab('dns')}
         >
           {t('overrideSettings.dns')}
+        </button>
+        <button
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'sniffer'
+              ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
+              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+          }`}
+          onClick={() => setActiveTab('sniffer')}
+        >
+          {t('overrideSettings.sniffer')}
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -679,6 +759,179 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
               />
             </div>
           )}
+        </div>
+      )}
+
+      {/* 嗅探设置 */}
+      {activeTab === 'sniffer' && (
+        <div className="space-y-4">
+          {/* 启用嗅探 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enableSniffer')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enableSnifferDesc')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={snifferConfig.enable || false}
+                onChange={(e) => updateSnifferConfig('enable', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* 对未映射 IP 地址嗅探 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.parsePureIp')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.parsePureIpDesc')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={snifferConfig['parse-pure-ip'] || false}
+                onChange={(e) => updateSnifferConfig('parse-pure-ip', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* 对真实 IP 映射嗅探 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.forceDnsMapping')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.forceDnsMappingDesc')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={snifferConfig['force-dns-mapping'] || false}
+                onChange={(e) => updateSnifferConfig('force-dns-mapping', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* 覆盖连接地址 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.overrideDestination')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.overrideDestinationDesc')}</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={snifferConfig['override-destination'] || false}
+                onChange={(e) => updateSnifferConfig('override-destination', e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          {/* HTTP 端口嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.httpPorts')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.httpPortsDesc')}</p>
+            <Input
+              type="text"
+              className="text-gray-900 dark:text-gray-100"
+              placeholder="80,443"
+              value={(snifferConfig.sniff?.HTTP?.ports || []).join(',')}
+              onChange={(e) => {
+                const ports = e.target.value.split(',').map(p => p.trim()).filter(p => p);
+                updateSnifferProtocol('HTTP', 'ports', ports);
+              }}
+            />
+          </div>
+
+          {/* TLS 端口嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.tlsPorts')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.tlsPortsDesc')}</p>
+            <Input
+              type="text"
+              className="text-gray-900 dark:text-gray-100"
+              placeholder="443"
+              value={(snifferConfig.sniff?.TLS?.ports || []).join(',')}
+              onChange={(e) => {
+                const ports = e.target.value.split(',').map(p => p.trim()).filter(p => p);
+                updateSnifferProtocol('TLS', 'ports', ports);
+              }}
+            />
+          </div>
+
+          {/* QUIC 端口嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.quicPorts')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.quicPortsDesc')}</p>
+            <Input
+              type="text"
+              className="text-gray-900 dark:text-gray-100"
+              placeholder="443"
+              value={(snifferConfig.sniff?.QUIC?.ports || []).join(',')}
+              onChange={(e) => {
+                const ports = e.target.value.split(',').map(p => p.trim()).filter(p => p);
+                updateSnifferProtocol('QUIC', 'ports', ports);
+              }}
+            />
+          </div>
+
+          {/* 跳过域名嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.skipDomain')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.skipDomainDesc')}</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={3}
+              placeholder="+.push.apple.com"
+              value={(snifferConfig['skip-domain'] || []).join('\n')}
+              onChange={(e) => updateArraySnifferConfig('skip-domain', e.target.value)}
+            />
+          </div>
+
+          {/* 强制域名嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.forceDomain')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.forceDomainDesc')}</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={3}
+              placeholder="example.com"
+              value={(snifferConfig['force-domain'] || []).join('\n')}
+              onChange={(e) => updateArraySnifferConfig('force-domain', e.target.value)}
+            />
+          </div>
+
+          {/* 跳过目标地址嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.skipDstAddress')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.skipDstAddressDesc')}</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={4}
+              placeholder="91.105.192.0/23"
+              value={(snifferConfig['skip-dst-address'] || []).join('\n')}
+              onChange={(e) => updateArraySnifferConfig('skip-dst-address', e.target.value)}
+            />
+          </div>
+
+          {/* 跳过来源地址嗅探 */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.skipSrcAddress')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.skipSrcAddressDesc')}</p>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
+              rows={3}
+              placeholder="192.168.1.0/24"
+              value={(snifferConfig['skip-src-address'] || []).join('\n')}
+              onChange={(e) => updateArraySnifferConfig('skip-src-address', e.target.value)}
+            />
+          </div>
         </div>
       )}
 

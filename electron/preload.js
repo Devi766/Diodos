@@ -535,6 +535,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Hosts 配置
   saveHostsConfig: (hosts) => ipcRenderer.invoke('save-hosts-config', hosts),
 
+  // Sniffer 配置
+  getSnifferConfig: () => ipcRenderer.invoke('get-sniffer-config'),
+  saveSnifferConfig: (config) => ipcRenderer.invoke('save-sniffer-config', config),
+
   // 流量历史
   getTrafficToday: () => ipcRenderer.invoke('traffic-history:get-today'),
   getTrafficMonth: (yearMonth) => ipcRenderer.invoke('traffic-history:get-month', yearMonth),
