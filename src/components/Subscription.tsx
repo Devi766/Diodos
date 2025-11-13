@@ -326,16 +326,29 @@ export default function SubscriptionManager() {
         console.log('使用热重载切换配置...');
         result = await window.electronAPI.reloadMihomoConfig(configPath);
 
-        if (result) {
+        const reloadSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+
+        if (reloadSuccess) {
           setActiveConfig(configPath);
         } else {
           // 热重载失败，回退到重启方式
           console.warn('热重载失败，尝试重启服务...');
-          await window.electronAPI.stopMihomo();
-          await new Promise(resolve => setTimeout(resolve, 500));
-          result = await window.electronAPI.startMihomo(configPath);
+          const stopResult = await window.electronAPI.stopMihomo();
+          const stopSuccess = typeof stopResult === 'object' ? (stopResult as any).success !== false : Boolean(stopResult);
 
-          if (result) {
+          if (!stopSuccess) {
+            showToast('错误', '停止当前服务失败，无法切换配置', 'error');
+            setSwitchingConfig(null);
+            return;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const startResult = await window.electronAPI.startMihomo(configPath);
+          const startSuccess = typeof startResult === 'object' ? (startResult as any).success !== false : Boolean(startResult);
+
+          result = startResult;
+
+          if (startSuccess) {
             setActiveConfig(configPath);
           }
         }
@@ -343,7 +356,9 @@ export default function SubscriptionManager() {
         // 服务未运行，只设置为首选配置，不自动启动服务
         console.log('服务未运行，设置为首选配置...');
         result = await window.electronAPI.setPreferredConfig(configPath);
-        if (result) {
+        const preferredSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+
+        if (preferredSuccess) {
           setActiveConfig(configPath);
           showToast('成功', '已设置为首选配置，下次启动服务时将使用此配置', 'success');
         } else {
@@ -351,7 +366,9 @@ export default function SubscriptionManager() {
         }
       }
 
-      if (result) {
+      const finalSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+
+      if (finalSuccess) {
         // 只在服务运行时才需要等待节点信息
         if (isServiceRunning) {
           // 关键修改：等待服务完全启动后获取节点信息

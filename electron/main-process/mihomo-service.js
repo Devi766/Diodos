@@ -481,7 +481,7 @@ module.exports = function initMihomoService(context) {
         return false;
       }
 
-      // 第一步：生成应用了覆写的work配置
+      // 第一步：生成应用了覆写的 work 配置
       try {
         console.log('[reloadMihomoConfig] 读取原始配置文件...');
         const rawConfig = yaml.load(fs.readFileSync(configPath, 'utf8'));
@@ -489,16 +489,16 @@ module.exports = function initMihomoService(context) {
         console.log('[reloadMihomoConfig] 应用覆写配置...');
         const configWithOverrides = await applyOverrides(context, rawConfig, configPath);
 
-        // 保存到work配置文件
+        // 保存到 work 配置文件
         const workConfigPath = path.join(userDataPath, 'mihomo', 'work-config.yaml');
-        console.log('[reloadMihomoConfig] 保存work配置到:', workConfigPath);
+        console.log('[reloadMihomoConfig] 保存 work 配置到:', workConfigPath);
         fs.writeFileSync(workConfigPath, yaml.dump(configWithOverrides), 'utf8');
 
         // 更新状态
         state.configFilePath = configPath;
         state.preferredConfig = configPath; // 同时更新首选配置
 
-        // 保存到last-config.json
+        // 保存到 last-config.json，供下次启动使用
         try {
           const lastConfigPath = path.join(userDataPath, 'last-config.json');
           fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
@@ -506,51 +506,40 @@ module.exports = function initMihomoService(context) {
           console.error('[reloadMihomoConfig] 保存首选配置失败:', saveError);
         }
 
-        console.log('[reloadMihomoConfig] work配置生成成功');
+        console.log('[reloadMihomoConfig] work 配置生成成功');
       } catch (error) {
-        console.error('[reloadMihomoConfig] 生成work配置失败:', error);
+        console.error('[reloadMihomoConfig] 生成 work 配置失败:', error);
         return false;
       }
 
-      // 第二步：通过API热重载配置
-      const port = 9090;
-      return new Promise((resolve) => {
-        try {
-          const testReq = http.request(
-            {
-              hostname: '127.0.0.1',
-              port,
-              path: '/version',
-              method: 'GET',
-              timeout: 1000
-            },
-            (res) => {
-              if (res.statusCode !== 200) {
-                console.warn(`[reloadMihomoConfig] 版本API返回非200状态码: ${res.statusCode}`);
-              }
-              const workConfigPath = path.join(userDataPath, 'mihomo', 'work-config.yaml');
-              const success = sendReloadRequest(workConfigPath, port);
-              resolve(success);
-            }
-          );
-
-          testReq.on('error', (err) => {
-            console.error('[reloadMihomoConfig] 测试Mihomo API连接失败:', err);
-            resolve(false);
-          });
-
-          testReq.on('timeout', () => {
-            testReq.destroy();
-            console.error('[reloadMihomoConfig] 测试Mihomo API连接超时');
-            resolve(false);
-          });
-
-          testReq.end();
-        } catch (error) {
-          console.error('[reloadMihomoConfig] 尝试连接Mihomo API时出错:', error);
-          resolve(false);
+      // 第二步：通过 Socket API 热重载配置
+      try {
+        const fetchMihomoAPI = context.get('fetchMihomoAPI');
+        if (typeof fetchMihomoAPI !== 'function') {
+          console.error('[reloadMihomoConfig] fetchMihomoAPI 不可用，无法热重载配置');
+          return false;
         }
-      });
+
+        const workConfigPath = path.join(userDataPath, 'mihomo', 'work-config.yaml');
+        console.log('[reloadMihomoConfig] 通过 Socket 发送热重载请求, path =', workConfigPath);
+
+        const response = await fetchMihomoAPI('/configs?force=true', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: workConfigPath })
+        });
+
+        if (!response || !response.ok) {
+          console.error('[reloadMihomoConfig] 热重载请求失败:', response && response.status);
+          return false;
+        }
+
+        console.log('[reloadMihomoConfig] 热重载请求成功');
+        return true;
+      } catch (error) {
+        console.error('[reloadMihomoConfig] 通过 Socket 热重载配置失败:', error);
+        return false;
+      }
     } catch (error) {
       console.error('[reloadMihomoConfig] 配置热重载失败:', error);
       return false;
@@ -1470,17 +1459,55 @@ module.exports = function initMihomoService(context) {
       const mihomoDir = path.join(userDataPath, 'mihomo');
       const pidFilePath = path.join(userDataPath, 'mihomo.pid');
 
+      // 确保工作目录存在
+      if (!fs.existsSync(mihomoDir)) {
+        fs.mkdirSync(mihomoDir, { recursive: true });
+      }
+
+      // 生成与正常模式一致的覆写 + 用户设置合并配置
+      const userSettings = getUserSettings();
+      const configFilename = path.basename(configPath);
+      const overrideConfigFilename = 'override-' + configFilename;
+      const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+
+      try {
+        const configContent = fs.readFileSync(configPath, 'utf8');
+        const config = yaml.load(configContent);
+
+        console.log('[LightweightMode] 原始配置文件:', configPath);
+
+        let configWithOverrides = config;
+        if (applyOverrides && typeof applyOverrides === 'function') {
+          console.log('[LightweightMode] 应用覆写配置...');
+          configWithOverrides = await applyOverrides(context, config, configPath);
+        }
+
+        let mergedConfig = deepMergeConfig(configWithOverrides, userSettings);
+        mergedConfig = validateMergedConfig(mergedConfig);
+
+        const mergedConfigContent = yaml.dump(mergedConfig, {
+          lineWidth: -1,
+          noRefs: true,
+          sortKeys: false
+        });
+
+        fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
+        console.log('[LightweightMode] 已生成轻量模式配置文件:', overrideConfigPath);
+      } catch (error) {
+        console.error('[LightweightMode] 生成轻量模式配置失败，回退到原始配置:', error);
+      }
+
       // 使用 detached 模式启动内核进程，使其独立于主进程
       console.log('[LightweightMode] 启动独立内核进程...');
       console.log('[LightweightMode] 内核路径:', binPath);
-      console.log('[LightweightMode] 配置文件:', configPath);
+      console.log('[LightweightMode] 配置文件:', fs.existsSync(overrideConfigPath) ? overrideConfigPath : configPath);
 
       const controllerParam = getMihomoControllerParam();
       const controllerArg = getMihomoControllerArg();
 
       const detachedProcess = spawn(binPath, [
         '-d', mihomoDir,
-        '-f', configPath,
+        '-f', fs.existsSync(overrideConfigPath) ? overrideConfigPath : configPath,
         controllerParam, controllerArg
       ], {
         cwd: mihomoDir,

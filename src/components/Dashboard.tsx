@@ -681,6 +681,34 @@ export default function Dashboard() {
     };
   }, [electron, fetchProxyMode, hydrateConnections, syncCurrentNode, syncProxyMode]);
 
+  // 周期性同步当前激活配置，避免在配置页面切换后 Dashboard 仍显示旧配置
+  useEffect(() => {
+    if (!electron?.getActiveConfig) return;
+    let disposed = false;
+
+    const syncActiveConfig = async () => {
+      try {
+        const config = await electron.getActiveConfig?.();
+        if (!disposed && typeof config === 'string' && config.length > 0) {
+          setActiveConfig(config);
+          const iconPath = await loadConfigIcon(config);
+          setActiveConfigIcon(iconPath);
+        }
+      } catch {
+        // 忽略同步失败，避免影响其它功能
+      }
+    };
+
+    // 立即同步一次
+    syncActiveConfig();
+    const timer = window.setInterval(syncActiveConfig, 5000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [electron]);
+
   useEffect(() => {
     if (!electron?.getTrafficStats) return;
     let disposed = false;
@@ -861,7 +889,9 @@ export default function Dashboard() {
         return;
       }
       const result = await electron.startMihomo(config);
-      if (result) {
+      const success = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+
+      if (success) {
         setIsRunning(true);
         setActiveConfig(config);
         setPreferredConfig(config);
@@ -902,7 +932,9 @@ export default function Dashboard() {
     showBanner(null);
     try {
       const result = await electron.stopMihomo();
-      if (result) {
+      const success = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+
+      if (success) {
         setIsRunning(false);
         commitCurrentNode('');
         setTrafficSamples([]);
