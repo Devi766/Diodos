@@ -26,6 +26,12 @@ class Shadowsocks extends Proxy {
     this.plugin = params.plugin || null;
     this.pluginOpts = params.pluginOpts || null;
     this.udp = params.udp !== undefined ? params.udp : true;
+    // Shadowsocks 2022 扩展
+    this.udpOverTcp = params.udpOverTcp || false;
+    this.network = params.network || null;
+    this.tfo = params.tfo || false;
+    this.psk = params.psk || null;
+    this.shortId = params.shortId || null;
   }
 }
 
@@ -156,6 +162,8 @@ class Hysteria2 extends Proxy {
     this.skipCertVerify = params.skipCertVerify || false;
     this.up = params.up || null;
     this.down = params.down || null;
+    this.alpn = params.alpn || [];
+    this.hopInterval = params.hopInterval || null;
   }
 }
 
@@ -175,6 +183,7 @@ class TUIC extends Proxy {
     this.skipCertVerify = params.skipCertVerify || false;
     this.congestionController = params.congestionController || 'bbr';
     this.udpRelayMode = params.udpRelayMode || 'native';
+    this.hopInterval = params.hopInterval || null;
   }
 }
 
@@ -193,6 +202,24 @@ class WireGuard extends Proxy {
     this.ipv6 = params.ipv6 || null;
     this.mtu = params.mtu || 1420;
     this.udp = true;
+  }
+}
+
+/**
+ * ShadowsocksR 代理
+ */
+class ShadowsocksR extends Proxy {
+  constructor(params) {
+    super(params.name, 'ssr');
+    this.server = params.server;
+    this.port = params.port;
+    this.protocol = params.protocol;
+    this.cipher = params.cipher;
+    this.obfs = params.obfs;
+    this.password = params.password;
+    this.protocolParam = params.protocolParam || null;
+    this.obfsParam = params.obfsParam || null;
+    this.udp = params.udp !== undefined ? params.udp : true;
   }
 }
 
@@ -223,6 +250,7 @@ module.exports = {
   Hysteria2,
   TUIC,
   WireGuard,
+  ShadowsocksR,
   OutputFormat
 };
 

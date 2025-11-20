@@ -34,7 +34,12 @@ class ClashProducer extends Producer {
     const validProxies = proxies.filter(proxy => this.isSupported(proxy));
     console.log(`[ClashProducer] After filtering: ${validProxies.length} valid proxies`);
 
-    const proxiesList = validProxies.map(proxy => this.convertProxy(proxy));
+    const proxiesList = validProxies
+      .map(proxy => this.convertProxy(proxy))
+      .filter(Boolean);
+    if (proxiesList.length !== validProxies.length) {
+      console.log(`[ClashProducer] Dropped ${validProxies.length - proxiesList.length} proxies not convertible to Clash format`);
+    }
     
     const config = { proxies: proxiesList };
     const yamlStr = yaml.dump(config, {
@@ -67,6 +72,8 @@ class ClashProducer extends Producer {
     switch (type) {
       case 'ss':
         return this.convertShadowsocks(proxy);
+      case 'ssr':
+        return this.convertSSR(proxy);
       case 'vmess':
         return this.convertVMess(proxy);
       case 'trojan':
@@ -96,6 +103,19 @@ class ClashProducer extends Producer {
     if (proxy.plugin) {
       config.plugin = proxy.plugin;
       config['plugin-opts'] = proxy.pluginOpts || {};
+    }
+
+    if (proxy.udpOverTcp) {
+      config['udp-over-tcp'] = true;
+    }
+    if (proxy.tfo) {
+      config['fast-open'] = true;
+    }
+    if (proxy.psk) {
+      config.psk = proxy.psk;
+    }
+    if (proxy.shortId) {
+      config['short-id'] = proxy.shortId;
     }
 
     return config;
@@ -160,6 +180,9 @@ class ClashProducer extends Producer {
 
     if (proxy.network === 'ws' && proxy.wsOpts) {
       config['ws-opts'] = proxy.wsOpts;
+      if (proxy.wsOpts['max-early-data'] && !proxy.wsOpts['early-data-header-name']) {
+        config['ws-opts']['early-data-header-name'] = 'Sec-WebSocket-Protocol';
+      }
     } else if (proxy.network === 'grpc' && proxy.grpcOpts) {
       config['grpc-opts'] = proxy.grpcOpts;
     }
@@ -177,6 +200,14 @@ class ClashProducer extends Producer {
       udp: proxy.udp
     };
 
+    if (proxy.flow) {
+      config.flow = proxy.flow;
+    }
+
+    if (proxy.reality) {
+      config['reality-opts'] = proxy.reality;
+    }
+
     if (proxy.tls) {
       config.tls = true;
       if (proxy.servername) {
@@ -191,6 +222,9 @@ class ClashProducer extends Producer {
 
     if (proxy.network === 'ws' && proxy.wsOpts) {
       config['ws-opts'] = proxy.wsOpts;
+      if (proxy.wsOpts['max-early-data'] && !proxy.wsOpts['early-data-header-name']) {
+        config['ws-opts']['early-data-header-name'] = 'Sec-WebSocket-Protocol';
+      }
     } else if (proxy.network === 'grpc' && proxy.grpcOpts) {
       config['grpc-opts'] = proxy.grpcOpts;
     }
@@ -259,8 +293,21 @@ class ClashMetaProducer extends ClashProducer {
   }
 
   isSupported(proxy) {
-    // Clash Meta 支持所有协议
-    return true;
+    const supportedTypes = new Set([
+      'ss',
+      'vmess',
+      'trojan',
+      'vless',
+      'socks5',
+      'http',
+      'hysteria',
+      'hysteria2',
+      'tuic',
+      'wireguard'
+    ]);
+
+    // Clash Meta 支持 ss-2022 等新算法，这里不做 cipher 白名单过滤
+    return supportedTypes.has(proxy.type);
   }
 
   convertProxy(proxy) {
@@ -320,6 +367,8 @@ class ClashMetaProducer extends ClashProducer {
     if (proxy.skipCertVerify) config['skip-cert-verify'] = true;
     if (proxy.up) config.up = proxy.up;
     if (proxy.down) config.down = proxy.down;
+    if (proxy.hopInterval) config['hop-interval'] = proxy.hopInterval;
+    if (proxy.alpn && proxy.alpn.length > 0) config.alpn = proxy.alpn;
 
     return config;
   }
@@ -340,6 +389,7 @@ class ClashMetaProducer extends ClashProducer {
     if (proxy.skipCertVerify) config['skip-cert-verify'] = true;
     if (proxy.congestionController) config['congestion-controller'] = proxy.congestionController;
     if (proxy.udpRelayMode) config['udp-relay-mode'] = proxy.udpRelayMode;
+    if (proxy.hopInterval) config['hop-interval'] = proxy.hopInterval;
 
     return config;
   }
@@ -387,6 +437,8 @@ class SingBoxProducer extends Producer {
     switch (type) {
       case 'ss':
         return this.convertShadowsocks(proxy);
+      case 'ssr':
+        return this.convertSSR(proxy);
       case 'vmess':
         return this.convertVMess(proxy);
       case 'trojan':
@@ -415,7 +467,9 @@ class SingBoxProducer extends Producer {
       server: proxy.server,
       server_port: proxy.port,
       method: proxy.cipher,
-      password: proxy.password
+      password: proxy.password,
+      psk: proxy.psk || undefined,
+      'short-id': proxy.shortId || undefined
     };
   }
 
@@ -447,6 +501,12 @@ class SingBoxProducer extends Producer {
         outbound.transport.path = proxy.wsOpts.path || '/';
         if (proxy.wsOpts.headers) {
           outbound.transport.headers = proxy.wsOpts.headers;
+        }
+        if (proxy.wsOpts['max-early-data']) {
+          outbound.transport.max_early_data = proxy.wsOpts['max-early-data'];
+        }
+        if (proxy.wsOpts['early-data-header-name']) {
+          outbound.transport.early_data_header_name = proxy.wsOpts['early-data-header-name'];
         }
       } else if (proxy.network === 'grpc' && proxy.grpcOpts) {
         outbound.transport.service_name = proxy.grpcOpts['grpc-service-name'] || '';
@@ -480,6 +540,12 @@ class SingBoxProducer extends Producer {
         outbound.transport.path = proxy.wsOpts.path || '/';
         if (proxy.wsOpts.headers) {
           outbound.transport.headers = proxy.wsOpts.headers;
+        }
+        if (proxy.wsOpts['max-early-data']) {
+          outbound.transport.max_early_data = proxy.wsOpts['max-early-data'];
+        }
+        if (proxy.wsOpts['early-data-header-name']) {
+          outbound.transport.early_data_header_name = proxy.wsOpts['early-data-header-name'];
         }
       } else if (proxy.network === 'grpc' && proxy.grpcOpts) {
         outbound.transport.service_name = proxy.grpcOpts['grpc-service-name'] || '';
@@ -528,6 +594,12 @@ class SingBoxProducer extends Producer {
         if (proxy.wsOpts.headers) {
           outbound.transport.headers = proxy.wsOpts.headers;
         }
+        if (proxy.wsOpts['max-early-data']) {
+          outbound.transport.max_early_data = proxy.wsOpts['max-early-data'];
+        }
+        if (proxy.wsOpts['early-data-header-name']) {
+          outbound.transport.early_data_header_name = proxy.wsOpts['early-data-header-name'];
+        }
       } else if (proxy.network === 'grpc' && proxy.grpcOpts) {
         outbound.transport.service_name = proxy.grpcOpts['grpc-service-name'] || '';
       }
@@ -559,7 +631,14 @@ class SingBoxProducer extends Producer {
       obfs: proxy.obfs ? {
         type: proxy.obfs,
         password: proxy.obfsPassword
-      } : undefined
+      } : undefined,
+      alpn: proxy.alpn && proxy.alpn.length > 0 ? proxy.alpn : undefined,
+      tls: proxy.sni || proxy.skipCertVerify ? {
+        enabled: true,
+        server_name: proxy.sni,
+        insecure: proxy.skipCertVerify || false
+      } : undefined,
+      hop_interval: proxy.hopInterval || undefined
     };
   }
 
@@ -571,7 +650,8 @@ class SingBoxProducer extends Producer {
       server_port: proxy.port,
       uuid: proxy.uuid,
       password: proxy.password,
-      congestion_control: proxy.congestionController || 'bbr'
+      congestion_control: proxy.congestionController || 'bbr',
+      hop_interval: proxy.hopInterval || undefined
     };
   }
 
@@ -641,20 +721,57 @@ class URIProducer extends Producer {
   }
 
   convertShadowsocks(proxy) {
-    const userInfo = Buffer.from(`${proxy.cipher}:${proxy.password}`).toString('base64');
-    let uri = `ss://${userInfo}@${proxy.server}:${proxy.port}`;
+    const userInfo =
+      proxy.cipher && proxy.cipher.startsWith('2022-')
+        ? `${proxy.cipher}:${proxy.password}`
+        : Buffer.from(`${proxy.cipher}:${proxy.password}`).toString('base64');
 
+    const params = new URLSearchParams();
     if (proxy.plugin) {
-      const params = new URLSearchParams();
       params.append('plugin', proxy.plugin);
       if (proxy.pluginOpts) {
         params.append('plugin-opts', JSON.stringify(proxy.pluginOpts));
       }
-      uri += `?${params.toString()}`;
     }
+    if (proxy.udpOverTcp) {
+      params.append('udp-over-tcp', '1');
+    }
+    if (proxy.udp === false) {
+      params.append('udp', '0');
+    }
+    if (proxy.network) params.append('type', proxy.network);
+    if (proxy.tfo) params.append('tfo', '1');
+    if (proxy.psk) params.append('psk', proxy.psk);
+    if (proxy.shortId) params.append('sid', proxy.shortId);
 
+    let uri = `ss://${userInfo}@${proxy.server}:${proxy.port}`;
+    const queryString = params.toString();
+    if (queryString) uri += `?${queryString}`;
     uri += `#${encodeURIComponent(proxy.name)}`;
     return uri;
+  }
+
+  convertSSR(proxy) {
+    const head = [
+      proxy.server,
+      proxy.port,
+      proxy.protocol || 'origin',
+      proxy.cipher,
+      proxy.obfs || 'plain',
+      Buffer.from(proxy.password).toString('base64')
+    ].join(':');
+
+    const params = new URLSearchParams();
+    if (proxy.protocolParam) {
+      params.append('protoparam', Buffer.from(proxy.protocolParam).toString('base64'));
+    }
+    if (proxy.obfsParam) {
+      params.append('obfsparam', Buffer.from(proxy.obfsParam).toString('base64'));
+    }
+    params.append('remarks', Buffer.from(proxy.name).toString('base64'));
+
+    const full = `${head}/?${params.toString()}`;
+    return `ssr://${Buffer.from(full).toString('base64')}`;
   }
 
   convertVMess(proxy) {
@@ -680,6 +797,12 @@ class URIProducer extends Producer {
       if (proxy.wsOpts.headers && proxy.wsOpts.headers.Host) {
         config.host = proxy.wsOpts.headers.Host;
       }
+      if (proxy.wsOpts['max-early-data']) {
+        config.ed = proxy.wsOpts['max-early-data'];
+        if (proxy.wsOpts['early-data-header-name']) {
+          config.edh = proxy.wsOpts['early-data-header-name'];
+        }
+      }
     }
 
     const encoded = Buffer.from(JSON.stringify(config)).toString('base64');
@@ -697,6 +820,12 @@ class URIProducer extends Producer {
         if (proxy.wsOpts.headers && proxy.wsOpts.headers.Host) {
           params.append('host', proxy.wsOpts.headers.Host);
         }
+        if (proxy.wsOpts['max-early-data']) {
+          params.append('ed', proxy.wsOpts['max-early-data']);
+          if (proxy.wsOpts['early-data-header-name']) {
+            params.append('edh', proxy.wsOpts['early-data-header-name']);
+          }
+        }
       }
     }
 
@@ -709,9 +838,16 @@ class URIProducer extends Producer {
 
   convertVLESS(proxy) {
     const params = new URLSearchParams();
+    const security = proxy.reality ? 'reality' : proxy.tls ? 'tls' : 'none';
+
     if (proxy.flow) params.append('flow', proxy.flow);
-    params.append('security', proxy.tls ? 'tls' : 'none');
+    params.append('security', security);
+
     if (proxy.tls && proxy.servername) params.append('sni', proxy.servername);
+    if (proxy.reality?.publicKey) params.append('pbk', proxy.reality.publicKey);
+    if (proxy.reality?.shortId) params.append('sid', proxy.reality.shortId);
+    if (proxy.reality?.spiderX) params.append('spx', proxy.reality.spiderX);
+
     if (proxy.skipCertVerify) params.append('allowInsecure', '1');
     if (proxy.network) params.append('type', proxy.network);
 
@@ -719,6 +855,12 @@ class URIProducer extends Producer {
       if (proxy.wsOpts.path) params.append('path', proxy.wsOpts.path);
       if (proxy.wsOpts.headers && proxy.wsOpts.headers.Host) {
         params.append('host', proxy.wsOpts.headers.Host);
+      }
+      if (proxy.wsOpts['max-early-data']) {
+        params.append('ed', proxy.wsOpts['max-early-data']);
+        if (proxy.wsOpts['early-data-header-name']) {
+          params.append('edh', proxy.wsOpts['early-data-header-name']);
+        }
       }
     }
 
@@ -754,6 +896,8 @@ class URIProducer extends Producer {
     if (proxy.skipCertVerify) params.append('insecure', '1');
     if (proxy.up) params.append('up', proxy.up);
     if (proxy.down) params.append('down', proxy.down);
+    if (proxy.alpn && proxy.alpn.length > 0) params.append('alpn', proxy.alpn.join(','));
+    if (proxy.hopInterval) params.append('hop-interval', proxy.hopInterval);
 
     let uri = `hysteria2://${encodeURIComponent(proxy.password)}@${proxy.server}:${proxy.port}`;
     const queryString = params.toString();
@@ -770,6 +914,7 @@ class URIProducer extends Producer {
     if (proxy.skipCertVerify) params.append('insecure', '1');
     if (proxy.congestionController) params.append('congestion_control', proxy.congestionController);
     if (proxy.udpRelayMode) params.append('udp_relay_mode', proxy.udpRelayMode);
+    if (proxy.hopInterval) params.append('hop-interval', proxy.hopInterval);
 
     let uri = `tuic://${encodeURIComponent(proxy.uuid)}:${encodeURIComponent(proxy.password)}@${proxy.server}:${proxy.port}`;
     const queryString = params.toString();

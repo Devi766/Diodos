@@ -92,19 +92,15 @@ class SubscriptionPreprocessor {
     }
 
     // 7. Fallback Base64 - 最后尝试解码
-    // 如果没有协议标识，尝试 Base64 解码
-    if (!trimmed.includes('://') && !trimmed.includes(' = ') && trimmed.length > 100) {
-      try {
-        const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
-        if (/^\w+(:|\/\/|\s*?=\s*?)\w+/m.test(decoded)) {
-          console.log('[SubscriptionPreprocessor] Detected Base64 encoded content (fallback)');
-          // 递归处理解码后的内容
-          const singBoxResult = this.handleSingBox(decoded);
-          if (singBoxResult) return singBoxResult;
-          return this.preprocess(decoded);
-        }
-      } catch (e) {
-        console.log('[SubscriptionPreprocessor] Fallback Base64 decode failed:', e.message);
+    // 如果看起来像 Base64，无论是否包含协议字符，都尝试一次解码
+    if (this.looksLikeBase64(trimmed)) {
+      const decoded = this.tryDecodeBase64(trimmed);
+      if (decoded && /^\w+(:|\/\/|\s*?=\s*?)\w+/m.test(decoded)) {
+        console.log('[SubscriptionPreprocessor] Detected Base64 encoded content (fallback)');
+        // 递归处理解码后的内容
+        const singBoxResult = this.handleSingBox(decoded);
+        if (singBoxResult) return singBoxResult;
+        return this.preprocess(decoded);
       }
     }
 
@@ -168,7 +164,8 @@ class SubscriptionPreprocessor {
     }
 
     try {
-      const config = yaml.load(content);
+      const normalized = this.normalizeClashContent(content);
+      const config = yaml.load(normalized);
 
       if (config && config.proxies && Array.isArray(config.proxies)) {
         console.log(`[SubscriptionPreprocessor] Detected Clash YAML format with ${config.proxies.length} proxies`);
@@ -395,6 +392,40 @@ class SubscriptionPreprocessor {
     
     // 长度应该足够长（至少 20 个字符）
     return str.length >= 20;
+  }
+
+  /**
+   * 预处理 Clash YAML，修正容易被解析成 Infinity 的 short-id 字段
+   */
+  static normalizeClashContent(content) {
+    return content.replace(/short-id:([ \t]*[^#\n,}]*)/g, (matched, value) => {
+      const afterTrim = value.trim();
+
+      if (!afterTrim) {
+        return 'short-id: ""';
+      }
+
+      if (/^(['"]).*\1$/.test(afterTrim)) {
+        return `short-id: ${afterTrim}`;
+      }
+
+      if (afterTrim === 'null') {
+        return 'short-id: null';
+      }
+
+      return `short-id: "${afterTrim}"`;
+    });
+  }
+
+  /**
+   * 尝试 Base64 解码，失败返回 null
+   */
+  static tryDecodeBase64(raw) {
+    try {
+      return Buffer.from(raw, 'base64').toString('utf-8');
+    } catch {
+      return null;
+    }
   }
 
   /**

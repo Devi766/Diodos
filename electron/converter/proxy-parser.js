@@ -4,7 +4,7 @@
  * 支持多种代理协议的 URI 格式解析
  */
 
-const { Shadowsocks, VMess, Trojan, VLESS, Socks5, Http, Hysteria, Hysteria2, TUIC, WireGuard } = require('./proxy-models');
+const { Shadowsocks, VMess, Trojan, VLESS, Socks5, Http, Hysteria, Hysteria2, TUIC, WireGuard, ShadowsocksR } = require('./proxy-models');
 const SubscriptionPreprocessor = require('./subscription-preprocessor');
 const yaml = require('js-yaml');
 const JSON5 = require('json5');
@@ -67,10 +67,12 @@ class URI_SS extends Parser {
       [userInfo, serverInfo] = decoded.split('@');
     }
 
-    // 解析 userInfo (method:password)
+    // 解析 userInfo (method:password) 兼容 2022-blake3 前缀
     let method, password;
     try {
-      const decodedUserInfo = Buffer.from(userInfo, 'base64').toString('utf-8');
+      const decodedUserInfo = userInfo.startsWith('2022-blake3-')
+        ? userInfo // 已经是明文
+        : Buffer.from(userInfo, 'base64').toString('utf-8');
       [method, password] = decodedUserInfo.split(':');
     } catch (e) {
       [method, password] = userInfo.split(':');
@@ -86,7 +88,12 @@ class URI_SS extends Parser {
       cipher: method,
       password,
       plugin: query.plugin || null,
-      pluginOpts: query['plugin-opts'] || null
+      pluginOpts: query['plugin-opts'] || null,
+      udpOverTcp: query['udp-over-tcp'] === 'true' || query['uot'] === '1',
+      network: query.type || null,
+      tfo: query.tfo === '1' || query.tfo === 'true',
+      psk: query.psk || null,
+      shortId: query.sid || null
     });
   }
 
@@ -97,6 +104,54 @@ class URI_SS extends Parser {
       params[decodeURIComponent(key)] = decodeURIComponent(value || '');
     });
     return params;
+  }
+}
+
+/**
+ * SSR URI 解析器
+ */
+class URI_SSR extends Parser {
+  constructor() {
+    super('URI SSR Parser');
+  }
+
+  test(line) {
+    return line.startsWith('ssr://');
+  }
+
+  parse(line) {
+    const decoded = Buffer.from(line.split('ssr://')[1], 'base64').toString('utf-8');
+    const [head, queryPart] = decoded.split('/?');
+    const [server, port, protocol, cipher, obfs, pwdEnc] = head.split(':');
+    const password = Buffer.from(pwdEnc, 'base64').toString('utf-8');
+
+    const params = new URLSearchParams(queryPart || '');
+    const protoParamRaw = params.get('protoparam');
+    const obfsParamRaw = params.get('obfsparam');
+    const remarksRaw = params.get('remarks');
+
+    const protocolParam = protoParamRaw
+      ? Buffer.from(protoParamRaw, 'base64').toString('utf-8').trim()
+      : null;
+    const obfsParam = obfsParamRaw
+      ? Buffer.from(obfsParamRaw, 'base64').toString('utf-8').trim()
+      : null;
+    const remarks = remarksRaw
+      ? Buffer.from(remarksRaw, 'base64').toString('utf-8')
+      : `${server}:${port}`;
+
+    return new ShadowsocksR({
+      name: remarks,
+      server,
+      port: parseInt(port, 10),
+      protocol,
+      cipher,
+      obfs,
+      password,
+      protocolParam,
+      obfsParam,
+      udp: params.get('udp-over-tcp') !== 'false'
+    });
   }
 }
 
@@ -140,6 +195,12 @@ class URI_VMess extends Parser {
         path: config.path || '/',
         headers: config.host ? { Host: config.host } : {}
       };
+      const early = config.ed || config['max-early-data'];
+      if (early) {
+        params.wsOpts['max-early-data'] = early;
+        params.wsOpts['early-data-header-name'] =
+          config.edh || config['early-data-header-name'] || 'Sec-WebSocket-Protocol';
+      }
     }
 
     // HTTP/2 配置
@@ -211,6 +272,12 @@ class URI_Trojan extends Parser {
         path: query.path || '/',
         headers: query.host ? { Host: query.host } : {}
       };
+      const maxEarly = query.ed || query['max-early-data'];
+      if (maxEarly) {
+        params.wsOpts['max-early-data'] = parseInt(maxEarly, 10);
+        params.wsOpts['early-data-header-name'] =
+          query.edh || query['early-data-header-name'] || 'Sec-WebSocket-Protocol';
+      }
     }
 
     // gRPC 配置
@@ -296,6 +363,12 @@ class URI_VLESS extends Parser {
       params.wsOpts = {
         path: query.path || '/',
         headers: query.host ? { Host: query.host } : {}
+      };
+      const maxEarly = query.ed || query['max-early-data'];
+      if (maxEarly) {
+        params.wsOpts['max-early-data'] = parseInt(maxEarly, 10);
+        params.wsOpts['early-data-header-name'] =
+          query.edh || query['early-data-header-name'] || 'Sec-WebSocket-Protocol';
       };
     }
 
@@ -480,7 +553,9 @@ class URI_Hysteria2 extends Parser {
       sni: params.get('sni'),
       skipCertVerify: params.get('insecure') === '1' || params.get('insecure') === 'true',
       up: params.get('up'),
-      down: params.get('down')
+      down: params.get('down'),
+      alpn: params.get('alpn') ? params.get('alpn').split(',') : [],
+      hopInterval: params.get('hop-interval') ? parseInt(params.get('hop-interval')) : null
     });
   }
 }
@@ -517,7 +592,8 @@ class URI_TUIC extends Parser {
       sni: params.get('sni'),
       skipCertVerify: params.get('insecure') === '1' || params.get('insecure') === 'true',
       congestionController: params.get('congestion_control') || params.get('congestion_controller') || 'bbr',
-      udpRelayMode: params.get('udp_relay_mode') || 'native'
+      udpRelayMode: params.get('udp_relay_mode') || 'native',
+      hopInterval: params.get('hop-interval') ? parseInt(params.get('hop-interval')) : null
     });
   }
 }
@@ -627,6 +703,25 @@ class Clash_All extends Parser {
           password: config.password,
           plugin: config.plugin || null,
           pluginOpts: config['plugin-opts'] || null,
+          udp: config.udp !== false,
+          udpOverTcp: config['udp-over-tcp'] || false,
+          network: config.network || null,
+          tfo: config['fast-open'] || config.tfo || false,
+          psk: config.psk || null,
+          shortId: config['short-id'] || null
+        });
+
+      case 'ssr':
+        return new ShadowsocksR({
+          name: config.name,
+          server: config.server,
+          port: config.port,
+          protocol: config.protocol,
+          cipher: config.cipher,
+          obfs: config.obfs,
+          password: config.password,
+          protocolParam: config['protocol-param'] || config.protocolParam || null,
+          obfsParam: config['obfs-param'] || config.obfsParam || null,
           udp: config.udp !== false
         });
 
@@ -727,6 +822,7 @@ class ProxyParsers {
       new URI_Socks5(),
       new URI_Http(),
       new URI_SS(),
+      new URI_SSR(),
       new URI_VMess(),
       new URI_VLESS(),
       new URI_Trojan(),
@@ -776,6 +872,7 @@ class ProxyParsers {
 module.exports = {
   Parser,
   URI_SS,
+  URI_SSR,
   URI_VMess,
   URI_Trojan,
   URI_VLESS,
