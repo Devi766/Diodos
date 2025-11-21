@@ -7,6 +7,7 @@ const { ProxyParsers } = require('./proxy-parser');
 const { ProxyProducers } = require('./proxy-producer');
 const { OutputFormat } = require('./proxy-models');
 const SubscriptionPreprocessor = require('./subscription-preprocessor');
+const { applyProcessors } = require('./processor-pipeline');
 const yaml = require('js-yaml');
 
 /**
@@ -56,9 +57,10 @@ class SubscriptionConverter {
    * @param {string|null} filterRegex - 节点过滤正则表达式（可选）
    * @param {ConversionOptions} options - 转换选项
    * @param {string|null} templateId - 配置模板ID（可选）
+   * @param {Array|null} processors - 可选的处理器流水线配置
    * @returns {ConversionResult}
    */
-  convert(input, targetFormat, filterRegex = null, options = new ConversionOptions(), templateId = null) {
+  convert(input, targetFormat, filterRegex = null, options = new ConversionOptions(), templateId = null, processors = null) {
     try {
       console.log(`[SubscriptionConverter] Starting conversion, input length: ${input.length}`);
 
@@ -106,11 +108,27 @@ class SubscriptionConverter {
         );
       }
 
-      // 3. 应用转换选项
-      const processedProxies = this.applyOptions(filteredProxies, options);
+      // 3. 应用处理流水线（processors）
+      let processedProxies = filteredProxies;
+      if (Array.isArray(processors) && processors.length > 0) {
+        processedProxies = applyProcessors(filteredProxies, processors);
+        console.log(`[SubscriptionConverter] After processors: ${processedProxies.length} proxies`);
+        if (processedProxies.length === 0) {
+          return new ConversionResult(
+            false,
+            '',
+            proxies.length,
+            0,
+            '处理流水线执行后没有剩余节点'
+          );
+        }
+      }
+
+      // 4. 应用转换选项
+      processedProxies = this.applyOptions(processedProxies, options);
       console.log(`[SubscriptionConverter] After applying options: ${processedProxies.length} proxies`);
 
-      // 4. 生成目标格式
+      // 5. 生成目标格式
       let output;
       if (templateId && (targetFormat === OutputFormat.CLASH || targetFormat === OutputFormat.CLASH_META)) {
         // 使用模板生成配置
@@ -161,25 +179,46 @@ class SubscriptionConverter {
    * 5. JSON 行格式（预处理器输出）
    */
   parseInput(input) {
+    console.log(
+      '[SubscriptionConverter] parseInput() 收到原始输入长度:',
+      input?.length ?? 0
+    );
+    console.log(
+      '[SubscriptionConverter] parseInput() 原始输入预览:',
+      typeof input === 'string' ? input.substring(0, 200) : ''
+    );
+
     // 预处理输入(包括Base64解码、格式转换)
     const preprocessed = SubscriptionPreprocessor.preprocess(input);
 
+    console.log(
+      '[SubscriptionConverter] parseInput() 预处理结果长度:',
+      preprocessed?.length ?? 0
+    );
+    console.log(
+      '[SubscriptionConverter] parseInput() 预处理结果预览:',
+      typeof preprocessed === 'string' ? preprocessed.substring(0, 200) : ''
+    );
+
     if (!preprocessed) {
+      console.warn('[SubscriptionConverter] parseInput() 预处理结果为空，返回空代理列表');
       return [];
     }
-
-    const trimmed = preprocessed.trim();
 
     // 分享链接列表或JSON行（每行一个）
     // 预处理器已经将Clash/Sing-box配置转换为JSON行格式
     // 直接按行解析
-    return preprocessed.split('\n')
+    const proxies = preprocessed
+      .split('\n')
       .map(line => {
         const trimmedLine = line.trim();
         if (!trimmedLine) return null;
         return this.parser.parseLine(trimmedLine);
       })
       .filter(proxy => proxy !== null);
+
+    console.log('[SubscriptionConverter] parseInput() 最终解析到代理数量:', proxies.length);
+    return proxies;
   }
 
   /**

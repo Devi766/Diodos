@@ -68,7 +68,7 @@ class ClashProducer extends Producer {
 
   convertProxy(proxy) {
     const type = proxy.type;
-    
+
     switch (type) {
       case 'ss':
         return this.convertShadowsocks(proxy);
@@ -84,6 +84,9 @@ class ClashProducer extends Producer {
         return this.convertSocks5(proxy);
       case 'http':
         return this.convertHttp(proxy);
+      case 'anytls':
+        // AnyTLS 在 sing-box 中通常以 trojan/outbound 形式表现，此处先映射为 trojan-like 配置
+        return this.convertAnyTLS(proxy);
       default:
         return null;
     }
@@ -303,7 +306,11 @@ class ClashMetaProducer extends ClashProducer {
       'hysteria',
       'hysteria2',
       'tuic',
-      'wireguard'
+      'wireguard',
+      'snell',
+      'ssh',
+      'anytls',
+      'juicity'
     ]);
 
     // Clash Meta 支持 ss-2022 等新算法，这里不做 cipher 白名单过滤
@@ -327,6 +334,14 @@ class ClashMetaProducer extends ClashProducer {
         return this.convertTUIC(proxy);
       case 'wireguard':
         return this.convertWireGuard(proxy);
+      case 'snell':
+        return this.convertSnell(proxy);
+      case 'ssh':
+        return this.convertSSH(proxy);
+      case 'anytls':
+        return this.convertAnyTLS(proxy);
+      case 'juicity':
+        return this.convertJuicity(proxy);
       default:
         return null;
     }
@@ -390,6 +405,10 @@ class ClashMetaProducer extends ClashProducer {
     if (proxy.congestionController) config['congestion-controller'] = proxy.congestionController;
     if (proxy.udpRelayMode) config['udp-relay-mode'] = proxy.udpRelayMode;
     if (proxy.hopInterval) config['hop-interval'] = proxy.hopInterval;
+    if (proxy.reduceRtt) config['reduce-rtt'] = true;
+    if (proxy.disableSni) config['disable-sni'] = true;
+    if (proxy.udpOverStream) config['udp-over-stream'] = true;
+    if (proxy.heartbeatInterval) config['heartbeat-interval'] = proxy.heartbeatInterval;
 
     return config;
   }
@@ -408,6 +427,90 @@ class ClashMetaProducer extends ClashProducer {
     if (proxy.presharedKey) config['preshared-key'] = proxy.presharedKey;
     if (proxy.ipv6) config.ipv6 = proxy.ipv6;
     if (proxy.mtu) config.mtu = proxy.mtu;
+
+    return config;
+  }
+
+  convertSnell(proxy) {
+    const config = {
+      name: proxy.name,
+      type: 'snell',
+      server: proxy.server,
+      port: proxy.port,
+      psk: proxy.psk,
+      version: proxy.version
+    };
+
+    if (proxy.ipVersion) config['ip-version'] = proxy.ipVersion;
+    if (proxy.udp !== undefined) config.udp = proxy.udp;
+    if (proxy.tfo) config.tfo = true;
+    if (proxy.obfs) {
+      config.obfs = proxy.obfs;
+      if (proxy.obfsHost) config['obfs-host'] = proxy.obfsHost;
+      if (proxy.obfsUri) config['obfs-uri'] = proxy.obfsUri;
+    }
+
+    return config;
+  }
+
+  convertSSH(proxy) {
+    const config = {
+      name: proxy.name,
+      type: 'ssh',
+      server: proxy.server,
+      port: proxy.port,
+      username: proxy.username
+    };
+
+    if (proxy.password) config.password = proxy.password;
+    if (proxy.privateKey) config['private-key'] = proxy.privateKey;
+    if (proxy.privateKeyPassphrase) {
+      config['private-key-passphrase'] = proxy.privateKeyPassphrase;
+    }
+    if (proxy.serverFingerprint) {
+      config['server-fingerprint'] = proxy.serverFingerprint;
+    }
+    if (proxy.hostKey) {
+      config['host-key'] = proxy.hostKey;
+    }
+    if (proxy.hostKeyAlgorithms) {
+      config['host-key-algorithms'] = proxy.hostKeyAlgorithms;
+    }
+    if (proxy.sni) config.sni = proxy.sni;
+    if (proxy.skipCertVerify) config['skip-cert-verify'] = true;
+    if (proxy.tfo) config.tfo = true;
+
+    return config;
+  }
+
+  convertAnyTLS(proxy) {
+    const config = {
+      name: proxy.name,
+      type: 'anytls',
+      server: proxy.server,
+      port: proxy.port,
+      password: proxy.password
+    };
+
+    if (proxy.sni) config.sni = proxy.sni;
+    if (proxy.reality) config['reality-opts'] = proxy.reality;
+    if (proxy.udp !== undefined) config.udp = proxy.udp;
+
+    return config;
+  }
+
+  convertJuicity(proxy) {
+    const config = {
+      name: proxy.name,
+      type: 'juicity',
+      server: proxy.server,
+      port: proxy.port,
+      uuid: proxy.uuid,
+      password: proxy.password
+    };
+
+    if (proxy.sni) config.sni = proxy.sni;
+    if (proxy.skipCertVerify) config['skip-cert-verify'] = true;
 
     return config;
   }
@@ -455,6 +558,10 @@ class SingBoxProducer extends Producer {
         return this.convertSocks5(proxy);
       case 'http':
         return this.convertHttp(proxy);
+      case 'wireguard':
+        return this.convertWireGuard(proxy);
+      case 'ssh':
+        return this.convertSSH(proxy);
       default:
         return null;
     }
@@ -643,7 +750,7 @@ class SingBoxProducer extends Producer {
   }
 
   convertTUIC(proxy) {
-    return {
+    const outbound = {
       tag: proxy.name,
       type: 'tuic',
       server: proxy.server,
@@ -653,6 +760,18 @@ class SingBoxProducer extends Producer {
       congestion_control: proxy.congestionController || 'bbr',
       hop_interval: proxy.hopInterval || undefined
     };
+
+    if (proxy.reduceRtt) {
+      outbound.zero_rtt_handshake = true;
+    }
+    if (proxy.udpOverStream) {
+      outbound.udp_over_stream = true;
+    }
+    if (proxy.heartbeatInterval) {
+      outbound.heartbeat = `${proxy.heartbeatInterval}ms`;
+    }
+
+    return outbound;
   }
 
   convertSocks5(proxy) {
@@ -666,6 +785,32 @@ class SingBoxProducer extends Producer {
     };
   }
 
+  convertAnyTLS(proxy) {
+    const outbound = {
+      tag: proxy.name,
+      type: 'trojan',
+      server: proxy.server,
+      server_port: proxy.port,
+      password: proxy.password
+    };
+
+    outbound.tls = {
+      enabled: true,
+      server_name: proxy.sni || proxy.server,
+      insecure: proxy.skipCertVerify || false
+    };
+
+    if (proxy.reality) {
+      outbound.tls.reality = {
+        enabled: true,
+        public_key: proxy.reality.publicKey,
+        short_id: proxy.reality.shortId
+      };
+    }
+
+    return outbound;
+  }
+
   convertHttp(proxy) {
     return {
       tag: proxy.name,
@@ -675,6 +820,37 @@ class SingBoxProducer extends Producer {
       username: proxy.username,
       password: proxy.password
     };
+  }
+
+  convertWireGuard(proxy) {
+    const localAddress = [];
+    if (proxy.ip) {
+      localAddress.push(`${proxy.ip}/32`);
+    }
+    if (proxy.ipv6) {
+      localAddress.push(`${proxy.ipv6}/128`);
+    }
+
+    const outbound = {
+      tag: proxy.name,
+      type: 'wireguard',
+      server: proxy.server,
+      server_port: proxy.port,
+      private_key: proxy.privateKey,
+      peer_public_key: proxy.publicKey
+    };
+
+    if (localAddress.length > 0) {
+      outbound.local_address = localAddress;
+    }
+    if (proxy.presharedKey) {
+      outbound.pre_shared_key = proxy.presharedKey;
+    }
+    if (proxy.mtu) {
+      outbound.mtu = proxy.mtu;
+    }
+
+    return outbound;
   }
 }
 
@@ -715,6 +891,33 @@ class URIProducer extends Producer {
         return this.convertSocks5(proxy);
       case 'http':
         return this.convertHttp(proxy);
+      case 'anytls':
+        // AnyTLS 暂不生成标准 URI，避免误导
+        return null;
+      case 'snell':
+      case 'ssh':
+        // 暂不生成 Snell/SSH URI
+        return null;
+      case 'juicity': {
+        // juicity URI: juicity://uuid:password@server:port?alpn=...&sni=...&insecure=1#name
+        const params = new URLSearchParams();
+        if (proxy.alpn && proxy.alpn.length > 0) {
+          params.append('alpn', proxy.alpn.join(','));
+        }
+        if (proxy.sni) {
+          params.append('sni', proxy.sni);
+        }
+        if (proxy.skipCertVerify) {
+          params.append('insecure', '1');
+        }
+        const user = encodeURIComponent(proxy.uuid);
+        const pass = encodeURIComponent(proxy.password);
+        let uri = `juicity://${user}:${pass}@${proxy.server}:${proxy.port}`;
+        const qs = params.toString();
+        if (qs) uri += `?${qs}`;
+        uri += `#${encodeURIComponent(proxy.name)}`;
+        return uri;
+      }
       default:
         return null;
     }
@@ -999,6 +1202,13 @@ class SurgeProducer extends Producer {
         return this.convertHttp(proxy);
       case 'socks5':
         return this.convertSocks5(proxy);
+      case 'hysteria2':
+        return this.convertHysteria2(proxy);
+      case 'tuic':
+        return this.convertTUIC(proxy);
+      case 'wireguard':
+        // 先输出注释形式的占位，避免直接丢失节点
+        return this.convertWireGuardSurgeComment(proxy);
       default:
         return null; // Surge 不支持的类型跳过
     }
@@ -1137,6 +1347,75 @@ class SurgeProducer extends Producer {
 
     return parts.join(', ');
   }
+
+  convertHysteria2(proxy) {
+    const parts = [];
+    parts.push(`${proxy.name} = hysteria2`);
+    parts.push(proxy.server);
+    parts.push(proxy.port.toString());
+
+    if (proxy.password) {
+      parts.push(`password="${proxy.password}"`);
+    }
+
+    if (proxy.hopInterval) {
+      parts.push(`port-hopping-interval=${proxy.hopInterval}`);
+    }
+
+    if (proxy.sni) {
+      parts.push(`sni=${proxy.sni}`);
+    }
+
+    if (proxy.skipCertVerify) {
+      parts.push('skip-cert-verify=true');
+    }
+
+    if (proxy.alpn && proxy.alpn.length > 0) {
+      parts.push(`alpn=${proxy.alpn[0]}`);
+    }
+
+    return parts.join(', ');
+  }
+
+  convertTUIC(proxy) {
+    const parts = [];
+    const type = 'tuic-v5';
+    parts.push(`${proxy.name} = ${type}`);
+    parts.push(proxy.server);
+    parts.push(proxy.port.toString());
+
+    if (proxy.uuid) {
+      parts.push(`uuid=${proxy.uuid}`);
+    }
+    if (proxy.password) {
+      parts.push(`password="${proxy.password}"`);
+    }
+
+    if (proxy.alpn && proxy.alpn.length > 0) {
+      parts.push(`alpn=${proxy.alpn[0]}`);
+    }
+
+    if (proxy.hopInterval) {
+      parts.push(`port-hopping-interval=${proxy.hopInterval}`);
+    }
+
+    if (proxy.sni) {
+      parts.push(`sni=${proxy.sni}`);
+    }
+
+    if (proxy.skipCertVerify) {
+      parts.push('skip-cert-verify=true');
+    }
+
+    return parts.join(', ');
+  }
+
+  convertWireGuardSurgeComment(proxy) {
+    const parts = [];
+    parts.push(`# > WireGuard Proxy ${proxy.name}`);
+    parts.push(`# ${proxy.name}=wireguard,${proxy.server},${proxy.port}`);
+    return parts.join('\n');
+  }
 }
 
 /**
@@ -1164,6 +1443,8 @@ class QuantumultXProducer extends Producer {
         return this.convertHttp(proxy);
       case 'socks5':
         return this.convertSocks5(proxy);
+      case 'hysteria2':
+        return this.convertHysteria2(proxy);
       default:
         return null;
     }
@@ -1256,6 +1537,43 @@ class QuantumultXProducer extends Producer {
     }
     if (proxy.password) {
       line += `, password=${proxy.password}`;
+    }
+
+    line += `, tag=${proxy.name}`;
+    return line;
+  }
+
+  convertHysteria2(proxy) {
+    let line = `hysteria2=${proxy.server}:${proxy.port}`;
+
+    if (proxy.password) {
+      line += `, password=${proxy.password}`;
+    }
+
+    if (proxy.up) {
+      line += `, up=${proxy.up}`;
+    }
+    if (proxy.down) {
+      line += `, down=${proxy.down}`;
+    }
+
+    if (proxy.obfs === 'salamander') {
+      line += `, obfs=salamander`;
+      if (proxy.obfsPassword) {
+        line += `, obfs-password=${proxy.obfsPassword}`;
+      }
+    }
+
+    if (proxy.sni) {
+      line += `, sni=${proxy.sni}`;
+    }
+
+    if (proxy.skipCertVerify) {
+      line += ', skip-cert-verify=true';
+    }
+
+    if (proxy.alpn && proxy.alpn.length > 0) {
+      line += `, alpn=${proxy.alpn.join('|')}`;
     }
 
     line += `, tag=${proxy.name}`;

@@ -85,6 +85,7 @@ export default function SubscriptionConverter() {
   const [showSettings, setShowSettings] = useState(false);
   const [serverPort, setServerPort] = useState(59999);
   const [autoStart, setAutoStart] = useState(false);
+  const [fetchUserAgent, setFetchUserAgent] = useState('FlyClash-Converter/1.0');
 
   // 添加成功对话框
   const [showAddSuccess, setShowAddSuccess] = useState(false);
@@ -109,6 +110,7 @@ export default function SubscriptionConverter() {
       if (result.success) {
         setServerPort(result.settings.port || 59999);
         setAutoStart(result.settings.autoStart || false);
+        setFetchUserAgent(result.settings.userAgent || 'FlyClash-Converter/1.0');
       }
     } catch (error) {
       console.error('加载设置失败:', error);
@@ -122,7 +124,8 @@ export default function SubscriptionConverter() {
     try {
       const result = await window.electronAPI.converter.saveSettings({
         port: serverPort,
-        autoStart: autoStart
+        autoStart: autoStart,
+        userAgent: fetchUserAgent
       });
 
       if (result.success) {
@@ -211,49 +214,76 @@ export default function SubscriptionConverter() {
 
     // 处理输入
     if (inputType === 'url') {
-      // URL模式:支持多个URL,每行一个
-      const urls = urlInput
+      // URL模式: 支持多个URL, 每行一个；如果输入看起来不是 URL 而是 Base64，则直接当作内容处理
+      const lines = urlInput
         .split('\n')
         .map(line => line.trim())
         .filter(line => line && !line.startsWith('#'));
 
-      if (urls.length === 0) {
+      if (lines.length === 0) {
         toast.error(t('converter.errors.emptyUrl'));
         return;
       }
 
-      setConverting(true);
-      setConversionResult(null);
-      setSubscriptionUrl('');
+      const urlLines = lines.filter(line => /^https?:\/\//i.test(line));
 
-      try {
-        // 下载所有URL的内容
-        if (urls.length === 1) {
-          const result = await window.electronAPI.converter.fetchUrl(urls[0]);
-          if (!result.success) {
-            throw new Error(result.error);
-          }
-          sourceContent = result.content;
-          console.log('[Converter] 下载内容长度:', sourceContent.length);
-          console.log('[Converter] 下载内容预览:', sourceContent.substring(0, 500));
-        } else {
-          // 多个URL,下载并合并
-          const contents: string[] = [];
-          for (let i = 0; i < urls.length; i++) {
-            const result = await window.electronAPI.converter.fetchUrl(urls[i]);
-            if (result.success) {
-              contents.push(result.content);
-              console.log(`[Converter] URL ${i+1} 下载内容长度:`, result.content.length);
-            }
-          }
-          sourceContent = contents.join('\n');
-          console.log('[Converter] 合并后内容长度:', sourceContent.length);
-        }
+      // 如果没有任何 http(s) 开头的行，而且整体看起来像 Base64，则直接作为内容处理（兼容 SIP003 这类订阅字符串）
+      const looksLikeBase64 = (str: string) => {
+        const compact = str.replace(/\s+/g, '');
+        if (compact.length < 16) return false;
+        if (!/^[A-Za-z0-9+/=]+$/.test(compact)) return false;
+        return true;
+      };
+
+      if (urlLines.length === 0 && looksLikeBase64(urlInput)) {
+        console.log(
+          '[Converter] URL 模式检测到 Base64 风格输入，直接按内容处理'
+        );
+        sourceContent = urlInput;
         setContentInput(sourceContent);
-      } catch (error: any) {
-        toast.error(t('converter.errors.fetchFailed', { error: error.message }));
-        setConverting(false);
-        return;
+        setConverting(true);
+        setConversionResult(null);
+        setSubscriptionUrl('');
+      } else {
+        // 正常 URL 模式: 下载所有 URL 的内容
+        const urls = urlLines;
+
+        if (urls.length === 0) {
+          toast.error(t('converter.errors.emptyUrl'));
+          return;
+        }
+
+        setConverting(true);
+        setConversionResult(null);
+        setSubscriptionUrl('');
+
+        try {
+          if (urls.length === 1) {
+            const result = await window.electronAPI.converter.fetchUrl(urls[0]);
+            if (!result.success) {
+              throw new Error(result.error);
+            }
+            sourceContent = result.content;
+            console.log('[Converter] 下载内容长度:', sourceContent.length);
+            console.log('[Converter] 下载内容预览:', sourceContent.substring(0, 500));
+          } else {
+            const contents: string[] = [];
+            for (let i = 0; i < urls.length; i++) {
+              const result = await window.electronAPI.converter.fetchUrl(urls[i]);
+              if (result.success) {
+                contents.push(result.content);
+                console.log(`[Converter] URL ${i + 1} 下载内容长度:`, result.content.length);
+              }
+            }
+            sourceContent = contents.join('\n');
+            console.log('[Converter] 合并后内容长度:', sourceContent.length);
+          }
+          setContentInput(sourceContent);
+        } catch (error: any) {
+          toast.error(t('converter.errors.fetchFailed', { error: error.message }));
+          setConverting(false);
+          return;
+        }
       }
     } else {
       // 内容模式
@@ -304,7 +334,9 @@ export default function SubscriptionConverter() {
             enableTcpFastOpen,
             skipCertificateVerify: skipCertVerify,
             autoAddEmoji
-          }
+          },
+          // 处理流水线（预留扩展，目前前端未开放配置时传空）
+          processors: null
         });
       }
 
@@ -855,6 +887,39 @@ export default function SubscriptionConverter() {
                   />
                   <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
                 </label>
+              </div>
+
+              {/* 请求 UA */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                  {t('converter.settings.fetchUserAgent')}
+                </label>
+                <input
+                  type="text"
+                  value={fetchUserAgent}
+                  onChange={(e) => setFetchUserAgent(e.target.value)}
+                  placeholder="FlyClash-Converter/1.0"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {t('converter.settings.fetchUserAgentHint')}
+                </p>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {[
+                    { label: '默认 (FlyClash)', value: 'FlyClash-Converter/1.0' },
+                    { label: 'Clash Meta', value: 'ClashMeta' },
+                    { label: 'Clash Verge', value: 'Clash-Verge' }
+                  ].map(preset => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      onClick={() => setFetchUserAgent(preset.value)}
+                      className="rounded-full border border-gray-300 dark:border-gray-600 px-2.5 py-0.5 text-[11px] text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

@@ -220,21 +220,36 @@ export function IpAddressCard() {
 
       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex-1 min-w-0">
-          {loading ? (
-            <div className="flex items-center gap-2">
-              <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {t('dashboard.loading') || '获取中...'}
+          {/* 第一行：固定高度，放 IP 或加载/错误信息 */}
+          <div className="h-7 flex items-center">
+            {loading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+                <span>{t('dashboard.loading') || '获取中...'}</span>
+              </div>
+            ) : error ? (
+              <div className="text-sm text-destructive truncate">
+                {error}
+              </div>
+            ) : (
+              <div className="truncate text-lg font-semibold text-foreground">
+                {displayIp}
+              </div>
+            )}
+          </div>
+
+          {/* 第二行：固定高度，放 ISP / 说明，占位时透明 */}
+          <div className="mt-1 h-4 flex items-center">
+            {loading || error ? (
+              <span className="text-xs text-muted-foreground opacity-0">
+                {displayIsp || t('dashboard.unknown')}
               </span>
-            </div>
-          ) : error ? (
-            <div className="text-sm text-destructive">{error}</div>
-          ) : (
-            <>
-              <div className="truncate text-lg font-semibold text-foreground">{displayIp}</div>
-              <div className="mt-1 truncate text-xs text-muted-foreground">{displayIsp}</div>
-            </>
-          )}
+            ) : (
+              <span className="truncate text-xs text-muted-foreground">
+                {displayIsp}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="ml-auto hidden shrink-0 items-center gap-0.5 self-end sm:flex" />

@@ -9,7 +9,7 @@ export default function NodesPage() {
 
   return (
     <Layout>
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold text-foreground">{t('nodes.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('nodes.subtitle')}</p>

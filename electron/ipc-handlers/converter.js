@@ -9,9 +9,8 @@ const { OutputFormat } = require('../converter/proxy-models');
 const TemplateManager = require('../converter/template-manager');
 const ConfigGenerator = require('../converter/config-generator');
 const path = require('path');
-const https = require('https');
-const http = require('http');
 const fs = require('fs');
+const { fetchWithOptions, DEFAULT_UA } = require('../converter/request-helper');
 
 // 全局实例
 let converter = null;
@@ -37,13 +36,18 @@ function loadSettings(app) {
 
     if (fs.existsSync(settingsFile)) {
       const data = fs.readFileSync(settingsFile, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      return {
+        port: parsed.port || 59999,
+        autoStart: parsed.autoStart || false,
+        userAgent: parsed.userAgent || DEFAULT_UA
+      };
     }
   } catch (e) {
     console.error('[Converter] Failed to load settings:', e);
   }
 
-  return { port: 59999, autoStart: false };
+  return { port: 59999, autoStart: false, userAgent: DEFAULT_UA };
 }
 
 /**
@@ -53,7 +57,9 @@ function getServer(app) {
   if (!server) {
     const settings = loadSettings(app);
     const configDir = path.join(app.getPath('userData'), 'converter-subscriptions');
-    server = new SubscriptionServer(settings.port, configDir);
+    server = new SubscriptionServer(settings.port, configDir, {
+      userAgent: settings.userAgent
+    });
   }
   return server;
 }
@@ -67,7 +73,7 @@ function registerConverterHandlers(app, dbManager) {
    */
   ipcMain.handle('converter:convert', async (event, params) => {
     try {
-      const { input, targetFormat, filterRegex, options } = params;
+      const { input, targetFormat, filterRegex, options, processors } = params;
 
       console.log('[IPC] converter:convert - 原始输入长度:', input.length);
       console.log('[IPC] converter:convert - 原始输入预览:', input.substring(0, 200));
@@ -79,7 +85,9 @@ function registerConverterHandlers(app, dbManager) {
         input,
         targetFormat,
         filterRegex,
-        conversionOptions
+        conversionOptions,
+        null,
+        processors
       );
 
       console.log('[IPC] converter:convert - 转换结果:', {
@@ -113,7 +121,9 @@ function registerConverterHandlers(app, dbManager) {
    */
   ipcMain.handle('converter:fetch-url', async (event, url) => {
     try {
-      const content = await fetchFromUrl(url);
+      const settings = loadSettings(app);
+      const { data } = await fetchWithOptions(url, { userAgent: settings.userAgent });
+      const content = typeof data === 'string' ? data : JSON.stringify(data);
       return {
         success: true,
         content
@@ -274,8 +284,22 @@ function registerConverterHandlers(app, dbManager) {
    */
   ipcMain.handle('converter:parse-proxies', async (event, input) => {
     try {
+      console.log(
+        '[IPC] converter:parse-proxies - 原始输入长度:',
+        input?.length ?? 0
+      );
+      console.log(
+        '[IPC] converter:parse-proxies - 原始输入预览:',
+        typeof input === 'string' ? input.substring(0, 200) : ''
+      );
+
       const converter = getConverter();
       const proxies = converter.parseInput(input);
+
+      console.log(
+        '[IPC] converter:parse-proxies - 解析到代理数量:',
+        proxies.length
+      );
       
       return {
         success: true,
@@ -467,15 +491,9 @@ function registerConverterHandlers(app, dbManager) {
       console.log('[IPC] converter:add-to-config - 开始下载配置:', name, 'URL:', url);
 
       // 从URL下载配置文件
-      const axios = require('axios');
-      const response = await axios.get(url, {
-        timeout: 30000,
-        headers: {
-          'User-Agent': 'FlyClash/1.0'
-        }
-      });
-
-      const configData = response.data;
+      const settings = loadSettings(app);
+      const { data } = await fetchWithOptions(url, settings);
+      const configData = typeof data === 'string' ? data : JSON.stringify(data);
       console.log('[IPC] converter:add-to-config - 配置下载成功,大小:', configData.length);
 
       // 保存为本地文件
@@ -516,23 +534,7 @@ function registerConverterHandlers(app, dbManager) {
    */
   ipcMain.handle('converter:get-settings', async (event) => {
     try {
-      const fs = require('fs');
-      const settingsFile = path.join(app.getPath('userData'), 'converter-settings.json');
-
-      let settings = {
-        port: 59999,
-        autoStart: false
-      };
-
-      if (fs.existsSync(settingsFile)) {
-        try {
-          const data = fs.readFileSync(settingsFile, 'utf-8');
-          settings = JSON.parse(data);
-        } catch (e) {
-          console.error('[IPC] Failed to read converter-settings.json:', e);
-        }
-      }
-
+      const settings = loadSettings(app);
       return {
         success: true,
         settings: settings
@@ -542,7 +544,7 @@ function registerConverterHandlers(app, dbManager) {
       return {
         success: false,
         error: error.message,
-        settings: { port: 59999, autoStart: false }
+        settings: { port: 59999, autoStart: false, userAgent: DEFAULT_UA }
       };
     }
   });
@@ -558,18 +560,32 @@ function registerConverterHandlers(app, dbManager) {
       // 读取旧设置
       const oldSettings = loadSettings(app);
 
+      const normalized = {
+        port: settings.port || 59999,
+        autoStart: !!settings.autoStart,
+        userAgent: settings.userAgent || DEFAULT_UA
+      };
+
       // 保存新设置
-      fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2), 'utf-8');
+      fs.writeFileSync(settingsFile, JSON.stringify(normalized, null, 2), 'utf-8');
 
-      console.log('[IPC] converter:save-settings - 设置已保存:', settings);
+      console.log('[IPC] converter:save-settings - 设置已保存:', normalized);
 
-      // 如果端口改变且服务器正在运行,需要重启服务器
-      if (oldSettings.port !== settings.port && server && server.server && server.server.listening) {
-        console.log('[IPC] Port changed, restarting server...');
+      const settingsChanged =
+        oldSettings.port !== normalized.port ||
+        oldSettings.autoStart !== normalized.autoStart ||
+        oldSettings.userAgent !== normalized.userAgent;
+
+      // 如果设置改变且服务器正在运行,需要重启服务器
+      if (server && server.server && server.server.listening && settingsChanged) {
+        console.log('[IPC] Settings changed, restarting converter server...');
         await server.stop();
         server = null; // 清除旧实例
         const newServer = getServer(app);
         await newServer.start();
+      } else if (settingsChanged) {
+        // 如果未运行但设置改变,清理实例以便下次启动使用新配置
+        server = null;
       }
 
       return {
@@ -590,44 +606,6 @@ function registerConverterHandlers(app, dbManager) {
 /**
  * 从 URL 获取内容
  */
-function fetchFromUrl(url) {
-  return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? https : http;
-    
-    const options = {
-      headers: {
-        'User-Agent': 'FlyClash/1.0'
-      }
-    };
-    
-    client.get(url, options, (res) => {
-      // 处理重定向
-      if (res.statusCode === 301 || res.statusCode === 302) {
-        if (res.headers.location) {
-          fetchFromUrl(res.headers.location).then(resolve).catch(reject);
-          return;
-        }
-      }
-
-      let data = '';
-      
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
-      
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          resolve(data);
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}`));
-        }
-      });
-    }).on('error', (error) => {
-      reject(error);
-    });
-  });
-}
-
 module.exports = {
   registerConverterHandlers,
   getServer

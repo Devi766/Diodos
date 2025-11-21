@@ -821,7 +821,9 @@
       "serverPort": "服务器端口",
       "serverPortHint": "订阅服务器监听端口，默认 59999",
       "autoStart": "自动启动",
-      "autoStartHint": "启动应用时自动启动订阅服务器"
+      "autoStartHint": "启动应用时自动启动订阅服务器",
+      "fetchUserAgent": "请求 User-Agent",
+      "fetchUserAgentHint": "用于订阅/转换请求的 UA，不填则使用默认值，可点击下方预设快速填入。"
     },
     "options": {
       "enableUdp": "启用 UDP",

@@ -62,6 +62,7 @@ app.name = 'flyclash';
 // 应用数据存储路径
 const userDataPath = app.getPath('userData');
 const configDir = path.join(userDataPath, 'config');
+const windowStatePath = path.join(configDir, 'window-state.json');
 
 context.set('userDataPath', userDataPath);
 context.set('configDir', configDir);
@@ -76,6 +77,49 @@ const dbManager = new DatabaseManager(dbPath);
 dbManager.initialize();
 
 context.set('dbManager', dbManager);
+
+function loadWindowState() {
+  try {
+    if (!fs.existsSync(windowStatePath)) {
+      return null;
+    }
+    const raw = fs.readFileSync(windowStatePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const { x, y, width, height, isMaximized } = parsed;
+    if (typeof width !== 'number' || typeof height !== 'number') {
+      return null;
+    }
+    return {
+      x: typeof x === 'number' ? x : undefined,
+      y: typeof y === 'number' ? y : undefined,
+      width,
+      height,
+      isMaximized: !!isMaximized
+    };
+  } catch (e) {
+    console.warn('[WindowState] Failed to load window state:', e?.message || e);
+    return null;
+  }
+}
+
+function saveWindowState(win) {
+  if (!win || win.isDestroyed?.()) return;
+  try {
+    const bounds = win.getBounds();
+    const data = {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      isMaximized: win.isMaximized()
+    };
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(windowStatePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[WindowState] Failed to save window state:', e?.message || e);
+  }
+}
 
 // 初始化订阅调度器
 const SubscriptionScheduler = require('./core/subscription-scheduler');
@@ -957,9 +1001,13 @@ function formatSpeed(bytesPerSecond) {
 }
 
 function createWindow() {
+  const savedState = loadWindowState() || {};
+
   state.mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    width: savedState.width || 1000,
+    height: savedState.height || 700,
+    x: typeof savedState.x === 'number' ? savedState.x : undefined,
+    y: typeof savedState.y === 'number' ? savedState.y : undefined,
     minWidth: 800,
     minHeight: 600,
     webPreferences: {
@@ -988,6 +1036,26 @@ function createWindow() {
   });
 
   state.mainWindow.setBackgroundColor('#00000000');
+
+  const notifyWindowState = () => {
+    if (!state.mainWindow || state.mainWindow.isDestroyed?.()) {
+      return;
+    }
+    try {
+      const maximized = state.mainWindow.isMaximized();
+      const fullScreen =
+        typeof state.mainWindow.isFullScreen === 'function'
+          ? state.mainWindow.isFullScreen()
+          : false;
+
+      state.mainWindow.webContents.send('window-state-changed', {
+        maximized,
+        fullScreen,
+      });
+    } catch (e) {
+      console.warn('[WindowState] Failed to notify window state:', e?.message || e);
+    }
+  };
 
   // 应用平台特定的背景效果
   if (isMac) {
@@ -1024,6 +1092,34 @@ function createWindow() {
       state.mainWindow.webContents.send('theme-changed', actualTheme);
     }
   });
+
+  let saveWindowStateTimer = null;
+  const scheduleSaveWindowState = () => {
+    if (!state.mainWindow) return;
+    if (saveWindowStateTimer) {
+      clearTimeout(saveWindowStateTimer);
+    }
+    saveWindowStateTimer = setTimeout(() => {
+      if (state.mainWindow && !state.mainWindow.isDestroyed?.()) {
+        saveWindowState(state.mainWindow);
+      }
+    }, 300);
+  };
+
+  state.mainWindow.on('resize', scheduleSaveWindowState);
+  state.mainWindow.on('move', scheduleSaveWindowState);
+  state.mainWindow.on('maximize', scheduleSaveWindowState);
+  state.mainWindow.on('unmaximize', scheduleSaveWindowState);
+  state.mainWindow.on('close', scheduleSaveWindowState);
+
+  state.mainWindow.on('maximize', notifyWindowState);
+  state.mainWindow.on('unmaximize', notifyWindowState);
+  state.mainWindow.on('enter-full-screen', notifyWindowState);
+  state.mainWindow.on('leave-full-screen', notifyWindowState);
+
+  if (savedState.isMaximized) {
+    state.mainWindow.maximize();
+  }
 
   // 开发环境使用localhost:3000
   if (isDev) {
@@ -1663,6 +1759,24 @@ ipcMain.handle('window-toggle-maximize', () => {
 
   state.mainWindow.maximize();
   return { success: true, maximized: true };
+});
+
+ipcMain.handle('window-get-state', () => {
+  if (!state.mainWindow) {
+    return { success: false };
+  }
+
+  const maximized = state.mainWindow.isMaximized();
+  const fullScreen =
+    typeof state.mainWindow.isFullScreen === 'function'
+      ? state.mainWindow.isFullScreen()
+      : false;
+
+  return {
+    success: true,
+    maximized,
+    fullScreen,
+  };
 });
 
 ipcMain.handle('window-close', () => {

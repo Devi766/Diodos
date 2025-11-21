@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { SubscriptionConverter, ConversionOptions } = require('./subscription-converter');
 const { OutputFormat } = require('./proxy-models');
+const { fetchWithOptions, DEFAULT_UA, DEFAULT_TIMEOUT } = require('./request-helper');
 
 /**
  * 订阅配置数据类
@@ -33,12 +34,19 @@ class SubscriptionConfig {
  * 订阅服务器
  */
 class SubscriptionServer {
-  constructor(port = 8080, configDir = null) {
+  constructor(port = 8080, configDir = null, requestSettings = {}) {
     this.port = port;
     this.configDir = configDir || path.join(process.cwd(), 'subscriptions');
     this.subscriptions = new Map();
     this.server = null;
     this.converter = new SubscriptionConverter();
+    this.requestSettings = {
+      userAgent: requestSettings.userAgent || DEFAULT_UA,
+      proxy: '',
+      insecure: false,
+      timeout: DEFAULT_TIMEOUT,
+      noCache: false
+    };
 
     // 确保配置目录存在
     if (!fs.existsSync(this.configDir)) {
@@ -141,9 +149,12 @@ class SubscriptionServer {
     try {
       // 获取订阅内容
       let content;
+      let upstreamHeaders = null;
       if (subscription.sourceUrl) {
         // 从 URL 获取
-        content = await this.fetchFromUrl(subscription.sourceUrl);
+        const result = await this.fetchFromUrl(subscription.sourceUrl);
+        content = result.content;
+        upstreamHeaders = result.headers || null;
       } else if (subscription.sourceContent) {
         // 使用本地内容
         content = subscription.sourceContent;
@@ -178,14 +189,17 @@ class SubscriptionServer {
       };
 
       // 添加订阅信息头
-      const userinfo = this.generateSubscriptionUserinfo(result);
+      const userinfo = upstreamHeaders?.['subscription-userinfo'] || upstreamHeaders?.['Subscription-Userinfo'] || this.generateSubscriptionUserinfo(result);
       if (userinfo) {
         headers['subscription-userinfo'] = userinfo;
       }
 
       // 添加更新间隔头
-      if (subscription.updateInterval > 0) {
-        headers['profile-update-interval'] = subscription.updateInterval.toString();
+      // 透传/回填更新间隔
+      const upstreamPui = upstreamHeaders?.['profile-update-interval'] || upstreamHeaders?.['Profile-Update-Interval'];
+      const updateInterval = upstreamPui || (subscription.updateInterval > 0 ? subscription.updateInterval.toString() : null);
+      if (updateInterval) {
+        headers['profile-update-interval'] = updateInterval;
       }
 
       res.writeHead(200, headers);
@@ -220,30 +234,13 @@ class SubscriptionServer {
    * 从 URL 获取内容
    */
   async fetchFromUrl(url) {
-    const https = require('https');
-    const http = require('http');
-    
-    return new Promise((resolve, reject) => {
-      const client = url.startsWith('https') ? https : http;
-      
-      client.get(url, (res) => {
-        let data = '';
-        
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-        
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            resolve(data);
-          } else {
-            reject(new Error(`HTTP ${res.statusCode}`));
-          }
-        });
-      }).on('error', (error) => {
-        reject(error);
-      });
-    });
+    const { data, headers } = await fetchWithOptions(url, this.requestSettings);
+    const content = typeof data === 'string'
+      ? data
+      : Buffer.isBuffer(data)
+        ? data.toString('utf-8')
+        : JSON.stringify(data);
+    return { content, headers };
   }
 
   /**

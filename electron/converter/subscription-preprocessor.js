@@ -44,19 +44,37 @@ class SubscriptionPreprocessor {
       return clashResult;
     }
 
-    // 4. 处理 SSD 格式
+    // 3.5 处理 Base64 包裹的分享链接列表（SIP003 / 通用 URI 列表）
+    const base64UriList = this.handleBase64UriList(trimmed);
+    if (base64UriList) {
+      return base64UriList;
+    }
+
+    // 3.6 处理每行一个 Base64 的 URI 列表（txt 等文件内每行 Base64）
+    const perLineBase64 = this.handlePerLineBase64UriList(trimmed);
+    if (perLineBase64) {
+      return perLineBase64;
+    }
+
+    // 4. 处理 SIP008（含 Base64 封装）
+    const sip008Result = this.handleSip008(trimmed);
+    if (sip008Result) {
+      return sip008Result;
+    }
+
+    // 5. 处理 SSD 格式
     if (trimmed.startsWith('ssd://')) {
       console.log('[SubscriptionPreprocessor] Processing as SSD format');
       return this.handleSSD(trimmed);
     }
 
-    // 5. 处理 Surge/QuantumultX 完整配置
+    // 6. 处理 Surge/QuantumultX 完整配置
     if (trimmed.includes('[Proxy]') || trimmed.includes('[Server]') || trimmed.includes('[server_local]')) {
       console.log('[SubscriptionPreprocessor] Processing as Surge/QuantumultX config');
       return this.extractProxiesFromConfig(trimmed);
     }
 
-    // 6. 智能检测 Base64 (检查是否包含 Base64 编码的协议关键字)
+    // 7. 智能检测 Base64 (检查是否包含 Base64 编码的协议关键字)
     const base64Keys = [
       'dm1lc3M',      // vmess
       'c3NyOi8v',     // ssr://
@@ -91,7 +109,7 @@ class SubscriptionPreprocessor {
       }
     }
 
-    // 7. Fallback Base64 - 最后尝试解码
+    // 8. Fallback Base64 - 最后尝试解码
     // 如果看起来像 Base64，无论是否包含协议字符，都尝试一次解码
     if (this.looksLikeBase64(trimmed)) {
       const decoded = this.tryDecodeBase64(trimmed);
@@ -104,9 +122,159 @@ class SubscriptionPreprocessor {
       }
     }
 
-    // 8. 返回原始内容
+    // 8.1 分段 Base64：删除空白后再尝试一次
+    const compactForBase64 = trimmed.replace(/\s+/g, '');
+    if (compactForBase64 !== trimmed && this.looksLikeBase64(compactForBase64)) {
+      const decoded = this.tryDecodeBase64(compactForBase64);
+      if (decoded && /^\w+(:|\/\/|\s*?=\s*?)\w+/m.test(decoded)) {
+        console.log('[SubscriptionPreprocessor] Detected segmented Base64 content');
+        const singBoxResult = this.handleSingBox(decoded);
+        if (singBoxResult) return singBoxResult;
+        return this.preprocess(decoded);
+      }
+    }
+
+    // 9. 返回原始内容
     console.log('[SubscriptionPreprocessor] No special format detected, returning raw content');
     return trimmed;
+  }
+
+  /**
+   * 处理 SIP008 订阅（支持原始 JSON 与 Base64 包裹）
+   */
+  static handleSip008(content) {
+    // 直接尝试 JSON
+    const parsedDirect = this.parseSip008Json(content);
+    if (parsedDirect) {
+      console.log(`[SubscriptionPreprocessor] Detected SIP008 JSON with ${parsedDirect.serverCount} servers`);
+      return parsedDirect.lines.join('\n');
+    }
+
+    // 尝试 Base64 包裹（去除空白方便识别分段 Base64）
+    const compact = content.replace(/\s+/g, '');
+    const base64Charset = /^[A-Za-z0-9+/=]+$/;
+    if (base64Charset.test(compact) && compact.length >= 16) {
+      const padded = this.padBase64(compact);
+      const decoded = padded ? this.tryDecodeBase64(padded) : null;
+      const parsedBase64 = decoded ? this.parseSip008Json(decoded) : null;
+      if (parsedBase64) {
+        console.log(`[SubscriptionPreprocessor] Detected SIP008 Base64 with ${parsedBase64.serverCount} servers`);
+        return parsedBase64.lines.join('\n');
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 处理 Base64 包裹的分享链接列表（SIP003 等）
+   * - 典型场景：整个订阅内容是多行 ss:// / vmess:// / vless:// 等 URI 的 Base64
+   * - 也可能包含其它协议：hy2://、anytls://、trojan:// 等
+   * - 如果解码后看起来是一串 URI 列表，就直接返回解码结果，交由后续按行解析
+   */
+  static handleBase64UriList(content) {
+    // 去掉空白后检查是否是 Base64 字符集
+    const compact = content.replace(/\s+/g, '');
+    const base64Charset = /^[A-Za-z0-9+/=]+$/;
+    if (!base64Charset.test(compact) || compact.length < 16) {
+      return null;
+    }
+
+    const padded = this.padBase64(compact);
+    const decoded = padded ? this.tryDecodeBase64(padded) : null;
+    if (!decoded) {
+      return null;
+    }
+
+    const decodedTrimmed = decoded.trim();
+
+    // 明显是 JSON / YAML 的情况交给其他处理器（Sing-box / Clash / SIP008 等）
+    if (decodedTrimmed.startsWith('{') || decodedTrimmed.startsWith('[')) {
+      return null;
+    }
+    if (decodedTrimmed.startsWith('proxies:') || decodedTrimmed.includes('proxies:')) {
+      return null;
+    }
+
+    const lines = decoded.split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      return null;
+    }
+
+    // 判断是否主要是 URI 列表：存在至少一行 URI，并且大部分行形如 scheme://...
+    const uriRegex = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;
+    const uriLines = lines.filter(line => uriRegex.test(line));
+
+    if (uriLines.length === 0) {
+      return null;
+    }
+
+    // 当 URI 行占比足够高时，认为是分享链接列表
+    if (uriLines.length / lines.length < 0.6) {
+      return null;
+    }
+
+    console.log(`[SubscriptionPreprocessor] Detected Base64 URI list with ${lines.length} lines`);
+    return decoded;
+  }
+
+  /**
+   * 处理「每行一个 Base64 串」的订阅
+   * 典型场景：txt 等文件中，每一行是独立的 Base64（解码后是一条 URI），而不是整段合并的 Base64。
+   * 例如：
+   *   c3M6Ly9...
+   *   dm1lc3M6Ly9...
+   */
+  static handlePerLineBase64UriList(content) {
+    const lines = content.split('\n');
+    const uriRegex = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;
+
+    const decodedLines = [];
+    let decodedCount = 0;
+
+    for (const originalLine of lines) {
+      const line = originalLine.trim();
+      if (!line || line.startsWith('#') || line.startsWith('//')) {
+        continue;
+      }
+
+      // 已经是 URI 的行，直接保留
+      if (uriRegex.test(line)) {
+        decodedLines.push(line);
+        continue;
+      }
+
+      // 尝试将该行视为 Base64 解码
+      const compact = line.replace(/\s+/g, '');
+      if (!/^[A-Za-z0-9+/=]+$/.test(compact) || compact.length < 16) {
+        continue;
+      }
+
+      const padded = this.padBase64(compact);
+      const decoded = padded ? this.tryDecodeBase64(padded) : null;
+      if (!decoded) {
+        continue;
+      }
+
+      // 有些行解码后可能包含换行，但一般是单条 URI，取第一行
+      const decodedFirstLine = decoded.split('\n')[0].trim();
+      if (uriRegex.test(decodedFirstLine)) {
+        decodedLines.push(decodedFirstLine);
+        decodedCount += 1;
+      }
+    }
+
+    if (decodedCount === 0 || decodedLines.length === 0) {
+      return null;
+    }
+
+    console.log(
+      `[SubscriptionPreprocessor] Detected per-line Base64 URI list, decoded ${decodedCount} lines`
+    );
+    return decodedLines.join('\n');
   }
 
   /**
@@ -188,6 +356,125 @@ class SubscriptionPreprocessor {
       console.log('[SubscriptionPreprocessor] Not a valid Clash YAML:', e.message);
     }
     return null;
+  }
+
+  /**
+   * 解析 SIP008 JSON，返回 JSON 行格式
+   */
+  static parseSip008Json(content) {
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return null;
+    }
+
+    const servers = parsed?.servers;
+    if (!Array.isArray(servers) || servers.length === 0) {
+      return null;
+    }
+
+    const lines = servers
+      .map((server, index) => this.convertSip008Server(server, index))
+      .filter(line => line !== null);
+
+    if (lines.length === 0) {
+      return null;
+    }
+
+    return {
+      serverCount: servers.length,
+      lines
+    };
+  }
+
+  /**
+   * 将单个 SIP008 server 转换为 Clash JSON 行
+   */
+  static convertSip008Server(server, index) {
+    if (!server || typeof server !== 'object') {
+      return null;
+    }
+
+    const host = server.server || server.address;
+    const portRaw = server.server_port ?? server.serverPort ?? server.port;
+    const cipher = server.method || server.cipher;
+    const password = server.password;
+
+    const port = parseInt(portRaw, 10);
+    if (!host || !port || !cipher || !password) {
+      return null;
+    }
+
+    const proxy = {
+      name: server.remarks || server.name || server.tag || `SIP008-${index + 1}`,
+      type: 'ss',
+      server: host,
+      port,
+      cipher,
+      password
+    };
+
+    if (typeof server.udp === 'boolean') {
+      proxy.udp = server.udp;
+    }
+
+    const plugin = server.plugin || server.plugin_name;
+    const pluginOptsRaw = server['plugin_opts'] ?? server.plugin_opts ?? server['plugin-opts'] ?? server.pluginOptions ?? server['plugin_options'];
+    if (plugin) {
+      proxy.plugin = plugin;
+      const pluginOpts = this.parseSip008PluginOpts(pluginOptsRaw);
+      if (pluginOpts !== null) {
+        proxy['plugin-opts'] = pluginOpts;
+      }
+    }
+
+    if (server['udp-over-tcp'] !== undefined) {
+      proxy['udp-over-tcp'] = server['udp-over-tcp'];
+    }
+    if (server['fast-open'] !== undefined) {
+      proxy['fast-open'] = server['fast-open'];
+    }
+
+    return JSON.stringify(proxy);
+  }
+
+  /**
+   * 解析 SIP008 plugin_opts 字段
+   */
+  static parseSip008PluginOpts(raw) {
+    if (raw === null || raw === undefined) {
+      return null;
+    }
+
+    if (typeof raw === 'object') {
+      return raw;
+    }
+
+    if (typeof raw !== 'string') {
+      return null;
+    }
+
+    const segments = raw.split(';')
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    if (segments.length === 0) {
+      return raw || null;
+    }
+
+    const opts = {};
+    for (const segment of segments) {
+      if (segment.includes('=')) {
+        const [key, ...rest] = segment.split('=');
+        const value = rest.join('=').trim();
+        opts[key.trim()] = value || true;
+      } else {
+        opts[segment] = true;
+      }
+    }
+
+    return Object.keys(opts).length > 0 ? opts : raw;
   }
 
   /**
@@ -392,6 +679,21 @@ class SubscriptionPreprocessor {
     
     // 长度应该足够长（至少 20 个字符）
     return str.length >= 20;
+  }
+
+  /**
+   * 填充 Base64 字符串至合法长度
+   */
+  static padBase64(str) {
+    const remainder = str.length % 4;
+    if (remainder === 0) {
+      return str;
+    }
+    // 余数为 1 无法通过填充修复
+    if (remainder === 1) {
+      return null;
+    }
+    return str.padEnd(str.length + (4 - remainder), '=');
   }
 
   /**

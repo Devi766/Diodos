@@ -212,6 +212,8 @@ export interface ElectronAPI {
   minimizeWindow: () => Promise<{ success: boolean }>;
   maximizeWindow: () => Promise<{ success: boolean; maximized?: boolean }>;
   closeWindow: () => Promise<{ success: boolean }>;
+  getWindowState?: () => Promise<{ success: boolean; maximized: boolean; fullScreen?: boolean }>;
+  onWindowStateChanged?: (callback: (state: { maximized: boolean; fullScreen?: boolean }) => void) => (() => void);
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openFile: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   openFileLocation: (filePath: string) => Promise<{ success: boolean, error?: string }>;

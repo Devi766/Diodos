@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window-close'),
+  getWindowState: () => ipcRenderer.invoke('window-get-state'),
 
   // 工具应用
   openToolsApp: (toolName) => ipcRenderer.invoke('open-tools-app', toolName),
@@ -401,6 +402,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (event, theme) => callback(event, theme);
     ipcRenderer.on('theme-changed', handler);
     return () => ipcRenderer.removeListener('theme-changed', handler);
+  },
+
+  // 窗口状态变更事件监听器（最大化 / 全屏）
+  onWindowStateChanged: (callback) => {
+    const handler = (_event, state) => callback(state);
+    ipcRenderer.on('window-state-changed', handler);
+    return () => ipcRenderer.removeListener('window-state-changed', handler);
   },
 
   onAppearanceModeChanged: (callback) => {

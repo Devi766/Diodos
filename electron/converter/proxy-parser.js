@@ -4,7 +4,7 @@
  * 支持多种代理协议的 URI 格式解析
  */
 
-const { Shadowsocks, VMess, Trojan, VLESS, Socks5, Http, Hysteria, Hysteria2, TUIC, WireGuard, ShadowsocksR } = require('./proxy-models');
+const { Shadowsocks, VMess, Trojan, VLESS, Socks5, Http, Hysteria, Hysteria2, TUIC, WireGuard, ShadowsocksR, Snell, SSH, AnyTLS, Juicity } = require('./proxy-models');
 const SubscriptionPreprocessor = require('./subscription-preprocessor');
 const yaml = require('js-yaml');
 const JSON5 = require('json5');
@@ -593,7 +593,13 @@ class URI_TUIC extends Parser {
       skipCertVerify: params.get('insecure') === '1' || params.get('insecure') === 'true',
       congestionController: params.get('congestion_control') || params.get('congestion_controller') || 'bbr',
       udpRelayMode: params.get('udp_relay_mode') || 'native',
-      hopInterval: params.get('hop-interval') ? parseInt(params.get('hop-interval')) : null
+      hopInterval: params.get('hop-interval') ? parseInt(params.get('hop-interval')) : null,
+      reduceRtt: ['1', 'true'].includes((params.get('reduce-rtt') || params.get('reduce_rtt') || '').toLowerCase()),
+      disableSni: ['1', 'true'].includes((params.get('disable-sni') || params.get('disable_sni') || '').toLowerCase()),
+      udpOverStream: ['1', 'true'].includes((params.get('udp-over-stream') || params.get('udp_over_stream') || '').toLowerCase()),
+      heartbeatInterval: params.get('heartbeat-interval')
+        ? parseInt(params.get('heartbeat-interval'))
+        : (params.get('heartbeat_interval') ? parseInt(params.get('heartbeat_interval')) : null)
     });
   }
 }
@@ -800,6 +806,60 @@ class Clash_All extends Parser {
           skipCertVerify: config['skip-cert-verify'] || false
         });
 
+      case 'snell':
+        return new Snell({
+          name: config.name,
+          server: config.server,
+          port: config.port,
+          psk: config.psk,
+          version: config.version || 3,
+          ipVersion: config['ip-version'] || null,
+          udp: config.udp !== false,
+          tfo: config.tfo || config['fast-open'] || false,
+          obfs: config.obfs || config['obfs-opts']?.mode || null,
+          obfsHost: config['obfs-opts']?.host || null,
+          obfsUri: config['obfs-opts']?.path || null
+        });
+
+      case 'ssh':
+        return new SSH({
+          name: config.name,
+          server: config.server,
+          port: config.port,
+          username: config.username,
+          password: config.password || null,
+          privateKey: config['private-key'] || null,
+          privateKeyPassphrase: config['private-key-passphrase'] || null,
+          serverFingerprint: config['server-fingerprint'] || null,
+          hostKey: config['host-key'] || null,
+          hostKeyAlgorithms: config['host-key-algorithms'] || null,
+          sni: config.sni || null,
+          skipCertVerify: config['skip-cert-verify'] || false,
+          tfo: config.tfo || config['fast-open'] || false
+        });
+
+      case 'anytls':
+        return new AnyTLS({
+          name: config.name,
+          server: config.server,
+          port: config.port,
+          password: config.password,
+          sni: config.sni || null,
+          reality: config['reality-opts'] || null,
+          udp: config.udp !== false
+        });
+
+      case 'juicity':
+        return new Juicity({
+          name: config.name,
+          server: config.server,
+          port: config.port,
+          uuid: config.uuid,
+          password: config.password,
+          sni: config.sni || null,
+          skipCertVerify: config['skip-cert-verify'] || false
+        });
+
       case 'direct':
       case 'reject':
         // Direct和Reject类型不需要转换,直接跳过
@@ -862,10 +922,22 @@ class ProxyParsers {
    * 解析多行配置
    */
   parseLines(content) {
+    console.log('[ProxyParsers] parseLines() 收到原始内容长度:', content?.length ?? 0);
     const preprocessed = SubscriptionPreprocessor.preprocess(content);
-    return preprocessed.split('\n')
+    console.log(
+      '[ProxyParsers] 预处理结果长度:',
+      preprocessed?.length ?? 0,
+      '预览:',
+      typeof preprocessed === 'string' ? preprocessed.substring(0, 200) : ''
+    );
+
+    const proxies = preprocessed
+      .split('\n')
       .map(line => this.parseLine(line))
       .filter(proxy => proxy !== null);
+
+    console.log('[ProxyParsers] parseLines() 最终解析到代理数量:', proxies.length);
+    return proxies;
   }
 }
 

@@ -184,6 +184,11 @@ class TUIC extends Proxy {
     this.congestionController = params.congestionController || 'bbr';
     this.udpRelayMode = params.udpRelayMode || 'native';
     this.hopInterval = params.hopInterval || null;
+    // 高级参数
+    this.reduceRtt = params.reduceRtt || false;
+    this.disableSni = params.disableSni || false;
+    this.udpOverStream = params.udpOverStream || false;
+    this.heartbeatInterval = params.heartbeatInterval || null; // 毫秒
   }
 }
 
@@ -224,6 +229,77 @@ class ShadowsocksR extends Proxy {
 }
 
 /**
+ * Snell 代理
+ * 主要用于 Clash.Meta / Surge 等客户端
+ */
+class Snell extends Proxy {
+  constructor(params) {
+    super(params.name, 'snell');
+    this.server = params.server;
+    this.port = params.port;
+    this.psk = params.psk;
+    this.version = params.version || 3;
+    this.ipVersion = params.ipVersion || null;
+    this.udp = params.udp !== undefined ? params.udp : true;
+    this.tfo = params.tfo || false;
+    this.obfs = params.obfs || null;
+    this.obfsHost = params.obfsHost || null;
+    this.obfsUri = params.obfsUri || null;
+  }
+}
+
+/**
+ * SSH 代理
+ */
+class SSH extends Proxy {
+  constructor(params) {
+    super(params.name, 'ssh');
+    this.server = params.server;
+    this.port = params.port;
+    this.username = params.username;
+    this.password = params.password || null;
+    this.privateKey = params.privateKey || null;
+    this.privateKeyPassphrase = params.privateKeyPassphrase || null;
+    this.serverFingerprint = params.serverFingerprint || null;
+    this.hostKey = params.hostKey || null;
+    this.hostKeyAlgorithms = params.hostKeyAlgorithms || null;
+    this.sni = params.sni || null;
+    this.skipCertVerify = params.skipCertVerify || false;
+    this.tfo = params.tfo || false;
+  }
+}
+
+/**
+ * AnyTLS 代理
+ */
+class AnyTLS extends Proxy {
+  constructor(params) {
+    super(params.name, 'anytls');
+    this.server = params.server;
+    this.port = params.port;
+    this.password = params.password;
+    this.sni = params.sni || null;
+    this.reality = params.reality || null;
+    this.udp = params.udp !== undefined ? params.udp : true;
+  }
+}
+
+/**
+ * Juicity 代理
+ */
+class Juicity extends Proxy {
+  constructor(params) {
+    super(params.name, 'juicity');
+    this.server = params.server;
+    this.port = params.port;
+    this.uuid = params.uuid;
+    this.password = params.password;
+    this.sni = params.sni || null;
+    this.skipCertVerify = params.skipCertVerify || false;
+  }
+}
+
+/**
  * 输出格式枚举
  */
 const OutputFormat = {
@@ -251,6 +327,10 @@ module.exports = {
   TUIC,
   WireGuard,
   ShadowsocksR,
+  Snell,
+  SSH,
+  AnyTLS,
+  Juicity,
   OutputFormat
 };
 

@@ -823,7 +823,9 @@
       "serverPort": "Server Port",
       "serverPortHint": "Subscription server listening port, default 59999",
       "autoStart": "Auto Start",
-      "autoStartHint": "Automatically start subscription server on app launch"
+      "autoStartHint": "Automatically start subscription server on app launch",
+      "fetchUserAgent": "Request User-Agent",
+      "fetchUserAgentHint": "UA for subscription/conversion requests. Leave empty for default, or click a preset below."
     },
     "options": {
       "enableUdp": "Enable UDP",
