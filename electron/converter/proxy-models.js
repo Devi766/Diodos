@@ -281,6 +281,8 @@ class AnyTLS extends Proxy {
     this.sni = params.sni || null;
     this.reality = params.reality || null;
     this.udp = params.udp !== undefined ? params.udp : true;
+    this.skipCertVerify = params.skipCertVerify || false;
+    this.alpn = params.alpn || null;
   }
 }
 

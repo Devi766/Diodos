@@ -605,6 +605,105 @@ class URI_TUIC extends Parser {
 }
 
 /**
+ * AnyTLS URI 解析器
+ * 参考 Sub-Store 的 URI_AnyTLS，实现与其基本对齐：
+ * - 基本格式：anytls://password@server:port?alpn=...&sni=...&insecure=1&udp=1#name
+ * - 复用 VLESS 解析结果以获取 reality / tls 等高级字段
+ */
+class URI_AnyTLS extends Parser {
+  constructor() {
+    super('URI AnyTLS Parser');
+  }
+
+  test(line) {
+    return line.startsWith('anytls://');
+  }
+
+  parse(line) {
+    // 先用 VLESS 解析一遍通用 TLS / Reality 参数
+    const vlessParser = new URI_VLESS();
+    const vlessLine = line.replace(/^anytls:\/\//, 'vless://');
+    const vlessProxy = vlessParser.parse(vlessLine);
+
+    // 再按 AnyTLS 规范解析 password@server:port?addons#name
+    const withoutScheme = line.substring('anytls://'.length);
+    const match = /^(.*?)@(.*?)(?::(\d+))?\/?(?:\?(.*?))?(?:#(.*?))?$/.exec(
+      withoutScheme
+    );
+
+    if (!match) {
+      throw new Error('Invalid AnyTLS URI');
+    }
+
+    let password = decodeURIComponent(match[1] || '');
+    const server = match[2];
+    let port = parseInt(match[3] || '', 10);
+    const addons = match[4] || '';
+    let name = match[5] != null ? decodeURIComponent(match[5]) : null;
+
+    if (!Number.isFinite(port)) {
+      port = 443;
+    }
+    if (!name) {
+      name = `AnyTLS ${server}:${port}`;
+    }
+
+    const params = {
+      name,
+      server,
+      port,
+      password,
+      sni: vlessProxy.servername || server,
+      reality: vlessProxy.reality || null,
+      udp: true,
+      skipCertVerify: !!vlessProxy.skipCertVerify
+    };
+
+    // 解析附加参数（基本对齐 Sub-Store 行为）
+    for (const addon of addons.split('&')) {
+      if (!addon) continue;
+      let [rawKey, rawValue = ''] = addon.split('=');
+      if (!rawKey) continue;
+
+      let key = decodeURIComponent(rawKey).replace(/_/g, '-');
+      const value = decodeURIComponent(rawValue);
+
+      switch (key) {
+        case 'sni':
+        case 'server-name':
+        case 'host':
+          if (value) params.sni = value;
+          break;
+        case 'alpn':
+          params.alpn = value ? value.split(',') : null;
+          break;
+        case 'insecure':
+          params.skipCertVerify = /(true|1)/i.test(value);
+          break;
+        case 'udp':
+          params.udp = /(true|1)/i.test(value);
+          break;
+        case 'public-key':
+        case 'pbk':
+          params.reality = params.reality || {};
+          params.reality.publicKey = value;
+          break;
+        case 'short-id':
+        case 'sid':
+          params.reality = params.reality || {};
+          params.reality.shortId = value;
+          break;
+        default:
+          // 其它参数暂不单独建模，避免破坏现有结构
+          break;
+      }
+    }
+
+    return new AnyTLS(params);
+  }
+}
+
+/**
  * WireGuard URI 解析器
  */
 class URI_WireGuard extends Parser {
@@ -886,6 +985,7 @@ class ProxyParsers {
       new URI_VMess(),
       new URI_VLESS(),
       new URI_Trojan(),
+      new URI_AnyTLS(),
       new URI_Hysteria2(),
       new URI_Hysteria(),
       new URI_TUIC(),
@@ -953,6 +1053,7 @@ module.exports = {
   URI_Hysteria,
   URI_Hysteria2,
   URI_TUIC,
+  URI_AnyTLS,
   URI_WireGuard,
   Clash_All,
   ProxyParsers

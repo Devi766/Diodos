@@ -173,10 +173,9 @@ class SubscriptionPreprocessor {
    * - 如果解码后看起来是一串 URI 列表，就直接返回解码结果，交由后续按行解析
    */
   static handleBase64UriList(content) {
-    // 去掉空白后检查是否是 Base64 字符集
+    // 去掉空白，按 Sub-Store 思路宽松判断是否为 Base64 封装
     const compact = content.replace(/\s+/g, '');
-    const base64Charset = /^[A-Za-z0-9+/=]+$/;
-    if (!base64Charset.test(compact) || compact.length < 16) {
+    if (compact.length < 16) {
       return null;
     }
 
@@ -247,9 +246,9 @@ class SubscriptionPreprocessor {
         continue;
       }
 
-      // 尝试将该行视为 Base64 解码
+      // 尝试将该行视为 Base64 解码（宽松处理，兼容 URL-safe Base64）
       const compact = line.replace(/\s+/g, '');
-      if (!/^[A-Za-z0-9+/=]+$/.test(compact) || compact.length < 16) {
+      if (compact.length < 16) {
         continue;
       }
 
@@ -685,15 +684,13 @@ class SubscriptionPreprocessor {
    * 填充 Base64 字符串至合法长度
    */
   static padBase64(str) {
-    const remainder = str.length % 4;
+    const compact = str.replace(/\s+/g, '');
+    const remainder = compact.length % 4;
     if (remainder === 0) {
-      return str;
+      return compact;
     }
-    // 余数为 1 无法通过填充修复
-    if (remainder === 1) {
-      return null;
-    }
-    return str.padEnd(str.length + (4 - remainder), '=');
+    // 其余情况统一使用补齐方式，尽量容忍缺失的填充位
+    return compact.padEnd(compact.length + (4 - remainder), '=');
   }
 
   /**
@@ -724,9 +721,18 @@ class SubscriptionPreprocessor {
    */
   static tryDecodeBase64(raw) {
     try {
+      if (!raw) return null;
+      // 先按标准 Base64 解码
       return Buffer.from(raw, 'base64').toString('utf-8');
     } catch {
-      return null;
+      try {
+        // 兼容 URL-safe Base64：-_/ 无填充
+        const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = this.padBase64(normalized);
+        return Buffer.from(padded, 'base64').toString('utf-8');
+      } catch {
+        return null;
+      }
     }
   }
 
