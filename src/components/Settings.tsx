@@ -793,37 +793,37 @@ export default function Settings() {
             <Tabs.List className="flex border-b border-gray-200 dark:border-gray-600 mb-6">
               <Tabs.Trigger
                 value="general"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 {t('settings.general')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="kernel"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 {t('settings.proxy')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="override"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 {t('settings.override')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="tun"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 {t('settings.tun')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="backup"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 {t('settings.backup')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="about"
-                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400"
+                className="px-4 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary"
               >
                 {t('settings.about')}
               </Tabs.Trigger>

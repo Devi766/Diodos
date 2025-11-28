@@ -616,11 +616,35 @@ export default function ProxyNodes() {
           }
         } else {
           if (isDev) {
-            console.log('[调试] 未找到配置文件中的代理组顺序，使用API返回的顺序');
+            console.log('[调试] 未找到配置文件中的代理组顺序，尝试使用现有的分组顺序');
           }
-          // 如果没有配置文件顺序，则使用API返回的顺序
-          for (const name of Object.keys(selectorGroups)) {
-            groupsOrder.push(name);
+
+          // 优先使用上一轮已经展示给用户的分组顺序，避免在配置暂时不可用时顺序跳动
+          if (groups.length > 0) {
+            const existingOrder = groups.map(g => g.name);
+            const knownSet = new Set(existingOrder);
+
+            // 先按现有顺序保留仍然存在的分组
+            groupsOrder = existingOrder.filter(name => selectorGroups[name]);
+
+            // 再把这次新增的分组追加到末尾
+            for (const name of Object.keys(selectorGroups)) {
+              if (!knownSet.has(name)) {
+                groupsOrder.push(name);
+              }
+            }
+
+            if (isDev) {
+              console.log(`[调试] 使用现有分组顺序回退: ${groupsOrder.join(', ')}`);
+            }
+          } else {
+            // 如果连现有分组都没有（首次加载），才退回使用API返回的顺序
+            if (isDev) {
+              console.log('[调试] 没有现有分组顺序，使用API返回的顺序');
+            }
+            for (const name of Object.keys(selectorGroups)) {
+              groupsOrder.push(name);
+            }
           }
         }
         

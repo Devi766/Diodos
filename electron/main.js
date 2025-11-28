@@ -1325,16 +1325,21 @@ ipcMain.handle('get-config-order', async (event) => {
       };
     }
 
-    // 使用覆写后的配置文件路径（override-xxx.yaml）
+    // 默认优先使用应用了覆写和用户设置后的 override 配置，
+    // 这样可以让代理组顺序与实际运行中的内核配置保持一致（包括 JS/YAML 覆写带来的变更）
     const path = require('path');
     const configFilename = path.basename(state.configFilePath);
     const overrideConfigFilename = 'override-' + configFilename;
     const mihomoDir = path.join(context.get('userDataPath'), 'mihomo');
     const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
 
-    // 检查覆写后的配置文件是否存在
     const fs = require('fs');
-    const configPathToUse = fs.existsSync(overrideConfigPath) ? overrideConfigPath : state.configFilePath;
+    let configPathToUse = overrideConfigPath;
+
+    // 如果 override 配置尚未生成，退回到原始配置文件
+    if (!fs.existsSync(configPathToUse)) {
+      configPathToUse = state.configFilePath;
+    }
 
     console.log('[get-config-order] 原始配置路径:', state.configFilePath);
     console.log('[get-config-order] 覆写配置路径:', overrideConfigPath);
