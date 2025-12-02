@@ -604,12 +604,7 @@ class URI_TUIC extends Parser {
   }
 }
 
-/**
- * AnyTLS URI 解析器
- * 参考 Sub-Store 的 URI_AnyTLS，实现与其基本对齐：
- * - 基本格式：anytls://password@server:port?alpn=...&sni=...&insecure=1&udp=1#name
- * - 复用 VLESS 解析结果以获取 reality / tls 等高级字段
- */
+
 class URI_AnyTLS extends Parser {
   constructor() {
     super('URI AnyTLS Parser');

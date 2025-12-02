@@ -204,6 +204,7 @@ export default function ProxyNodes() {
   }
   
   const LAYOUT_SETTING_KEY = 'proxyGroupsLayoutMode';
+  const SORT_MODE_KEY = 'nodesSortMode';
 
   const [currentMode, setCurrentMode] = useState<string>('rule');
   const [layoutMode, setLayoutMode] = useState<'single' | 'double'>(() => {
@@ -218,10 +219,47 @@ export default function ProxyNodes() {
       return 'single';
     }
   });
-  const [sortMode, setSortMode] = useState<'default' | 'latency'>('default');
+  const [sortMode, setSortMode] = useState<'default' | 'latency'>(() => {
+    if (typeof window === 'undefined') {
+      return 'default';
+    }
+
+    try {
+      const saved = localStorage.getItem(SORT_MODE_KEY);
+      return saved === 'latency' ? 'latency' : 'default';
+    } catch {
+      return 'default';
+    }
+  });
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const router = useRouter();
   let mihomoAPI = useMihomoAPI();
+
+  const applySortMode = useCallback((value: 'default' | 'latency') => {
+    setSortMode(value);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(SORT_MODE_KEY, value);
+      } catch (error) {
+        console.error('缓存排序模式失败:', error);
+      }
+    }
+  }, []);
+
+  const persistSortMode = useCallback(async (value: 'default' | 'latency') => {
+    applySortMode(value);
+
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.setSetting) {
+        const result = await window.electronAPI.setSetting(SORT_MODE_KEY, value);
+        if (result?.success === false && isDev) {
+          console.error('保存排序模式失败:', result.error);
+        }
+      }
+    } catch (error) {
+      console.error('保存排序模式失败:', error);
+    }
+  }, [applySortMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI?.getSetting) {
@@ -250,13 +288,26 @@ export default function ProxyNodes() {
     // 加载排序模式设置
     const loadSortModePreference = async () => {
       try {
-        const result = await window.electronAPI.getSetting('nodesSortMode');
-        if (!cancelled && result?.success && result?.value) {
+        const result = await window.electronAPI.getSetting(SORT_MODE_KEY, sortMode);
+        if (!cancelled && result?.success) {
           const value = result.value === 'latency' ? 'latency' : 'default';
-          setSortMode(value);
+          applySortMode(value);
+          return;
         }
       } catch (error) {
         console.error('加载排序模式设置失败:', error);
+      }
+
+      // IPC 获取失败时，尝试从本地缓存恢复
+      if (!cancelled) {
+        if (typeof window !== 'undefined') {
+          try {
+            const fallback = localStorage.getItem(SORT_MODE_KEY) === 'latency' ? 'latency' : 'default';
+            applySortMode(fallback);
+          } catch (error) {
+            console.error('加载排序模式本地缓存失败:', error);
+          }
+        }
       }
     };
 
@@ -265,7 +316,7 @@ export default function ProxyNodes() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySortMode, sortMode]);
 
   // 获取节点的动画高度，用于折叠/展开动画
   const getNodeRef = useRef<{[key: string]: HTMLDivElement | null}>({});
@@ -1914,15 +1965,7 @@ export default function ProxyNodes() {
                         <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
                         <button
                           onClick={async () => {
-                            setSortMode('default');
-                            try {
-                              if (window.electronAPI?.saveSetting) {
-                                await window.electronAPI.saveSetting('nodesSortMode', 'default');
-                              }
-                              localStorage.setItem('nodesSortMode', 'default');
-                            } catch (error) {
-                              console.error('保存排序模式失败:', error);
-                            }
+                            await persistSortMode('default');
                             setShowOptionsMenu(false);
                           }}
                           className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center ${
@@ -1936,15 +1979,7 @@ export default function ProxyNodes() {
                         </button>
                         <button
                           onClick={async () => {
-                            setSortMode('latency');
-                            try {
-                              if (window.electronAPI?.saveSetting) {
-                                await window.electronAPI.saveSetting('nodesSortMode', 'latency');
-                              }
-                              localStorage.setItem('nodesSortMode', 'latency');
-                            } catch (error) {
-                              console.error('保存排序模式失败:', error);
-                            }
+                            await persistSortMode('latency');
                             setShowOptionsMenu(false);
                           }}
                           className={`w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center ${

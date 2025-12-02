@@ -1,8 +1,3 @@
-/**
- * 订阅自动更新调度器
- * 参考 Mihomo Party 的实现，管理订阅的定时更新任务
- */
-
 class SubscriptionScheduler {
   constructor(context) {
     this.context = context;
