@@ -2820,30 +2820,41 @@ app.whenReady().then(async () => {
         }
         
         // 提取其他节点组
+        const isSelectorType = (type) => {
+          const normalized = typeof type === 'string' ? type.toLowerCase() : '';
+          return ['selector', 'urltest', 'fallback', 'loadbalance', 'smart'].includes(normalized);
+        };
+
         for (const [name, proxy] of Object.entries(data.proxies)) {
-          if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback' || proxy.type === 'LoadBalance') {
-            if (name !== 'GLOBAL' && name !== 'PROXY' && proxy.all && proxy.all.length > 0) {
-              const nodes = [];
-              for (const nodeName of proxy.all) {
-                if (data.proxies[nodeName]) {
-                  const node = data.proxies[nodeName];
-                  nodes.push({
-                    name: nodeName,
-                    type: node.type,
-                    server: node.server || '',
-                    port: node.port || 0,
-                    delay: node.delay || undefined
-                  });
-                }
-              }
-              
-              groups.push({
-                name: name,
-                type: proxy.type,
-                nodes: nodes
+          if (!isSelectorType(proxy.type)) {
+            continue;
+          }
+          if (name === 'GLOBAL' || name === 'PROXY') {
+            continue;
+          }
+          if (!proxy.all || proxy.all.length === 0) {
+            continue;
+          }
+
+          const nodes = [];
+          for (const nodeName of proxy.all) {
+            if (data.proxies[nodeName]) {
+              const node = data.proxies[nodeName];
+              nodes.push({
+                name: nodeName,
+                type: node.type,
+                server: node.server || '',
+                port: node.port || 0,
+                delay: node.delay || undefined
               });
             }
           }
+
+          groups.push({
+            name: name,
+            type: proxy.type,
+            nodes: nodes
+          });
         }
         
         return {

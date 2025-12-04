@@ -353,10 +353,11 @@ export default function BatchSpeedtest({ onClose, inDialog = false, enableBackgr
         if (configOrder && configOrder.success && configOrder.data && 
             configOrder.data.proxyGroups && configOrder.data.proxyGroups.length > 0) {
           
+          const visibleGroups = configOrder.data.proxyGroups.filter((g: { name: string; hidden?: boolean }) => g.hidden !== true);
           // 如果是规则模式，过滤掉GLOBAL组
-          const validGroups = currentMode === 'rule' ? 
-            configOrder.data.proxyGroups.filter((g: {name: string}) => g.name !== 'GLOBAL') : 
-            configOrder.data.proxyGroups;
+          const validGroups = currentMode === 'rule'
+            ? visibleGroups.filter((g: { name: string }) => g.name !== 'GLOBAL')
+            : visibleGroups;
             
           if (validGroups.length > 0) {
             firstGroupName = validGroups[0].name;
@@ -373,9 +374,9 @@ export default function BatchSpeedtest({ onClose, inDialog = false, enableBackgr
         
         if (result && result.groups && result.groups.length > 0) {
           // 如果是规则模式，过滤掉GLOBAL组
-          const validGroups = currentMode === 'rule' ? 
-            result.groups.filter((g: ProxyGroup) => g.name !== 'GLOBAL') : 
-            result.groups;
+          const validGroups = currentMode === 'rule'
+            ? result.groups.filter((g: ProxyGroup) => g.name !== 'GLOBAL' && (g as any)?.hidden !== true)
+            : result.groups.filter((g: ProxyGroup) => (g as any)?.hidden !== true);
             
           if (validGroups.length > 0) {
             const firstGroup = validGroups[0];

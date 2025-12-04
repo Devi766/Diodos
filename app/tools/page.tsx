@@ -108,16 +108,19 @@ export default function ToolsPage() {
         if (configOrder && configOrder.success && configOrder.data && 
             configOrder.data.proxyGroups && configOrder.data.proxyGroups.length > 0) {
           // 获取第一个代理组的名称
-          const firstGroupName = configOrder.data.proxyGroups[0].name;
-          console.log('获取到第一个代理组名称:', firstGroupName);
-          
-          // 请求该代理组的信息
-          const groupResponse = await window.electronAPI.requestMihomoAPI(`/proxies/${encodeURIComponent(firstGroupName)}`);
-          if (groupResponse && groupResponse.ok && groupResponse.data && groupResponse.data.now) {
-            // now字段是该组选择的节点名称
-            setCurrentNode(groupResponse.data.now);
-            console.log(`通过${firstGroupName}组获取到节点名称:`, groupResponse.data.now);
-            return;
+          const visibleGroups = configOrder.data.proxyGroups.filter((g: any) => g?.hidden !== true);
+          const firstGroupName = visibleGroups[0]?.name;
+          if (firstGroupName) {
+            console.log('获取到第一个代理组名称:', firstGroupName);
+            
+            // 请求该代理组的信息
+            const groupResponse = await window.electronAPI.requestMihomoAPI(`/proxies/${encodeURIComponent(firstGroupName)}`);
+            if (groupResponse && groupResponse.ok && groupResponse.data && groupResponse.data.now) {
+              // now字段是该组选择的节点名称
+              setCurrentNode(groupResponse.data.now);
+              console.log(`通过${firstGroupName}组获取到节点名称:`, groupResponse.data.now);
+              return;
+            }
           }
         }
       } catch (error) {

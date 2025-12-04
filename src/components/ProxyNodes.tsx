@@ -54,6 +54,12 @@ type MihomoProxy = {
   port?: number;
 };
 
+const isGroupType = (type?: string | null) => {
+  if (!type) return false;
+  const normalized = type.toLowerCase().replace(/-/g, '');
+  return ['selector', 'urltest', 'fallback', 'loadbalance', 'smart'].includes(normalized);
+};
+
 const renderGroupIcon = (icon?: string | null) => {
   if (!icon) return null;
   const trimmed = icon.trim();
@@ -485,13 +491,12 @@ export default function ProxyNodes() {
       
       // 获取配置文件中的原始顺序
       let configOrder: {
-        proxyGroups: Array<{name: string, type: string, proxies: string[]}>,
-        proxies: Array<{name: string, type: string, server: string, port: number}>
+        proxyGroups: Array<{ name: string; type: string; proxies: string[]; hidden?: boolean; icon?: string | null }>,
+        proxies: Array<{ name: string; type: string; server: string; port: number }>
       } | undefined;
       
       if (window.electronAPI) {
         try {
-          // 使用类型断言解决TypeScript错误
           const api = window.electronAPI as any;
           if (isDev) {
             console.log('[调试] 开始从配置文件获取代理组顺序');
@@ -500,28 +505,26 @@ export default function ProxyNodes() {
           if (isDev) {
             console.log('[调试] 获取配置文件顺序结果:', result);
           }
-          
+
           if (result.success && result.data) {
             configOrder = result.data;
             if (isDev) {
               console.log('[调试] 成功获取配置文件顺序');
             }
-            
+
             // 详细记录代理组顺序，方便调试
             if (isDev) {
               if (configOrder && configOrder.proxyGroups) {
                 console.log('[调试] 配置文件中的代理组顺序:');
                 configOrder.proxyGroups.forEach((group, index) => {
-                  console.log(`${index+1}. ${group.name} (${group.type}), 包含节点: ${group.proxies.length}`);
+                  console.log(`${index + 1}. ${group.name} (${group.type}), 包含节点: ${group.proxies.length}`);
                 });
               } else {
                 console.log('[调试] 配置中没有代理组信息');
               }
             }
-          } else {
-            if (isDev) {
-              console.warn('[调试] 无法获取配置文件顺序:', result.error);
-            }
+          } else if (isDev) {
+            console.warn('[调试] 无法获取配置文件顺序:', result.error);
           }
         } catch (error) {
           if (isDev) {
@@ -529,15 +532,23 @@ export default function ProxyNodes() {
           }
         }
       }
-      
+
       // 获取代理信息
       const proxiesData = await mihomoAPI.proxies();
       if (!proxiesData || !proxiesData.proxies) {
         throw new Error('获取代理信息失败');
       }
-      
       const data = proxiesData;
-      
+
+      const hiddenGroups = new Set<string>();
+      if (configOrder?.proxyGroups && Array.isArray(configOrder.proxyGroups)) {
+        for (const group of configOrder.proxyGroups) {
+          if (group?.hidden === true && typeof group.name === 'string') {
+            hiddenGroups.add(group.name);
+          }
+        }
+      }
+
       const groupsData: ProxyGroup[] = [];
       
       // 根据当前模式决定如何显示节点
@@ -552,6 +563,17 @@ export default function ProxyNodes() {
           const globalData = data.proxies['GLOBAL'];
           
           if (globalData && globalData.all && Array.isArray(globalData.all)) {
+            const isHiddenGlobal = (globalData as any)?.hidden === true || hiddenGroups.has('GLOBAL');
+            if (isHiddenGlobal) {
+              hiddenGroups.add('GLOBAL');
+              if (isDev) {
+                console.log('[调试] GLOBAL 代理组设置了 hidden:true，跳过展示');
+              }
+              if (globalData.now) {
+                setSelectedNode(globalData.now);
+              }
+            } else {
+
             const nodes = globalData.all
               .map((nodeName: string) => {
                 const node = data.proxies[nodeName];
@@ -559,7 +581,7 @@ export default function ProxyNodes() {
                   console.warn(`[ProxyNodes] GLOBAL 组引用了不存在的节点: ${nodeName}, 已忽略`);
                   return null;
                 }
-                const isGroup = node.type === 'Selector' || node.type === 'URLTest' || node.type === 'Fallback';
+                const isGroup = isGroupType(node.type);
               
                 return {
                   name: nodeName,
@@ -593,6 +615,7 @@ export default function ProxyNodes() {
               now: globalData.now,
               icon: globalIcon,
             });
+            }
           }
         } catch (error) {
           if (isDev) {
@@ -618,7 +641,15 @@ export default function ProxyNodes() {
             continue;
           }
           
-          if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
+          if ((proxy as any)?.hidden === true) {
+            hiddenGroups.add(name);
+            if (isDev) {
+              console.log(`[调试] 代理组 ${name} 在配置中设置了 hidden:true，跳过展示`);
+            }
+            continue;
+          }
+          
+          if (isGroupType(proxy.type)) {
             selectorGroups[name] = proxy;
           }
         }
@@ -630,6 +661,7 @@ export default function ProxyNodes() {
             console.log('[调试] 严格使用配置文件中的代理组顺序');
           }
           groupsOrder = configOrder.proxyGroups
+            .filter(group => group.hidden !== true)
             .filter(group => !(group.name === 'GLOBAL' && currentProxyMode === 'rule'))
             .map(group => group.name);
           
@@ -699,6 +731,8 @@ export default function ProxyNodes() {
           }
         }
         
+        // 按 hidden 标记最终过滤一次，防止回退顺序中包含已隐藏组
+        groupsOrder = groupsOrder.filter(name => !hiddenGroups.has(name));
         if (isDev) {
           console.log(`将按照以下顺序构建代理组数据: ${groupsOrder.join(', ')}`);
         }
@@ -709,6 +743,13 @@ export default function ProxyNodes() {
           if (!selectorGroups[groupName]) {
             if (isDev) {
               console.log(`跳过API中不存在的组: ${groupName}`);
+            }
+            continue;
+          }
+
+          if (hiddenGroups.has(groupName)) {
+            if (isDev) {
+              console.log(`[调试] 代理组 ${groupName} 设置了 hidden:true，跳过展示`);
             }
             continue;
           }
@@ -760,7 +801,7 @@ export default function ProxyNodes() {
                   console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
                   return null;
                 }
-                const isGroup = node.type === 'Selector' || node.type === 'URLTest' || node.type === 'Fallback';
+                const isGroup = isGroupType(node.type);
 
                 return {
                   name: nodeName,

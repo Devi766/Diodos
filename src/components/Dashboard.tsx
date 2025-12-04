@@ -629,7 +629,8 @@ export default function Dashboard() {
       try {
         const order = await electron.getConfigOrder?.();
         if (!cancelled && order?.success && Array.isArray(order.data?.proxyGroups) && order.data.proxyGroups.length > 0) {
-          const groupName = order.data.proxyGroups[0]?.name;
+          const availableGroups = order.data.proxyGroups.filter((g: any) => g?.hidden !== true);
+          const groupName = availableGroups[0]?.name;
           if (typeof groupName === 'string' && groupName.length > 0) {
             setPrimaryProxyGroup(groupName);
             // 立刻尝试解析一次，避免初渲染显示组名
@@ -902,7 +903,8 @@ export default function Dashboard() {
         try {
           const order = await electron.getConfigOrder?.();
           if (order?.success && Array.isArray(order.data?.proxyGroups) && order.data.proxyGroups.length > 0) {
-            const groupName = order.data.proxyGroups[0]?.name;
+            const availableGroups = order.data.proxyGroups.filter((g: any) => g?.hidden !== true);
+            const groupName = availableGroups[0]?.name;
             if (typeof groupName === 'string' && groupName.length > 0) {
               setPrimaryProxyGroup(groupName);
               // 主代理组确定后尝试立即解析一次

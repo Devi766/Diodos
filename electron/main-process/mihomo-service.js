@@ -330,12 +330,19 @@ module.exports = function initMihomoService(context) {
         for (const group of config['proxy-groups']) {
           if (
             group.name &&
-            (group.type === 'select' || group.type === 'url-test' || group.type === 'fallback')
+            (
+              group.type === 'select' ||
+              group.type === 'url-test' ||
+              group.type === 'fallback' ||
+              group.type === 'load-balance'
+            )
           ) {
             proxyGroups.push({
               name: group.name,
               type: group.type,
-              proxies: group.proxies || []
+              proxies: group.proxies || [],
+              hidden: group.hidden === true,
+              icon: group.icon
             });
           }
         }
