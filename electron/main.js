@@ -2293,6 +2293,35 @@ app.whenReady().then(async () => {
     }
   });
 
+  // 仅保存订阅 User-Agent，不触发服务重启
+  ipcMain.handle('save-ua-settings', async (_event, uaKey) => {
+    try {
+      const allowedUAs = security?.ALLOWED_USERAGENTS
+        ? Object.keys(security.ALLOWED_USERAGENTS)
+        : [];
+      const normalizedKey = typeof uaKey === 'string' ? uaKey.trim() : '';
+
+      if (!normalizedKey) {
+        return { success: false, error: '无效的User-Agent选项' };
+      }
+
+      if (allowedUAs.length && !allowedUAs.includes(normalizedKey)) {
+        return { success: false, error: '不支持的User-Agent选项' };
+      }
+
+      if (typeof updateUserSettingsRaw === 'function') {
+        await updateUserSettingsRaw({ 'subscription-ua': normalizedKey });
+      } else {
+        dbManager?.setSetting?.('subscription-ua', normalizedKey);
+      }
+
+      return { success: true, message: 'User-Agent已更新' };
+    } catch (error) {
+      console.error('保存User-Agent设置失败:', error);
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
   // 添加: 主题设置
   ipcMain.handle('set-theme', (event, theme) => {
     try {
