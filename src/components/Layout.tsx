@@ -69,6 +69,58 @@ export default function Layout({ children }: LayoutProps) {
     setUpdateDialogOpen(true);
   }, []);
 
+  const renderMarkdownLinks = useCallback((text: string) => {
+    const regex = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g;
+    const result: (string | JSX.Element)[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(text)) !== null) {
+      const [fullMatch, label, url] = match;
+
+      if (match.index > lastIndex) {
+        result.push(text.slice(lastIndex, match.index));
+      }
+
+      result.push(
+        <a
+          key={`${match.index}-${url}`}
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-blue-600 hover:underline dark:text-blue-300 break-words"
+        >
+          {label}
+        </a>
+      );
+
+      lastIndex = match.index + fullMatch.length;
+    }
+
+    if (lastIndex < text.length) {
+      result.push(text.slice(lastIndex));
+    }
+
+    return result.length > 0 ? result : [text];
+  }, []);
+
+  const renderChangelog = useCallback((raw?: string) => {
+    if (!raw || raw.trim().length === 0) {
+      return t('settings.updateNoChangelog');
+    }
+
+    const lines = raw.trim().split(/\r?\n/);
+    return (
+      <div className="space-y-2 text-sm text-foreground/90 leading-relaxed break-words">
+        {lines.map((line, idx) => (
+          <div key={idx} className="whitespace-pre-wrap font-mono">
+            {renderMarkdownLinks(line)}
+          </div>
+        ))}
+      </div>
+    );
+  }, [renderMarkdownLinks, t]);
+
   // 避免 SSR hydration 不匹配
   useEffect(() => {
     setMounted(true);
@@ -894,10 +946,8 @@ export default function Layout({ children }: LayoutProps) {
                 <h4 className="text-sm font-semibold text-foreground mb-2">
                   {t('settings.updateChangelog')}
                 </h4>
-                <div className="max-h-72 overflow-y-auto rounded-2xl bg-muted/30 p-4 text-left text-sm whitespace-pre-wrap font-mono text-foreground/90">
-                  {pendingUpdate.body?.trim()
-                    ? pendingUpdate.body.trim()
-                    : t('settings.updateNoChangelog')}
+                <div className="max-h-72 overflow-y-auto rounded-2xl bg-muted/30 p-4 text-left">
+                  {renderChangelog(pendingUpdate.body)}
                 </div>
               </div>
             </div>
