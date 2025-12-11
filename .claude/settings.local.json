@@ -14,7 +14,8 @@
       "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path ''F:\\code\\FlyClash-PC'' -Force\")",
       "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path ''F:\\code\\FlyClash-PC'' -Recurse -Include ''*.md'',''*.config.*'' -File 2>/dev/null | Select-Object -First 20\")",
       "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path ''F:\\code\\FlyClash-PC\\.claude'' -Recurse -File | Select-Object -ExpandProperty FullName\")",
-      "Bash(powershell -NoProfile -Command:*)"
+      "Bash(powershell -NoProfile -Command:*)",
+      "Bash(del \"F:\\code\\FlyClash-PC\\flycast-ui\\test-task-creation.js\")"
     ],
     "deny": [],
     "ask": []

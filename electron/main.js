@@ -1942,81 +1942,61 @@ ipcMain.handle('reset-kernel-path', async () => {
   }
 });
 
-// Windows 权限初始化 - 用户手动授权模式
-if (process.platform === 'win32' && !isDev) {
-  const PermissionManager = require('./main-process/permission-manager');
-  const permissionManager = new PermissionManager();
-  const { execSync, spawn } = require('child_process');
-  const { dialog } = require('electron');
-  const path = require('path');
-  const fs = require('fs');
-
-  // 将 PermissionManager 方法添加到 context
-  context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
-  context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
-  context.permissionManager = permissionManager; // 保存实例供后续使用
-
-  console.log('[Startup] Checking admin privileges...');
-
-  let hasAdminPrivileges = false;
-  try {
-    execSync('net session', { stdio: 'ignore' });
-    hasAdminPrivileges = true;
-    console.log('[Startup] ✓ Current process has admin privileges');
-
-    // 有管理员权限时，确保任务已创建
-    try {
-      permissionManager.createElevateTask();
-      console.log('[Startup] ✓ Elevated task created/updated successfully');
-    } catch (error) {
-      console.log('[Startup] ! Task creation failed (may already exist):', error.message);
-    }
-  } catch {
-    console.log('[Startup] ✗ Current process does NOT have admin privileges');
-
-    // 没有管理员权限，检查是否有计划任务
-    const taskExists = permissionManager.checkElevateTaskSync();
-
-    if (taskExists) {
-      console.log('[Startup] ✓ Found existing elevated task, using it to restart...');
-      try {
-        // 通过计划任务运行自己（会以管理员权限启动）
-        execSync(`%SystemRoot%\\System32\\schtasks.exe /run /tn "${permissionManager.taskName}"`, {
-          stdio: 'ignore'
-        });
-        console.log('[Startup] → Task execution triggered, exiting current instance...');
-
-        // 延迟退出，让计划任务有时间启动
-        setTimeout(() => {
-          app.quit();
-        }, 1000);
-
-        // 阻止继续执行
-        return;
-      } catch (runError) {
-        console.error('[Startup] ✗ Failed to run task:', runError.message);
-        console.log('[Startup] → Will continue without admin privileges');
-      }
-    } else {
-      console.log('[Startup] ✗ No elevated task found');
-      console.log('[Startup] → User needs to grant TUN permissions manually');
-      console.log('[Startup] → Continuing without admin privileges');
-    }
-  }
-
-  console.log('[Startup] Initialization complete, admin status:', hasAdminPrivileges ? 'YES' : 'NO');
-} else if (process.platform === 'win32' && isDev) {
-  // 开发环境也需要提供这些方法
-  const PermissionManager = require('./main-process/permission-manager');
-  const permissionManager = new PermissionManager();
-
-  context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
-  context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
-  context.permissionManager = permissionManager;
+// Windows 权限初始化 - 延迟到 app.whenReady() 后执行
+// 这里只做基本的 context 初始化，实际的权限检测和任务创建在 app.whenReady() 中进行
+if (process.platform === 'win32') {
+  // 标记需要进行权限初始化
+  context.needsPermissionInit = true;
 }
 
 // 应用启动时执行
 app.whenReady().then(async () => {
+  // Windows 权限初始化 - 必须在 app.whenReady() 后执行，因为需要 app.getPath()
+  if (context.needsPermissionInit && process.platform === 'win32') {
+    const PermissionManager = require('./main-process/permission-manager');
+    const permissionManager = new PermissionManager();
+    const { execSync } = require('child_process');
+
+    // 将 PermissionManager 方法添加到 context
+    context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
+    context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
+    context.permissionManager = permissionManager;
+
+    console.log('[Startup] Checking admin privileges...');
+
+    let hasAdminPrivileges = false;
+    try {
+      execSync('net session', { stdio: 'ignore' });
+      hasAdminPrivileges = true;
+      context.hasAdminPrivileges = true;
+      console.log('[Startup] ✓ Current process has admin privileges');
+
+      // 有管理员权限时，确保任务已创建
+      try {
+        permissionManager.createElevateTaskSync();
+        console.log('[Startup] ✓ Elevated task created/updated successfully');
+      } catch (error) {
+        console.error('[Startup] ! Task creation failed:', error.message);
+      }
+    } catch {
+      console.log('[Startup] ✗ Current process does NOT have admin privileges');
+      context.hasAdminPrivileges = false;
+
+      // 没有管理员权限，检查是否有计划任务可以用来提权重启
+      const taskExists = permissionManager.checkElevateTaskSync();
+
+      if (taskExists) {
+        console.log('[Startup] ✓ Found existing elevated task');
+        // 不自动重启，让用户在需要 TUN 时手动触发
+      } else {
+        console.log('[Startup] ✗ No elevated task found');
+        console.log('[Startup] → User needs to grant TUN permissions manually');
+      }
+    }
+
+    console.log('[Startup] Permission init complete, admin status:', hasAdminPrivileges ? 'YES' : 'NO');
+  }
+
   // 清理轻量模式遗留进程
   if (context.lightweightModeManager) {
     try {

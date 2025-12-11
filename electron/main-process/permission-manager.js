@@ -84,29 +84,47 @@ class PermissionManager {
   }
 
   /**
-   * 创建计划任务
+   * 创建计划任务（同步）
    */
-  async createElevateTask() {
+  createElevateTaskSync() {
     try {
       // 生成 XML 配置
       const xml = this.getElevateTaskXml();
       const xmlPath = path.join(this.taskDir, `${this.taskName}.xml`);
-      
-      // 写入 XML 文件
-      fs.writeFileSync(xmlPath, xml, 'utf16le');
-      
+
+      // 写入 XML 文件（必须是 UTF-16LE 带 BOM）
+      // \ufeff 是 BOM 标记，schtasks.exe 需要它来正确识别编码
+      fs.writeFileSync(xmlPath, Buffer.from(`\ufeff${xml}`, 'utf16le'));
+
+      console.log('[PermissionManager] XML written to:', xmlPath);
+      console.log('[PermissionManager] ExePath:', this.getExePath());
+
       // 创建计划任务
-      execSync(
-        `%SystemRoot%\\System32\\schtasks.exe /create /tn "${this.taskName}" /xml "${xmlPath}" /f`,
-        { stdio: 'pipe' }
-      );
-      
+      const cmd = `%SystemRoot%\\System32\\schtasks.exe /create /tn "${this.taskName}" /xml "${xmlPath}" /f`;
+      console.log('[PermissionManager] Executing:', cmd);
+
+      const result = execSync(cmd, { stdio: 'pipe', encoding: 'utf8' });
+      console.log('[PermissionManager] schtasks output:', result);
+
       console.log('[PermissionManager] Elevated task created:', this.taskName);
       return true;
     } catch (error) {
       console.error('[PermissionManager] Failed to create elevated task:', error.message);
+      if (error.stderr) {
+        console.error('[PermissionManager] stderr:', error.stderr.toString());
+      }
+      if (error.stdout) {
+        console.error('[PermissionManager] stdout:', error.stdout.toString());
+      }
       throw error;
     }
+  }
+
+  /**
+   * 创建计划任务（异步，兼容旧调用）
+   */
+  async createElevateTask() {
+    return this.createElevateTaskSync();
   }
 
   /**
