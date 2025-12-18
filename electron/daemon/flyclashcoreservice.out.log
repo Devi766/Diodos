@@ -1,0 +1,268 @@
+
+[2025-12-18T01:46:28.175Z] [INFO] FlyClash Core Service Worker starting...
+[ServiceWorker] Config loaded: {
+  corePath: 'F:\\code\\FlyClash-PC\\flycast-ui\\extra\\sidecar\\mihomo.exe',
+  pipeName: '\\\\.\\pipe\\flycast-core-service',
+  port: 19091,
+  userDataPath: 'C:\\Users\\GtxFury\\AppData\\Roaming\\flyclash'
+}
+[2025-12-18T01:46:28.183Z] [INFO] FlyClash Core Service Worker started
+[2025-12-18T01:46:28.184Z] [INFO] Pipe server listening on \\.\pipe\flycast-core-service
+[2025-12-18T01:46:28.186Z] [INFO] TCP server listening on 127.0.0.1:19091
+[2025-12-18T03:14:23.590Z] [INFO] Client connected to pipe
+[2025-12-18T03:14:23.592Z] [INFO] Received command: start_core
+[2025-12-18T03:14:23.592Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T03:14:23.592Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:14:23.593Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T03:14:23.624Z] [CORE] time="2025-12-18T11:14:23.612142600+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:14:23.625Z] [CORE] time="2025-12-18T11:14:23.625603600+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:14:23.625603600+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:14:23.625Z] [CORE] time="2025-12-18T11:14:23.626655100+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T03:14:24.605Z] [INFO] Mihomo started successfully
+[2025-12-18T03:14:24.666Z] [INFO] Pipe client disconnected
+[2025-12-18T03:14:44.147Z] [INFO] Client connected to pipe
+[2025-12-18T03:14:44.147Z] [INFO] Received command: start_core
+[2025-12-18T03:14:44.148Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T03:14:44.148Z] [INFO] Stopping Mihomo...
+[2025-12-18T03:14:44.328Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T03:14:44.328Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:14:44.328Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T03:14:44.353Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T03:14:44.380Z] [CORE] time="2025-12-18T11:14:44.362237300+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:14:44.380Z] [CORE] time="2025-12-18T11:14:44.381389000+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:14:44.381389000+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:14:44.381Z] [CORE] time="2025-12-18T11:14:44.382484800+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T03:14:45.331Z] [INFO] Mihomo stopped
+[2025-12-18T03:14:45.332Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T03:14:45.392Z] [INFO] Pipe client disconnected
+[2025-12-18T03:15:00.462Z] [INFO] Client connected to TCP
+[2025-12-18T03:15:00.463Z] [INFO] Received command: start_core
+[2025-12-18T03:15:00.463Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T03:15:00.463Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:15:00.463Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T03:15:00.484Z] [CORE] time="2025-12-18T11:15:00.480763900+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:15:00.485Z] [CORE] time="2025-12-18T11:15:00.485900000+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:15:00.485900000+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:15:00.486Z] [CORE] time="2025-12-18T11:15:00.487446800+08:00" level=info msg="Initial configuration complete, total time: 2ms"
+[2025-12-18T03:15:01.468Z] [INFO] Mihomo started successfully
+[2025-12-18T03:15:01.470Z] [INFO] TCP client disconnected
+[2025-12-18T03:15:01.879Z] [INFO] Client connected to TCP
+[2025-12-18T03:15:01.879Z] [INFO] Received command: start_core
+[2025-12-18T03:15:01.879Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T03:15:01.879Z] [INFO] Stopping Mihomo...
+[2025-12-18T03:15:02.022Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T03:15:02.022Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:15:02.022Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T03:15:02.024Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T03:15:02.041Z] [CORE] time="2025-12-18T11:15:02.038474700+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:15:02.042Z] [CORE] time="2025-12-18T11:15:02.043081200+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:15:02.043081200+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:15:02.043Z] [CORE] time="2025-12-18T11:15:02.043591200+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T03:15:03.024Z] [INFO] Mihomo stopped
+[2025-12-18T03:15:03.025Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T03:15:03.027Z] [INFO] TCP client disconnected
+[2025-12-18T03:19:40.784Z] [INFO] Client connected to TCP
+[2025-12-18T03:19:40.784Z] [INFO] Received command: start_core
+[2025-12-18T03:19:40.784Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T03:19:40.784Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:19:40.784Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T03:19:40.806Z] [CORE] time="2025-12-18T11:19:40.801975300+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:19:40.807Z] [CORE] time="2025-12-18T11:19:40.807144500+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:19:40.807144500+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:19:40.807Z] [CORE] time="2025-12-18T11:19:40.807656200+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T03:19:41.798Z] [INFO] Mihomo started successfully
+[2025-12-18T03:19:41.799Z] [INFO] TCP client disconnected
+[2025-12-18T03:19:49.185Z] [INFO] Client connected to TCP
+[2025-12-18T03:19:49.186Z] [INFO] Received command: start_core
+[2025-12-18T03:19:49.186Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T03:19:49.186Z] [INFO] Stopping Mihomo...
+[2025-12-18T03:19:49.338Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T03:19:49.338Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:19:49.338Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T03:19:49.341Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T03:19:49.367Z] [CORE] time="2025-12-18T11:19:49.362780600+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:19:49.369Z] [CORE] time="2025-12-18T11:19:49.369760300+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:19:49.369760300+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:19:49.372Z] [CORE] time="2025-12-18T11:19:49.372403700+08:00" level=info msg="Initial configuration complete, total time: 5ms"
+[2025-12-18T03:19:50.352Z] [INFO] Mihomo stopped
+[2025-12-18T03:19:50.352Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T03:19:50.358Z] [INFO] TCP client disconnected
+
+[2025-12-18T03:22:37.205Z] [INFO] FlyClash Core Service Worker starting...
+[ServiceWorker] Config loaded: {
+  corePath: 'F:\\code\\FlyClash-PC\\flycast-ui\\extra\\sidecar\\mihomo.exe',
+  pipeName: '\\\\.\\pipe\\flycast-core-service',
+  port: 19091,
+  userDataPath: 'C:\\Users\\GtxFury\\AppData\\Roaming\\flyclash'
+}
+[2025-12-18T03:22:37.240Z] [INFO] FlyClash Core Service Worker started
+[2025-12-18T03:22:37.241Z] [INFO] Pipe server listening on \\.\pipe\flycast-core-service
+[2025-12-18T03:22:37.243Z] [INFO] TCP server listening on 127.0.0.1:19091
+[2025-12-18T03:34:24.986Z] [INFO] Client connected to TCP
+[2025-12-18T03:34:24.987Z] [INFO] Received command: start_core
+[2025-12-18T03:34:24.989Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\extra\sidecar\mihomo.exe
+[2025-12-18T03:34:24.989Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:34:24.989Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T03:34:24.989Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T03:34:25.022Z] [CORE] time="2025-12-18T11:34:25.018436900+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:34:25.025Z] [CORE] time="2025-12-18T11:34:25.025689500+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:34:25.025689500+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:34:25.028Z] [CORE] time="2025-12-18T11:34:25.028823300+08:00" level=info msg="Initial configuration complete, total time: 6ms"
+[2025-12-18T03:34:25.995Z] [INFO] Mihomo started successfully
+[2025-12-18T03:34:25.997Z] [INFO] TCP client disconnected
+[2025-12-18T03:34:44.961Z] [INFO] Client connected to TCP
+[2025-12-18T03:34:44.964Z] [INFO] Received command: start_core
+[2025-12-18T03:34:44.964Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T03:34:44.965Z] [INFO] Stopping Mihomo...
+[2025-12-18T03:34:45.089Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\extra\sidecar\mihomo.exe
+[2025-12-18T03:34:45.089Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:34:45.089Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T03:34:45.089Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T03:34:45.113Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T03:34:45.146Z] [CORE] time="2025-12-18T11:34:45.141362600+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:34:45.149Z] [CORE] time="2025-12-18T11:34:45.150138000+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:34:45.150138000+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:34:45.152Z] [CORE] time="2025-12-18T11:34:45.153314700+08:00" level=info msg="Initial configuration complete, total time: 5ms"
+[2025-12-18T03:34:46.097Z] [INFO] Mihomo stopped
+[2025-12-18T03:34:46.097Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T03:34:48.757Z] [INFO] TCP client disconnected
+[2025-12-18T03:35:55.821Z] [INFO] Client connected to TCP
+[2025-12-18T03:35:55.821Z] [INFO] Received command: start_core
+[2025-12-18T03:35:55.821Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\extra\sidecar\mihomo.exe
+[2025-12-18T03:35:55.821Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T03:35:55.822Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T03:35:55.822Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T03:35:55.852Z] [CORE] time="2025-12-18T11:35:55.846782400+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T03:35:55.854Z] [CORE] time="2025-12-18T11:35:55.854563400+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T11:35:55.854563400+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T03:35:55.858Z] [CORE] time="2025-12-18T11:35:55.857717400+08:00" level=info msg="Initial configuration complete, total time: 5ms"
+[2025-12-18T03:35:56.828Z] [INFO] Mihomo started successfully
+[2025-12-18T03:35:56.829Z] [INFO] TCP client disconnected
+[2025-12-18T04:05:01.792Z] [INFO] Client connected to TCP
+[2025-12-18T04:05:01.793Z] [INFO] Received command: start_core
+[2025-12-18T04:05:01.793Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T04:05:01.793Z] [INFO] Stopping Mihomo...
+[2025-12-18T04:05:01.907Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\extra\sidecar\mihomo.exe
+[2025-12-18T04:05:01.907Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T04:05:01.907Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T04:05:01.908Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T04:05:01.910Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T04:05:01.938Z] [CORE] time="2025-12-18T12:05:01.933740700+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T04:05:01.940Z] [CORE] time="2025-12-18T12:05:01.941112700+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T12:05:01.941112700+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T04:05:01.944Z] [CORE] time="2025-12-18T12:05:01.944219200+08:00" level=info msg="Initial configuration complete, total time: 5ms"
+[2025-12-18T04:05:02.919Z] [INFO] Mihomo stopped
+[2025-12-18T04:05:02.919Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T04:05:23.169Z] [INFO] TCP client disconnected
+[2025-12-18T04:05:25.088Z] [INFO] Client connected to TCP
+[2025-12-18T04:05:25.088Z] [INFO] Received command: start_core
+[2025-12-18T04:05:25.089Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\extra\sidecar\mihomo.exe
+[2025-12-18T04:05:25.089Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T04:05:25.089Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T04:05:25.089Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T04:05:25.118Z] [CORE] time="2025-12-18T12:05:25.113943400+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T04:05:25.120Z] [CORE] time="2025-12-18T12:05:25.120751000+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T12:05:25.120751000+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T04:05:25.123Z] [CORE] time="2025-12-18T12:05:25.123840300+08:00" level=info msg="Initial configuration complete, total time: 5ms"
+[2025-12-18T04:05:26.093Z] [INFO] Mihomo started successfully
+[2025-12-18T04:05:26.095Z] [INFO] TCP client disconnected
+[2025-12-18T04:05:49.297Z] [INFO] Client connected to TCP
+[2025-12-18T04:05:49.297Z] [INFO] Received command: stop_core
+[2025-12-18T04:05:49.297Z] [INFO] Stopping Mihomo...
+[2025-12-18T04:05:49.419Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T04:05:50.424Z] [INFO] Mihomo stopped
+[2025-12-18T04:05:50.426Z] [INFO] TCP client disconnected
+[2025-12-18T04:30:24.071Z] [INFO] Client connected to TCP
+[2025-12-18T04:30:24.071Z] [INFO] Received command: start_core
+[2025-12-18T04:30:24.071Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T04:30:24.072Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T04:30:24.072Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml
+[2025-12-18T04:30:24.072Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-天枢互联.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T04:30:24.103Z] [CORE] time="2025-12-18T12:30:24.098377900+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T04:30:24.106Z] [CORE] time="2025-12-18T12:30:24.105652800+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T12:30:24.105652800+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T04:30:24.109Z] [CORE] time="2025-12-18T12:30:24.108888900+08:00" level=info msg="Initial configuration complete, total time: 5ms"
+[2025-12-18T04:30:25.087Z] [INFO] Mihomo started successfully
+[2025-12-18T04:30:25.089Z] [INFO] TCP client disconnected
+[2025-12-18T04:37:31.053Z] [INFO] Mihomo exited with code 0, signal null
+[2025-12-18T04:37:31.060Z] [INFO] Mihomo exited with code 0, signal null
+[2025-12-18T04:37:31.090Z] [INFO] Mihomo exited with code 0, signal null
+
+[2025-12-18T04:38:25.313Z] [INFO] FlyClash Core Service Worker starting...
+[ServiceWorker] Config loaded: {
+  corePath: 'F:\\code\\FlyClash-PC\\flycast-ui\\extra\\sidecar\\mihomo.exe',
+  pipeName: '\\\\.\\pipe\\flycast-core-service',
+  port: 19091,
+  userDataPath: 'C:\\Users\\GtxFury\\AppData\\Roaming\\flyclash'
+}
+[2025-12-18T04:38:25.346Z] [INFO] FlyClash Core Service Worker started
+[2025-12-18T04:38:25.347Z] [INFO] Pipe server listening on \\.\pipe\flycast-core-service
+[2025-12-18T04:38:25.351Z] [INFO] TCP server listening on 127.0.0.1:19091
+[2025-12-18T04:41:00.476Z] [INFO] Client connected to TCP
+[2025-12-18T04:41:00.477Z] [INFO] Received command: start_core
+[2025-12-18T04:41:00.479Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T04:41:00.479Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T04:41:00.479Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T04:41:00.479Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T04:41:00.501Z] [CORE] time="2025-12-18T12:41:00.497487400+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T04:41:00.502Z] [CORE] time="2025-12-18T12:41:00.502099800+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T12:41:00.502099800+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T04:41:00.503Z] [CORE] time="2025-12-18T12:41:00.503188600+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T04:41:01.496Z] [INFO] Mihomo started successfully
+[2025-12-18T04:41:01.498Z] [INFO] TCP client disconnected
+[2025-12-18T05:00:40.912Z] [INFO] Client connected to pipe
+[2025-12-18T05:00:40.912Z] [INFO] Received command: start_core
+[2025-12-18T05:00:40.912Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T05:00:40.913Z] [INFO] Stopping Mihomo...
+[2025-12-18T05:00:40.996Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T05:00:40.996Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T05:00:40.997Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T05:00:40.997Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T05:00:41.002Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T05:00:41.034Z] [CORE] time="2025-12-18T13:00:41.030235400+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T05:00:41.035Z] [CORE] time="2025-12-18T13:00:41.035925900+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T13:00:41.035925900+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T05:00:41.035Z] [CORE] time="2025-12-18T13:00:41.036439200+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T05:00:42.006Z] [INFO] Mihomo stopped
+[2025-12-18T05:00:42.007Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T05:00:44.079Z] [INFO] Pipe client disconnected
+
+[2025-12-18T05:06:33.231Z] [INFO] FlyClash Core Service Worker starting...
+[ServiceWorker] Config loaded: {
+  corePath: 'F:\\code\\FlyClash-PC\\flycast-ui\\extra\\sidecar\\mihomo.exe',
+  pipeName: '\\\\.\\pipe\\flycast-core-service',
+  port: 19091,
+  userDataPath: 'C:\\Users\\GtxFury\\AppData\\Roaming\\flyclash'
+}
+[2025-12-18T05:06:33.246Z] [INFO] FlyClash Core Service Worker started
+[2025-12-18T05:06:33.246Z] [INFO] Pipe server listening on \\.\pipe\flycast-core-service
+[2025-12-18T05:06:33.249Z] [INFO] TCP server listening on 127.0.0.1:19091
+[2025-12-18T05:07:08.162Z] [INFO] Client connected to pipe
+[2025-12-18T05:07:08.163Z] [INFO] Received command: start_core
+[2025-12-18T05:07:08.163Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T05:07:08.163Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T05:07:08.164Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T05:07:08.164Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T05:07:08.187Z] [CORE] time="2025-12-18T13:07:08.183571000+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T05:07:08.188Z] [CORE] time="2025-12-18T13:07:08.187886600+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T13:07:08.187886600+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T05:07:08.188Z] [CORE] time="2025-12-18T13:07:08.188961200+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T05:07:09.172Z] [INFO] Mihomo started successfully
+[2025-12-18T05:07:09.233Z] [INFO] Pipe client disconnected
+[2025-12-18T05:08:54.256Z] [INFO] Client connected to TCP
+[2025-12-18T05:08:54.257Z] [INFO] Received command: start_core
+[2025-12-18T05:08:54.257Z] [WARN] Mihomo is already running, stopping first...
+[2025-12-18T05:08:54.257Z] [INFO] Stopping Mihomo...
+[2025-12-18T05:08:54.376Z] [INFO] Starting Mihomo: F:\code\FlyClash-PC\flycast-ui\release\win-unpacked\resources\sidecar\mihomo.exe
+[2025-12-18T05:08:54.377Z] [INFO] Config dir: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo
+[2025-12-18T05:08:54.377Z] [INFO] Config file: C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml
+[2025-12-18T05:08:54.377Z] [INFO] Mihomo args: -d C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo -f C:\Users\GtxFury\AppData\Roaming\flyclash\mihomo\override-flexconfig.yaml -ext-ctl-pipe \\.\pipe\flycast-mihomo-service
+[2025-12-18T05:08:54.410Z] [INFO] Mihomo exited with code 1, signal null
+[2025-12-18T05:08:54.429Z] [CORE] time="2025-12-18T13:08:54.423485400+08:00" level=info msg="Start initial configuration in progress"
+[2025-12-18T05:08:54.429Z] [CORE] time="2025-12-18T13:08:54.430165100+08:00" level=info msg="Geodata Loader mode: memconservative"
+time="2025-12-18T13:08:54.430165100+08:00" level=info msg="Geosite Matcher implementation: succinct"
+[2025-12-18T05:08:54.430Z] [CORE] time="2025-12-18T13:08:54.431289600+08:00" level=info msg="Initial configuration complete, total time: 1ms"
+[2025-12-18T05:08:55.386Z] [INFO] Mihomo stopped
+[2025-12-18T05:08:55.387Z] [ERROR] Command start_core failed: Mihomo 启动失败
+[2025-12-18T05:08:57.225Z] [INFO] TCP client disconnected
+[2025-12-18T05:09:29.692Z] [INFO] Mihomo exited with code 4294967295, signal null

@@ -1,0 +1,32 @@
+<service>
+	<id>flyclashcoreservice.exe</id>
+	<name>FlyClashCoreService</name>
+	<description>FlyClash 核心服务，用于 TUN 模式</description>
+	<executable>F:\code\FlyClash-PC\flycast-ui\node_modules\electron\dist\electron.exe</executable>
+	<argument>--harmony</argument>
+	<argument>F:\code\FlyClash-PC\flycast-ui\node_modules\node-windows\lib\wrapper.js</argument>
+	<argument>--file</argument>
+	<argument>F:\code\FlyClash-PC\flycast-ui\electron\service-worker.js</argument>
+	<argument>--scriptoptions=</argument>
+	<argument>--log</argument>
+	<argument>FlyClashCoreService wrapper</argument>
+	<argument>--grow</argument>
+	<argument>0.25</argument>
+	<argument>--wait</argument>
+	<argument>1</argument>
+	<argument>--maxrestarts</argument>
+	<argument>3</argument>
+	<argument>--abortonerror</argument>
+	<argument>n</argument>
+	<argument>--stopparentfirst</argument>
+	<argument>undefined</argument>
+	<logmode>rotate</logmode>
+	<stoptimeout>30sec</stoptimeout>
+	<env name="FLYCAST_SERVICE_CONFIG" value="C:\Users\GtxFury\AppData\Roaming\flyclash\service\service-config.json"/>
+	<serviceaccount>
+		<domain>NONE</domain>
+		<user>LocalSystem</user>
+		<password></password>
+	</serviceaccount>
+	<workingdirectory>F:\code\FlyClash-PC\flycast-ui</workingdirectory>
+</service>

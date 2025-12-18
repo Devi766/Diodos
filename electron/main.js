@@ -15,6 +15,14 @@ const security = require('./security');
 const { enableAcrylic } = require('./windows/acrylic');
 const axios = require('axios');
 
+// 检查是否作为核心服务工作进程运行（Windows 服务模式）
+const isServiceWorkerMode = process.argv.includes('--service-worker');
+
+// 在服务模式下，仅启动 service-worker，不初始化主应用 UI/托盘等
+if (isServiceWorkerMode) {
+  require('./service-worker');
+} else {
+
 // 导入媒体检测模块
 const { testMediaStreaming } = require('./mediatest');
 
@@ -1955,32 +1963,41 @@ app.whenReady().then(async () => {
   if (context.needsPermissionInit && process.platform === 'win32') {
     const PermissionManager = require('./main-process/permission-manager');
     const permissionManager = new PermissionManager();
-    const { execSync } = require('child_process');
 
     // 将 PermissionManager 方法添加到 context
     context.checkElevateTask = permissionManager.checkElevateTask.bind(permissionManager);
     context.deleteElevateTask = permissionManager.deleteElevateTask.bind(permissionManager);
     context.permissionManager = permissionManager;
 
+    // 获取当前 TUN 提升模式设置
+    const tunElevationMode = context.dbManager?.getSetting('tun_elevation_mode', 'service') || 'service';
+    console.log('[Startup] TUN elevation mode:', tunElevationMode);
     console.log('[Startup] Checking admin privileges...');
 
-    let hasAdminPrivileges = false;
-    try {
-      execSync('net session', { stdio: 'ignore' });
-      hasAdminPrivileges = true;
-      context.hasAdminPrivileges = true;
+    const hasAdminPrivileges =
+      typeof permissionManager.checkAdminPrivilegesSync === 'function'
+        ? permissionManager.checkAdminPrivilegesSync()
+        : false;
+
+    context.hasAdminPrivileges = hasAdminPrivileges;
+
+    if (hasAdminPrivileges) {
       console.log('[Startup] ✓ Current process has admin privileges');
 
-      // 有管理员权限时，确保任务已创建
-      try {
-        permissionManager.createElevateTaskSync();
-        console.log('[Startup] ✓ Elevated task created/updated successfully');
-      } catch (error) {
-        console.error('[Startup] ! Task creation failed:', error.message);
+      // 只有在计划任务模式下，才自动创建计划任务
+      // 服务模式下不需要计划任务，避免冲突
+      if (tunElevationMode === 'task') {
+        try {
+          permissionManager.createElevateTaskSync();
+          console.log('[Startup] ✓ Elevated task created/updated successfully');
+        } catch (error) {
+          console.error('[Startup] ! Task creation failed:', error.message);
+        }
+      } else {
+        console.log('[Startup] ✓ Service mode enabled, skipping task creation');
       }
-    } catch {
+    } else {
       console.log('[Startup] ✗ Current process does NOT have admin privileges');
-      context.hasAdminPrivileges = false;
 
       // 没有管理员权限，检查是否有计划任务可以用来提权重启
       const taskExists = permissionManager.checkElevateTaskSync();
@@ -2126,17 +2143,47 @@ app.whenReady().then(async () => {
       console.log('[TUN] 检测到待处理的 TUN 启用请求');
       dbManager.deleteSetting('pendingTunEnable');
 
-      // 检查是否有管理员权限
+      // 这里只负责记录日志，实际启用仍由用户在获得管理员权限后手动触发
       try {
-        const { execSync } = require('child_process');
-        execSync('net session', { stdio: 'ignore' });
-        console.log('[TUN] 已获得管理员权限，TUN 模式将在服务启动时自动启用');
-        state.tunModeEnabled = true;
-        setTunModeEnabled(true);
-      } catch {
-        console.warn('[TUN] 未获得管理员权限，TUN 模式无法启用');
-        state.tunModeEnabled = false;
-        setTunModeEnabled(false);
+        const PermissionManager = require('./main-process/permission-manager');
+        const pm = new PermissionManager();
+        const isAdmin = typeof pm.checkAdminPrivilegesSync === 'function'
+          ? pm.checkAdminPrivilegesSync()
+          : false;
+        if (isAdmin) {
+          console.log('[TUN] 当前进程已具备管理员权限，请在界面中重新开启 TUN 模式');
+        } else {
+          console.warn('[TUN] 当前进程仍未获得管理员权限，TUN 模式无法自动启用');
+        }
+      } catch (e) {
+        console.warn('[TUN] 检查管理员权限失败:', e?.message || e);
+      }
+    }
+
+    // 检查是否有待处理的服务安装请求（从管理员重启后）
+    const pendingServiceInstall = dbManager.getSetting('pendingServiceInstall', false);
+    if (pendingServiceInstall) {
+      console.log('[Service] 检测到待处理的服务安装请求');
+      dbManager.deleteSetting('pendingServiceInstall');
+
+      try {
+        const PermissionManager = require('./main-process/permission-manager');
+        const pm = new PermissionManager();
+        const isAdmin = typeof pm.checkAdminPrivilegesSync === 'function'
+          ? pm.checkAdminPrivilegesSync()
+          : false;
+
+        if (isAdmin && context.tunManager && typeof context.tunManager.installService === 'function') {
+          console.log('[Service] 当前为管理员环境，尝试自动安装 TUN 服务');
+          const result = await context.tunManager.installService();
+          console.log('[Service] 自动安装服务结果:', result);
+        } else if (!isAdmin) {
+          console.warn('[Service] 当前进程仍未获得管理员权限，无法自动安装服务');
+        } else {
+          console.warn('[Service] TUN 管理器不可用，无法自动安装服务');
+        }
+      } catch (e) {
+        console.error('[Service] 自动安装服务失败:', e?.message || e);
       }
     }
   } catch (error) {
@@ -2915,13 +2962,15 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('is-mihomo-running', async () => {
-    // 方法1: 检查进程是否存在
-    if (!state.mihomoProcess || !state.mihomoProcess.pid || state.mihomoProcess.exitCode !== null) {
+    const { getRunningMode, RunningMode } = require('./utils/running-mode');
+    const currentMode = getRunningMode();
+
+    // 如果运行模式是 NOT_RUNNING，直接返回 false
+    if (currentMode === RunningMode.NOT_RUNNING) {
       return false;
     }
 
-    // 方法2: 尝试调用mihomo API的/version端点来验证服务真正可用
-    // 这是mihomo-party使用的方法，更可靠
+    // 无论是服务模式还是 sidecar 模式，都通过 API 检查内核是否真正运行
     try {
       const axios = await context.getAxiosInstance(true);
       if (axios) {
@@ -2929,13 +2978,18 @@ app.whenReady().then(async () => {
         return true;
       }
     } catch (error) {
-      // API调用失败，说明服务不可用
-      console.log('[is-mihomo-running] API check failed:', error.message);
+      console.log(`[is-mihomo-running] API check failed (mode: ${currentMode}):`, error.message);
       return false;
     }
 
-    // 如果axios不可用，仅依靠进程检查
-    return true;
+    // 如果 axios 不可用，根据运行模式判断
+    if (currentMode === RunningMode.SIDECAR) {
+      // Sidecar 模式下，检查进程是否存在
+      return !!(state.mihomoProcess && state.mihomoProcess.pid && state.mihomoProcess.exitCode === null);
+    }
+
+    // 服务模式下，如果 API 不可用，认为未运行
+    return false;
   });
 
   ipcMain.handle('get-proxy-nodes', (event, configPath) => {
@@ -3814,11 +3868,14 @@ app.whenReady().then(async () => {
       console.log('[IPC toggleTunMode] 收到请求，目标状态:', enabled);
       const menuItem = { checked: Boolean(enabled) };
 
-      // toggleTunMode 现在是异步函数，需要 await
-      await toggleTunMode(menuItem);
+      // toggleTunMode 会返回操作结果
+      const res = await toggleTunMode(menuItem);
+      console.log('[IPC toggleTunMode] 操作完成，当前状态:', state.tunModeEnabled, 'result:', res);
 
-      console.log('[IPC toggleTunMode] 操作完成，当前状态:', state.tunModeEnabled);
-      // 返回成功对象，而不是布尔值
+      if (!res || !res.success) {
+        return { success: false, error: res && res.error ? String(res.error) : '切换 TUN 模式失败' };
+      }
+
       return { success: true, enabled: state.tunModeEnabled };
     } catch (error) {
       console.error('[IPC toggleTunMode] 切换TUN模式失败:', error);
@@ -4048,9 +4105,45 @@ exit /b %errorlevel%
 
   ipcMain.handle('check-core-permission', async () => {
     try {
-      if (context.checkCorePermission) {
-        return await context.checkCorePermission();
+      // Windows: 使用 tunManager.checkPermission 综合判断服务/管理员权限
+      if (isWindows) {
+        if (context.tunManager && typeof context.tunManager.checkPermission === 'function') {
+          const result = await context.tunManager.checkPermission();
+          if (result && result.success) {
+            return {
+              success: true,
+              hasPermission: !!result.hasPermission,
+              details: result.details || {}
+            };
+          }
+        }
+
+        // 回退：仅根据启动时记录的管理员状态
+        const hasAdmin = !!context.hasAdminPrivileges;
+        return {
+          success: true,
+          hasPermission: hasAdmin,
+          details: { mode: hasAdmin ? 'admin' : 'none' }
+        };
       }
+
+      // 非 Windows 平台：委托给 system-integration 暴露的 checkCorePermission
+      if (context.checkCorePermission) {
+        const result = await context.checkCorePermission();
+        if (result && typeof result.hasPermission === 'boolean') {
+          return {
+            success: true,
+            hasPermission: !!result.hasPermission,
+            details: result.details || {}
+          };
+        }
+        // 兼容旧逻辑：如果返回的是布尔值或其他结构，则尽量转换
+        return {
+          success: !!result,
+          hasPermission: !!result
+        };
+      }
+
       return { success: false, hasPermission: false };
     } catch (error) {
       console.error('[check-core-permission] Error:', error);
@@ -4136,6 +4229,156 @@ exit /b %errorlevel%
       return { success: true };
     } catch (error) {
       console.error('[TUN] 保存配置失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // TUN 权限提升模式相关（Windows）
+  ipcMain.handle('get-tun-elevation-mode', async () => {
+    try {
+      if (context.tunManager && context.tunManager.getTunElevationMode) {
+        return { success: true, mode: context.tunManager.getTunElevationMode() };
+      }
+      return { success: true, mode: 'service' };
+    } catch (error) {
+      console.error('[TUN] 获取提升模式失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('set-tun-elevation-mode', async (event, mode) => {
+    try {
+      if (context.tunManager && context.tunManager.setTunElevationMode) {
+        context.tunManager.setTunElevationMode(mode);
+        console.log('[TUN] 提升模式已设置为:', mode);
+
+        // 切换到服务模式时，删除已存在的计划任务（避免冲突）
+        if (mode === 'service' && context.permissionManager) {
+          try {
+            const taskExists = await context.permissionManager.checkElevateTask();
+            if (taskExists) {
+              await context.permissionManager.deleteElevateTask();
+              console.log('[TUN] 已删除计划任务（切换到服务模式）');
+            }
+          } catch (deleteError) {
+            console.warn('[TUN] 删除计划任务失败:', deleteError.message);
+            // 不影响模式切换的成功状态
+          }
+        }
+
+        return { success: true };
+      }
+      return { success: false, error: 'TUN manager not available' };
+    } catch (error) {
+      console.error('[TUN] 设置提升模式失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-tun-service-status', async () => {
+    try {
+      if (context.tunManager && context.tunManager.getServiceStatus) {
+        const status = await context.tunManager.getServiceStatus();
+        return { success: true, ...status };
+      }
+      return { success: true, installed: false, running: false, mode: 'task' };
+    } catch (error) {
+      console.error('[TUN] 获取服务状态失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('install-tun-service', async () => {
+    try {
+      if (context.tunManager && context.tunManager.installService) {
+        const result = await context.tunManager.installService();
+
+        // 非管理员环境下的服务安装：尝试发起一次管理员重启，并在下次启动时自动安装服务
+        if (isWindows && result && result.needsAdmin) {
+          try {
+            const PermissionManager = require('./main-process/permission-manager');
+            const permissionManager = new PermissionManager();
+
+            // 标记待安装服务
+            try {
+              dbManager.setSetting('pendingServiceInstall', true);
+            } catch (e) {
+              console.warn('[TUN] Failed to set pendingServiceInstall flag:', e?.message || e);
+            }
+
+            // 确保计划任务存在
+            try {
+              if (!permissionManager.checkElevateTaskSync()) {
+                permissionManager.createElevateTaskSync();
+              }
+            } catch (e) {
+              console.error('[TUN] 创建计划任务失败:', e?.message || e);
+              return {
+                success: false,
+                error: '无法创建提权任务，请尝试手动以管理员身份运行应用后再安装服务'
+              };
+            }
+
+            // 通过计划任务以管理员权限重新启动应用
+            permissionManager
+              .runAsAdmin()
+              .catch((e) => console.error('[TUN] 通过计划任务提权失败:', e?.message || e));
+
+            return {
+              success: true,
+              needRestart: true,
+              message: '正在请求管理员权限安装服务，应用将以管理员模式重新启动后自动完成安装'
+            };
+          } catch (e) {
+            console.error('[TUN] 自动提权安装服务失败:', e?.message || e);
+            return {
+              success: false,
+              error: result.error || '安装服务需要管理员权限，请以管理员身份运行应用程序'
+            };
+          }
+        }
+
+        return result;
+      }
+      return { success: false, error: 'TUN manager not available' };
+    } catch (error) {
+      console.error('[TUN] 安装服务失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('uninstall-tun-service', async () => {
+    try {
+      if (context.tunManager && context.tunManager.uninstallService) {
+        return await context.tunManager.uninstallService();
+      }
+      return { success: false, error: 'TUN manager not available' };
+    } catch (error) {
+      console.error('[TUN] 卸载服务失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('start-tun-service', async () => {
+    try {
+      if (context.tunManager && context.tunManager.startService) {
+        return await context.tunManager.startService();
+      }
+      return { success: false, error: 'TUN manager not available' };
+    } catch (error) {
+      console.error('[TUN] 启动服务失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('stop-tun-service', async () => {
+    try {
+      if (context.tunManager && context.tunManager.stopService) {
+        return await context.tunManager.stopService();
+      }
+      return { success: false, error: 'TUN manager not available' };
+    } catch (error) {
+      console.error('[TUN] 停止服务失败:', error);
       return { success: false, error: error.message };
     }
   });
@@ -5122,3 +5365,5 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
     state.mainWindow.focus();
   }
 });
+
+} // end of !isServiceWorkerMode

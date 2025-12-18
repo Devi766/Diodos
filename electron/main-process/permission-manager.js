@@ -168,14 +168,43 @@ class PermissionManager {
   /**
    * 检查当前进程是否有管理员权限
    */
-  async checkAdminPrivileges() {
+  checkAdminPrivilegesSync() {
+    if (process.platform !== 'win32') {
+      // 非 Windows 平台由其他逻辑决定权限
+      return false;
+    }
+
+    // 优先使用 PowerShell 判断当前用户是否在 Administrators 组
     try {
-      // 使用 net session 命令检查管理员权限
-      execSync('net session', { stdio: 'pipe' });
+      const output = execSync(
+        'powershell -NoProfile -NonInteractive -Command "[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"',
+        { stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+        .toString()
+        .trim()
+        .toLowerCase();
+
+      if (output === 'true') {
+        return true;
+      }
+    } catch (e) {
+      // PowerShell 失败时回退到 net session 检测
+      console.warn('[PermissionManager] PowerShell admin check failed, fallback to net session:', e.message);
+    }
+
+    try {
+      execSync('net session', { stdio: 'ignore' });
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * 检查当前进程是否有管理员权限（异步包装）
+   */
+  async checkAdminPrivileges() {
+    return this.checkAdminPrivilegesSync();
   }
 
   /**

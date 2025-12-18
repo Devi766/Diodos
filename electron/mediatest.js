@@ -142,209 +142,201 @@ async function testMediaStreaming(serviceName, checkUrl) {
       console.log(`[mediatest.js] 使用 switch 语句处理服务: ${serviceName}`);
       switch (serviceName) {
         case 'Netflix': {
-          // 参考check.sh实现，检测Netflix
-          await logger.log('开始检测Netflix...');
-          
-          // 检测Netflix自制剧
-          await logger.log('检测Netflix自制剧...');
-          const originalResponse = await fetch('https://www.netflix.com/title/81280792', baseRequestOptions);
-          await logger.log(`Netflix自制剧HTTP状态码: ${originalResponse.status}`);
-          const originalHtml = await originalResponse.text();
-          await logger.logResponse('Netflix Original', 'https://www.netflix.com/title/81280792', originalResponse, originalHtml);
-          
-          // Breaking Bad - 非自制剧ID
-          await logger.log('检测Netflix非自制剧...');
-          const nonOriginalResponse = await fetch('https://www.netflix.com/title/70143836', baseRequestOptions);
-          await logger.log(`Netflix非自制剧HTTP状态码: ${nonOriginalResponse.status}`);
-          const nonOriginalHtml = await nonOriginalResponse.text();
-          await logger.logResponse('Netflix Non-Original', 'https://www.netflix.com/title/70143836', nonOriginalResponse, nonOriginalHtml);
-          
-          // 检查页面内容是否包含地区限制提示
-          // 注意：Netflix页面中的地区限制信息可能被编码或分割，需要多种检测手段
-          
-          // 1. 检查明显的地区限制文本 - 使用更小的片段增加匹配机会
-          const textLimitations = [
-            "not available in your country",
-            "isn't available to watch in your country",
-            "isn't available in your country",
-            "not available in your region",
-            "isn't available in your region",
-            "currently isn't available",
-            "isn't available to watch",
-            "not available to watch",
-            "Oh no! This title",
-            "Sorry, this title",
-            "unavailable in your area"
-          ];
-          
-          // 检查原创剧和非原创剧页面是否包含这些文本片段
-          const hasLimitationText = textLimitations.some(text => 
-            originalHtml.includes(text) || nonOriginalHtml.includes(text)
-          );
-          
-          await logger.log(`Netflix地区限制文本检测: ${hasLimitationText ? '检测到限制文本' : '未检测到限制文本'}`);
-          
-          // 2. 检查特定的HTML元素类和ID
-          const limitElements = [
-            'data-uia="locally-unavailable"',
-            'alert_visualStyles',
-            'WarningFillStandard',
-            'ui-message-error',
-            'error-page',
-            'unavailable-content',
-            'serviceErrorMessage'
-          ];
-          
-          const hasLimitationElements = limitElements.some(element => 
-            originalHtml.includes(element) || nonOriginalHtml.includes(element)
-          );
-          
-          await logger.log(`Netflix限制元素检测: ${hasLimitationElements ? '检测到限制元素' : '未检测到限制元素'}`);
-          
-          // 3. 检查错误代码
-          const errorCodes = [
-            "NSES-404",
-            "NSES-403",
-            "NSES-500",
-            "NSES-NTI",  // Netflix Title Inaccessible
-            "errorCode:"
-          ];
-          
-          const hasErrorCodes = errorCodes.some(code => 
-            originalHtml.includes(code) || nonOriginalHtml.includes(code)
-          );
-          
-          await logger.log(`Netflix错误代码检测: ${hasErrorCodes ? '检测到错误代码' : '未检测到错误代码'}`);
-          
-          // 4. 检查页面标题
-          const errorTitles = [
-            "<title>Netflix - 出错了</title>",
-            "<title>Netflix - Error</title>",
-            "<title>Netflix - ошибка</title>",
-            "<title>Netflix - Oops</title>",
-            "Netflix - Oh no!"
-          ];
-          
-          const hasErrorTitle = errorTitles.some(title => 
-            originalHtml.includes(title) || nonOriginalHtml.includes(title)
-          );
-          
-          await logger.log(`Netflix错误标题检测: ${hasErrorTitle ? '检测到错误标题' : '未检测到错误标题'}`);
-          
-          // 5. 检查JSON配置中的限制标记
-          // Netflix经常在JSON配置中包含地区限制信息
-          const jsonLimitations = [
-            '"availabilityReason":',
-            '"isAvailable":false',
-            '"geographicallyAvailable":false',
-            '"isPlayable":false',
-            '"regionRestriction":'
-          ];
-          
-          const hasJsonLimitation = jsonLimitations.some(json => 
-            originalHtml.includes(json) || nonOriginalHtml.includes(json)
-          );
-          
-          await logger.log(`Netflix JSON限制检测: ${hasJsonLimitation ? '检测到JSON限制' : '未检测到JSON限制'}`);
-          
-          // 综合判断地区限制
-          const regionBlocked = hasLimitationText || hasLimitationElements || hasErrorCodes || hasErrorTitle || hasJsonLimitation;
-          
-          await logger.log(`Netflix区域限制综合检测结果: ${regionBlocked ? '检测到限制' : '无限制'}`);
-          
-          // 记录页面标题以便调试
-          const originalTitleMatch = originalHtml.match(/<title>(.*?)<\/title>/);
-          const nonOriginalTitleMatch = nonOriginalHtml.match(/<title>(.*?)<\/title>/);
-          
-          if (originalTitleMatch) {
-            await logger.log(`Netflix自制剧页面标题: ${originalTitleMatch[1]}`);
-          }
-          
-          if (nonOriginalTitleMatch) {
-            await logger.log(`Netflix非自制剧页面标题: ${nonOriginalTitleMatch[1]}`);
-          }
-          
-          // 根据状态码和页面内容判断结果
-          if (originalResponse.status === 404 && nonOriginalResponse.status === 404) {
-            // 404表示资源可能不存在，或者是地区限制
-            await logger.log('Netflix检测结果: 可能无法访问(404错误)');
+          // 使用新的reactContext解析机制检测Netflix (参考Android版本NetflixDetector.kt)
+          await logger.log('开始检测Netflix (使用reactContext解析机制)...');
+
+          // Netflix自制剧测试URL (LEGO Ninjago)
+          const NETFLIX_ORIGINAL_URL = 'https://www.netflix.com/title/81280792';
+          const NETFLIX_ORIGINAL_ID = '81280792';
+
+          // Netflix非自制剧测试URL (Breaking Bad) - 更新为Android版本使用的ID
+          const NETFLIX_NON_ORIGINAL_URL = 'https://www.netflix.com/title/80057281';
+          const NETFLIX_NON_ORIGINAL_ID = '80057281';
+
+          // 解码十六进制转义字符
+          const decodeHexEscapes = (input) => {
+            return input.replace(/\\x([0-9A-Fa-f]{2})/g, (match, hex) => {
+              return String.fromCharCode(parseInt(hex, 16));
+            });
+          };
+
+          // 从URL路径中提取区域
+          const extractRegionFromPath = (models) => {
+            try {
+              const originalUrl = models?.serverDefs?.data?.originalUrl;
+              if (!originalUrl) return null;
+              const cleaned = originalUrl.replace(/^\/+|\/+$/g, '');
+              const parts = cleaned.split('/');
+              if (parts.length === 0) return null;
+              const locale = parts[0];
+              const localeParts = locale.split('-');
+              if (localeParts.length === 0) return null;
+              const country = localeParts[0];
+              if (country.length === 2 && /^[a-zA-Z]+$/.test(country)) {
+                return country.toUpperCase();
+              }
+              return null;
+            } catch (e) {
+              return null;
+            }
+          };
+
+          // 解析netflix.reactContext
+          const parseReactContext = (body) => {
+            if (!body) return null;
+            const marker = 'netflix.reactContext = ';
+            const startIndex = body.indexOf(marker);
+            if (startIndex === -1) return null;
+            const jsonStart = startIndex + marker.length;
+            const scriptEnd = body.indexOf(';</script>', jsonStart);
+            if (scriptEnd === -1) return null;
+            const rawJson = body.substring(jsonStart, scriptEnd);
+            const decoded = decodeHexEscapes(rawJson);
+
+            try {
+              const jsonObject = JSON.parse(decoded);
+              const models = jsonObject?.models;
+              const graphqlData = models?.graphql?.data;
+              const region = models?.geo?.data?.requestCountry?.id?.toUpperCase() || extractRegionFromPath(models);
+              return { graphqlData, region };
+            } catch (e) {
+              console.error(`解析reactContext JSON失败: ${e.message}`);
+              return null;
+            }
+          };
+
+          // 检查视频是否可播放
+          const isVideoPlayable = (graphqlData, videoId) => {
+            if (!graphqlData) return false;
+            const showKey = `Show:{"videoId":${videoId}}`;
+            const movieKey = `Movie:{"videoId":${videoId}}`;
+            const videoNode = graphqlData[showKey] || graphqlData[movieKey];
+            if (!videoNode) return false;
+            const mediaTracks = videoNode.mediaTracks;
+            return mediaTracks && typeof mediaTracks === 'object' && Object.keys(mediaTracks).length > 0;
+          };
+
+          // 测试特定Netflix内容
+          const testNetflixContent = async (url, titleId, contentType) => {
+            try {
+              await logger.log(`检测Netflix${contentType}...`);
+              const response = await fetch(url, {
+                ...baseRequestOptions,
+                headers: {
+                  ...baseRequestOptions.headers,
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                  'Accept-Language': 'en-US,en;q=0.9',
+                  'Upgrade-Insecure-Requests': '1'
+                }
+              });
+
+              await logger.log(`Netflix${contentType}HTTP状态码: ${response.status}`);
+              const html = await response.text();
+              await logger.logResponse(`Netflix ${contentType}`, url, response, html);
+
+              const context = parseReactContext(html);
+              if (!context) {
+                await logger.log(`Netflix${contentType}: 解析reactContext失败`);
+                return {
+                  contentType,
+                  success: false,
+                  playable: false,
+                  region: null,
+                  errorMessage: '解析Netflix页面失败'
+                };
+              }
+
+              const playable = isVideoPlayable(context.graphqlData, titleId);
+              await logger.log(`Netflix${contentType}: playable=${playable}, region=${context.region}`);
+
+              return {
+                contentType,
+                success: true,
+                playable,
+                region: context.region
+              };
+            } catch (e) {
+              await logger.error(`Netflix${contentType}检测出错: ${e.message}`);
+              return {
+                contentType,
+                success: false,
+                playable: false,
+                region: null,
+                errorMessage: e.message
+              };
+            }
+          };
+
+          // 检测自制剧和非自制剧
+          const originalResult = await testNetflixContent(NETFLIX_ORIGINAL_URL, NETFLIX_ORIGINAL_ID, '自制剧');
+          const nonOriginalResult = await testNetflixContent(NETFLIX_NON_ORIGINAL_URL, NETFLIX_NON_ORIGINAL_ID, '非自制剧');
+
+          // 分析结果
+          const region = originalResult.region || nonOriginalResult.region || 'Unknown';
+
+          if (!originalResult.success && !nonOriginalResult.success) {
+            const reason = originalResult.errorMessage || nonOriginalResult.errorMessage || '未知错误';
+            await logger.log(`Netflix检测结果: 检测失败 - ${reason}`);
             detectionResult.available = false;
-            detectionResult.message = '无法访问(404错误)';
-          } else if (originalResponse.status === 403 || nonOriginalResponse.status === 403) {
-            // 有403表示IP被封或区域限制
-            await logger.log('Netflix检测结果: 不支持访问(403错误)');
-            detectionResult.available = false;
-            detectionResult.message = '不支持访问(403错误)';
-          } else if (originalResponse.status === 200 && nonOriginalResponse.status === 200) {
-            // 多重检查以提高准确性 - 即使状态码是200，也要检查是否存在地区限制提示
-            if (regionBlocked) {
-              // 如果检测到地区限制警告框或文字，这是最明确的标志
-              await logger.log('Netflix检测结果: 仅支持自制剧(检测到地区限制提示)');
+            detectionResult.message = `检测失败: ${reason}`;
+            detectionResult.region = region !== 'Unknown' ? region : null;
+          } else if (!originalResult.success && nonOriginalResult.success) {
+            if (nonOriginalResult.playable) {
+              await logger.log(`Netflix检测结果: 支持非自制剧 (${region})`);
+              detectionResult.available = true;
+              detectionResult.fullSupport = true;
+              detectionResult.message = '解锁非自制剧';
+              detectionResult.region = region !== 'Unknown' ? region : null;
+            } else {
+              await logger.log(`Netflix检测结果: 不支持 (${region})`);
+              detectionResult.available = false;
+              detectionResult.message = '不支持';
+              detectionResult.region = region !== 'Unknown' ? region : null;
+            }
+          } else if (originalResult.success && !nonOriginalResult.success) {
+            if (originalResult.playable) {
+              await logger.log(`Netflix检测结果: 仅支持自制剧 (${region})`);
               detectionResult.available = true;
               detectionResult.fullSupport = false;
               detectionResult.message = '仅支持自制剧';
+              detectionResult.region = region !== 'Unknown' ? region : null;
             } else {
-              // 如果两个页面都返回200且没有地区限制提示，则认为支持完整内容
-              await logger.log('Netflix检测结果: 完全支持');
+              await logger.log(`Netflix检测结果: 不支持 (${region})`);
+              detectionResult.available = false;
+              detectionResult.message = '不支持';
+              detectionResult.region = region !== 'Unknown' ? region : null;
+            }
+          } else {
+            // 两者都成功
+            const originalPlayable = originalResult.playable;
+            const nonOriginalPlayable = nonOriginalResult.playable;
+
+            if (originalPlayable && nonOriginalPlayable) {
+              await logger.log(`Netflix检测结果: 完全支持 (${region})`);
               detectionResult.available = true;
               detectionResult.fullSupport = true;
               detectionResult.message = '解锁所有内容';
-            }
-          } else if (originalResponse.status === 200) {
-            // 只有自制剧返回200
-            await logger.log('Netflix检测结果: 仅支持自制剧');
-            detectionResult.available = true;
-            detectionResult.fullSupport = false;
-            detectionResult.message = '仅支持自制剧';
-          } else {
-            // 其他情况，可能是网络问题
-            await logger.log(`Netflix检测结果: 未知错误 (${originalResponse.status}_${nonOriginalResponse.status})`);
-            detectionResult.available = false;
-            detectionResult.message = `检测失败`;
-          }
-          
-          // 尝试获取区域信息 - 改进国家代码检测
-          try {
-            const homePageResp = await fetch('https://www.netflix.com/', baseRequestOptions);
-            const homePageHtml = await homePageResp.text();
-            await logger.logResponse('Netflix Home', 'https://www.netflix.com/', homePageResp, homePageHtml);
-            
-            // 使用更精确的国家代码匹配模式 - 国际标准ISO代码通常是两个字母
-            // 首先尝试直接获取ISO国家代码
-            let countryMatch = homePageHtml.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
-            
-            if (!countryMatch) {
-              // 备用匹配模式
-              countryMatch = homePageHtml.match(/(?:"\\u[0-9a-f]{4}"\s*:\s*)"([A-Z]{2})"/i);
-            }
-            
-            if (!countryMatch) {
-              // 尝试从URL或其他地方获取
-              const urlMatch = homePageResp.url.match(/(?:\/([a-z]{2})(?:\/|$))|(?:\.([a-z]{2})(?:\/|$))/i);
-              if (urlMatch) {
-                const code = urlMatch[1] || urlMatch[2];
-                if (code) {
-                  detectionResult.region = code.toUpperCase();
-                  await logger.log(`从URL检测到Netflix区域: ${detectionResult.region}`);
-                }
-              }
+              detectionResult.region = region !== 'Unknown' ? region : null;
+            } else if (originalPlayable && !nonOriginalPlayable) {
+              await logger.log(`Netflix检测结果: 仅支持自制剧 (${region})`);
+              detectionResult.available = true;
+              detectionResult.fullSupport = false;
+              detectionResult.message = '仅支持自制剧';
+              detectionResult.region = region !== 'Unknown' ? region : null;
+            } else if (!originalPlayable && nonOriginalPlayable) {
+              await logger.log(`Netflix检测结果: 支持非自制剧 (${region})`);
+              detectionResult.available = true;
+              detectionResult.fullSupport = true;
+              detectionResult.message = '解锁非自制剧';
+              detectionResult.region = region !== 'Unknown' ? region : null;
             } else {
-              detectionResult.region = countryMatch[1].toUpperCase();
-              await logger.log(`检测到Netflix区域: ${detectionResult.region}`);
+              await logger.log(`Netflix检测结果: 不支持 (${region})`);
+              detectionResult.available = false;
+              detectionResult.message = '不支持';
+              detectionResult.region = region !== 'Unknown' ? region : null;
             }
-            
-            // 如果还没找到区域，尝试从语言设置中推断
-            if (!detectionResult.region) {
-              const langMatch = homePageHtml.match(/(?:"locale"|"requestLocale")\s*:\s*"([a-z]{2})[-_]([A-Z]{2})"/i);
-              if (langMatch && langMatch[2]) {
-                detectionResult.region = langMatch[2].toUpperCase();
-                await logger.log(`从语言设置检测到Netflix区域: ${detectionResult.region}`);
-              }
-            }
-          } catch (e) {
-            await logger.error('获取Netflix区域出错:' + e.message);
           }
-          
+
           break;
         }
         

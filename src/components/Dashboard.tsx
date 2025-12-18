@@ -1053,9 +1053,54 @@ export default function Dashboard() {
     }
 
     // 开启 TUN 模式
-    // Windows: 检查计划任务，总是显示确认对话框（可能需要重启应用）
-    if (electron?.checkElevateTask) {
-      console.log('[Dashboard] Windows platform detected, showing confirmation dialog');
+    // Windows: 检查服务状态或计划任务，根据模式决定是否需要显示确认对话框
+    if (isWindowsPlatform && electron?.getTunElevationMode) {
+      console.log('[Dashboard] Windows platform detected, checking elevation mode');
+      try {
+        const modeResult = await electron.getTunElevationMode();
+        const elevationMode = modeResult?.mode || 'service';
+        console.log('[Dashboard] Windows elevation mode:', elevationMode);
+
+        if (elevationMode === 'service') {
+          // 服务模式：检查服务状态
+          const serviceStatus = await electron.getTunServiceStatus?.();
+          console.log('[Dashboard] Service status:', serviceStatus);
+
+          if (serviceStatus?.running) {
+            // 服务正在运行，直接启用 TUN 模式
+            console.log('[Dashboard] Service is running, directly enabling TUN mode');
+            await runTunToggle(true);
+            return;
+          } else if (serviceStatus?.installed) {
+            // 服务已安装但未运行，提示用户启动服务
+            showBanner({ type: 'warning', message: 'TUN 服务未运行，请在 TUN 设置页面启动服务' });
+            // 刷新 TUN 状态确保与后端同步
+            await refreshTunStatus();
+            return;
+          } else {
+            // 服务未安装，提示用户安装服务
+            showBanner({ type: 'warning', message: 'TUN 服务未安装，请在 TUN 设置页面安装服务' });
+            // 刷新 TUN 状态确保与后端同步
+            await refreshTunStatus();
+            return;
+          }
+        } else {
+          // 计划任务模式：检查计划任务
+          const hasTask = await electron.checkElevateTask?.() || false;
+          console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
+          setHasAdminPermission(hasTask);
+          setTunConfirmOpen(true);
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to check TUN permission:', error);
+        setHasAdminPermission(false);
+        setTunConfirmOpen(true);
+      }
+      return;
+    } else if (isWindowsPlatform && electron?.checkElevateTask) {
+      // 兼容旧版本：只有 checkElevateTask
+      console.log('[Dashboard] Windows platform detected (legacy), showing confirmation dialog');
       try {
         const hasTask = await electron.checkElevateTask();
         console.log('[Dashboard] Windows checkElevateTask result:', hasTask);

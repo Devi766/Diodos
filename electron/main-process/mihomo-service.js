@@ -15,7 +15,8 @@ module.exports = function initMihomoService(context) {
   } = context;
 
   const { applyOverrides } = require('../ipc-handlers/overrides');
-  const { getMihomoSocketPath, getMihomoControllerArg, getMihomoControllerParam, cleanupSocketFile } = require('../utils/socket-path');
+  const { getMihomoControllerParam, cleanupSocketFile } = require('../utils/socket-path');
+  const { RunningMode, setRunningMode, getRunningMode, isServiceMode, getSocketPath, getServiceSocketPath, getSidecarSocketPath } = require('../utils/running-mode');
   console.log('[mihomo-service] applyOverrides函数已导入:', typeof applyOverrides);
 
   // 安全向渲染进程发送消息，避免在窗口销毁后触发“Object has been destroyed”异常
@@ -732,6 +733,75 @@ module.exports = function initMihomoService(context) {
     }
   }
 
+  // ========== Windows 服务模式辅助函数 ==========
+
+  /**
+   * 生成合并后的配置文件（用于服务模式）
+   */
+  async function generateMergedConfig(configPath, userSettings, mihomoDir) {
+    const configFilename = path.basename(configPath);
+    const configContent = fs.readFileSync(configPath, 'utf8');
+    const config = yaml.load(configContent);
+
+    // 应用覆写
+    let configWithOverrides = config;
+    if (applyOverrides && typeof applyOverrides === 'function') {
+      configWithOverrides = await applyOverrides(context, config, configPath);
+    }
+
+    // 应用用户设置
+    let mergedConfig = deepMergeConfig(configWithOverrides, userSettings);
+    mergedConfig = validateMergedConfig(mergedConfig);
+
+    const mergedConfigContent = yaml.dump(mergedConfig, {
+      lineWidth: -1,
+      noRefs: true,
+      sortKeys: false
+    });
+
+    const overrideConfigFilename = 'override-' + configFilename;
+    const overrideConfigPath = path.join(mihomoDir, overrideConfigFilename);
+    fs.writeFileSync(overrideConfigPath, mergedConfigContent, 'utf8');
+    console.log('[generateMergedConfig] 已生成配置文件:', overrideConfigPath);
+
+    return overrideConfigPath;
+  }
+
+  /**
+   * 等待内核 API 就绪
+   */
+  async function waitForCoreReady(maxRetries, retryInterval) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const axios = await context.getAxiosInstance(true);
+        await axios.get('/');
+        console.log(`[waitForCoreReady] 内核已就绪，尝试次数: ${i + 1}`);
+        return true;
+      } catch (error) {
+        if (i === 0) {
+          console.log('[waitForCoreReady] 等待内核 API 就绪...');
+        }
+        await new Promise(resolve => setTimeout(resolve, retryInterval));
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 保存最后使用的配置
+   */
+  function saveLastConfig(configPath) {
+    try {
+      const lastConfigPath = path.join(userDataPath, 'last-config.json');
+      fs.writeFileSync(lastConfigPath, JSON.stringify({ path: configPath }, null, 2), 'utf8');
+      console.log('[saveLastConfig] 已保存配置:', configPath);
+    } catch (error) {
+      console.error('[saveLastConfig] 保存失败:', error);
+    }
+  }
+
+  // ========== Windows 服务模式辅助函数结束 ==========
+
   async function startMihomo(configPath) {
     try {
       if (!fs.existsSync(configPath)) {
@@ -746,19 +816,6 @@ module.exports = function initMihomoService(context) {
 
       // 清理旧的 socket 文件
       await cleanupSocketFile();
-
-      // 获取 socket 路径
-      const socketPath = getMihomoSocketPath();
-      console.log('[Socket] 使用 socket 路径:', socketPath);
-
-      // 设置 API 配置为 socket 模式
-      state.activeApiConfig = {
-        socketPath: socketPath,
-        controllerHost: null,  // socket 模式不使用 HTTP
-        controllerPort: null,
-        secret: ''  // socket 模式不需要密钥
-      };
-      console.log('已设置API配置为 socket 模式:', state.activeApiConfig);
 
       if (state.mihomoProcess) {
         state.mihomoProcess.kill();
@@ -810,7 +867,127 @@ module.exports = function initMihomoService(context) {
         return false;
       }
 
+      // ========== Windows 服务模式启动检查 ==========
+      const isWindows = process.platform === 'win32';
+      const tunEnabled = dbManager ? dbManager.getSetting('tunModeEnabled', false) : false;
       const userSettings = getUserSettings();
+      const tunConfigEnabled = userSettings.tun?.enable === true;
+      const elevationMode = dbManager?.getSetting('tun_elevation_mode', 'service') || 'service';
+
+      console.log('[startMihomo] Windows 检查:', { isWindows, tunEnabled, tunConfigEnabled, elevationMode });
+
+      // 如果是 Windows 且使用服务模式，检查是否应该通过服务启动
+      // 注意：即使 TUN 关闭，只要用户选择了服务模式，就应该通过服务启动内核
+      if (isWindows && elevationMode === 'service') {
+        try {
+          console.log('[startMihomo] Windows elevation mode:', elevationMode);
+
+          // 检查服务是否可用
+          const { coreService } = require('./core-service');
+          const isServiceInstalled = await coreService.isInstalled();
+          const isServiceRunning = isServiceInstalled ? await coreService.isRunning() : false;
+
+          console.log('[startMihomo] Service status:', { isServiceInstalled, isServiceRunning });
+
+          if (isServiceRunning) {
+            console.log('[startMihomo] 使用服务模式启动 Mihomo');
+
+            // 先生成配置文件
+            const overrideConfigPath = await generateMergedConfig(configPath, userSettings, mihomoDir);
+
+            // 通过服务启动内核
+            const result = await coreService.startCore(binPath, overrideConfigPath);
+
+            if (result.success) {
+              console.log('[startMihomo] 服务模式启动成功');
+
+              // 设置运行模式为服务模式
+              setRunningMode(RunningMode.SERVICE);
+
+              // 更新 socket 路径到服务模式路径
+              const socketPath = getServiceSocketPath();
+              state.activeApiConfig = {
+                socketPath: socketPath,
+                controllerHost: null,
+                controllerPort: null,
+                secret: ''
+              };
+              console.log('[startMihomo] 服务模式 socket 路径:', socketPath);
+
+              // 等待内核 API 就绪
+              const coreReady = await waitForCoreReady(30, 500);
+              if (!coreReady) {
+                console.warn('[startMihomo] 内核 API 未就绪，但服务已启动');
+              }
+
+              // 保存配置
+              saveLastConfig(configPath);
+
+              // 启动流量统计和日志
+              if (typeof context.startTrafficStatsUpdate === 'function') {
+                context.startTrafficStatsUpdate();
+              }
+              if (typeof context.startMihomoLogs === 'function') {
+                context.startMihomoLogs();
+              }
+
+              return { success: true, viaService: true };
+            } else {
+              console.warn('[startMihomo] 服务模式启动失败:', result.error);
+              // 服务模式下启动失败，不回退到直接启动模式（会因权限问题失败）
+              // 而是提示用户检查服务状态
+              const { dialog } = require('electron');
+              dialog.showErrorBox(
+                '服务模式启动失败',
+                '通过服务启动内核失败。\n\n请检查：\n1. 服务是否正常运行\n2. 尝试在 TUN 设置页面重启服务\n\n错误信息：' + (result.error || '未知错误')
+              );
+              // 重置运行模式
+              setRunningMode(RunningMode.NOT_RUNNING);
+              return { success: false, error: result.error || '服务模式启动失败' };
+            }
+          } else if (isServiceInstalled) {
+            console.log('[startMihomo] 服务已安装但未运行，尝试启动服务');
+            const startResult = await coreService.start();
+            if (startResult.success) {
+              // 服务启动成功，递归调用 startMihomo 使用服务模式
+              await new Promise(r => setTimeout(r, 1000));
+              return await startMihomo(configPath);
+            }
+            // 服务启动失败，提示用户
+            console.warn('[startMihomo] 服务启动失败');
+            const { dialog } = require('electron');
+            dialog.showErrorBox(
+              '服务模式启动失败',
+              '无法启动服务。\n\n请尝试：\n1. 在 TUN 设置页面手动启动服务\n2. 或以管理员身份运行应用重新安装服务'
+            );
+            return { success: false, error: '服务启动失败' };
+          } else {
+            // 服务未安装，回退到 sidecar 模式
+            console.log('[startMihomo] 服务未安装，使用 sidecar 模式');
+            // 不阻止启动，继续使用 sidecar 模式
+          }
+        } catch (serviceError) {
+          console.error('[startMihomo] 服务模式检查失败:', serviceError);
+          // 服务模式检查失败，回退到 sidecar 模式
+          console.log('[startMihomo] 回退到 sidecar 模式');
+        }
+      }
+      // ========== Windows 服务模式启动检查结束 ==========
+
+      // 直接启动模式（Sidecar 模式）
+      // 获取 sidecar 模式的 socket 路径
+      const socketPath = getSidecarSocketPath();
+      console.log('[Socket] 使用 sidecar 模式 socket 路径:', socketPath);
+
+      // 设置 API 配置为 socket 模式
+      state.activeApiConfig = {
+        socketPath: socketPath,
+        controllerHost: null,  // socket 模式不使用 HTTP
+        controllerPort: null,
+        secret: ''  // socket 模式不需要密钥
+      };
+      console.log('已设置API配置为 socket 模式:', state.activeApiConfig);
+
       console.log('已读取用户设置:', userSettings);
       console.log('[调试] userSettings["external-controller"]:', userSettings['external-controller']);
       console.log('[调试] userSettings["external-controller"] 类型:', typeof userSettings['external-controller']);
@@ -902,13 +1079,13 @@ module.exports = function initMihomoService(context) {
 
       // 使用 -ext-ctl-pipe (Windows) 或 -ext-ctl-unix (Unix) 参数指定 Socket 路径
       const controllerParam = getMihomoControllerParam();
-      const controllerArg = getMihomoControllerArg();
-      console.log('[Socket] Mihomo 启动参数:', controllerParam, controllerArg);
+      // 使用已经设置好的 socketPath（sidecar 模式）
+      console.log('[Socket] Mihomo 启动参数:', controllerParam, socketPath);
 
       state.mihomoProcess = spawn(binPath, [
         '-d', mihomoDir,
         '-f', overrideConfigPath,
-        controllerParam, controllerArg  // 使用 socket 而不是 HTTP 端口
+        controllerParam, socketPath  // 使用 socket 而不是 HTTP 端口
       ], {
         cwd: mihomoDir,
         env: {
@@ -948,11 +1125,21 @@ module.exports = function initMihomoService(context) {
           state.tunModeEnabled = false;
           safeSend('tun-status', false);
 
+          // 根据当前模式显示不同的提示
+          const elevationMode = dbManager?.getSetting('tun_elevation_mode', 'service') || 'service';
           const { dialog } = require('electron');
-          dialog.showErrorBox(
-            'TUN 模式启动失败',
-            'TUN 模式需要管理员权限。\n\n请以管理员身份运行应用，或在 TUN 设置页面授予权限。'
-          );
+
+          if (elevationMode === 'service') {
+            dialog.showErrorBox(
+              'TUN 模式启动失败',
+              'TUN 模式需要通过服务运行。\n\n请在 TUN 设置页面：\n1. 确认已选择"服务模式"\n2. 安装并启动服务\n3. 然后重新启用 TUN 模式'
+            );
+          } else {
+            dialog.showErrorBox(
+              'TUN 模式启动失败',
+              'TUN 模式需要管理员权限。\n\n请以管理员身份运行应用，或在 TUN 设置页面切换到"服务模式"。'
+            );
+          }
         }
 
         // 检测 fatal 错误
@@ -1099,6 +1286,10 @@ module.exports = function initMihomoService(context) {
       }
 
       if (state.mihomoProcess) {
+        // 设置运行模式为 sidecar 模式
+        setRunningMode(RunningMode.SIDECAR);
+        console.log('[startMihomo] Sidecar 模式启动成功');
+
         if (typeof context.startTrafficStatsUpdate === 'function') {
           context.startTrafficStatsUpdate();
         }
@@ -1122,23 +1313,46 @@ module.exports = function initMihomoService(context) {
 
   async function stopMihomo() {
     try {
-      if (state.mihomoProcess) {
-        state.mihomoProcess.kill();
-        state.mihomoProcess = null;
-        if (typeof context.stopTrafficStatsUpdate === 'function') {
-          context.stopTrafficStatsUpdate();
+      const currentMode = getRunningMode();
+      console.log('[stopMihomo] 当前运行模式:', currentMode);
+
+      // 根据运行模式停止内核
+      if (currentMode === RunningMode.SERVICE) {
+        // 服务模式：通过服务停止内核
+        try {
+          const { coreService } = require('./core-service');
+          const result = await coreService.stopCore();
+          if (result.success) {
+            console.log('[stopMihomo] 已通过服务停止内核');
+          }
+        } catch (serviceError) {
+          console.error('[stopMihomo] 服务停止失败:', serviceError);
         }
-        if (typeof context.stopConnectionsWebSocket === 'function') {
-          context.stopConnectionsWebSocket();
+      } else if (currentMode === RunningMode.SIDECAR) {
+        // Sidecar 模式：直接 kill 进程
+        if (state.mihomoProcess) {
+          state.mihomoProcess.kill();
+          state.mihomoProcess = null;
+          console.log('[stopMihomo] 已停止 sidecar 进程');
         }
-        if (typeof context.stopMihomoLogs === 'function') {
-          context.stopMihomoLogs();
-        }
-        state.configFilePath = null;
-        console.log('Mihomo已停止');
-        return true;
       }
-      return false;
+
+      // 重置运行模式
+      setRunningMode(RunningMode.NOT_RUNNING);
+
+      // 停止相关服务
+      if (typeof context.stopTrafficStatsUpdate === 'function') {
+        context.stopTrafficStatsUpdate();
+      }
+      if (typeof context.stopConnectionsWebSocket === 'function') {
+        context.stopConnectionsWebSocket();
+      }
+      if (typeof context.stopMihomoLogs === 'function') {
+        context.stopMihomoLogs();
+      }
+      state.configFilePath = null;
+      console.log('Mihomo已停止');
+      return true;
     } catch (error) {
       console.error('停止Mihomo失败:', error);
       return false;
@@ -1391,8 +1605,35 @@ module.exports = function initMihomoService(context) {
     try {
       console.log('[restartMihomo] 开始重启 Mihomo，配置文件:', configPath);
 
-      if (state.mihomoProcess) {
-        console.log('[restartMihomo] 停止当前进程...');
+      // 检查当前运行模式
+      const currentMode = getRunningMode();
+      console.log('[restartMihomo] 当前运行模式:', currentMode);
+
+      // 停止当前运行的内核
+      if (currentMode === RunningMode.SERVICE) {
+        // 服务模式：通过服务停止内核
+        console.log('[restartMihomo] 服务模式，通过服务停止内核...');
+        try {
+          const { coreService } = require('./core-service');
+          await coreService.stopCore();
+          console.log('[restartMihomo] 服务模式内核已停止');
+        } catch (e) {
+          console.warn('[restartMihomo] 停止服务模式内核失败:', e.message);
+        }
+        // 停止流量统计和日志
+        if (typeof context.stopTrafficStatsUpdate === 'function') {
+          context.stopTrafficStatsUpdate();
+        }
+        if (typeof context.stopConnectionsWebSocket === 'function') {
+          context.stopConnectionsWebSocket();
+        }
+        if (typeof context.stopMihomoLogs === 'function') {
+          context.stopMihomoLogs();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } else if (state.mihomoProcess) {
+        // Sidecar 模式：直接停止进程
+        console.log('[restartMihomo] Sidecar 模式，停止当前进程...');
         state.mihomoProcess.kill();
         state.mihomoProcess = null;
         if (typeof context.stopTrafficStatsUpdate === 'function') {
@@ -1407,6 +1648,9 @@ module.exports = function initMihomoService(context) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
         console.log('[restartMihomo] 进程已停止');
       }
+
+      // 重置运行模式
+      setRunningMode(RunningMode.NOT_RUNNING);
 
       console.log('[restartMihomo] 启动新进程...');
       const result = await startMihomo(configPath);
@@ -1510,12 +1754,12 @@ module.exports = function initMihomoService(context) {
       console.log('[LightweightMode] 配置文件:', fs.existsSync(overrideConfigPath) ? overrideConfigPath : configPath);
 
       const controllerParam = getMihomoControllerParam();
-      const controllerArg = getMihomoControllerArg();
+      const lightweightSocketPath = getSidecarSocketPath();
 
       const detachedProcess = spawn(binPath, [
         '-d', mihomoDir,
         '-f', fs.existsSync(overrideConfigPath) ? overrideConfigPath : configPath,
-        controllerParam, controllerArg
+        controllerParam, lightweightSocketPath
       ], {
         cwd: mihomoDir,
         env: {

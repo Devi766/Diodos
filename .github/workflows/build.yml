@@ -23,18 +23,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build SysProxy
+        run: |
+          cd native/sysproxy
+          ./build-all.bat ${{ matrix.arch }}
+        shell: cmd
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Install Dependencies
         env:
           npm_config_arch: ${{ matrix.arch }}
           npm_config_target_arch: ${{ matrix.arch }}
         run: npm install
-      
+
       - name: Prepare (Download Mihomo Core)
         run: node scripts/prepare.mjs --${{ matrix.arch }}
       

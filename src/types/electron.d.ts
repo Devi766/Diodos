@@ -199,6 +199,15 @@ export interface ElectronAPI {
   revokeCorePermission: () => Promise<{ success: boolean; error?: string }>;
   getTunConfig: () => Promise<{ success: boolean; config?: TunConfig; error?: string }>;
   saveTunConfig: (config: TunConfig) => Promise<{ success: boolean; error?: string }>;
+
+  // TUN 权限提升模式（Windows）
+  getTunElevationMode?: () => Promise<{ success: boolean; mode?: 'service' | 'task'; error?: string }>;
+  setTunElevationMode?: (mode: 'service' | 'task') => Promise<{ success: boolean; error?: string }>;
+  getTunServiceStatus?: () => Promise<{ success: boolean; installed?: boolean; running?: boolean; mode?: string; error?: string }>;
+  installTunService?: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  uninstallTunService?: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  startTunService?: () => Promise<{ success: boolean; message?: string; error?: string }>;
+  stopTunService?: () => Promise<{ success: boolean; message?: string; error?: string }>;
   
   // 自动启动设置
   setAutoStart: (enabled: boolean) => Promise<boolean>;

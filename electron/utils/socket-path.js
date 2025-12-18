@@ -2,6 +2,29 @@ const path = require('path');
 const os = require('os');
 const { app } = require('electron');
 
+// 服务模式下使用固定的管道名称
+const SERVICE_MODE_PIPE_NAME = '\\\\.\\pipe\\flycast-mihomo-service';
+const SERVICE_MODE_SOCKET_PATH = '/tmp/flyclash-mihomo-service.sock';
+
+// 是否使用服务模式（由外部设置）
+let useServiceMode = false;
+
+/**
+ * 设置是否使用服务模式
+ * @param {boolean} enabled
+ */
+function setServiceMode(enabled) {
+  useServiceMode = enabled;
+  console.log(`[Socket] 服务模式: ${enabled ? '启用' : '禁用'}`);
+}
+
+/**
+ * 获取是否使用服务模式
+ */
+function isServiceMode() {
+  return useServiceMode;
+}
+
 /**
  * 获取 Mihomo IPC Socket 路径
  * Windows: 使用 Named Pipe
@@ -10,17 +33,29 @@ const { app } = require('electron');
 function getMihomoSocketPath() {
   if (process.platform === 'win32') {
     // Windows Named Pipe
-    // 格式: \\.\pipe\<name>
+    if (useServiceMode) {
+      return SERVICE_MODE_PIPE_NAME;
+    }
+    // 非服务模式使用进程特定的管道
     const sessionId = process.env.SESSIONNAME || process.env.USERNAME || 'default';
     const processId = process.pid;
     return `\\\\.\\pipe\\FlyClash\\mihomo-${sessionId}-${processId}`;
   } else {
     // Unix Domain Socket
-    // 使用临时目录,确保权限安全
+    if (useServiceMode) {
+      return SERVICE_MODE_SOCKET_PATH;
+    }
     const uid = process.getuid ? process.getuid() : 'unknown';
     const processId = process.pid;
     return `/tmp/flyclash-mihomo-${uid}-${processId}.sock`;
   }
+}
+
+/**
+ * 获取服务模式下的固定 Socket 路径
+ */
+function getServiceModeSocketPath() {
+  return process.platform === 'win32' ? SERVICE_MODE_PIPE_NAME : SERVICE_MODE_SOCKET_PATH;
 }
 
 /**
@@ -50,10 +85,10 @@ async function cleanupSocketFile() {
     // Windows Named Pipe 会自动清理
     return;
   }
-  
+
   const fs = require('fs').promises;
   const socketPath = getMihomoSocketPath();
-  
+
   try {
     await fs.unlink(socketPath);
     console.log(`[Socket] 清理旧的 socket 文件: ${socketPath}`);
@@ -69,6 +104,11 @@ module.exports = {
   getMihomoSocketPath,
   getMihomoControllerArg,
   getMihomoControllerParam,
-  cleanupSocketFile
+  cleanupSocketFile,
+  setServiceMode,
+  isServiceMode,
+  getServiceModeSocketPath,
+  SERVICE_MODE_PIPE_NAME,
+  SERVICE_MODE_SOCKET_PATH
 };
 

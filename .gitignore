@@ -17,6 +17,9 @@ nul
 /release
 /dist
 
+# sysproxy build artifacts (built by GitHub Actions)
+/tools/sysproxy*.exe
+
 # local build config
 electron-builder.local.yml
 # testing

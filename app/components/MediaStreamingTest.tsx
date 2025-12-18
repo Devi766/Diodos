@@ -57,6 +57,7 @@ interface StreamingService {
   dnsStatus?: { resolved: boolean; ip?: string };
   ipInfo?: { ip: string; country?: string; region?: string; city?: string; org?: string };
   logContent?: string;
+  fullSupport?: boolean;
 }
 
 interface MediaStreamingTestProps {
@@ -404,7 +405,8 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
               checkTime: result.checkTime || undefined,
               dnsStatus: result.dnsStatus || undefined,
               ipInfo: result.ipInfo || undefined,
-              logContent: ''  // 初始化日志内容为空字符串
+              logContent: '',  // 初始化日志内容为空字符串
+              fullSupport: result.fullSupport
             };
             
             // 如果有日志路径，尝试读取日志内容
@@ -457,28 +459,61 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
 
   // 获取状态对应的颜色和图标
   const getStatusInfo = (status: StreamingServiceStatus, service: StreamingService) => {
+    // 判断 Netflix 解锁类型（根据 message 内容判断）
+    const getNetflixUnlockType = (service: StreamingService): 'full' | 'non-original' | 'original-only' | 'none' => {
+      if (service.name !== 'Netflix') return 'none';
+      const msg = service.message || '';
+      // "解锁所有内容" = 完全解锁
+      if (msg.includes('所有') || msg.includes('完全')) {
+        return 'full';
+      }
+      // "解锁非自制剧" = 非自制剧
+      if (msg.includes('非自制')) {
+        return 'non-original';
+      }
+      // "仅支持自制剧" = 仅自制剧
+      if (msg.includes('仅') || msg.includes('自制剧')) {
+        return 'original-only';
+      }
+      return 'none';
+    };
+
     // 根据服务名称和状态返回更详细的文本信息
     const getDetailedStatusText = (service: StreamingService) => {
-      if (status === 'success') {
-        // 特定服务显示自定义文本
-        if (service.name === 'Netflix' || service.name === 'HBO Max' || 
-            service.name === 'Disney+' || service.name === 'Amazon Prime Video') {
-          return service.region ? `解锁(${service.region})` : '已解锁';
-        }
-        // 其他服务直接显示已解锁
-        return service.region ? `已解锁(${service.region})` : '已解锁';
-      } else if (status === 'partial') {
-        // 针对特定服务返回更详细的部分支持信息
+      if (status === 'success' || status === 'partial') {
+        // Netflix 特殊处理：根据 message 内容显示具体解锁类型
         if (service.name === 'Netflix') {
-          return '自制剧';
-        } else if (service.name === 'Disney+') {
-          return '部分地区';
-        } else if (service.name === 'HBO Max') {
-          return '部分内容';
-        } else if (service.name === 'Amazon Prime Video') {
-          return '部分内容';
+          const unlockType = getNetflixUnlockType(service);
+          const region = service.region ? `(${service.region})` : '';
+          switch (unlockType) {
+            case 'full':
+              return `完全解锁${region}`;
+            case 'non-original':
+              return `非自制剧${region}`;
+            case 'original-only':
+              return `仅自制剧${region}`;
+            default:
+              return service.region ? `已解锁${region}` : '已解锁';
+          }
+        }
+        if (status === 'success') {
+          if (service.name === 'HBO Max' ||
+              service.name === 'Disney+' || service.name === 'Amazon Prime Video') {
+            return service.region ? `解锁(${service.region})` : '已解锁';
+          }
+          // 其他服务直接显示已解锁
+          return service.region ? `已解锁(${service.region})` : '已解锁';
         } else {
-          return '部分支持';
+          // partial 状态
+          if (service.name === 'Disney+') {
+            return '部分地区';
+          } else if (service.name === 'HBO Max') {
+            return '部分内容';
+          } else if (service.name === 'Amazon Prime Video') {
+            return '部分内容';
+          } else {
+            return '部分支持';
+          }
         }
       } else if (status === 'error') {
         return '不可用';
@@ -489,6 +524,16 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       }
       return '';
     };
+
+    // Netflix 特殊处理颜色：完全解锁绿色，其他黄色
+    if (service.name === 'Netflix' && (status === 'success' || status === 'partial')) {
+      const unlockType = getNetflixUnlockType(service);
+      if (unlockType === 'full') {
+        return { color: 'text-green-500 bg-green-50 dark:bg-green-900/20', icon: <Check className="w-4 h-4" />, text: getDetailedStatusText(service) };
+      } else {
+        return { color: 'text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20', icon: <AlertTriangle className="w-4 h-4" />, text: getDetailedStatusText(service) };
+      }
+    }
 
     switch (status) {
       case 'success':

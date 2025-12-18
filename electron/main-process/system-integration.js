@@ -1,5 +1,15 @@
 const PermissionManager = require('./permission-manager');
 
+// Windows 系统代理管理模块
+let winProxyModule = null;
+if (process.platform === 'win32') {
+  try {
+    winProxyModule = require('../utils/win-proxy');
+  } catch (e) {
+    console.warn('[system-integration] Failed to load win-proxy module:', e.message);
+  }
+}
+
 module.exports = function initSystemIntegration(context) {
   const {
     dialog,
@@ -57,7 +67,40 @@ module.exports = function initSystemIntegration(context) {
     return context.updateUserSettings || context.updateUserSettingsRaw;
   }
 
-  function toggleSystemProxy(menuItem) {
+  // 获取代理守卫设置
+  function getProxyGuardSettings() {
+    return {
+      enabled: dbManager.getSetting('enable_proxy_guard', false),
+      duration: dbManager.getSetting('proxy_guard_duration', 10) * 1000, // 转换为毫秒
+      bypass: dbManager.getSetting('system_proxy_bypass', winProxyModule?.DEFAULT_BYPASS || '')
+    };
+  }
+
+  // 启动或停止代理守卫
+  function updateProxyGuard(enable, host, port) {
+    if (!winProxyModule) return;
+
+    const { proxyGuard } = winProxyModule;
+    const guardSettings = getProxyGuardSettings();
+
+    if (enable && guardSettings.enabled) {
+      // 设置回调
+      proxyGuard.onRestored = (config) => {
+        console.log('[ProxyGuard] 代理设置已自动恢复');
+        safeSend('proxy-guard-restored', config);
+      };
+
+      // 设置检查间隔
+      proxyGuard.setInterval(guardSettings.duration);
+
+      // 启动守卫
+      proxyGuard.start(host, port, guardSettings.bypass);
+    } else {
+      proxyGuard.stop();
+    }
+  }
+
+  async function toggleSystemProxy(menuItem) {
     if (!state.mihomoProcess) {
       console.warn('[toggleSystemProxy] Mihomo 服务未运行');
       return;
@@ -67,22 +110,33 @@ module.exports = function initSystemIntegration(context) {
       const getSettings = context.getUserSettings || (() => ({}));
       const userSettings = getSettings();
       const port = userSettings['mixed-port'] || 7890;
+      const host = '127.0.0.1';
 
       if (menuItem.checked) {
         console.log('启用系统代理，端口:', port);
+
         if (process.platform === 'win32') {
-          execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
-          execSync(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:${port}" /f`);
-          process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
-          process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+          // 使用原生实现设置系统代理
+          if (winProxyModule) {
+            const { winProxy } = winProxyModule;
+            const guardSettings = getProxyGuardSettings();
+            await winProxy.enable(host, port, guardSettings.bypass);
+          } else {
+            throw new Error('系统代理模块加载失败');
+          }
+          process.env.HTTP_PROXY = `http://${host}:${port}`;
+          process.env.HTTPS_PROXY = `http://${host}:${port}`;
+
+          // 启动代理守卫
+          updateProxyGuard(true, host, port);
         } else if (process.platform === 'darwin') {
           const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
           for (let i = 1; i < services.length; i++) {
             const service = services[i].trim();
             if (service && !service.includes('*')) {
-              execSync(`networksetup -setwebproxy "${service}" 127.0.0.1 ${port}`);
-              execSync(`networksetup -setsecurewebproxy "${service}" 127.0.0.1 ${port}`);
-              execSync(`networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 ${port}`);
+              execSync(`networksetup -setwebproxy "${service}" ${host} ${port}`);
+              execSync(`networksetup -setsecurewebproxy "${service}" ${host} ${port}`);
+              execSync(`networksetup -setsocksfirewallproxy "${service}" ${host} ${port}`);
             }
           }
         }
@@ -92,8 +146,18 @@ module.exports = function initSystemIntegration(context) {
         safeSend('proxy-status', true);
       } else {
         console.log('禁用系统代理');
+
         if (process.platform === 'win32') {
-          execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
+          // 停止代理守卫
+          updateProxyGuard(false);
+
+          // 使用原生实现禁用系统代理
+          if (winProxyModule) {
+            const { winProxy } = winProxyModule;
+            await winProxy.disable();
+          } else {
+            throw new Error('系统代理模块加载失败');
+          }
           delete process.env.HTTP_PROXY;
           delete process.env.HTTPS_PROXY;
         } else if (process.platform === 'darwin') {
@@ -137,7 +201,7 @@ module.exports = function initSystemIntegration(context) {
     toggleSystemProxy({ checked: false });
   }
 
-  function updateSystemProxyIfEnabled() {
+  async function updateSystemProxyIfEnabled() {
     if (!state.systemProxyEnabled) {
       return;
     }
@@ -146,22 +210,34 @@ module.exports = function initSystemIntegration(context) {
       const getSettings = context.getUserSettings || (() => ({}));
       const userSettings = getSettings();
       const port = userSettings['mixed-port'] || 7890;
+      const host = '127.0.0.1';
 
       console.log('更新系统代理设置，使用新端口:', port);
 
       if (process.platform === 'win32') {
-        execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f');
-        execSync(`reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d "127.0.0.1:${port}" /f`);
-        process.env.HTTP_PROXY = `http://127.0.0.1:${port}`;
-        process.env.HTTPS_PROXY = `http://127.0.0.1:${port}`;
+        // 使用原生实现更新系统代理
+        if (winProxyModule) {
+          const { winProxy, proxyGuard } = winProxyModule;
+          const guardSettings = getProxyGuardSettings();
+          await winProxy.enable(host, port, guardSettings.bypass);
+
+          // 更新代理守卫的期望配置
+          if (proxyGuard.isRunning()) {
+            proxyGuard.updateExpectedConfig(host, port, guardSettings.bypass);
+          }
+        } else {
+          throw new Error('系统代理模块加载失败');
+        }
+        process.env.HTTP_PROXY = `http://${host}:${port}`;
+        process.env.HTTPS_PROXY = `http://${host}:${port}`;
       } else if (process.platform === 'darwin') {
         const services = execSync('networksetup -listallnetworkservices').toString().split('\n');
         for (let i = 1; i < services.length; i++) {
           const service = services[i].trim();
           if (service && !service.includes('*')) {
-            execSync(`networksetup -setwebproxy "${service}" 127.0.0.1 ${port}`);
-            execSync(`networksetup -setsecurewebproxy "${service}" 127.0.0.1 ${port}`);
-            execSync(`networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 ${port}`);
+            execSync(`networksetup -setwebproxy "${service}" ${host} ${port}`);
+            execSync(`networksetup -setsecurewebproxy "${service}" ${host} ${port}`);
+            execSync(`networksetup -setsocksfirewallproxy "${service}" ${host} ${port}`);
           }
         }
       }
@@ -171,6 +247,58 @@ module.exports = function initSystemIntegration(context) {
       console.error('更新系统代理设置失败:', error);
       dialog.showErrorBox('系统代理错误', `更新系统代理设置失败: ${error.message}`);
     }
+  }
+
+  // 更新代理守卫设置
+  function updateProxyGuardSettings(settings) {
+    if (process.platform !== 'win32' || !winProxyModule) return;
+
+    const { proxyGuard } = winProxyModule;
+
+    if (settings.enabled !== undefined) {
+      dbManager.setSetting('enable_proxy_guard', settings.enabled);
+    }
+    if (settings.duration !== undefined) {
+      dbManager.setSetting('proxy_guard_duration', settings.duration);
+    }
+    if (settings.bypass !== undefined) {
+      dbManager.setSetting('system_proxy_bypass', settings.bypass);
+    }
+
+    // 如果系统代理已启用，更新守卫状态
+    if (state.systemProxyEnabled) {
+      const getSettings = context.getUserSettings || (() => ({}));
+      const userSettings = getSettings();
+      const port = userSettings['mixed-port'] || 7890;
+      const host = '127.0.0.1';
+
+      const guardSettings = getProxyGuardSettings();
+
+      if (guardSettings.enabled) {
+        proxyGuard.setInterval(guardSettings.duration);
+        if (!proxyGuard.isRunning()) {
+          proxyGuard.start(host, port, guardSettings.bypass);
+        } else {
+          proxyGuard.updateExpectedConfig(host, port, guardSettings.bypass);
+        }
+      } else {
+        proxyGuard.stop();
+      }
+    }
+  }
+
+  // 获取当前系统代理状态
+  async function getSystemProxyStatus() {
+    if (process.platform !== 'win32' || !winProxyModule) {
+      return {
+        enabled: state.systemProxyEnabled,
+        host: null,
+        port: null
+      };
+    }
+
+    const { winProxy } = winProxyModule;
+    return await winProxy.getCurrent();
   }
 
   async function checkAdminPrivileges() {
@@ -235,20 +363,26 @@ module.exports = function initSystemIntegration(context) {
     try {
       const tun = context.tunManager || require('./tun-manager')(context);
       const res = await tun.toggleTun(targetEnabled);
-      if (!res?.success) {
-        console.warn('[toggleTunMode] toggle failed:', res?.error);
+      if (!res || !res.success) {
+        console.warn('[toggleTunMode] toggle failed:', res && res.error);
         menuItem.checked = false;
         state.tunModeEnabled = false;
-        const setTunModeEnabled = context.setTunModeEnabled;
-        if (setTunModeEnabled) setTunModeEnabled(false);
+        try {
+          context.setTunModeEnabled?.(false);
+        } catch {}
         safeSend('tun-status', false);
-        if (res?.error) dialog.showErrorBox('TUN 模式错误', String(res.error));
-        return;
+        if (res && res.error) {
+          dialog.showErrorBox('TUN 模式错误', String(res.error));
+        }
+        return { success: false, error: res && res.error };
       }
+
       state.tunModeEnabled = targetEnabled;
-      const setTunModeEnabled = context.setTunModeEnabled;
-      if (setTunModeEnabled) setTunModeEnabled(targetEnabled);
+      try {
+        context.setTunModeEnabled?.(targetEnabled);
+      } catch {}
       safeSend('tun-status', targetEnabled);
+      return { success: true };
     } catch (error) {
       console.error('[toggleTunMode] Failed:', error);
       menuItem.checked = false;
@@ -256,6 +390,7 @@ module.exports = function initSystemIntegration(context) {
       try { context.setTunModeEnabled?.(false); } catch {}
       safeSend('tun-status', false);
       dialog.showErrorBox('TUN 模式错误', `设置 TUN 模式失败: ${error.message}`);
+      return { success: false, error: error.message };
     }
   }
 
@@ -342,6 +477,8 @@ module.exports = function initSystemIntegration(context) {
     enableSystemProxy,
     disableSystemProxy,
     updateSystemProxyIfEnabled,
+    updateProxyGuardSettings,
+    getSystemProxyStatus,
     toggleTunMode,
     checkElevateTask,
     deleteElevateTask,
@@ -355,6 +492,8 @@ module.exports = function initSystemIntegration(context) {
   context.enableSystemProxy = enableSystemProxy;
   context.disableSystemProxy = disableSystemProxy;
   context.updateSystemProxyIfEnabled = updateSystemProxyIfEnabled;
+  context.updateProxyGuardSettings = updateProxyGuardSettings;
+  context.getSystemProxyStatus = getSystemProxyStatus;
   context.toggleTunMode = toggleTunMode;
   context.checkElevateTask = checkElevateTask;
   context.deleteElevateTask = deleteElevateTask;

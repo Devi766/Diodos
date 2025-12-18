@@ -41,10 +41,16 @@ const TunSettings: React.FC = () => {
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
   const [platform, setPlatform] = useState<string>('');
 
+  // Windows 服务模式相关状态
+  const [elevationMode, setElevationMode] = useState<'service' | 'task'>('service');
+  const [serviceStatus, setServiceStatus] = useState<{ installed: boolean; running: boolean }>({ installed: false, running: false });
+  const [serviceLoading, setServiceLoading] = useState(false);
+
   useEffect(() => {
     loadConfig();
     checkPermissionStatus();
     getPlatformInfo();
+    loadElevationMode();
   }, []);
 
   const getPlatformInfo = async () => {
@@ -60,34 +66,163 @@ const TunSettings: React.FC = () => {
     }
   };
 
+  const loadElevationMode = async () => {
+    if (!window.electronAPI) return;
+
+    try {
+      const currentPlatform = await window.electronAPI.getPlatform?.() || process.platform;
+      if (currentPlatform !== 'win32') return;
+
+      // 获取提升模式
+      if (window.electronAPI.getTunElevationMode) {
+        const result = await window.electronAPI.getTunElevationMode();
+        if (result.success && result.mode) {
+          setElevationMode(result.mode);
+        }
+      }
+
+      // 获取服务状态
+      if (window.electronAPI.getTunServiceStatus) {
+        const status = await window.electronAPI.getTunServiceStatus();
+        if (status.success) {
+          setServiceStatus({
+            installed: status.installed || false,
+            running: status.running || false
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[TunSettings] Failed to load elevation mode:', error);
+    }
+  };
+
+  const handleElevationModeChange = async (mode: 'service' | 'task') => {
+    if (!window.electronAPI) return;
+
+    setServiceLoading(true);
+    try {
+      if (window.electronAPI.setTunElevationMode) {
+        const result = await window.electronAPI.setTunElevationMode(mode);
+        if (result.success) {
+          setElevationMode(mode);
+          showToast('成功', `已切换到${mode === 'service' ? '服务' : '计划任务'}模式`, 'success');
+        } else {
+          showToast('错误', result.error || '切换模式失败', 'error');
+        }
+      }
+    } catch (error) {
+      showToast('错误', String(error), 'error');
+    } finally {
+      setServiceLoading(false);
+    }
+  };
+
+  const handleInstallService = async () => {
+    if (!window.electronAPI) return;
+
+    setServiceLoading(true);
+    try {
+      if (window.electronAPI.installTunService) {
+        const result = await window.electronAPI.installTunService();
+        if (result.success) {
+          if (result.needRestart) {
+            showToast('成功', result.message || '正在请求管理员权限安装服务，应用将重新启动', 'success');
+          } else {
+            showToast('成功', result.message || '服务安装成功', 'success');
+          }
+          await loadElevationMode();
+          await checkPermissionStatus();
+        } else {
+          showToast('错误', result.error || '服务安装失败', 'error');
+        }
+      }
+    } catch (error) {
+      showToast('错误', String(error), 'error');
+    } finally {
+      setServiceLoading(false);
+    }
+  };
+
+  const handleUninstallService = async () => {
+    if (!window.electronAPI) return;
+
+    setServiceLoading(true);
+    try {
+      if (window.electronAPI.uninstallTunService) {
+        const result = await window.electronAPI.uninstallTunService();
+        if (result.success) {
+          showToast('成功', result.message || '服务卸载成功', 'success');
+          await loadElevationMode();
+          await checkPermissionStatus();
+        } else {
+          showToast('错误', result.error || '服务卸载失败', 'error');
+        }
+      }
+    } catch (error) {
+      showToast('错误', String(error), 'error');
+    } finally {
+      setServiceLoading(false);
+    }
+  };
+
+  const handleStartService = async () => {
+    if (!window.electronAPI) return;
+
+    setServiceLoading(true);
+    try {
+      if (window.electronAPI.startTunService) {
+        const result = await window.electronAPI.startTunService();
+        if (result.success) {
+          showToast('成功', result.message || '服务已启动', 'success');
+          await loadElevationMode();
+        } else {
+          showToast('错误', result.error || '服务启动失败', 'error');
+        }
+      }
+    } catch (error) {
+      showToast('错误', String(error), 'error');
+    } finally {
+      setServiceLoading(false);
+    }
+  };
+
+  const handleStopService = async () => {
+    if (!window.electronAPI) return;
+
+    setServiceLoading(true);
+    try {
+      if (window.electronAPI.stopTunService) {
+        const result = await window.electronAPI.stopTunService();
+        if (result.success) {
+          showToast('成功', result.message || '服务已停止', 'success');
+          await loadElevationMode();
+        } else {
+          showToast('错误', result.error || '服务停止失败', 'error');
+        }
+      }
+    } catch (error) {
+      showToast('错误', String(error), 'error');
+    } finally {
+      setServiceLoading(false);
+    }
+  };
+
   const checkPermissionStatus = async () => {
     if (!window.electronAPI) return;
 
     try {
-      // 从 Electron API 获取平台信息，而不是依赖 process.platform
-      const platform = await window.electronAPI.getPlatform?.() || process.platform;
-      const isWindows = platform === 'win32';
-
-      console.log('[TunSettings] Platform:', platform, 'isWindows:', isWindows);
-
-      if (isWindows) {
-        if (window.electronAPI.checkElevateTask) {
-          const hasTask = await window.electronAPI.checkElevateTask();
-          console.log('[TunSettings] Windows checkElevateTask result:', hasTask);
-          setPermissionStatus(hasTask ? 'granted' : 'not_granted');
+      // 统一通过 checkCorePermission 查询权限状态
+      if (window.electronAPI.checkCorePermission) {
+        const result = await window.electronAPI.checkCorePermission();
+        console.log('[TunSettings] checkCorePermission result:', result);
+        if (result && typeof result.hasPermission === 'boolean') {
+          setPermissionStatus(result.hasPermission ? 'granted' : 'not_granted');
         } else {
-          console.warn('[TunSettings] checkElevateTask API not available');
           setPermissionStatus('unknown');
         }
       } else {
-        if (window.electronAPI.checkCorePermission) {
-          const result = await window.electronAPI.checkCorePermission();
-          console.log('[TunSettings] macOS/Linux checkCorePermission result:', result);
-          setPermissionStatus(result.hasPermission ? 'granted' : 'not_granted');
-        } else {
-          console.warn('[TunSettings] checkCorePermission API not available');
-          setPermissionStatus('unknown');
-        }
+        console.warn('[TunSettings] checkCorePermission API not available');
+        setPermissionStatus('unknown');
       }
     } catch (error) {
       console.error('Failed to check permission:', error);
@@ -257,6 +392,122 @@ const TunSettings: React.FC = () => {
 
           </div>
         </div>
+
+        {/* Windows 权限提升模式 */}
+        {isWindows && (
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
+              TUN 权限提升方式
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
+              选择 TUN 模式的权限提升方式。服务模式只需一次安装，后续无需每次确认；计划任务模式每次需要 UAC 确认。
+            </p>
+
+            <div className="flex gap-2 mb-4">
+              <button
+                className={`py-1.5 px-3 text-sm rounded-lg transition-colors ${
+                  elevationMode === 'service'
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                }`}
+                onClick={() => handleElevationModeChange('service')}
+                disabled={serviceLoading}
+              >
+                服务模式（推荐）
+              </button>
+              <button
+                className={`py-1.5 px-3 text-sm rounded-lg transition-colors ${
+                  elevationMode === 'task'
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
+                }`}
+                onClick={() => handleElevationModeChange('task')}
+                disabled={serviceLoading}
+              >
+                计划任务模式
+              </button>
+            </div>
+
+            {/* 服务模式状态和操作 */}
+            {elevationMode === 'service' && (
+              <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-600 dark:text-gray-300">服务状态</span>
+                  <span className={`text-xs font-medium ${
+                    serviceStatus.running
+                      ? 'text-green-600 dark:text-green-400'
+                      : serviceStatus.installed
+                        ? 'text-yellow-600 dark:text-yellow-400'
+                        : 'text-gray-500 dark:text-gray-400'
+                  }`}>
+                    {serviceStatus.running ? '运行中' : serviceStatus.installed ? '已安装但未运行' : '未安装'}
+                  </span>
+                </div>
+
+                <div className="flex gap-2 flex-wrap">
+                  {!serviceStatus.installed && (
+                    <button
+                      className="py-1 px-2.5 text-xs rounded-md bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-50"
+                      onClick={handleInstallService}
+                      disabled={serviceLoading}
+                    >
+                      {serviceLoading ? '处理中...' : '安装服务'}
+                    </button>
+                  )}
+                  {serviceStatus.installed && !serviceStatus.running && (
+                    <>
+                      <button
+                        className="py-1 px-2.5 text-xs rounded-md bg-green-500 hover:bg-green-600 text-white transition-colors disabled:opacity-50"
+                        onClick={handleStartService}
+                        disabled={serviceLoading}
+                      >
+                        {serviceLoading ? '处理中...' : '启动服务'}
+                      </button>
+                      <button
+                        className="py-1 px-2.5 text-xs rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 transition-colors disabled:opacity-50"
+                        onClick={handleUninstallService}
+                        disabled={serviceLoading}
+                      >
+                        {serviceLoading ? '处理中...' : '卸载服务'}
+                      </button>
+                    </>
+                  )}
+                  {serviceStatus.running && (
+                    <>
+                      <button
+                        className="py-1 px-2.5 text-xs rounded-md bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-50"
+                        onClick={handleStopService}
+                        disabled={serviceLoading}
+                      >
+                        {serviceLoading ? '处理中...' : '停止服务'}
+                      </button>
+                      <button
+                        className="py-1 px-2.5 text-xs rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 transition-colors disabled:opacity-50"
+                        onClick={handleUninstallService}
+                        disabled={serviceLoading}
+                      >
+                        {serviceLoading ? '处理中...' : '卸载服务'}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
+                  服务模式需要管理员权限安装，安装后可在后台运行 TUN 核心。
+                </p>
+              </div>
+            )}
+
+            {/* 计划任务模式说明 */}
+            {elevationMode === 'task' && (
+              <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
+                <p className="text-xs text-gray-600 dark:text-gray-300">
+                  计划任务模式使用 Windows 计划任务在后台以管理员权限运行应用。每次切换 TUN 模式时可能需要 UAC 确认。
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* macOS DNS 设置 */}
         {isMac && (

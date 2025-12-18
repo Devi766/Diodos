@@ -1,10 +1,11 @@
 /**
- * Cross‑platform TUN manager (macOS/Linux)
+ * Cross‑platform TUN manager (macOS/Linux/Windows)
  *
  * Goals (Sparkle‑like UX):
  * 1) Structured permission probe before enabling TUN
  * 2) One‑time authorization flow, prefer custom kernel path when provided
  * 3) Start/Stop with verification; rollback on failure
+ * 4) Windows: Service mode (default) or Task Scheduler mode
  */
 
 module.exports = function initTunManager(context) {
@@ -16,6 +17,52 @@ module.exports = function initTunManager(context) {
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const isWindows = process.platform === 'win32';
+
+  // Windows 服务模块（延迟加载）
+  let coreServiceModule = null;
+  let serviceIpcModule = null;
+
+  function getCoreService() {
+    if (!isWindows) return null;
+    if (!coreServiceModule) {
+      try {
+        coreServiceModule = require('./core-service');
+      } catch (e) {
+        console.warn('[TunManager] Failed to load core-service module:', e.message);
+      }
+    }
+    return coreServiceModule?.coreService;
+  }
+
+  function getServiceIpc() {
+    if (!isWindows) return null;
+    if (!serviceIpcModule) {
+      try {
+        serviceIpcModule = require('./service-ipc');
+      } catch (e) {
+        console.warn('[TunManager] Failed to load service-ipc module:', e.message);
+      }
+    }
+    return serviceIpcModule?.defaultIpc;
+  }
+
+  // 获取 TUN 权限提升模式设置
+  function getTunElevationMode() {
+    try {
+      return context.dbManager?.getSetting('tun_elevation_mode', 'service') || 'service';
+    } catch {
+      return 'service';
+    }
+  }
+
+  // 设置 TUN 权限提升模式
+  function setTunElevationMode(mode) {
+    try {
+      context.dbManager?.setSetting('tun_elevation_mode', mode);
+    } catch (e) {
+      console.error('[TunManager] Failed to save elevation mode:', e);
+    }
+  }
 
   // 将技术性错误转换为用户友好的提示
   function getUserFriendlyError(error, operation = 'authorization') {
@@ -516,7 +563,91 @@ module.exports = function initTunManager(context) {
       }
     }
 
+    // Windows 平台：使用服务模式或计划任务模式
+    if (isWindows) {
+      try {
+        const elevationMode = getTunElevationMode();
+        console.log('[TunManager] Windows elevation mode:', elevationMode);
+
+        if (elevationMode === 'service') {
+          // 服务模式
+          const coreService = getCoreService();
+          if (!coreService) {
+            console.warn('[TunManager] Core service module not available, falling back to task mode');
+            setTunElevationMode('task');
+            return await grantPermissionsViaTask();
+          }
+
+          // 检查服务是否已安装
+          const isInstalled = await coreService.isInstalled();
+          if (isInstalled) {
+            // 服务已安装，检查是否正在运行
+            const isRunning = await coreService.isRunning();
+            if (isRunning) {
+              console.log('[TunManager] Windows service already running');
+              return { success: true, message: '服务已运行', mode: 'service' };
+            }
+
+            // 启动服务
+            const startResult = await coreService.start();
+            if (startResult.success) {
+              console.log('[TunManager] Windows service started');
+              return { success: true, message: '服务已启动', mode: 'service' };
+            }
+          }
+
+          // 安装服务
+          console.log('[TunManager] Installing Windows service...');
+          const kernelPath = getKernelPath();
+          const installResult = await coreService.install({ corePath: kernelPath });
+
+          if (installResult.success) {
+            console.log('[TunManager] Windows service installed successfully');
+            return { success: true, message: '服务安装成功', mode: 'service' };
+          }
+
+          console.warn('[TunManager] Service installation failed:', installResult.error);
+          console.log('[TunManager] Falling back to task scheduler mode');
+          return await grantPermissionsViaTask();
+        } else {
+          // 计划任务模式
+          return await grantPermissionsViaTask();
+        }
+      } catch (e) {
+        console.error('[TunManager] Windows grant permissions failed:', e);
+        return { success: false, error: getUserFriendlyError(e, 'authorization') };
+      }
+    }
+
     return { success: false, error: '不支持的操作系统' };
+  }
+
+  // Windows 计划任务授权模式
+  async function grantPermissionsViaTask() {
+    try {
+      const PermissionManager = require('./permission-manager');
+      const permissionManager = new PermissionManager();
+
+      // 检查任务是否已存在
+      const taskExists = await permissionManager.checkElevateTask();
+      if (taskExists) {
+        console.log('[TunManager] Elevated task already exists');
+        return { success: true, message: '计划任务已存在', mode: 'task' };
+      }
+
+      // 创建计划任务
+      console.log('[TunManager] Creating elevated task...');
+      const created = await permissionManager.createElevateTask();
+      if (created) {
+        console.log('[TunManager] Elevated task created successfully');
+        return { success: true, message: '计划任务创建成功', mode: 'task' };
+      }
+
+      return { success: false, error: '创建计划任务失败' };
+    } catch (e) {
+      console.error('[TunManager] Task scheduler authorization failed:', e);
+      return { success: false, error: getUserFriendlyError(e, 'authorization') };
+    }
   }
 
   async function checkKernelUpdate() {
@@ -579,7 +710,30 @@ module.exports = function initTunManager(context) {
     try {
       if (enabled) {
         if (isWindows) {
-          console.log('[TunManager] Windows detected, skipping authorization probe');
+          console.log('[TunManager] Windows detected, checking permission for TUN toggle...');
+
+          // 复用统一的权限检查逻辑
+          const perm = await checkPermission();
+          if (!perm || !perm.success || !perm.hasPermission) {
+            const details = perm?.details || {};
+            const serviceInfo = details.service || {};
+            const isInstalled = serviceInfo.installed;
+            const isRunning = serviceInfo.running;
+            const isAdmin = details.isAdmin;
+
+            // 优先给出更友好的提示
+            if (isInstalled === false) {
+              return { success: false, error: 'TUN 服务未安装，请在 TUN 设置页面安装服务，或以管理员身份运行 FlyClash' };
+            }
+            if (isInstalled && isRunning === false) {
+              return { success: false, error: 'TUN 服务未运行，请在 TUN 设置页面启动服务，或以管理员身份运行 FlyClash' };
+            }
+            if (!isAdmin && !isRunning) {
+              return { success: false, error: 'TUN 模式需要服务模式或以管理员身份运行 FlyClash' };
+            }
+
+            return { success: false, error: 'TUN 模式缺少必要权限，请先完成授权' };
+          }
         } else {
           console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
 
@@ -700,12 +854,24 @@ module.exports = function initTunManager(context) {
       }
       // 注意：关闭 TUN 时不修改 tunModeEnabled，保持授权状态
 
-      // Restart kernel via service
-      if (!context.state.mihomoProcess || !context.state.configFilePath) {
-        // No process yet; reflect target state only
+      // 检查运行模式
+      const { getRunningMode, RunningMode, isRunning } = require('../utils/running-mode');
+      const runningMode = getRunningMode();
+      console.log('[TunManager] Current running mode:', runningMode);
+
+      // 如果内核没有运行，只更新配置状态
+      if (!isRunning() && !context.state.mihomoProcess) {
+        console.log('[TunManager] Kernel not running, config updated only');
         return { success: true, pending: true };
       }
 
+      // 检查配置文件路径
+      if (!context.state.configFilePath) {
+        console.log('[TunManager] No config file path, config updated only');
+        return { success: true, pending: true };
+      }
+
+      // 重启内核（服务模式和 sidecar 模式都通过 mihomoService 处理）
       const ok = await context.mihomoService?.restartMihomo?.(context.state.configFilePath);
       if (!ok) {
         // rollback
@@ -823,6 +989,71 @@ module.exports = function initTunManager(context) {
         return { success: true, hasPermission: ok, details: { path: kernelPath, stat: st } };
       }
 
+      // Windows 平台：综合检查服务状态和管理员权限
+      if (isWindows) {
+        const elevationMode = getTunElevationMode();
+        console.log('[TunManager] Windows checking permission, mode:', elevationMode);
+
+        let isInstalled = false;
+        let isRunning = false;
+        let taskExists = false;
+        let isAdmin = false;
+
+        // 服务状态
+        const coreService = getCoreService();
+        if (coreService) {
+          try {
+            isInstalled = await coreService.isInstalled();
+            isRunning = isInstalled ? await coreService.isRunning() : false;
+          } catch (e) {
+            console.warn('[TunManager] Windows service status check failed:', e.message);
+          }
+        }
+
+        // 计划任务 / 管理员状态
+        try {
+          const PermissionManager = require('./permission-manager');
+          const permissionManager = new PermissionManager();
+          taskExists = await permissionManager.checkElevateTask();
+          isAdmin = await permissionManager.checkAdminPrivileges();
+        } catch (e) {
+          console.warn('[TunManager] Windows task/admin status check failed:', e.message);
+        }
+
+        const hasServicePermission = isInstalled && isRunning;
+        const hasAdminPermission = isAdmin;
+        const hasPermission = hasServicePermission || hasAdminPermission;
+
+        const details = {
+          mode: hasServicePermission
+            ? 'service'
+            : hasAdminPermission
+              ? 'admin'
+              : elevationMode === 'task'
+                ? 'task'
+                : 'none',
+          service: { installed: isInstalled, running: isRunning },
+          task: { exists: taskExists },
+          isAdmin
+        };
+
+        const extra = {};
+        if (!hasServicePermission && elevationMode === 'service') {
+          if (!isInstalled) {
+            extra.needsInstall = true;
+          } else if (!isRunning) {
+            extra.needsStart = true;
+          }
+        }
+
+        return {
+          success: true,
+          hasPermission,
+          details,
+          ...extra
+        };
+      }
+
       return { success: false, hasPermission: false };
     } catch (e) {
       console.error('[TunManager] checkPermission failed:', e);
@@ -830,17 +1061,97 @@ module.exports = function initTunManager(context) {
     }
   }
 
+  // Windows 服务管理函数
+  async function installService(options = {}) {
+    if (!isWindows) {
+      return { success: false, error: '仅支持 Windows 平台' };
+    }
+
+    const coreService = getCoreService();
+    if (!coreService) {
+      return { success: false, error: '服务模块不可用' };
+    }
+
+    const kernelPath = options.corePath || getKernelPath();
+    return await coreService.install({ corePath: kernelPath });
+  }
+
+  async function uninstallService() {
+    if (!isWindows) {
+      return { success: false, error: '仅支持 Windows 平台' };
+    }
+
+    const coreService = getCoreService();
+    if (!coreService) {
+      return { success: false, error: '服务模块不可用' };
+    }
+
+    return await coreService.uninstall();
+  }
+
+  async function startService() {
+    if (!isWindows) {
+      return { success: false, error: '仅支持 Windows 平台' };
+    }
+
+    const coreService = getCoreService();
+    if (!coreService) {
+      return { success: false, error: '服务模块不可用' };
+    }
+
+    return await coreService.start();
+  }
+
+  async function stopService() {
+    if (!isWindows) {
+      return { success: false, error: '仅支持 Windows 平台' };
+    }
+
+    const coreService = getCoreService();
+    if (!coreService) {
+      return { success: false, error: '服务模块不可用' };
+    }
+
+    return await coreService.stop();
+  }
+
+  async function getServiceStatus() {
+    if (!isWindows) {
+      return { installed: false, running: false, mode: null };
+    }
+
+    const coreService = getCoreService();
+    if (!coreService) {
+      return { installed: false, running: false, mode: 'task' };
+    }
+
+    const installed = await coreService.isInstalled();
+    const running = installed ? await coreService.isRunning() : false;
+    const mode = getTunElevationMode();
+
+    return { installed, running, mode };
+  }
+
   context.tunManager = {
     getKernelPath,
     probeAuthorization,
     grantPermissions,
+    grantPermissionsViaTask,
     toggleTun,
     checkPermission,
     isTunActive,
     checkKernelUpdate,
     autoSyncKernel,
     setSystemDns,
-    restoreSystemDns
+    restoreSystemDns,
+    // Windows 服务相关
+    getTunElevationMode,
+    setTunElevationMode,
+    installService,
+    uninstallService,
+    startService,
+    stopService,
+    getServiceStatus
   };
 
   return context.tunManager;

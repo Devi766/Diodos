@@ -266,6 +266,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   serviceUninstall: () => ipcRenderer.invoke('service-uninstall'),
   getTunConfig: () => ipcRenderer.invoke('get-tun-config'),
   saveTunConfig: (config) => ipcRenderer.invoke('save-tun-config', config),
+
+  // TUN 权限提升模式（Windows）
+  getTunElevationMode: () => ipcRenderer.invoke('get-tun-elevation-mode'),
+  setTunElevationMode: (mode) => ipcRenderer.invoke('set-tun-elevation-mode', mode),
+  getTunServiceStatus: () => ipcRenderer.invoke('get-tun-service-status'),
+  installTunService: () => ipcRenderer.invoke('install-tun-service'),
+  uninstallTunService: () => ipcRenderer.invoke('uninstall-tun-service'),
+  startTunService: () => ipcRenderer.invoke('start-tun-service'),
+  stopTunService: () => ipcRenderer.invoke('stop-tun-service'),
   
   // 自动启动设置
   setAutoStart: (enabled) => ipcRenderer.invoke('set-auto-start', enabled),

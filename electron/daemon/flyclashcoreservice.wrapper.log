@@ -1,0 +1,48 @@
+2025-12-18 09:46:27 - Starting F:\code\FlyClash-PC\flycast-ui\node_modules\electron\dist\electron.exe  --harmony F:\code\FlyClash-PC\flycast-ui\node_modules\node-windows\lib\wrapper.js --file F:\code\FlyClash-PC\flycast-ui\electron\service-worker.js --scriptoptions= --log "FlyClashCoreService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-12-18 09:46:28 - Started 32904
+2025-12-18 11:22:36 - Starting F:\code\FlyClash-PC\flycast-ui\node_modules\electron\dist\electron.exe  --harmony F:\code\FlyClash-PC\flycast-ui\node_modules\node-windows\lib\wrapper.js --file F:\code\FlyClash-PC\flycast-ui\electron\service-worker.js --scriptoptions= --log "FlyClashCoreService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-12-18 11:22:36 - Started 11996
+2025-12-18 12:37:31 - Stopping flyclashcoreservice.exe
+2025-12-18 12:37:31 - ProcessKill 11996
+2025-12-18 12:37:31 - Shutdown exception
+Message:系统正在关机。
+
+Stacktrace:   在 System.Runtime.InteropServices.Marshal.ThrowExceptionForHRInternal(Int32 errorCode, IntPtr errorInfo)
+   在 System.Management.ManagementScope.InitializeGuts(Object o)
+   在 System.Management.ManagementScope.Initialize()
+   在 System.Management.ManagementObjectSearcher.Initialize()
+   在 System.Management.ManagementObjectSearcher.Get()
+   在 winsw.WrapperService.GetChildPids(Int32 pid)
+   在 winsw.WrapperService.StopProcessAndChildren(Int32 pid)
+   在 winsw.WrapperService.StopIt()
+   在 winsw.WrapperService.OnShutdown()
+2025-12-18 12:38:24 - Starting F:\code\FlyClash-PC\flycast-ui\node_modules\electron\dist\electron.exe  --harmony F:\code\FlyClash-PC\flycast-ui\node_modules\node-windows\lib\wrapper.js --file F:\code\FlyClash-PC\flycast-ui\electron\service-worker.js --scriptoptions= --log "FlyClashCoreService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-12-18 12:38:24 - Started 11952
+2025-12-18 13:06:33 - Starting F:\code\FlyClash-PC\flycast-ui\node_modules\electron\dist\electron.exe  --harmony F:\code\FlyClash-PC\flycast-ui\node_modules\node-windows\lib\wrapper.js --file F:\code\FlyClash-PC\flycast-ui\electron\service-worker.js --scriptoptions= --log "FlyClashCoreService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-12-18 13:06:33 - Started 9964
+2025-12-18 13:09:29 - Stopping flyclashcoreservice.exe
+2025-12-18 13:09:29 - ProcessKill 9964
+2025-12-18 13:09:29 - Found child process: 16032 Name: electron.exe
+2025-12-18 13:09:29 - Found child process: 3536 Name: electron.exe
+2025-12-18 13:09:29 - Found child process: 15100 Name: electron.exe
+2025-12-18 13:09:29 - Found child process: 30360 Name: mihomo.exe
+2025-12-18 13:09:29 - Found child process: 24492 Name: conhost.exe
+2025-12-18 13:09:29 - Stopping process 24492
+2025-12-18 13:09:29 - Send SIGINT 24492
+2025-12-18 13:09:29 - SIGINT to 24492 failed - Killing as fallback
+2025-12-18 13:09:29 - Stopping process 30360
+2025-12-18 13:09:29 - Send SIGINT 30360
+2025-12-18 13:09:29 - SIGINT to 30360 failed - Killing as fallback
+2025-12-18 13:09:29 - Stopping process 16032
+2025-12-18 13:09:29 - Send SIGINT 16032
+2025-12-18 13:09:29 - SIGINT to 16032 failed - Killing as fallback
+2025-12-18 13:09:29 - Stopping process 3536
+2025-12-18 13:09:29 - Send SIGINT 3536
+2025-12-18 13:09:29 - SIGINT to 3536 failed - Killing as fallback
+2025-12-18 13:09:29 - Stopping process 15100
+2025-12-18 13:09:29 - Send SIGINT 15100
+2025-12-18 13:09:29 - SIGINT to 15100 failed - Killing as fallback
+2025-12-18 13:09:29 - Stopping process 9964
+2025-12-18 13:09:29 - Send SIGINT 9964
+2025-12-18 13:09:29 - SIGINT to 9964 failed - Killing as fallback
+2025-12-18 13:09:29 - Finished flyclashcoreservice.exe
