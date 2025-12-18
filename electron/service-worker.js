@@ -7,6 +7,7 @@ const net = require('net');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // 服务配置
 const PIPE_NAME = '\\\\.\\pipe\\flycast-core-service';
@@ -20,6 +21,23 @@ let mihomoProcess = null;
 let currentConfigPath = null;
 let currentCorePath = null;
 let serviceConfig = {};
+
+/**
+ * 计算期望的 IPC 认证密钥
+ * 使用 userDataPath 派生，确保在应用升级或重新安装后保持稳定
+ */
+function getExpectedSecret() {
+  try {
+    if (!serviceConfig || !serviceConfig.userDataPath) {
+      return null;
+    }
+    const seed = `flyclash-ipc-secret-v1::${serviceConfig.userDataPath}`;
+    return crypto.createHash('sha256').update(seed).digest('hex');
+  } catch (e) {
+    console.error('[ServiceWorker] Failed to derive expected secret:', e.message);
+    return null;
+  }
+}
 
 /**
  * 解析服务配置路径
@@ -237,9 +255,16 @@ function getStatus() {
 async function handleCommand(request) {
   const { id, command, payload, secret } = request || {};
 
-  // 如果配置中存在共享密钥，则所有请求必须携带正确的 secret
-  if (serviceConfig && serviceConfig.secret) {
-    if (!secret || secret !== serviceConfig.secret) {
+  // 如果能够派生出期望的密钥，则所有请求必须携带正确的 secret
+  let expectedSecret = getExpectedSecret();
+
+  // 兼容旧版本：如果无法派生，则退回到配置中的 secret
+  if (!expectedSecret && serviceConfig && typeof serviceConfig.secret === 'string') {
+    expectedSecret = serviceConfig.secret;
+  }
+
+  if (expectedSecret) {
+    if (!secret || secret !== expectedSecret) {
       log('WARN', `Rejected command ${command || 'unknown'}: invalid auth secret`);
       return {
         id,

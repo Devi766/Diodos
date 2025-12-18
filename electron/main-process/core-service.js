@@ -20,6 +20,18 @@ function escapeXml(text) {
     .replace(/'/g, '&apos;');
 }
 
+// 派生 IPC 共享密钥，确保在版本升级或重新安装后保持稳定
+function deriveIpcSecret(userDataPath) {
+  try {
+    const base = userDataPath || app.getPath('userData');
+    if (!base) return null;
+    const seed = `flyclash-ipc-secret-v1::${base}`;
+    return crypto.createHash('sha256').update(seed).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
 // 服务配置
 const SERVICE_NAME = 'FlyClashCoreService';
 const SERVICE_DISPLAY_NAME = 'FlyClash Core Service';
@@ -123,6 +135,14 @@ class CoreService {
    * 读取现有配置中的 secret，或生成新的 secret
    */
   loadOrCreateSecret(configPath) {
+    // 优先使用基于用户数据目录的稳定派生密钥，
+    // 避免每次重装服务后更换密钥导致认证失败。
+    const derived = deriveIpcSecret();
+    if (derived) {
+      return derived;
+    }
+
+    // 兼容旧版本：尝试从历史配置中读取
     try {
       if (fs.existsSync(configPath)) {
         const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -144,6 +164,17 @@ class CoreService {
   getSharedSecret() {
     if (this._cachedSecret) {
       return this._cachedSecret;
+    }
+
+    // 首选稳定派生的密钥，保证不同安装路径下保持一致
+    try {
+      const derived = deriveIpcSecret();
+      if (derived) {
+        this._cachedSecret = derived;
+        return this._cachedSecret;
+      }
+    } catch (e) {
+      console.warn('[CoreService] Failed to derive shared secret:', e.message);
     }
 
     const configPath = this.getConfigPath();
