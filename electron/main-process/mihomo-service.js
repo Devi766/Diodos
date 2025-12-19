@@ -885,11 +885,11 @@ module.exports = function initMihomoService(context) {
           // 检查服务是否可用
           const { coreService } = require('./core-service');
           const isServiceInstalled = await coreService.isInstalled();
-          const isServiceRunning = isServiceInstalled ? await coreService.isRunning() : false;
+          const isServiceAvailable = isServiceInstalled ? await coreService.isAvailable() : false;
 
-          console.log('[startMihomo] Service status:', { isServiceInstalled, isServiceRunning });
+          console.log('[startMihomo] Service status:', { isServiceInstalled, isServiceAvailable });
 
-          if (isServiceRunning) {
+          if (isServiceAvailable) {
             console.log('[startMihomo] 使用服务模式启动 Mihomo');
 
             // 先生成配置文件
@@ -946,21 +946,17 @@ module.exports = function initMihomoService(context) {
               return { success: false, error: result.error || '服务模式启动失败' };
             }
           } else if (isServiceInstalled) {
-            console.log('[startMihomo] 服务已安装但未运行，尝试启动服务');
-            const startResult = await coreService.start();
-            if (startResult.success) {
-              // 服务启动成功，递归调用 startMihomo 使用服务模式
-              await new Promise(r => setTimeout(r, 1000));
-              return await startMihomo(configPath);
-            }
-            // 服务启动失败，提示用户
-            console.warn('[startMihomo] 服务启动失败');
+            // 服务已安装但不可用，提示用户
+            console.warn('[startMihomo] 服务已安装但不可用');
             const { dialog } = require('electron');
             dialog.showErrorBox(
-              '服务模式启动失败',
-              '无法启动服务。\n\n请尝试：\n1. 在 TUN 设置页面手动启动服务\n2. 或以管理员身份运行应用重新安装服务'
+              '服务未运行',
+              '服务已安装但未运行。\n\n' +
+              '解决方案：\n' +
+              '1. 重启电脑（服务设置为自动启动，重启后会自动运行）\n' +
+              '2. 或在 Windows 服务管理器中手动启动 "FlyClash Helper Service"'
             );
-            return { success: false, error: '服务启动失败' };
+            return { success: false, error: '服务未运行' };
           } else {
             // 服务未安装，回退到 sidecar 模式
             console.log('[startMihomo] 服务未安装，使用 sidecar 模式');

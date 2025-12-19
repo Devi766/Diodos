@@ -117,6 +117,24 @@
     "showIp": "Show IP",
     "ipFetchError": "Fetch Failed"
   },
+  "ipInfoDialog": {
+    "title": "IP Details",
+    "loading": "Fetching IP information...",
+    "fetchError": "Failed to fetch IP information",
+    "retry": "Retry",
+    "exitIp": "Exit IP",
+    "ipAddress": "IP Address",
+    "country": "Country/Region",
+    "region": "Province/State",
+    "city": "City",
+    "isp": "ISP",
+    "org": "Organization",
+    "asn": "ASN",
+    "timezone": "Timezone",
+    "clickToCopy": "Click to copy",
+    "clickToCopyHint": "Click any row to copy its content",
+    "copied": "Copied: {{value}}"
+  },
   "nodes": {
     "title": "Proxy Groups",
     "subtitle": "Select and manage proxy groups",

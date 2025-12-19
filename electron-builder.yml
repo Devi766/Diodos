@@ -58,18 +58,14 @@ extraResources:
       - '*.ico'
       - '*.svg'
       - '!node-v*.msi'
-  - from: electron/service-worker.js
-    to: service-worker.js
-  - from: electron/daemon/flyclashcoreservice.exe
-    to: service/flyclashcoreservice.exe
-  - from: electron/daemon/flyclashcoreservice.exe.config
-    to: service/flyclashcoreservice.exe.config
   - from: tools/data
     to: tools/data
   - from: tools/sysproxy.exe
     to: tools/sysproxy.exe
   - from: tools/speedtest.exe
     to: tools/speedtest.exe
+  - from: tools/flyclash-helper.exe
+    to: flyclash-helper.exe
 asar: true
 asarUnpack:
   - node_modules/better-sqlite3/**/*

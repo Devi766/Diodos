@@ -840,19 +840,13 @@ module.exports = function initTunManager(context) {
 
       updateUserSettingsRaw(updatePayload);
 
-      // 关键修改：只在启用 TUN 时设置 tunModeEnabled = true
-      // 关闭 TUN 时不修改 tunModeEnabled，这样 mihomo 仍然使用已授权的系统内核
-      // tunModeEnabled 表示"是否已授权 TUN"，而 tun.enable 表示"是否当前启用 TUN"
-      if (enabled) {
-        if (context.setTunModeEnabled) {
-          context.setTunModeEnabled(true);
-          console.log('[TunManager] Set tunModeEnabled to true (授权状态)');
-        }
-        if (context.state) {
-          context.state.tunModeEnabled = true;
-        }
+      // 持久化当前 TUN 开关状态（用于记忆上次状态）
+      if (context.setTunModeEnabled) {
+        context.setTunModeEnabled(enabled);
       }
-      // 注意：关闭 TUN 时不修改 tunModeEnabled，保持授权状态
+      if (context.state) {
+        context.state.tunModeEnabled = enabled;
+      }
 
       // 检查运行模式
       const { getRunningMode, RunningMode, isRunning } = require('../utils/running-mode');

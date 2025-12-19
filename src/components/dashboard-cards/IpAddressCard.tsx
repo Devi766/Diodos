@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Eye, EyeOff, RefreshCw, Globe } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { IpInfoDialog } from './IpInfoDialog';
 
 interface IpInfo {
   ip: string;
@@ -18,6 +19,7 @@ export function IpAddressCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   const fetchIpInfo = async () => {
     setLoading(true);
@@ -182,10 +184,22 @@ export function IpAddressCard() {
     30
   );
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Don't open dialog if clicking on buttons
+    if ((e.target as HTMLElement).closest('button')) {
+      return;
+    }
+    if (!loading && !error && ipInfo) {
+      setDialogOpen(true);
+    }
+  };
+
   return (
+    <>
     <Card
       data-hoverable="false"
-      className="rounded-3xl bg-white p-5 shadow-sm transition-all hover:shadow-md dark:bg-[#2a2a2a]"
+      className="rounded-3xl bg-white p-5 shadow-sm transition-all hover:shadow-md dark:bg-[#2a2a2a] cursor-pointer"
+      onClick={handleCardClick}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -255,5 +269,8 @@ export function IpAddressCard() {
         <div className="ml-auto hidden shrink-0 items-center gap-0.5 self-end sm:flex" />
       </div>
     </Card>
+
+    <IpInfoDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+    </>
   );
 }

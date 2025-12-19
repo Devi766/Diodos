@@ -410,7 +410,7 @@ export default function Dashboard() {
     [primaryProxyGroup, updateCurrentNodeDisplay]
   );
 
-  const syncCurrentNode = useCallback(async () => {
+  const syncCurrentNode = useCallback(async (overrideMode?: ProxyMode | null) => {
     if (!electron || !isRunning) return;
     try {
       await getProxiesSnapshot(true);
@@ -419,8 +419,18 @@ export default function Dashboard() {
       }
 
       const snapshotCache = proxiesSnapshotRef.current.data;
-      // 只使用实际存在的代理组，不使用硬编码的 PROXY 和 GLOBAL
-      const allCandidates = [primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean);
+      // 根据代理模式决定候选组的优先级
+      // 全局模式下优先使用 GLOBAL 组，规则模式下优先使用 primaryProxyGroup 和 PROXY
+      // 使用传入的 overrideMode 或当前的 proxyMode
+      const effectiveMode = overrideMode ?? proxyMode;
+      let allCandidates: string[];
+      if (effectiveMode === 'global') {
+        // 全局模式：优先 GLOBAL
+        allCandidates = ['GLOBAL', primaryProxyGroup, 'PROXY'].filter(Boolean);
+      } else {
+        // 规则模式或其他：优先 primaryProxyGroup 和 PROXY
+        allCandidates = [primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean);
+      }
       const candidateGroups = allCandidates.filter(groupName =>
         snapshotCache && typeof snapshotCache[groupName] !== 'undefined'
       );
@@ -496,7 +506,7 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Failed to sync current node:', error);
     }
-  }, [commitCurrentNode, electron, getProxiesSnapshot, hydrateConnections, isRunning, primaryProxyGroup, resolveEffectiveNode]);
+  }, [commitCurrentNode, electron, getProxiesSnapshot, hydrateConnections, isRunning, primaryProxyGroup, proxyMode, resolveEffectiveNode]);
 
   const fetchProxyMode = useCallback(async (): Promise<ProxyMode | null> => {
     if (!electron?.requestMihomoAPI) return null;
@@ -1194,7 +1204,8 @@ export default function Dashboard() {
 
         setProxyMode(nextMode);
         showBanner({ type: 'success', message: t('dashboard.switchedToMode', { mode: MODE_LABELS[nextMode] }) });
-        await syncCurrentNode();
+        // 传入新的模式，避免等待 React 状态更新
+        await syncCurrentNode(nextMode);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         showBanner({ type: 'error', message: t('dashboard.switchProxyModeFailed', { message }) });

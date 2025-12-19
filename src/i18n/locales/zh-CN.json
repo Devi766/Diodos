@@ -117,6 +117,24 @@
     "showIp": "显示 IP",
     "ipFetchError": "获取失败"
   },
+  "ipInfoDialog": {
+    "title": "IP 详情",
+    "loading": "正在获取 IP 信息...",
+    "fetchError": "获取 IP 信息失败",
+    "retry": "重试",
+    "exitIp": "落地 IP",
+    "ipAddress": "IP 地址",
+    "country": "国家/地区",
+    "region": "省份/州",
+    "city": "城市",
+    "isp": "运营商",
+    "org": "组织",
+    "asn": "ASN",
+    "timezone": "时区",
+    "clickToCopy": "点击复制",
+    "clickToCopyHint": "点击任意行可复制内容",
+    "copied": "已复制: {{value}}"
+  },
   "nodes": {
     "title": "代理组",
     "subtitle": "选择和管理代理组",

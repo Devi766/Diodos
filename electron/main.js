@@ -15,13 +15,8 @@ const security = require('./security');
 const { enableAcrylic } = require('./windows/acrylic');
 const axios = require('axios');
 
-// 检查是否作为核心服务工作进程运行（Windows 服务模式）
-const isServiceWorkerMode = process.argv.includes('--service-worker');
-
-// 在服务模式下，仅启动 service-worker，不初始化主应用 UI/托盘等
-if (isServiceWorkerMode) {
-  require('./service-worker');
-} else {
+// 新的 helper 服务是独立的 Go 程序，不再需要 service-worker 模式
+{
 
 // 导入媒体检测模块
 const { testMediaStreaming } = require('./mediatest');
@@ -2184,6 +2179,33 @@ app.whenReady().then(async () => {
         }
       } catch (e) {
         console.error('[Service] 自动安装服务失败:', e?.message || e);
+      }
+    }
+
+    // 检查是否有待处理的服务卸载请求（从管理员重启后）
+    const pendingServiceUninstall = dbManager.getSetting('pendingServiceUninstall', false);
+    if (pendingServiceUninstall) {
+      console.log('[Service] 检测到待处理的服务卸载请求');
+      dbManager.deleteSetting('pendingServiceUninstall');
+
+      try {
+        const PermissionManager = require('./main-process/permission-manager');
+        const pm = new PermissionManager();
+        const isAdmin = typeof pm.checkAdminPrivilegesSync === 'function'
+          ? pm.checkAdminPrivilegesSync()
+          : false;
+
+        if (isAdmin && context.tunManager && typeof context.tunManager.uninstallService === 'function') {
+          console.log('[Service] 当前为管理员环境，尝试自动卸载 TUN 服务');
+          const result = await context.tunManager.uninstallService();
+          console.log('[Service] 自动卸载服务结果:', result);
+        } else if (!isAdmin) {
+          console.warn('[Service] 当前进程仍未获得管理员权限，无法自动卸载服务');
+        } else {
+          console.warn('[Service] TUN 管理器不可用，无法自动卸载服务');
+        }
+      } catch (e) {
+        console.error('[Service] 自动卸载服务失败:', e?.message || e);
       }
     }
   } catch (error) {
@@ -4350,7 +4372,54 @@ exit /b %errorlevel%
   ipcMain.handle('uninstall-tun-service', async () => {
     try {
       if (context.tunManager && context.tunManager.uninstallService) {
-        return await context.tunManager.uninstallService();
+        const result = await context.tunManager.uninstallService();
+
+        // 非管理员环境下的服务卸载：尝试发起一次管理员重启，并在下次启动时自动卸载服务
+        if (isWindows && result && result.needsAdmin) {
+          try {
+            const PermissionManager = require('./main-process/permission-manager');
+            const permissionManager = new PermissionManager();
+
+            // 标记待卸载服务
+            try {
+              dbManager.setSetting('pendingServiceUninstall', true);
+            } catch (e) {
+              console.warn('[TUN] Failed to set pendingServiceUninstall flag:', e?.message || e);
+            }
+
+            // 确保计划任务存在
+            try {
+              if (!permissionManager.checkElevateTaskSync()) {
+                permissionManager.createElevateTaskSync();
+              }
+            } catch (e) {
+              console.error('[TUN] 创建计划任务失败:', e?.message || e);
+              return {
+                success: false,
+                error: '无法创建提权任务，请尝试手动以管理员身份运行应用后再卸载服务'
+              };
+            }
+
+            // 通过计划任务以管理员权限重新启动应用
+            permissionManager
+              .runAsAdmin()
+              .catch((e) => console.error('[TUN] 通过计划任务提权失败:', e?.message || e));
+
+            return {
+              success: true,
+              needRestart: true,
+              message: '正在请求管理员权限卸载服务，应用将以管理员模式重新启动后自动完成卸载'
+            };
+          } catch (e) {
+            console.error('[TUN] 自动提权卸载服务失败:', e?.message || e);
+            return {
+              success: false,
+              error: result.error || '卸载服务需要管理员权限，请以管理员身份运行应用程序'
+            };
+          }
+        }
+
+        return result;
       }
       return { success: false, error: 'TUN manager not available' };
     } catch (error) {
@@ -4435,8 +4504,7 @@ app.on('before-quit', async (event) => {
     state.mihomoProcess.kill();
   }
 
-  // 停止服务模式的内核进程
-  // 注意：只停止内核，不停止服务本身（服务可以保持运行，下次启动更快）
+  // 停止服务模式的内核（但保持服务运行，服务设置为自动启动模式）
   if (!quitCleanupDone) {
     try {
       const { getRunningMode, RunningMode, setRunningMode } = require('./utils/running-mode');
@@ -4450,10 +4518,11 @@ app.on('before-quit', async (event) => {
         const { coreService } = require('./main-process/core-service');
 
         try {
-          // 设置超时，最多等待 3 秒
+          // 只停止内核，不停止服务本身
+          // 服务设置为自动启动模式，会随系统启动，保持运行可以加快下次启动速度
           await Promise.race([
             coreService.stopCore(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('超时')), 3000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('停止内核超时')), 3000))
           ]);
           console.log('[退出] 服务模式内核已停止');
         } catch (err) {
@@ -4468,7 +4537,7 @@ app.on('before-quit', async (event) => {
         return;
       }
     } catch (error) {
-      console.error('[退出] 停止服务模式内核失败:', error);
+      console.error('[退出] 停止服务模式失败:', error);
     }
   }
 

@@ -35,6 +35,22 @@ jobs:
           ./build-all.bat ${{ matrix.arch }}
         shell: cmd
 
+      - name: Build Helper Service
+        run: |
+          cd native/helper
+          go mod tidy
+          $env:GOOS = "windows"
+          $env:CGO_ENABLED = "0"
+          if ("${{ matrix.arch }}" -eq "x64") {
+            $env:GOARCH = "amd64"
+          } elseif ("${{ matrix.arch }}" -eq "ia32") {
+            $env:GOARCH = "386"
+          } elseif ("${{ matrix.arch }}" -eq "arm64") {
+            $env:GOARCH = "arm64"
+          }
+          go build -ldflags="-s -w" -o ../../tools/flyclash-helper.exe .
+        shell: pwsh
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

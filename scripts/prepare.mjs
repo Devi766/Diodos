@@ -148,6 +148,57 @@ async function resolveSidecar(binInfo) {
 }
 
 /**
+ * Windows: 确保 flyclash-helper.exe 始终使用最新源码构建
+ * - 如果本机安装了 Go，并且存在 native/helper 目录，则每次 prepare 都会重新编译
+ * - 编译结果写入 native/helper/flyclash-helper.exe，并同步到 tools/flyclash-helper.exe
+ * - 如果 Go 不存在，则保持现有的预编译版本，不中断打包流程
+ */
+function resolveHelper() {
+  if (platform !== 'win32') {
+    return
+  }
+
+  // 在 CI（GitHub Actions）中，helper 由 workflow 单独构建到 tools/ 目录，避免与这里的逻辑冲突
+  if (process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true') {
+    console.log('[Helper] CI environment detected, skip local helper build (handled by workflow)')
+    return
+  }
+
+  const helperDir = path.join(cwd, 'native', 'helper')
+  const toolsHelperPath = path.join(cwd, 'tools', 'flyclash-helper.exe')
+
+  if (!fs.existsSync(helperDir)) {
+    console.log('[Helper] native/helper directory not found, skip helper build')
+    return
+  }
+
+  try {
+    execSync('go version', { stdio: 'pipe' })
+  } catch (e) {
+    console.log('[Helper] Go toolchain not found, using existing tools/flyclash-helper.exe')
+    return
+  }
+
+  try {
+    console.log('[Helper] Building flyclash-helper.exe from native/helper ...')
+    // 在源码目录生成一个 helper，可根据需要扩展为多架构构建
+    execSync('go build -ldflags="-s -w" -o flyclash-helper.exe .', {
+      cwd: helperDir,
+      stdio: 'inherit'
+    })
+
+    // 将最新构建同步到 tools 目录，供 electron-builder extraResources 使用
+    const builtHelperPath = path.join(helperDir, 'flyclash-helper.exe')
+    fs.mkdirSync(path.dirname(toolsHelperPath), { recursive: true })
+    fs.copyFileSync(builtHelperPath, toolsHelperPath)
+    console.log('[Helper] Updated tools/flyclash-helper.exe')
+  } catch (e) {
+    console.error('[Helper] Failed to build helper:', e.message || e)
+    // 失败时保留旧版本，不中断整个 prepare
+  }
+}
+
+/**
  * download the file to the extra dir
  */
 async function resolveResource(binInfo) {
@@ -197,6 +248,12 @@ const resolveGeoIP = () =>
   })
 
 const tasks = [
+  {
+    name: 'helper',
+    func: resolveHelper,
+    retry: 1,
+    winOnly: true
+  },
   {
     name: 'mihomo',
     func: () => getLatestReleaseVersion().then(() => resolveSidecar(mihomo())),

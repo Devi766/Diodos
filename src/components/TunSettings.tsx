@@ -355,7 +355,10 @@ const TunSettings: React.FC = () => {
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
             {isMac && 'macOS 需要授予内核 root 权限才能启用 TUN 模式。'}
             {isLinux && 'Linux 需要授予内核 root 权限才能启用 TUN 模式。'}
-            {isWindows && 'Windows 需要创建计划任务以管理员权限运行，首次授权后应用会自动重启。'}
+            {isWindows &&
+              (elevationMode === 'service'
+                ? 'Windows 服务模式通过后台 Helper 服务以管理员权限运行 TUN 内核，首次安装/配置服务需要管理员权限。'
+                : 'Windows 需要创建计划任务以管理员权限运行，首次授权后应用会自动重启。')}
           </p>
 
           <div className="flex items-center gap-3">
@@ -366,7 +369,10 @@ const TunSettings: React.FC = () => {
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
                   <span className="text-xs">
-                    {isWindows && '已授权管理员权限'}
+                    {isWindows &&
+                      (elevationMode === 'service'
+                        ? '已启用服务模式：后台 Helper 服务已安装并具备管理员权限。'
+                        : '已启用计划任务模式：已通过计划任务授予管理员权限。')}
                     {isMac && '已授权（内核已获得 root 权限）'}
                     {isLinux && '已授权（内核已获得 root 权限）'}
                   </span>
@@ -378,7 +384,10 @@ const TunSettings: React.FC = () => {
                     <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                   </svg>
                   <span className="text-xs">
-                    {isWindows && '未授权 TUN 模式权限，请退出应用，然后用管理员权限启动'}
+                    {isWindows &&
+                      (elevationMode === 'service'
+                        ? '未启用服务模式权限，请在下方安装/启动服务，或以管理员身份运行应用。'
+                        : '未授权 TUN 模式权限，请退出应用，然后用管理员权限启动。')}
                     {isMac && '未授权（需要授予内核 root 权限）'}
                     {isLinux && '未授权（需要授予内核 root 权限）'}
                   </span>
