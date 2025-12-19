@@ -4424,18 +4424,60 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+// 标记是否已经处理过退出清理
+let quitCleanupDone = false;
+
+app.on('before-quit', async (event) => {
   state.isQuitting = true;
+
+  // 停止 sidecar 模式的内核进程
   if (state.mihomoProcess) {
     state.mihomoProcess.kill();
   }
-  
+
+  // 停止服务模式的内核进程
+  // 注意：只停止内核，不停止服务本身（服务可以保持运行，下次启动更快）
+  if (!quitCleanupDone) {
+    try {
+      const { getRunningMode, RunningMode, setRunningMode } = require('./utils/running-mode');
+      const currentMode = getRunningMode();
+      if (currentMode === RunningMode.SERVICE) {
+        // 阻止立即退出，等待清理完成
+        event.preventDefault();
+        quitCleanupDone = true;
+
+        console.log('[退出] 检测到服务模式，正在停止内核...');
+        const { coreService } = require('./main-process/core-service');
+
+        try {
+          // 设置超时，最多等待 3 秒
+          await Promise.race([
+            coreService.stopCore(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('超时')), 3000))
+          ]);
+          console.log('[退出] 服务模式内核已停止');
+        } catch (err) {
+          console.error('[退出] 停止服务模式内核失败或超时:', err.message);
+        }
+
+        // 重置运行模式
+        setRunningMode(RunningMode.NOT_RUNNING);
+
+        // 清理完成，继续退出
+        app.quit();
+        return;
+      }
+    } catch (error) {
+      console.error('[退出] 停止服务模式内核失败:', error);
+    }
+  }
+
   // 关闭静态文件服务器
   if (global.staticServer && global.staticServer.listening) {
     console.log('关闭静态文件服务器');
     global.staticServer.close();
   }
-  
+
   // 确保退出时关闭系统代理
   try {
     execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');

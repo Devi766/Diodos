@@ -20,14 +20,53 @@ function escapeXml(text) {
     .replace(/'/g, '&apos;');
 }
 
-// 派生 IPC 共享密钥，确保在版本升级或重新安装后保持稳定
-function deriveIpcSecret(userDataPath) {
+/**
+ * 获取 IPC 密钥文件路径
+ * 存储在用户数据目录（%APPDATA%/flyclash），不受安装路径影响
+ */
+function getSecretFilePath() {
   try {
-    const base = userDataPath || app.getPath('userData');
-    if (!base) return null;
-    const seed = `flyclash-ipc-secret-v1::${base}`;
-    return crypto.createHash('sha256').update(seed).digest('hex');
+    const userDataPath = app.getPath('userData');
+    return path.join(userDataPath, 'service-secret.key');
   } catch {
+    return null;
+  }
+}
+
+/**
+ * 获取或创建 IPC 共享密钥
+ * 密钥存储在用户数据目录，首次使用时生成随机密钥
+ * 这样无论软件安装在哪里，密钥都保持一致
+ */
+function getOrCreateIpcSecret() {
+  try {
+    const secretPath = getSecretFilePath();
+    if (!secretPath) return null;
+
+    // 如果密钥文件已存在，直接读取
+    if (fs.existsSync(secretPath)) {
+      const secret = fs.readFileSync(secretPath, 'utf8').trim();
+      if (secret && secret.length >= 32) {
+        return secret;
+      }
+    }
+
+    // 生成新的随机密钥
+    const newSecret = crypto.randomBytes(32).toString('hex');
+
+    // 确保目录存在
+    const dir = path.dirname(secretPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // 写入密钥文件
+    fs.writeFileSync(secretPath, newSecret, 'utf8');
+    console.log('[CoreService] Generated new IPC secret at:', secretPath);
+
+    return newSecret;
+  } catch (e) {
+    console.error('[CoreService] Failed to get/create IPC secret:', e.message);
     return null;
   }
 }
@@ -132,62 +171,35 @@ class CoreService {
   }
 
   /**
-   * 读取现有配置中的 secret，或生成新的 secret
+   * 获取共享密钥（用于服务安装和 IPC 认证）
+   * 使用存储在用户数据目录的密钥文件，确保路径变化不影响认证
    */
-  loadOrCreateSecret(configPath) {
-    // 优先使用基于用户数据目录的稳定派生密钥，
-    // 避免每次重装服务后更换密钥导致认证失败。
-    const derived = deriveIpcSecret();
-    if (derived) {
-      return derived;
+  loadOrCreateSecret() {
+    // 使用用户数据目录中的密钥文件
+    const secret = getOrCreateIpcSecret();
+    if (secret) {
+      return secret;
     }
 
-    // 兼容旧版本：尝试从历史配置中读取
-    try {
-      if (fs.existsSync(configPath)) {
-        const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (existing && typeof existing.secret === 'string' && existing.secret.length >= 16) {
-          return existing.secret;
-        }
-      }
-    } catch (e) {
-      console.warn('[CoreService] Failed to read existing service config for secret:', e.message);
-    }
-
-    // 生成新的随机密钥
+    // 回退：生成临时随机密钥（不推荐，仅作为最后手段）
+    console.warn('[CoreService] Failed to use persistent secret, generating temporary one');
     return crypto.randomBytes(32).toString('hex');
   }
 
   /**
-   * 从配置文件中读取共享密钥（用于 IPC 认证）
+   * 获取共享密钥（用于 IPC 认证）
+   * 从用户数据目录读取密钥文件
    */
   getSharedSecret() {
     if (this._cachedSecret) {
       return this._cachedSecret;
     }
 
-    // 首选稳定派生的密钥，保证不同安装路径下保持一致
-    try {
-      const derived = deriveIpcSecret();
-      if (derived) {
-        this._cachedSecret = derived;
-        return this._cachedSecret;
-      }
-    } catch (e) {
-      console.warn('[CoreService] Failed to derive shared secret:', e.message);
-    }
-
-    const configPath = this.getConfigPath();
-    try {
-      if (fs.existsSync(configPath)) {
-        const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (cfg && typeof cfg.secret === 'string') {
-          this._cachedSecret = cfg.secret;
-          return this._cachedSecret;
-        }
-      }
-    } catch (e) {
-      console.warn('[CoreService] Failed to read shared secret from config:', e.message);
+    // 从用户数据目录读取密钥
+    const secret = getOrCreateIpcSecret();
+    if (secret) {
+      this._cachedSecret = secret;
+      return this._cachedSecret;
     }
 
     return null;
@@ -380,7 +392,7 @@ class CoreService {
 
       // 写入服务配置（供 service-worker 使用）
       const configPath = this.getConfigPath();
-      const secret = this.loadOrCreateSecret(configPath);
+      const secret = this.loadOrCreateSecret();
       const config = {
         corePath: corePath || '',
         pipeName: this.pipeName,

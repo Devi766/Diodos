@@ -23,18 +23,42 @@ let currentCorePath = null;
 let serviceConfig = {};
 
 /**
- * 计算期望的 IPC 认证密钥
- * 使用 userDataPath 派生，确保在应用升级或重新安装后保持稳定
+ * 获取 IPC 密钥文件路径
+ * 从服务配置中获取 userDataPath，然后读取密钥文件
  */
-function getExpectedSecret() {
+function getSecretFilePath() {
   try {
     if (!serviceConfig || !serviceConfig.userDataPath) {
       return null;
     }
-    const seed = `flyclash-ipc-secret-v1::${serviceConfig.userDataPath}`;
-    return crypto.createHash('sha256').update(seed).digest('hex');
+    return path.join(serviceConfig.userDataPath, 'service-secret.key');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 获取期望的 IPC 认证密钥
+ * 从用户数据目录读取密钥文件，确保与主进程使用相同的密钥
+ */
+function getExpectedSecret() {
+  try {
+    const secretPath = getSecretFilePath();
+    if (!secretPath) {
+      return null;
+    }
+
+    // 从密钥文件读取
+    if (fs.existsSync(secretPath)) {
+      const secret = fs.readFileSync(secretPath, 'utf8').trim();
+      if (secret && secret.length >= 32) {
+        return secret;
+      }
+    }
+
+    return null;
   } catch (e) {
-    console.error('[ServiceWorker] Failed to derive expected secret:', e.message);
+    console.error('[ServiceWorker] Failed to read secret file:', e.message);
     return null;
   }
 }
