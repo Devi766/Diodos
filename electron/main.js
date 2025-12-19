@@ -4315,49 +4315,13 @@ exit /b %errorlevel%
       if (context.tunManager && context.tunManager.installService) {
         const result = await context.tunManager.installService();
 
-        // 非管理员环境下的服务安装：尝试发起一次管理员重启，并在下次启动时自动安装服务
+        // 非管理员环境下的服务安装：直接提示用户以管理员身份重新启动应用
         if (isWindows && result && result.needsAdmin) {
-          try {
-            const PermissionManager = require('./main-process/permission-manager');
-            const permissionManager = new PermissionManager();
-
-            // 标记待安装服务
-            try {
-              dbManager.setSetting('pendingServiceInstall', true);
-            } catch (e) {
-              console.warn('[TUN] Failed to set pendingServiceInstall flag:', e?.message || e);
-            }
-
-            // 确保计划任务存在
-            try {
-              if (!permissionManager.checkElevateTaskSync()) {
-                permissionManager.createElevateTaskSync();
-              }
-            } catch (e) {
-              console.error('[TUN] 创建计划任务失败:', e?.message || e);
-              return {
-                success: false,
-                error: '无法创建提权任务，请尝试手动以管理员身份运行应用后再安装服务'
-              };
-            }
-
-            // 通过计划任务以管理员权限重新启动应用
-            permissionManager
-              .runAsAdmin()
-              .catch((e) => console.error('[TUN] 通过计划任务提权失败:', e?.message || e));
-
-            return {
-              success: true,
-              needRestart: true,
-              message: '正在请求管理员权限安装服务，应用将以管理员模式重新启动后自动完成安装'
-            };
-          } catch (e) {
-            console.error('[TUN] 自动提权安装服务失败:', e?.message || e);
-            return {
-              success: false,
-              error: result.error || '安装服务需要管理员权限，请以管理员身份运行应用程序'
-            };
-          }
+          return {
+            success: false,
+            error:
+              '安装服务需要管理员权限，请先退出 FlyClash，然后右键以管理员身份运行后再尝试安装服务。'
+          };
         }
 
         return result;
@@ -4374,49 +4338,13 @@ exit /b %errorlevel%
       if (context.tunManager && context.tunManager.uninstallService) {
         const result = await context.tunManager.uninstallService();
 
-        // 非管理员环境下的服务卸载：尝试发起一次管理员重启，并在下次启动时自动卸载服务
+        // 非管理员环境下的服务卸载：直接提示用户以管理员身份重新启动应用
         if (isWindows && result && result.needsAdmin) {
-          try {
-            const PermissionManager = require('./main-process/permission-manager');
-            const permissionManager = new PermissionManager();
-
-            // 标记待卸载服务
-            try {
-              dbManager.setSetting('pendingServiceUninstall', true);
-            } catch (e) {
-              console.warn('[TUN] Failed to set pendingServiceUninstall flag:', e?.message || e);
-            }
-
-            // 确保计划任务存在
-            try {
-              if (!permissionManager.checkElevateTaskSync()) {
-                permissionManager.createElevateTaskSync();
-              }
-            } catch (e) {
-              console.error('[TUN] 创建计划任务失败:', e?.message || e);
-              return {
-                success: false,
-                error: '无法创建提权任务，请尝试手动以管理员身份运行应用后再卸载服务'
-              };
-            }
-
-            // 通过计划任务以管理员权限重新启动应用
-            permissionManager
-              .runAsAdmin()
-              .catch((e) => console.error('[TUN] 通过计划任务提权失败:', e?.message || e));
-
-            return {
-              success: true,
-              needRestart: true,
-              message: '正在请求管理员权限卸载服务，应用将以管理员模式重新启动后自动完成卸载'
-            };
-          } catch (e) {
-            console.error('[TUN] 自动提权卸载服务失败:', e?.message || e);
-            return {
-              success: false,
-              error: result.error || '卸载服务需要管理员权限，请以管理员身份运行应用程序'
-            };
-          }
+          return {
+            success: false,
+            error:
+              '卸载服务需要管理员权限，请先退出 FlyClash，然后右键以管理员身份运行后再尝试卸载服务。'
+          };
         }
 
         return result;

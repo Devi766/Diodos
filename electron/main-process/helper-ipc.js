@@ -277,7 +277,7 @@ async function installService() {
   if (!isAdmin()) {
     return {
       success: false,
-      error: '安装服务需要管理员权限，请以管理员身份运行应用程序',
+      error: '安装服务需要管理员权限，请先退出 FlyClash，然后右键以管理员身份运行后再尝试安装服务。',
       needsAdmin: true
     };
   }
@@ -346,7 +346,7 @@ async function uninstallService() {
   if (!isAdmin()) {
     return {
       success: false,
-      error: '卸载服务需要管理员权限，请以管理员身份运行应用程序',
+      error: '卸载服务需要管理员权限，请先退出 FlyClash，然后右键以管理员身份运行后再尝试卸载服务。',
       needsAdmin: true
     };
   }

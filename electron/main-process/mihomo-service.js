@@ -987,8 +987,9 @@ module.exports = function initMihomoService(context) {
               '服务未运行',
               '服务已安装但未运行。\n\n' +
               '解决方案：\n' +
-              '1. 重启电脑（服务设置为自动启动，重启后会自动运行）\n' +
-              '2. 或在 Windows 服务管理器中手动启动 "FlyClash Helper Service"'
+              '1. 请退出应用，并以管理员身份运行 FlyClash 再重试\n' +
+              '2. 重启电脑（服务设置为自动启动，重启后会自动运行）\n' +
+              '3. 或在 Windows 服务管理器中手动启动 "FlyClash Helper Service"'
             );
             return { success: false, error: '服务未运行' };
           } else {
