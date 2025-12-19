@@ -297,6 +297,10 @@ module.exports = function initMihomoService(context) {
     }
   }
 
+  // 缓存已解析的配置结果，避免在大配置文件上重复解析导致内存与 CPU 开销过大
+  // key: 配置文件绝对路径，value: { mtimeMs, data }
+  const configParseCache = new Map();
+
   function getSubscriptionList(configDirParam) {
     const resolvedConfigDir = configDirParam || context.get('configDir');
     return new Promise((resolve) => {
@@ -319,6 +323,13 @@ module.exports = function initMihomoService(context) {
 
   function parseConfigFile(filePath) {
     try {
+      const stat = fs.statSync(filePath);
+      const cacheKey = filePath;
+      const cached = configParseCache.get(cacheKey);
+      if (cached && cached.mtimeMs === stat.mtimeMs) {
+        return cached.data;
+      }
+
       const fileContent = fs.readFileSync(filePath, 'utf8');
       const config = yaml.load(fileContent);
       if (!config) {
@@ -371,11 +382,15 @@ module.exports = function initMihomoService(context) {
       apiConfig.controllerHost = '127.0.0.1';
       apiConfig.controllerPort = '9090';
 
-      return {
+      const result = {
         proxyGroups,
         proxies,
         apiConfig
       };
+
+      configParseCache.set(cacheKey, { mtimeMs: stat.mtimeMs, data: result });
+
+      return result;
     } catch (error) {
       console.error('解析配置文件失败:', error);
       return null;
@@ -885,7 +900,26 @@ module.exports = function initMihomoService(context) {
           // 检查服务是否可用
           const { coreService } = require('./core-service');
           const isServiceInstalled = await coreService.isInstalled();
-          const isServiceAvailable = isServiceInstalled ? await coreService.isAvailable() : false;
+          let isServiceAvailable = false;
+
+          if (isServiceInstalled) {
+            isServiceAvailable = await coreService.isAvailable();
+
+            // 如果服务已安装但当前不可用，尝试自动启动服务（例如用户以管理员身份运行应用）
+            if (!isServiceAvailable) {
+              console.log('[startMihomo] Service installed but not available, trying to start service automatically...');
+              try {
+                const startServiceResult = await coreService.start();
+                console.log('[startMihomo] coreService.start result:', startServiceResult);
+                if (startServiceResult && startServiceResult.success) {
+                  // 再次确认服务是否可用
+                  isServiceAvailable = await coreService.isAvailable();
+                }
+              } catch (e) {
+                console.warn('[startMihomo] Failed to start service automatically:', e && e.message ? e.message : e);
+              }
+            }
+          }
 
           console.log('[startMihomo] Service status:', { isServiceInstalled, isServiceAvailable });
 

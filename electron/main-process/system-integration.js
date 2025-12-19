@@ -101,8 +101,32 @@ module.exports = function initSystemIntegration(context) {
   }
 
   async function toggleSystemProxy(menuItem) {
-    if (!state.mihomoProcess) {
-      console.warn('[toggleSystemProxy] Mihomo 服务未运行');
+    // 在 sidecar 和服务模式下都允许切换系统代理
+    // 只要检测到内核确实在运行即可
+    let coreRunning = false;
+
+    try {
+      const { getRunningMode, RunningMode } = require('../utils/running-mode');
+      const currentMode = getRunningMode();
+
+      if (currentMode === RunningMode.SERVICE) {
+        try {
+          const { coreService } = require('./core-service');
+          const status = await coreService.getCoreStatus();
+          coreRunning = !!status?.running;
+        } catch (e) {
+          console.warn('[toggleSystemProxy] Failed to query service core status:', e?.message || e);
+        }
+      } else {
+        coreRunning = !!state.mihomoProcess;
+      }
+    } catch (e) {
+      console.warn('[toggleSystemProxy] Failed to detect core running state:', e?.message || e);
+      coreRunning = !!state.mihomoProcess;
+    }
+
+    if (!coreRunning) {
+      console.warn('[toggleSystemProxy] Mihomo 核心未运行，忽略系统代理切换');
       return;
     }
 

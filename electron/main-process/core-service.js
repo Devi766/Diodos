@@ -6,6 +6,7 @@
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 const helperIpc = require('./helper-ipc');
 
 /**
@@ -97,10 +98,29 @@ class CoreService {
       return { success: true, message: 'Service already running' };
     }
 
-    // 普通用户无法启动服务，提示用户
+    // 尝试通过 sc 命令启动服务：
+    // - 管理员进程会成功启动服务；
+    // - 非管理员进程会收到“拒绝访问”等错误，我们再给出提示。
+    try {
+      execSync(`sc start "${this.serviceName}"`, { stdio: 'pipe' });
+    } catch (e) {
+      const msg = e && e.message ? e.message : '';
+      // 大概率是权限不足
+      return {
+        success: false,
+        error: msg || 'Service not running. Please restart your computer or run as administrator to start the service.'
+      };
+    }
+
+    // 等待服务变为可用（可接受 IPC 请求）
+    const available = await this.waitForAvailable(8000);
+    if (available) {
+      return { success: true, message: 'Service started successfully' };
+    }
+
     return {
       success: false,
-      error: 'Service not running. Please restart your computer or run as administrator to start the service.'
+      error: 'Service start command sent, but service is still not available'
     };
   }
 

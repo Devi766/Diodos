@@ -88,21 +88,8 @@ const renderGroupIcon = (icon?: string | null) => {
 // 节点组件
 export default function ProxyNodes() {
   const { t } = useTranslation();
-  // 初始化时直接从sessionStorage加载缓存数据，避免闪烁
-  const [groups, setGroups] = useState<ProxyGroup[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const saved = sessionStorage.getItem('proxyGroupsCache');
-      if (saved) {
-        const cached = JSON.parse(saved);
-        console.log('从sessionStorage加载了缓存的代理组数据:', cached.length);
-        return cached;
-      }
-    } catch (error) {
-      console.error('Failed to load cached groups:', error);
-    }
-    return [];
-  });
+  // 不再从 sessionStorage 恢复整棵代理树，首次进入时统一从内核拉取最新数据
+  const [groups, setGroups] = useState<ProxyGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -393,18 +380,6 @@ export default function ProxyNodes() {
     setErrorMessage(message);
     setTimeout(() => setErrorMessage(null), 5000);
   };
-
-  // 保存groups到sessionStorage，用于下次加载时显示
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (groups.length > 0) {
-      try {
-        sessionStorage.setItem('proxyGroupsCache', JSON.stringify(groups));
-      } catch (error) {
-        console.error('Failed to cache groups:', error);
-      }
-    }
-  }, [groups]);
 
   // 保存mihomo运行状态到sessionStorage
   useEffect(() => {
@@ -881,7 +856,7 @@ export default function ProxyNodes() {
     fetchProxies();
   };
 
-  // 初始加载和定时刷新
+  // 初始加载以及在配置/Profile 更新时刷新
   useEffect(() => {
     scheduleSoftRefresh();
 
@@ -893,12 +868,7 @@ export default function ProxyNodes() {
       window.addEventListener('profile-updated', onProfileUpdated);
     }
 
-    const refreshInterval = setInterval(() => {
-      scheduleSoftRefresh();
-    }, 10000);
-
     return () => {
-      clearInterval(refreshInterval);
       if (typeof window !== 'undefined') {
         window.removeEventListener('profile-updated', onProfileUpdated);
       }
