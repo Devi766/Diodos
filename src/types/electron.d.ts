@@ -122,7 +122,20 @@ export interface ElectronAPI {
   getKernelPath: () => Promise<{ success: boolean, path?: string, isDefault?: boolean, exists?: boolean, error?: string }>;
   selectKernelExecutable: () => Promise<{ success: boolean, path?: string, needsRestart?: boolean, canceled?: boolean, error?: string }>;
   resetKernelPath: () => Promise<{ success: boolean, path?: string, needsRestart?: boolean, error?: string }>;
-  
+
+  // 内核管理 API
+  coreGetCurrentConfig: () => Promise<{ success: boolean; config?: CoreConfig; corePath?: string; version?: string; exists?: boolean; error?: string }>;
+  coreGetInstalledCores: () => Promise<{ success: boolean; cores?: InstalledCore[]; error?: string }>;
+  coreCheckUpdate: (coreType: CoreType) => Promise<{ success: boolean; hasUpdate?: boolean; currentVersion?: string; latestVersion?: string; releaseInfo?: ReleaseInfo; error?: string }>;
+  coreDownloadCore: (coreType: CoreType) => Promise<{ success: boolean; version?: string; path?: string; error?: string }>;
+  coreGetAvailableVersions: (coreType: CoreType, limit?: number, forceRefresh?: boolean) => Promise<{ success: boolean; versions?: CoreVersion[]; error?: string }>;
+  coreClearVersionCache: (coreType?: CoreType) => Promise<{ success: boolean; error?: string }>;
+  coreDownloadSpecificVersion: (coreType: CoreType, version: string) => Promise<{ success: boolean; version?: string; path?: string; error?: string }>;
+  coreSwitchCore: (coreType: CoreType, specificVersion?: string) => Promise<{ success: boolean; error?: string }>;
+  coreDeleteCore: (corePath: string) => Promise<{ success: boolean; error?: string }>;
+  coreSetCustomPath: (customPath: string) => Promise<{ success: boolean; error?: string }>;
+  onCoreDownloadProgress: (callback: (data: CoreDownloadProgress) => void) => (() => void);
+
   // 主题设置
   setTheme: (theme: string) => Promise<{ success: boolean, theme: string, error?: string }>;
   getTheme: () => Promise<{ success: boolean, theme: string, error?: string }>;
@@ -479,6 +492,51 @@ interface TunConfig {
   routeExcludeAddress: string[];
   mtu: number;
   autoSetDNS?: boolean;
+}
+
+// 内核类型
+type CoreType = 'mihomo' | 'mihomo-alpha' | 'mihomo-smart' | 'mihomo-specific';
+
+// 内核配置
+interface CoreConfig {
+  coreType: CoreType;
+  specificVersion?: string | null;
+  customPath?: string | null;
+}
+
+// 已安装的内核
+interface InstalledCore {
+  type: CoreType;
+  version?: string | null;
+  path: string;
+  size: number;
+  modifiedAt: Date;
+}
+
+// Release 信息
+interface ReleaseInfo {
+  name: string;
+  body: string;
+  publishedAt: string;
+}
+
+// 内核下载进度
+interface CoreDownloadProgress {
+  coreType: CoreType;
+  version?: string;
+  progress: number;
+  downloaded: number;
+  total: number;
+}
+
+// 内核版本信息
+interface CoreVersion {
+  version: string;
+  tagName: string;
+  name: string;
+  publishedAt: string;
+  prerelease: boolean;
+  body: string;
 }
 
 // 已将ElectronAPI导出

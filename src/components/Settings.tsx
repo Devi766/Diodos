@@ -9,6 +9,7 @@ import OverrideSettings, { OverrideSettingsRef } from './OverrideSettings';
 import { Button } from './ui/button';
 import TunSettings from './TunSettings';
 import BackupSettings from './BackupSettings';
+import CoreManager from './CoreManager';
 import { useTranslation } from 'react-i18next';
 import { compareVersions, fetchLatestRelease, emitUpdateAvailableEvent } from '@/utils/update-check';
 
@@ -1224,10 +1225,14 @@ export default function Settings() {
 
             <Tabs.Content value="kernel" className="w-full">
               <div className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.kernelPath')}</h3>
+                {/* 内核管理 */}
+                <CoreManager />
+
+                {/* 自定义内核路径 */}
+                <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.customKernelPath')}</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-                    {t('settings.kernelPathDesc')}
+                    {t('settings.customKernelPathDesc')}
                   </p>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input

@@ -66,6 +66,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getKernelPath: () => ipcRenderer.invoke('get-kernel-path'),
   selectKernelExecutable: () => ipcRenderer.invoke('select-kernel-executable'),
   resetKernelPath: () => ipcRenderer.invoke('reset-kernel-path'),
+
+  // 内核管理 API
+  coreGetCurrentConfig: () => ipcRenderer.invoke('core:get-current-config'),
+  coreGetInstalledCores: () => ipcRenderer.invoke('core:get-installed-cores'),
+  coreCheckUpdate: (coreType) => ipcRenderer.invoke('core:check-update', coreType),
+  coreDownloadCore: (coreType) => ipcRenderer.invoke('core:download-core', coreType),
+  coreGetAvailableVersions: (coreType, limit, forceRefresh = false) => ipcRenderer.invoke('core:get-available-versions', coreType, limit, forceRefresh),
+  coreClearVersionCache: (coreType) => ipcRenderer.invoke('core:clear-version-cache', coreType),
+  coreDownloadSpecificVersion: (coreType, version) => ipcRenderer.invoke('core:download-specific-version', coreType, version),
+  coreSwitchCore: (coreType, specificVersion) => ipcRenderer.invoke('core:switch-core', coreType, specificVersion),
+  coreDeleteCore: (corePath) => ipcRenderer.invoke('core:delete-core', corePath),
+  coreSetCustomPath: (customPath) => ipcRenderer.invoke('core:set-custom-path', customPath),
+  onCoreDownloadProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('core:download-progress', handler);
+    return () => ipcRenderer.removeListener('core:download-progress', handler);
+  },
   
   // 添加主题设置相关方法
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),

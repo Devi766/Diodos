@@ -66,6 +66,15 @@ module.exports = function initMihomoService(context) {
       }
     }
 
+    // 优先使用 CoreManager 管理的内核
+    if (context.coreManager && typeof context.coreManager.getCorePath === 'function') {
+      const managedCorePath = context.coreManager.getCorePath();
+      if (managedCorePath && fs.existsSync(managedCorePath)) {
+        console.log('[MihomoService] Using managed kernel from CoreManager:', managedCorePath);
+        return managedCorePath;
+      }
+    }
+
     const preferredPath = context.getKernelExecutablePath ? context.getKernelExecutablePath() : null;
     if (preferredPath && fs.existsSync(preferredPath)) {
       console.log('[MihomoService] Using preferred kernel:', preferredPath);
