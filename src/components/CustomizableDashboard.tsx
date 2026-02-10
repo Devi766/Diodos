@@ -29,6 +29,8 @@ import { SystemProxyCard, TunModeCard, ProxyModeCard } from '@/components/dashbo
 import { IpAddressCard } from '@/components/dashboard-cards/IpAddressCard';
 import { TrafficRankingCard } from '@/components/dashboard-cards/TrafficRankingCard';
 import { TrafficStatisticsCard } from '@/components/dashboard-cards/TrafficStatisticsCard';
+import { SubscriptionInfoCard } from '@/components/dashboard-cards/SubscriptionInfoCard';
+import { RulesOverviewCard } from '@/components/dashboard-cards/RulesOverviewCard';
 
 interface CustomizableDashboardProps {
   // Metrics卡片数据
@@ -254,6 +256,12 @@ export function CustomizableDashboard({
       case 'traffic-statistics':
         return <TrafficStatisticsCard />;
 
+      case 'subscription-info':
+        return <SubscriptionInfoCard />;
+
+      case 'rules-overview':
+        return <RulesOverviewCard />;
+
       default:
         return null;
     }
@@ -287,6 +295,14 @@ export function CustomizableDashboard({
     }
     // 流量统计：占2列（左边大卡片，右边可以放2个小卡片）
     if (type === 'traffic-statistics') {
+      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
+    }
+    // 订阅信息：占2列
+    if (type === 'subscription-info') {
+      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
+    }
+    // 规则统计：占2列
+    if (type === 'rules-overview') {
       return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
     }
     return '';

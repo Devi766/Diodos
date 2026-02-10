@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Search, Shield, ShieldCheck, ShieldX, Loader2, AlertCircle, CheckCircle2, Save } from 'lucide-react';
+import { Search, Shield, ShieldCheck, ShieldX, Loader2, AlertCircle, Save, RefreshCw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
+import { useThemeColor } from '@/hooks/useThemeColor';
 
 interface LoopbackAppItem {
   appContainerName: string;
@@ -20,16 +21,16 @@ interface LoopbackAppItem {
 
 export default function LoopbackManager() {
   const { t } = useTranslation();
+  const themeColor = useThemeColor();
   const [apps, setApps] = useState<LoopbackAppItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 跟踪用户修改的豁免状态（SID -> boolean）
   const [exemptChanges, setExemptChanges] = useState<Map<string, boolean>>(new Map());
 
-  // 是否有未保存的更改（从 exemptChanges 的大小派生）
+  // 是否有未保存的更改
   const hasChanges = exemptChanges.size > 0;
 
   // 加载应用列表
@@ -41,18 +42,17 @@ export default function LoopbackManager() {
         setError(t('tools.loopback.noAccess'));
         return;
       }
-
       const result = await window.electronAPI.loopback.getApps();
       if (result.success && result.apps) {
         setApps(result.apps);
-        setIsAdmin(result.isAdmin);
         setExemptChanges(new Map());
       } else {
         setError(result.error || t('tools.loopback.loadError'));
       }
-    } catch (err: any) {
-      console.error('加载 UWP 应用列表失败:', err);
-      setError(err.message || t('tools.loopback.loadError'));
+    } catch (err: unknown) {
+      console.error('Failed to load UWP app list:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message || t('tools.loopback.loadError'));
     } finally {
       setLoading(false);
     }
@@ -66,13 +66,11 @@ export default function LoopbackManager() {
   const toggleExemption = useCallback((sid: string, currentExempt: boolean) => {
     setExemptChanges(prev => {
       const next = new Map(prev);
-      // 找到原始状态
       const originalApp = apps.find(a => a.sid === sid);
       const originalExempt = originalApp?.isExempt ?? false;
       const newExempt = !currentExempt;
 
       if (newExempt === originalExempt) {
-        // 恢复到原始状态，移除变更记录
         next.delete(sid);
       } else {
         next.set(sid, newExempt);
@@ -110,7 +108,6 @@ export default function LoopbackManager() {
     }
     return { total: apps.length, exempt: exemptCount };
   }, [apps, getEffectiveExempt]);
-
   // 全选当前过滤列表
   const selectAll = useCallback(() => {
     setExemptChanges(prev => {
@@ -149,7 +146,6 @@ export default function LoopbackManager() {
 
     setSaving(true);
     try {
-      // 收集所有需要豁免的 SID
       const exemptSids: string[] = [];
       for (const app of apps) {
         if (getEffectiveExempt(app)) {
@@ -162,26 +158,25 @@ export default function LoopbackManager() {
         toast.success(t('tools.loopback.saveSuccess', {
           count: exemptSids.length
         }));
-        // 重新加载以获取最新状态
         await loadApps();
       } else {
         toast.error(t('tools.loopback.saveError', {
           error: result.error || ''
         }));
       }
-    } catch (err: any) {
-      console.error('保存回环豁免配置失败:', err);
-      toast.error(t('tools.loopback.saveError', { error: err.message }));
+    } catch (err: unknown) {
+      console.error('Failed to save loopback exemption config:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(t('tools.loopback.saveError', { error: message }));
     } finally {
       setSaving(false);
     }
   }, [apps, getEffectiveExempt, loadApps, t]);
-
   // 加载中状态
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="flex flex-col items-center justify-center py-16 space-y-3">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
         <p className="text-sm text-muted-foreground">{t('tools.loopback.loading')}</p>
       </div>
     );
@@ -190,45 +185,28 @@ export default function LoopbackManager() {
   // 错误状态
   if (error) {
     return (
-      <div className="space-y-4">
-        <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-md border border-red-200 dark:border-red-800">
-          <div className="flex items-start">
-            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 mr-2 flex-shrink-0" />
+      <div className="space-y-4 py-2">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
             <div>
-              <h4 className="font-medium text-red-800 dark:text-red-300">
+              <h4 className="font-medium text-destructive">
                 {t('tools.loopback.errorTitle')}
               </h4>
-              <p className="text-sm text-red-700 dark:text-red-400 mt-1">{error}</p>
+              <p className="text-sm text-destructive/80 mt-1">{error}</p>
             </div>
           </div>
         </div>
-        <Button
-          onClick={loadApps}
-          className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-          variant="default"
-        >
+        <Button onClick={loadApps} variant="default" className="w-full">
           {t('tools.loopback.retry')}
         </Button>
       </div>
     );
   }
-
   return (
-    <div className="space-y-4">
-      {/* 管理员权限提示 */}
-      {!isAdmin && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800">
-          <div className="flex items-center">
-            <ShieldX className="w-4 h-4 text-amber-500 mr-2 flex-shrink-0" />
-            <p className="text-sm text-amber-700 dark:text-amber-400">
-              {t('tools.loopback.noAdmin')}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* 统计信息和操作栏 */}
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-3 h-full" style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}>
+      {/* 统计信息栏 + 操作按钮 */}
+      <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Shield className="w-4 h-4" />
           <span>
@@ -237,44 +215,62 @@ export default function LoopbackManager() {
               exempt: stats.exempt
             })}
           </span>
+          {hasChanges && (
+            <span className="text-xs text-primary font-medium ml-1">
+              ({exemptChanges.size} {t('tools.loopback.modified')})
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={selectAll}
-            className="text-xs h-7 px-2"
+            className="text-xs h-7 px-2.5"
           >
             {t('tools.loopback.selectAll')}
           </Button>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={deselectAll}
-            className="text-xs h-7 px-2"
+            className="text-xs h-7 px-2.5"
           >
             {t('tools.loopback.deselectAll')}
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={loadApps}
+            className="text-xs h-7 w-7 p-0"
+            title={t('tools.loopback.retry')}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
         </div>
       </div>
-
       {/* 搜索栏 */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+      <div className="relative flex-shrink-0">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
         <Input
           placeholder={t('tools.loopback.searchPlaceholder')}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-9"
+          className="pl-9 h-9"
         />
+        {searchQuery.trim() && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+            {filteredApps.length}/{apps.length}
+          </span>
+        )}
       </div>
 
       {/* 应用列表 */}
-      <ScrollArea className="h-[360px] rounded-md border border-gray-200 dark:border-gray-700">
-        <div className="divide-y divide-gray-100 dark:divide-gray-800">
+      <div className="overflow-y-auto max-h-[380px] rounded-xl custom-scrollbar" style={{ WebkitFontSmoothing: 'antialiased' }}>
+        <div className="flex flex-col p-1">
           {filteredApps.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-              <Search className="w-8 h-8 mb-2 opacity-50" />
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Search className="w-8 h-8 mb-2 opacity-40" />
               <p className="text-sm">{t('tools.loopback.noResults')}</p>
             </div>
           ) : (
@@ -284,9 +280,11 @@ export default function LoopbackManager() {
               return (
                 <div
                   key={app.sid}
-                  className={`flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors ${
-                    isChanged ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''
-                  }`}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors rounded-lg',
+                    'hover:bg-accent/50',
+                    isChanged && 'bg-primary/5'
+                  )}
                   onClick={() => toggleExemption(app.sid, isExempt)}
                 >
                   <Checkbox
@@ -299,18 +297,18 @@ export default function LoopbackManager() {
                       {isExempt ? (
                         <ShieldCheck className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
                       ) : (
-                        <ShieldX className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                        <ShieldX className="w-3.5 h-3.5 text-muted-foreground/30 flex-shrink-0" />
                       )}
                       <span className="text-sm font-medium truncate">
                         {app.displayName}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">
+                    <p className="text-xs text-muted-foreground/60 truncate mt-0.5 pl-5">
                       {app.packageFamilyName}
                     </p>
                   </div>
                   {isChanged && (
-                    <span className="text-xs text-blue-500 flex-shrink-0">
+                    <span className="text-[11px] text-primary font-medium flex-shrink-0 px-1.5 py-0.5 rounded-md bg-primary/10">
                       {t('tools.loopback.modified')}
                     </span>
                   )}
@@ -319,14 +317,25 @@ export default function LoopbackManager() {
             })
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* 保存按钮 */}
-      <Button
+      <button
         onClick={saveConfig}
-        disabled={saving || !isAdmin || !hasChanges}
-        className="w-full bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50"
-        variant="default"
+        disabled={saving || !hasChanges}
+        className="w-full flex-shrink-0 relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-10 px-5 hover:brightness-110"
+        style={{
+          backgroundColor: themeColor,
+          boxShadow: `0 16px 36px -18px ${themeColor}70`
+        }}
+        onMouseEnter={(e) => {
+          if (!e.currentTarget.disabled) {
+            e.currentTarget.style.boxShadow = `0 20px 44px -16px ${themeColor}90`;
+          }
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = `0 16px 36px -18px ${themeColor}70`;
+        }}
       >
         {saving ? (
           <>
@@ -337,9 +346,14 @@ export default function LoopbackManager() {
           <>
             <Save className="w-4 h-4 mr-2" />
             {t('tools.loopback.save')}
+            {hasChanges && (
+              <span className="ml-1.5 text-xs opacity-80">
+                ({exemptChanges.size})
+              </span>
+            )}
           </>
         )}
-      </Button>
+      </button>
     </div>
   );
 }

@@ -1,8 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// 导航函数不再需要处理DOM事件，直接在NavMenu组件中处理
-// 删除旧的handleNavigation函数
-
 // 增强安全 - 令牌管理
 let securityToken = null;
 let tokenExpiry = 0;
@@ -187,11 +184,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 订阅管理
   saveSubscription: (subUrl, configData, customName, subscriptionInfo) => {
-    console.log('preload.js - 传递订阅参数 - URL:', subUrl);
-    console.log('preload.js - 传递订阅参数 - 自定义名称:', customName);
-    if (subscriptionInfo) {
-      console.log('preload.js - 传递订阅流量信息:', subscriptionInfo);
-    }
     return ipcRenderer.invoke('save-subscription', subUrl, configData, customName, subscriptionInfo);
   },
   getSubscriptions: () => ipcRenderer.invoke('get-subscriptions'),
@@ -210,7 +202,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 添加订阅导入事件监听
   onImportSubscription: (callback) => {
     const handler = (_, url) => {
-      console.log('preload.js - 收到导入订阅事件，URL:', url);
       callback(url);
     };
     ipcRenderer.on('import-subscription', handler);
@@ -501,16 +492,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('traffic-update');
     ipcRenderer.removeAllListeners('connections-update');
   },
-  
+
   // 节点和代理组管理
-  getProxies: () => ipcRenderer.invoke('get-proxies'),
   // 切换节点
   switchNode: (nodeName) => ipcRenderer.invoke('switch-node', nodeName),
   // 通过代理进行网络请求测试
   proxyFetch: (url, options) => ipcRenderer.invoke('proxy-fetch', url, options),
-  // 获取配置顺序
-  getConfigOrder: () => ipcRenderer.invoke('get-config-order'),
-  
+
   // 添加获取代理配置的方法
   getProxyConfig: () => ipcRenderer.invoke('get-proxy-config'),
   
@@ -635,15 +623,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeExemption: (sid) => ipcRenderer.invoke('loopback:remove-exemption', sid),
   },
 });
-
-// 移除重复的事件监听器
-// ipcRenderer.on('node-changed', (event, data) => {
-//   event.sender.send('dashboard', { type: 'node-changed', data });
-// });
-
-// ipcRenderer.on('connections-update', (event, data) => {
-//   event.sender.send('dashboard', { type: 'connections-update', data });
-// }); 
 
 const UPDATE_AVAILABLE_EVENT = 'flyclash-update-available';
 

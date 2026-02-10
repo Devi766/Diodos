@@ -284,6 +284,12 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
         payload: string
         proxy: string
         size?: number
+        extra?: {
+          hitCount?: number
+          missCount?: number
+          hitAt?: string
+          missAt?: string
+        }
       }>
     }>('/rules');
   }

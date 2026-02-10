@@ -369,6 +369,12 @@ export default function SubscriptionManager() {
       const finalSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
 
       if (finalSuccess) {
+        // 清除代理组缓存，确保下次获取最新数据
+        try { sessionStorage.removeItem('proxyGroupsCache'); } catch (_) {}
+
+        // 通知代理页面刷新
+        window.dispatchEvent(new Event('profile-updated'));
+
         // 只在服务运行时才需要等待节点信息
         if (isServiceRunning) {
           // 关键修改：等待服务完全启动后获取节点信息
@@ -390,6 +396,8 @@ export default function SubscriptionManager() {
                     await window.electronAPI.notifyNodeChanged(selectedNode.name);
                   }
                 }
+                // 服务就绪后再次通知代理页面刷新
+                window.dispatchEvent(new Event('profile-updated'));
               }
             } catch (error) {
               console.error('获取节点信息失败:', error);

@@ -115,7 +115,21 @@
     "ipAddress": "IP 地址",
     "hideIp": "隐藏 IP",
     "showIp": "显示 IP",
-    "ipFetchError": "获取失败"
+    "ipFetchError": "获取失败",
+    "subscriptionInfo": "订阅信息",
+    "usedTraffic": "已用流量",
+    "remainingTraffic": "剩余流量",
+    "totalTrafficLabel": "总流量",
+    "expiryDate": "到期时间",
+    "daysRemaining": "剩余 {{days}} 天",
+    "expired": "已过期",
+    "noSubscription": "暂无激活的订阅配置",
+    "rulesOverview": "规则统计",
+    "hitRules": "命中",
+    "missRules": "未命中",
+    "noRuleStats": "暂无规则统计数据",
+    "ruleType": "类型",
+    "hits": "次"
   },
   "ipInfoDialog": {
     "title": "IP 详情",
@@ -460,10 +474,15 @@
       "dialogDescription": "测试当前配置文件中的第一个代理组的所有节点,并生成测试报告",
       "close": "关闭"
     },
+    "converter": {
+      "detail": "支持 Clash、Clash Meta、Sing-box 等多种格式的订阅转换",
+      "open": "打开转换器"
+    },
     "shareDialog": {
       "title": "分享测速结果",
       "description": "生成并分享您的网络测速结果"
-    }
+    },
+    "unknownNode": "未知节点"
   },
   "logs": {
     "title": "日志",

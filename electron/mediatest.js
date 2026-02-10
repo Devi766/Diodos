@@ -1,10 +1,12 @@
 // 媒体服务检测模块
-// node-fetch是ESM模块，我们需要动态导入
-// const nodeFetch = require('node-fetch');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
+
+// Public API tokens for media service detection (not user credentials)
+const DISNEY_PLUS_PUBLIC_TOKEN = 'ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84';
+const YOUTUBE_DETECTION_COOKIE = 'YSC=FSCWhKo2Zgw; VISITOR_PRIVACY_METADATA=CgJERRIEEgAgYQ%3D%3D; PREF=f7=4000';
 
 // 日志记录器
 const logger = {
@@ -350,7 +352,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
               method: 'POST',
               headers: {
                 'accept-language': 'en-US,en;q=0.9',
-                'authorization': 'Bearer ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84',
+                'authorization': `Bearer ${DISNEY_PLUS_PUBLIC_TOKEN}`,
                 'content-type': 'application/json; charset=UTF-8',
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
               },
@@ -392,7 +394,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
             const tokenResponse = await fetch('https://disney.api.edge.bamgrid.com/token', {
               method: 'POST',
               headers: {
-                'authorization': 'Bearer ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84',
+                'authorization': `Bearer ${DISNEY_PLUS_PUBLIC_TOKEN}`,
                 'content-type': 'application/json; charset=UTF-8',
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
               },
@@ -487,7 +489,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
             headers: {
               ...baseRequestOptions.headers,
               'accept-language': 'en-US,en;q=0.9',
-              'cookie': 'YSC=FSCWhKo2Zgw; VISITOR_PRIVACY_METADATA=CgJERRIEEgAgYQ%3D%3D; PREF=f7=4000'
+              'cookie': YOUTUBE_DETECTION_COOKIE
             }
           });
           

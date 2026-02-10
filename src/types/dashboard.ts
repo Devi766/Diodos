@@ -10,7 +10,9 @@ export type DashboardCardType =
   | 'ip-address' // IP地址
   | 'traffic-chart' // 流量图表
   | 'traffic-ranking' // 流量排行
-  | 'traffic-statistics'; // 流量统计
+  | 'traffic-statistics' // 流量统计
+  | 'subscription-info' // 订阅信息
+  | 'rules-overview'; // 规则统计
 
 // 卡片配置项
 export interface DashboardCard {
@@ -111,6 +113,22 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
     description: '总流量和连接统计信息',
     enabled: false,
     order: 10,
+  },
+  {
+    id: 'subscription-info-card',
+    type: 'subscription-info',
+    title: '订阅信息',
+    description: '当前激活配置的流量和到期信息',
+    enabled: false,
+    order: 11,
+  },
+  {
+    id: 'rules-overview-card',
+    type: 'rules-overview',
+    title: '规则统计',
+    description: '规则命中和未命中排行统计',
+    enabled: false,
+    order: 12,
   },
 ];
 

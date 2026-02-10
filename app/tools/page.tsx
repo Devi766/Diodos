@@ -44,7 +44,7 @@ export default function ToolsPage() {
   const [speedtestError, setSpeedtestError] = useState<string | null>(null);
   const [speedtestLogs, setSpeedtestLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
-  const [currentNode, setCurrentNode] = useState('未知节点');
+  const [currentNode, setCurrentNode] = useState(t('tools.unknownNode'));
   
   // 用于动画效果
   const [animateDownload, setAnimateDownload] = useState(false);
@@ -561,14 +561,14 @@ export default function ToolsPage() {
             </CardHeader>
             <CardContent className="pt-0">
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                支持 Clash、Clash Meta、Sing-box 等多种格式的订阅转换
+                {t('tools.converter.detail')}
               </p>
               <Button
                 onClick={() => router.push('/converter')}
                 className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                 variant="default"
               >
-                打开转换器
+                {t('tools.converter.open')}
               </Button>
             </CardContent>
           </Card>
@@ -836,8 +836,8 @@ export default function ToolsPage() {
 
       {/* UWP 回环豁免管理对话框 */}
       <Dialog open={loopbackDialogOpen} onOpenChange={setLoopbackDialogOpen}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[680px] max-h-[85vh] flex flex-col overflow-hidden p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <NetworkIcon className="w-5 h-5" /> {t('tools.loopback.dialogTitle')}
             </DialogTitle>
@@ -846,7 +846,7 @@ export default function ToolsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-2">
+          <div className="px-6 pb-6 flex-1 min-h-0 overflow-hidden">
             <LoopbackManager />
           </div>
         </DialogContent>

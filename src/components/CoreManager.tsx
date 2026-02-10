@@ -35,6 +35,13 @@ interface CoreVersion {
   body: string;
 }
 
+interface UpdateInfo {
+  success: boolean;
+  hasUpdate: boolean;
+  currentVersion?: string;
+  latestVersion?: string;
+}
+
 export default function CoreManager() {
   const { t } = useTranslation();
   const [currentConfig, setCurrentConfig] = useState<CoreConfig | null>(null);
@@ -44,7 +51,7 @@ export default function CoreManager() {
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<CoreDownloadProgress | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -336,8 +343,6 @@ export default function CoreManager() {
 
   const canSwitchSelected = hasSelectedTypeInstalled && hasSelectedSpecificInstalled && !isCurrentSelection;
 
-  const filteredVersions = availableVersions;
-
   const isCoreActive = (core: InstalledCore) => {
     if (!currentConfig || currentConfig.coreType !== core.type) {
       return false;
@@ -467,13 +472,13 @@ export default function CoreManager() {
             disabled={loadingVersions}
           >
             <option value="latest">{t('core.latestVersion')}</option>
-            {filteredVersions.map((v) => (
+            {availableVersions.map((v) => (
               <option key={v.version} value={v.version}>
                 v{v.version} ({formatDate(v.publishedAt)}){v.prerelease ? ' [Pre-release]' : ''}
               </option>
             ))}
           </select>
-          {!loadingVersions && filteredVersions.length === 0 && (
+          {!loadingVersions && availableVersions.length === 0 && (
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
               {t('core.noVersionsFound')}
             </p>
@@ -582,10 +587,10 @@ export default function CoreManager() {
 
       <ConfirmDialog
         open={deleteConfirmOpen}
-        title={t('core.confirmDeleteTitle', '删除内核')}
+        title={t('core.confirmDeleteTitle', 'Delete Kernel')}
         description={t('core.confirmDelete')}
         confirmText={t('core.delete')}
-        cancelText={t('core.cancel', '取消')}
+        cancelText={t('core.cancel', 'Cancel')}
         onConfirm={confirmDeleteCore}
         onCancel={() => { setDeleteConfirmOpen(false); setPendingDeletePath(null); }}
       />

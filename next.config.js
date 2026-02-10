@@ -24,8 +24,7 @@ const nextConfig = {
     BASE_PATH: process.env.NEXT_PUBLIC_BASE_PATH || '',
   },
   typescript: {
-    // !! 警告 !!
-    // 仅在构建阶段忽略类型错误，实际开发时请修复这些错误
+    // TODO: Fix all TypeScript errors and remove this flag before open-sourcing
     ignoreBuildErrors: true,
   },
   // 修改资源路径配置

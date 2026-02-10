@@ -115,7 +115,21 @@
     "ipAddress": "IP Address",
     "hideIp": "Hide IP",
     "showIp": "Show IP",
-    "ipFetchError": "Fetch Failed"
+    "ipFetchError": "Fetch Failed",
+    "subscriptionInfo": "Subscription Info",
+    "usedTraffic": "Used Traffic",
+    "remainingTraffic": "Remaining Traffic",
+    "totalTrafficLabel": "Total Traffic",
+    "expiryDate": "Expiry Date",
+    "daysRemaining": "{{days}} days left",
+    "expired": "Expired",
+    "noSubscription": "No active subscription",
+    "rulesOverview": "Rules Overview",
+    "hitRules": "Hit",
+    "missRules": "Miss",
+    "noRuleStats": "No rule statistics available",
+    "ruleType": "Type",
+    "hits": "hits"
   },
   "ipInfoDialog": {
     "title": "IP Details",
@@ -460,10 +474,15 @@
       "dialogDescription": "Test all nodes in the first proxy group of current configuration file and generate test report",
       "close": "Close"
     },
+    "converter": {
+      "detail": "Supports subscription conversion for Clash, Clash Meta, Sing-box and more formats",
+      "open": "Open Converter"
+    },
     "shareDialog": {
       "title": "Share Speed Test Results",
       "description": "Generate and share your network speed test results"
-    }
+    },
+    "unknownNode": "Unknown Node"
   },
   "logs": {
     "title": "Logs",

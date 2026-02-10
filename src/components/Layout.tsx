@@ -366,6 +366,9 @@ export default function Layout({ children }: LayoutProps) {
         return;
       }
 
+      // Sanitize imageUrl to prevent CSS injection
+      imageUrl = imageUrl.replace(/['"\\()]/g, '');
+
       // 查找或创建样式元素
       let styleElement = document.getElementById('custom-background-style');
       if (!styleElement) {
