@@ -182,15 +182,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('speedtest-output', handler);
     return () => ipcRenderer.removeListener('speedtest-output', handler);
   },
-  
-  // 测速报告管理
-  saveSpeedtestReport: (reportData) => ipcRenderer.invoke('save-speedtest-report', reportData),
-  getSpeedtestReports: () => ipcRenderer.invoke('get-speedtest-reports'),
-  getSpeedtestReport: (reportId) => ipcRenderer.invoke('get-speedtest-report', reportId),
-  copySpeedtestReportToClipboard: (imageDataUrl) => ipcRenderer.invoke('copy-speedtest-report-to-clipboard', imageDataUrl),
-  // 新增puppeteer相关API
-  generateSpeedtestReportWithPuppeteer: (reportData) => ipcRenderer.invoke('generate-speedtest-report-with-puppeteer', reportData),
-  copySpeedtestReportWithPuppeteer: (reportData) => ipcRenderer.invoke('copy-speedtest-report-with-puppeteer', reportData),
+
   openFileInDefaultApp: (filePath) => ipcRenderer.invoke('open-file-in-default-app', filePath),
   
   // 订阅管理
@@ -524,8 +516,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 添加通过HTTP代理发送请求的方法，支持指定节点
   fetchWithProxy: (options) => ipcRenderer.invoke('fetch-with-proxy', options),
-  // 添加取消批量测速的API
-  cancelBatchSpeedtest: () => ipcRenderer.invoke('cancel-batch-speedtest'),
   // 监听测速进度
 
   // Provider 资源管理
@@ -635,6 +625,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getIcon: (iconUrl, configPath) => ipcRenderer.invoke('config-icon:get-icon', iconUrl, configPath),
     clearCache: () => ipcRenderer.invoke('config-icon:clear-cache'),
     getCacheSize: () => ipcRenderer.invoke('config-icon:get-cache-size'),
+  },
+
+  // UWP 回环豁免管理
+  loopback: {
+    getApps: () => ipcRenderer.invoke('loopback:get-apps'),
+    saveConfig: (exemptSids) => ipcRenderer.invoke('loopback:save-config', exemptSids),
+    addExemption: (sid) => ipcRenderer.invoke('loopback:add-exemption', sid),
+    removeExemption: (sid) => ipcRenderer.invoke('loopback:remove-exemption', sid),
   },
 });
 

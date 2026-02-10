@@ -21,7 +21,7 @@ export function SystemProxyCard({ enabled, updating, onToggle }: SystemProxyCard
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t('dashboard.systemProxy')}
         </p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs text-muted-foreground">
           {t('dashboard.systemProxyDesc')}
         </p>
       </div>
@@ -49,7 +49,7 @@ export function TunModeCard({ enabled, updating, available, isRunning, onToggle 
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {t('dashboard.tunMode')}
         </p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs text-muted-foreground">
           {t('dashboard.tunModeDesc')}
         </p>
       </div>

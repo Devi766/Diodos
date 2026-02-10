@@ -294,48 +294,7 @@ export interface ElectronAPI {
   }>;
   onSpeedtestProgress: (callback: (progressData: SpeedtestProgress) => void) => (() => void);
   onSpeedtestOutput: (callback: (outputData: SpeedtestOutput) => void) => (() => void);
-  
-  // 批量测速相关
-  // 取消批量测速
-  cancelBatchSpeedtest: () => Promise<{
-    success: boolean,
-    error?: string
-  }>;
-  
-  // 测速报告管理
-  saveSpeedtestReport: (reportData: any) => Promise<{ 
-    success: boolean, 
-    filePath?: string, 
-    reportId?: string, 
-    error?: string 
-  }>;
-  getSpeedtestReports: () => Promise<{ 
-    success: boolean, 
-    reports?: SpeedtestReportSummary[], 
-    error?: string 
-  }>;
-  getSpeedtestReport: (reportId: string) => Promise<{ 
-    success: boolean, 
-    report?: SpeedtestReport, 
-    error?: string 
-  }>;
-  copySpeedtestReportToClipboard: (imageDataUrl: string) => Promise<{ 
-    success: boolean, 
-    error?: string 
-  }>;
-  // 新增puppeteer相关API
-  generateSpeedtestReportWithPuppeteer: (reportData: any) => Promise<{
-    success: boolean,
-    filePath?: string,
-    htmlPath?: string,
-    reportId?: string,
-    error?: string,
-    canceled?: boolean
-  }>;
-  copySpeedtestReportWithPuppeteer: (reportData: any) => Promise<{
-    success: boolean,
-    error?: string
-  }>;
+
   openFileInDefaultApp: (filePath: string) => Promise<{
     success: boolean,
     error?: string
@@ -422,6 +381,14 @@ export interface ElectronAPI {
     clearCache: () => Promise<{ success: boolean; error?: string }>;
     getCacheSize: () => Promise<{ success: boolean; size?: number; error?: string }>;
   };
+
+  // UWP 回环豁免管理
+  loopback?: {
+    getApps: () => Promise<LoopbackAppsResult>;
+    saveConfig: (exemptSids: string[]) => Promise<{ success: boolean; error?: string; added?: number; failed?: number }>;
+    addExemption: (sid: string) => Promise<{ success: boolean; error?: string }>;
+    removeExemption: (sid: string) => Promise<{ success: boolean; error?: string }>;
+  };
 }
 
 interface Window {
@@ -459,25 +426,22 @@ interface SpeedtestOutput {
   error?: string;
 }
 
-// 添加测速报告接口
-interface SpeedtestReport {
-  id: string;
-  timestamp: string;
-  proxyGroupName: string;
-  testResults: SpeedTestResult[];
-  skippedNodes: string[];
-  excludedNodes?: string[];
+// UWP 回环豁免应用信息
+interface LoopbackApp {
+  appContainerName: string;
+  displayName: string;
+  packageFamilyName: string;
+  sid: string;
+  workingDir: string;
+  isExempt: boolean;
 }
 
-// 添加测速报告概要信息接口
-interface SpeedtestReportSummary {
-  id: string;
-  timestamp: string;
-  filePath: string;
-  proxyGroupName: string;
-  nodeCount: number;
-  skippedCount: number;
-  excludedCount: number;
+// UWP 回环豁免查询结果
+interface LoopbackAppsResult {
+  success: boolean;
+  apps?: LoopbackApp[];
+  isAdmin: boolean;
+  error?: string;
 }
 
 // TUN 配置接口

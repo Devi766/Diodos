@@ -3,7 +3,7 @@
  * 提供基础的过滤/排序/重命名/属性设置能力，便于后续前端扩展配置。
  *
  * 设计目标：
- * - 与 Sub-Store processors 思路一致：接收一组 proxies 以及一组 processor 配置，按顺序执行。
+ * - 接收一组 proxies 以及一组 processor 配置，按顺序执行。
  * - 当前实现的 Processor 类型：
  *   - includeRegex: 保留名称匹配正则的节点
  *   - excludeRegex: 丢弃名称匹配正则的节点

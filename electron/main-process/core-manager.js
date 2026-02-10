@@ -1,7 +1,7 @@
 /**
  * 内核管理模块
  * 支持多内核版本管理、下载、切换
- * 参考 Clash Party 实现
+ * 提供统一的内核管理能力
  */
 
 const { app } = require('electron');

@@ -654,7 +654,7 @@ class URI_AnyTLS extends Parser {
       skipCertVerify: !!vlessProxy.skipCertVerify
     };
 
-    // 解析附加参数（基本对齐 Sub-Store 行为）
+    // 解析附加参数（宽松兼容常见分享链接）
     for (const addon of addons.split('&')) {
       if (!addon) continue;
       let [rawKey, rawValue = ''] = addon.split('=');

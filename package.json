@@ -83,7 +83,6 @@
     "ofetch": "^1.4.1",
     "peggy": "5.0.6",
     "proxy-agent": "^6.5.0",
-    "puppeteer": "^22.7.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-i18next": "16.2.0",

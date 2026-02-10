@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ConfirmDialog } from './ConfirmDialog';
 
 type CoreType = 'mihomo' | 'mihomo-alpha' | 'mihomo-smart' | 'mihomo-specific';
 
@@ -51,6 +52,8 @@ export default function CoreManager() {
   const [availableVersions, setAvailableVersions] = useState<CoreVersion[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<string>('latest');
   const [loadingVersions, setLoadingVersions] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null);
 
   const normalizeVersion = (value?: string | null) => {
     if (!value) return '';
@@ -66,9 +69,14 @@ export default function CoreManager() {
         setCurrentConfig(result.config || null);
         setCurrentVersion(result.version || t('core.unknown'));
         if (result.config) {
-          setSelectedCoreType(result.config.coreType);
-          if (result.config.coreType === 'mihomo-specific' && result.config.specificVersion) {
-            setSelectedVersion(normalizeVersion(result.config.specificVersion));
+          // mihomo-specific 在 UI 上合并到 mihomo（稳定版）
+          if (result.config.coreType === 'mihomo-specific') {
+            setSelectedCoreType('mihomo');
+            if (result.config.specificVersion) {
+              setSelectedVersion(normalizeVersion(result.config.specificVersion));
+            }
+          } else {
+            setSelectedCoreType(result.config.coreType);
           }
         }
       }
@@ -143,13 +151,17 @@ export default function CoreManager() {
     try {
       if (!window.electronAPI?.coreDownloadCore || !window.electronAPI?.coreDownloadSpecificVersion) return;
 
+      // 稳定版选了具体版本时，内部使用 mihomo-specific
+      const isSpecific = selectedCoreType === 'mihomo' && selectedVersion !== 'latest';
+      const effectiveType = isSpecific ? 'mihomo-specific' as CoreType : selectedCoreType;
+
       const result = selectedVersion === 'latest'
-        ? await window.electronAPI.coreDownloadCore(selectedCoreType)
-        : await window.electronAPI.coreDownloadSpecificVersion(selectedCoreType, selectedVersion);
+        ? await window.electronAPI.coreDownloadCore(effectiveType)
+        : await window.electronAPI.coreDownloadSpecificVersion(effectiveType, selectedVersion);
 
       if (result.success) {
         const downloadedVersion = normalizeVersion(result.version || selectedVersion);
-        if (selectedCoreType === 'mihomo-specific' && downloadedVersion) {
+        if (isSpecific && downloadedVersion) {
           setSelectedVersion(downloadedVersion);
         }
 
@@ -171,7 +183,10 @@ export default function CoreManager() {
 
   const handleSwitchCore = async (coreType: CoreType, specificVersion?: string) => {
     const normalizedSpecificVersion = normalizeVersion(specificVersion);
-    if (coreType === 'mihomo-specific' && !normalizedSpecificVersion) {
+    // 稳定版指定了版本时，内部使用 mihomo-specific
+    const effectiveType = (coreType === 'mihomo' && normalizedSpecificVersion) ? 'mihomo-specific' as CoreType : coreType;
+
+    if (effectiveType === 'mihomo-specific' && !normalizedSpecificVersion) {
       setToast({ type: 'info', message: t('core.selectSpecificVersionFirst') });
       return;
     }
@@ -180,7 +195,7 @@ export default function CoreManager() {
     try {
       if (!window.electronAPI?.coreSwitchCore) return;
 
-      const result = await window.electronAPI.coreSwitchCore(coreType, normalizedSpecificVersion || undefined);
+      const result = await window.electronAPI.coreSwitchCore(effectiveType, normalizedSpecificVersion || undefined);
       if (result.success) {
         setToast({ type: 'success', message: t('core.switchSuccess') });
         await loadCurrentConfig();
@@ -196,12 +211,18 @@ export default function CoreManager() {
   };
 
   const handleDeleteCore = async (corePath: string) => {
-    if (!confirm(t('core.confirmDelete'))) return;
+    setPendingDeletePath(corePath);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDeleteCore = async () => {
+    setDeleteConfirmOpen(false);
+    if (!pendingDeletePath) return;
 
     try {
       if (!window.electronAPI?.coreDeleteCore) return;
 
-      const result = await window.electronAPI.coreDeleteCore(corePath);
+      const result = await window.electronAPI.coreDeleteCore(pendingDeletePath);
       if (result.success) {
         setToast({ type: 'success', message: t('core.deleteSuccess') });
         await loadInstalledCores();
@@ -211,6 +232,8 @@ export default function CoreManager() {
     } catch (error) {
       console.error('[CoreManager] 删除内核失败:', error);
       setToast({ type: 'error', message: String(error) });
+    } finally {
+      setPendingDeletePath(null);
     }
   };
 
@@ -219,7 +242,9 @@ export default function CoreManager() {
   };
 
   useEffect(() => {
-    loadAvailableVersions(selectedCoreType);
+    if (selectedCoreType === 'mihomo') {
+      loadAvailableVersions(selectedCoreType);
+    }
   }, [selectedCoreType]);
 
   useEffect(() => {
@@ -281,27 +306,35 @@ export default function CoreManager() {
   };
 
   const currentSpecificVersion = useMemo(() => {
-    if (!currentConfig || currentConfig.coreType !== 'mihomo-specific') return '';
+    if (!currentConfig) return '';
+    if (currentConfig.coreType !== 'mihomo-specific' && currentConfig.coreType !== 'mihomo') return '';
     return normalizeVersion(currentConfig.specificVersion || currentVersion);
   }, [currentConfig, currentVersion]);
 
   const selectedSpecificVersion = selectedVersion === 'latest' ? '' : normalizeVersion(selectedVersion);
-  const hasSelectedTypeInstalled = installedCores.some((core) => core.type === selectedCoreType);
-  const hasSelectedSpecificInstalled = selectedCoreType !== 'mihomo-specific' || installedCores.some(
+  const isStableWithVersion = selectedCoreType === 'mihomo' && selectedSpecificVersion;
+  const hasSelectedTypeInstalled = installedCores.some((core) =>
+    isStableWithVersion ? core.type === 'mihomo-specific' : core.type === selectedCoreType
+  );
+  const hasSelectedSpecificInstalled = !isStableWithVersion || installedCores.some(
     (core) => core.type === 'mihomo-specific' && normalizeVersion(core.version) === selectedSpecificVersion
   );
 
   const isCurrentSelection = (() => {
     if (!currentConfig) return false;
+    if (isStableWithVersion) {
+      // 稳定版选了具体版本，对比 mihomo-specific
+      if (currentConfig.coreType !== 'mihomo-specific') return false;
+      return selectedSpecificVersion === currentSpecificVersion;
+    }
+    if (selectedCoreType === 'mihomo' && selectedVersion === 'latest') {
+      return currentConfig.coreType === 'mihomo';
+    }
     if (currentConfig.coreType !== selectedCoreType) return false;
-    if (selectedCoreType !== 'mihomo-specific') return true;
-    if (!selectedSpecificVersion) return false;
-    return selectedSpecificVersion === currentSpecificVersion;
+    return true;
   })();
 
-  const canSwitchSelected = hasSelectedTypeInstalled && hasSelectedSpecificInstalled && !isCurrentSelection && (
-    selectedCoreType !== 'mihomo-specific' || Boolean(selectedSpecificVersion)
-  );
+  const canSwitchSelected = hasSelectedTypeInstalled && hasSelectedSpecificInstalled && !isCurrentSelection;
 
   const filteredVersions = availableVersions;
 
@@ -409,43 +442,44 @@ export default function CoreManager() {
           <option value="mihomo">{t('core.stable')}</option>
           <option value="mihomo-alpha">{t('core.alpha')}</option>
           <option value="mihomo-smart">{t('core.smart')}</option>
-          <option value="mihomo-specific">{t('core.specific')}</option>
         </select>
       </div>
 
-      <div>
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">
-            {t('core.selectVersion')}
-          </h3>
-          <button
-            className="py-1 px-2 text-xs rounded bg-gray-100 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:hover:bg-[#333333] text-gray-700 dark:text-gray-200 transition-colors"
-            onClick={handleRefreshVersions}
+      {selectedCoreType === 'mihomo' && (
+        <div>
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">
+              {t('core.selectVersion')}
+            </h3>
+            <button
+              className="py-1 px-2 text-xs rounded bg-gray-100 hover:bg-gray-200 dark:bg-[#2a2a2a] dark:hover:bg-[#333333] text-gray-700 dark:text-gray-200 transition-colors"
+              onClick={handleRefreshVersions}
+              disabled={loadingVersions}
+              title={t('core.refreshVersions')}
+            >
+              {loadingVersions ? t('core.loadingVersions') : '↻'}
+            </button>
+          </div>
+          <select
+            className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+            value={selectedVersion}
+            onChange={(e) => setSelectedVersion(e.target.value)}
             disabled={loadingVersions}
-            title={t('core.refreshVersions')}
           >
-            {loadingVersions ? t('core.loadingVersions') : '↻'}
-          </button>
+            <option value="latest">{t('core.latestVersion')}</option>
+            {filteredVersions.map((v) => (
+              <option key={v.version} value={v.version}>
+                v{v.version} ({formatDate(v.publishedAt)}){v.prerelease ? ' [Pre-release]' : ''}
+              </option>
+            ))}
+          </select>
+          {!loadingVersions && filteredVersions.length === 0 && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+              {t('core.noVersionsFound')}
+            </p>
+          )}
         </div>
-        <select
-          className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
-          value={selectedVersion}
-          onChange={(e) => setSelectedVersion(e.target.value)}
-          disabled={loadingVersions}
-        >
-          <option value="latest">{t('core.latestVersion')}</option>
-          {filteredVersions.map((v) => (
-            <option key={v.version} value={v.version}>
-              v{v.version} ({formatDate(v.publishedAt)}){v.prerelease ? ' [Pre-release]' : ''}
-            </option>
-          ))}
-        </select>
-        {!loadingVersions && filteredVersions.length === 0 && (
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            {t('core.noVersionsFound')}
-          </p>
-        )}
-      </div>
+      )}
 
       {downloadProgress && (
         <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
@@ -484,7 +518,7 @@ export default function CoreManager() {
         {canSwitchSelected && (
           <button
             className="flex-1 py-2 px-4 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white transition-colors disabled:opacity-50"
-            onClick={() => handleSwitchCore(selectedCoreType, selectedSpecificVersion || undefined)}
+            onClick={() => handleSwitchCore(selectedCoreType, isStableWithVersion ? selectedSpecificVersion : undefined)}
             disabled={loading}
           >
             {loading ? t('core.switching') : t('core.switchToThisCore')}
@@ -545,6 +579,16 @@ export default function CoreManager() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title={t('core.confirmDeleteTitle', '删除内核')}
+        description={t('core.confirmDelete')}
+        confirmText={t('core.delete')}
+        cancelText={t('core.cancel', '取消')}
+        onConfirm={confirmDeleteCore}
+        onCancel={() => { setDeleteConfirmOpen(false); setPendingDeletePath(null); }}
+      />
     </div>
   );
 }

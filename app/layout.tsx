@@ -2,7 +2,6 @@
 
 import "./globals.css";
 import { useEffect, useState } from "react";
-import { SpeedTestProvider } from "./contexts/SpeedTestContext";
 import { ToastContainer } from "@/components/ui/toast";
 import '@/i18n';
 
@@ -183,9 +182,7 @@ export default function RootLayout({
         <link rel="icon" href="/favicon.ico" />
       </head>
       <body className="antialiased min-h-screen text-foreground">
-        <SpeedTestProvider>
           {children}
-        </SpeedTestProvider>
         <ToastContainer />
       </body>
     </html>

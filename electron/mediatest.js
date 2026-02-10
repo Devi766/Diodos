@@ -142,7 +142,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
       console.log(`[mediatest.js] 使用 switch 语句处理服务: ${serviceName}`);
       switch (serviceName) {
         case 'Netflix': {
-          // 使用新的reactContext解析机制检测Netflix (参考Android版本NetflixDetector.kt)
+          // 使用新的 reactContext 解析机制检测 Netflix
           await logger.log('开始检测Netflix (使用reactContext解析机制)...');
 
           // Netflix自制剧测试URL (LEGO Ninjago)
@@ -341,7 +341,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'Disney+': {
-          // 参考check.sh实现，使用Disney+ API
+          // 使用 Disney+ API 检测
           await logger.log('开始检测Disney+...');
           
           try {
@@ -479,7 +479,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'YouTube Premium': {
-          // YouTube Premium检测逻辑，参考check.sh
+          // YouTube Premium 检测逻辑
           await logger.log('开始检测YouTube Premium...');
           
           const response = await fetch('https://www.youtube.com/premium', {
@@ -540,7 +540,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'BBC iPlayer': {
-          // BBC iPlayer检测逻辑 - 使用官方API接口检测，参考check.sh
+          // BBC iPlayer 检测逻辑 - 使用官方 API 接口检测
           await logger.log('开始检测BBC iPlayer...');
           
           // 使用官方API检测接口
@@ -585,7 +585,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'Hulu': {
-          // Hulu检测逻辑(美国Hulu)，参考check.sh
+          // Hulu 检测逻辑（美国 Hulu）
           await logger.log('开始检测Hulu(US)...');
           
           // 使用登录API测试地区限制
@@ -646,7 +646,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         
         case 'AbemaTV':
         case 'Abema TV': {
-          // AbemaTV检测逻辑 - 使用官方API检测，参考check.sh
+          // AbemaTV 检测逻辑 - 使用官方 API 检测
           await logger.log('开始检测AbemaTV...');
           
           try {
@@ -703,7 +703,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         
         case 'myTVSuper':
         case 'MyTVSuper': {
-          // myTVSuper检测逻辑 - 香港本地流媒体服务，参考check.sh
+          // myTVSuper 检测逻辑 - 香港本地流媒体服务
           await logger.log('开始检测myTVSuper...');
           
           try {
@@ -755,14 +755,14 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'Bilibili港澳台': {
-          // Bilibili港澳台解锁检测，参考check.sh
+          // Bilibili 港澳台解锁检测
           await logger.log('开始检测Bilibili港澳台...');
           
           try {
-            // 使用和check.sh相同的API端点和参数
+            // 使用统一的 API 端点和参数
             const randsession = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
             
-            // 港澳台限定内容检测：使用与check.sh中相同的参数
+            // 港澳台限定内容检测参数
             const hkmctwResponse = await fetch(`https://api.bilibili.com/pgc/player/web/playurl?avid=18281381&cid=29892777&qn=0&type=&otype=json&ep_id=183799&fourk=1&fnver=0&fnval=16&session=${randsession}&module=bangumi`, {
               ...baseRequestOptions,
               headers: {
@@ -811,14 +811,14 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'Bilibili台湾': {
-          // 仅台湾限定内容解锁检测，参考check.sh
+          // 仅台湾限定内容解锁检测
           await logger.log('开始检测Bilibili台湾...');
           
           try {
-            // 使用和check.sh相同的API端点和参数
+            // 使用统一的 API 端点和参数
             const randsession = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
             
-            // 台湾限定内容检测：使用与check.sh中相同的参数
+            // 台湾限定内容检测参数
             const twResponse = await fetch(`https://api.bilibili.com/pgc/player/web/playurl?avid=50762638&cid=100279344&qn=0&type=&otype=json&ep_id=268176&fourk=1&fnver=0&fnval=16&session=${randsession}&module=bangumi`, {
               ...baseRequestOptions,
               headers: {
@@ -1013,7 +1013,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'Meta AI': {
-          // Meta AI可用性检测，参考check.sh
+          // Meta AI 可用性检测
           await logger.log('开始检测Meta AI...');
           
           try {
@@ -1085,7 +1085,7 @@ async function testMediaStreaming(serviceName, checkUrl) {
         }
         
         case 'Bing区域': {
-          // Bing区域检测，参考check.sh
+          // Bing 区域检测
           await logger.log('开始检测Bing区域...');
           
           try {

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play, ZapIcon, ArrowRight, RefreshCw } from 'lucide-react';
+import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
@@ -19,8 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import SpeedtestShare from '../components/SpeedtestShare';
 import MediaStreamingTest from '../components/MediaStreamingTest';
-import BatchSpeedtest from '../components/BatchSpeedtest';
-import { useSpeedTest } from '../contexts/SpeedTestContext';
+import LoopbackManager from '@/components/LoopbackManager';
 import { useTranslation } from 'react-i18next';
 
 export default function ToolsPage() {
@@ -29,19 +28,9 @@ export default function ToolsPage() {
   const [speedtestDialogOpen, setSpeedtestDialogOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mediaTestDialogOpen, setMediaTestDialogOpen] = useState(false);
-  const [batchTestDialogOpen, setBatchTestDialogOpen] = useState(false);
+  const [loopbackDialogOpen, setLoopbackDialogOpen] = useState(false);
   const [isMacOS, setIsMacOS] = useState(false);
 
-  // 获取后台测速状态
-  const {
-    isBackgroundTesting,
-    currentNodeName: bgTestNodeName,
-    progress: bgTestProgress,
-    testingPhase: bgTestPhase,
-    navigateToTest,
-    showSpeedTestDialog,
-    setShowSpeedTestDialog
-  } = useSpeedTest();
   const [speedtestRunning, setSpeedtestRunning] = useState(false);
   const [speedtestResult, setSpeedtestResult] = useState<null | {
     downloadSpeed: number;
@@ -236,22 +225,8 @@ export default function ToolsPage() {
     }
   }, [speedtestRunning, speedtestResult]);
 
-  const openEnableLoopbackTool = async () => {
-    try {
-      if (window.electronAPI) {
-        const result = await window.electronAPI.openToolsApp('EnableLoopback.exe');
-        if (result.success) {
-          toast.success(t('tools.enableLoopback.launchSuccess'));
-        } else {
-          toast.error(t('tools.enableLoopback.launchError', { error: result.error }));
-        }
-      } else {
-        toast.error(t('tools.enableLoopback.noAccess'));
-      }
-    } catch (error) {
-      console.error('启动工具出错:', error);
-      toast.error(t('tools.enableLoopback.error'));
-    }
+  const openLoopbackManager = () => {
+    setLoopbackDialogOpen(true);
   };
 
   const openSpeedtestDialog = () => {
@@ -273,10 +248,6 @@ export default function ToolsPage() {
 
   const openMediaTestDialog = () => {
     setMediaTestDialogOpen(true);
-  };
-
-  const openBatchTestDialog = () => {
-    setShowSpeedTestDialog(true);
   };
 
   const runSpeedtest = async () => {
@@ -499,28 +470,28 @@ export default function ToolsPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-          {/* EnableLoopback 工具 - 仅在 Windows 上显示 */}
+          {/* UWP 回环豁免管理 - 仅在 Windows 上显示 */}
           {!isMacOS && (
             <Card className="overflow-hidden hover:shadow-sm transition-shadow">
               <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
                   <NetworkIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                  <CardTitle>{t('tools.enableLoopback.title')}</CardTitle>
+                  <CardTitle>{t('tools.loopback.title')}</CardTitle>
                 </div>
                 <CardDescription className="text-gray-500 dark:text-gray-400">
-                  {t('tools.enableLoopback.description')}
+                  {t('tools.loopback.description')}
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0">
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  {t('tools.enableLoopback.detail')}
+                  {t('tools.loopback.detail')}
                 </p>
                 <Button
-                  onClick={openEnableLoopbackTool}
+                  onClick={openLoopbackManager}
                   className="w-full bg-blue-500 hover:bg-blue-600 text-white"
                   variant="default"
                 >
-                  {t('tools.enableLoopback.launch')}
+                  {t('tools.loopback.open')}
                 </Button>
               </CardContent>
             </Card>
@@ -574,56 +545,6 @@ export default function ToolsPage() {
               >
                 {t('tools.mediaTest.start')}
               </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
-            <CardHeader className="pb-6">
-              <div className="flex items-center space-x-3 mb-2">
-                <ZapIcon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                <CardTitle>{t('tools.batchTest.title')}</CardTitle>
-              </div>
-              <CardDescription className="text-gray-500 dark:text-gray-400">
-                {t('tools.batchTest.description')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              {isBackgroundTesting ? (
-                <>
-                  <div className="text-sm text-blue-500 font-medium mb-2 flex items-center">
-                    <Activity className="w-4 h-4 mr-1 animate-pulse" />
-                    {t('tools.batchTest.testing', { progress: Math.round(bgTestProgress) })}
-                  </div>
-                  <p className="text-xs text-gray-500 mb-2">
-                    {t('tools.batchTest.currentNode', { node: bgTestNodeName || t('tools.batchTest.preparing') })}
-                    {bgTestPhase && (
-                      <span className="block mt-1">{t('tools.batchTest.testPhase', { phase: bgTestPhase })}</span>
-                    )}
-                  </p>
-                  <Progress value={bgTestProgress} className="h-1 mb-3" />
-                  <Button
-                    onClick={navigateToTest}
-                    className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-                    variant="default"
-                  >
-                    <ArrowRight className="w-4 h-4 mr-1" />
-                    {t('tools.batchTest.goToPage')}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    {t('tools.batchTest.detail')}
-                  </p>
-                  <Button
-                    onClick={openBatchTestDialog}
-                    className="w-full bg-blue-500 hover:bg-blue-600 text-white"
-                    variant="default"
-                  >
-                    {t('tools.batchTest.start')}
-                  </Button>
-                </>
-              )}
             </CardContent>
           </Card>
 
@@ -913,28 +834,24 @@ export default function ToolsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 批量测速对话框 */}
-      <Dialog open={showSpeedTestDialog} onOpenChange={setShowSpeedTestDialog}>
-        <DialogContent className="sm:max-w-[800px]">
+      {/* UWP 回环豁免管理对话框 */}
+      <Dialog open={loopbackDialogOpen} onOpenChange={setLoopbackDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
-            <DialogTitle>{t('tools.batchTest.dialogTitle')}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <NetworkIcon className="w-5 h-5" /> {t('tools.loopback.dialogTitle')}
+            </DialogTitle>
             <DialogDescription>
-              {t('tools.batchTest.dialogDescription')}
+              {t('tools.loopback.dialogDescription')}
             </DialogDescription>
           </DialogHeader>
 
-          <BatchSpeedtest onClose={() => setShowSpeedTestDialog(false)} inDialog={true} enableBackground={true} />
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowSpeedTestDialog(false)}
-            >
-              {t('tools.batchTest.close')}
-            </Button>
-          </DialogFooter>
+          <div className="py-2">
+            <LoopbackManager />
+          </div>
         </DialogContent>
       </Dialog>
+
     </Layout>
   );
 }

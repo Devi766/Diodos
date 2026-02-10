@@ -1,7 +1,6 @@
 /**
  * 订阅内容预处理器
- * 参考 Sub-Store 的预处理逻辑，支持多种订阅格式
- * 对应安卓端的 SubscriptionPreprocessor.kt
+ * 支持多种订阅格式的预处理逻辑
  */
 
 const yaml = require('js-yaml');
@@ -173,7 +172,7 @@ class SubscriptionPreprocessor {
    * - 如果解码后看起来是一串 URI 列表，就直接返回解码结果，交由后续按行解析
    */
   static handleBase64UriList(content) {
-    // 去掉空白，按 Sub-Store 思路宽松判断是否为 Base64 封装
+    // 去掉空白，宽松判断是否为 Base64 封装
     const compact = content.replace(/\s+/g, '');
     if (compact.length < 16) {
       return null;

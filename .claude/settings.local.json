@@ -22,7 +22,10 @@
       "Bash(curl -s -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/vernesong/mihomo/releases?per_page=30\")",
       "Bash(curl -s -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=100\" -o metacubex_releases.json)",
       "Bash(curl -s -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/vernesong/mihomo/releases?per_page=100\" -o vernesong_releases.json)",
-      "Bash(node -e \"const fs=require\\(''fs''\\); const data=JSON.parse\\(fs.readFileSync\\(''metacubex_releases.json'',''utf8''\\)\\); console.log\\(''Total releases:'', data.length\\); console.log\\(''\\\\nAll prerelease versions:''\\); data.filter\\(r=>r.prerelease\\).forEach\\(\\(r,i\\)=>console.log\\(\\(i+1\\) + ''. '' + r.tag_name + '' | date: '' + r.published_at.split\\(''T''\\)[0]\\)\\)\")"
+      "Bash(node -e \"const fs=require\\(''fs''\\); const data=JSON.parse\\(fs.readFileSync\\(''metacubex_releases.json'',''utf8''\\)\\); console.log\\(''Total releases:'', data.length\\); console.log\\(''\\\\nAll prerelease versions:''\\); data.filter\\(r=>r.prerelease\\).forEach\\(\\(r,i\\)=>console.log\\(\\(i+1\\) + ''. '' + r.tag_name + '' | date: '' + r.published_at.split\\(''T''\\)[0]\\)\\)\")",
+      "Bash(del \"F:\\\\code\\\\FlyClash-PC\\\\flycast-ui\\\\electron\\\\batchspeedtest.js\")",
+      "mcp__playwright-claude__browser_take_screenshot",
+      "WebFetch(domain:docs.microsoft.com)"
     ],
     "deny": [],
     "ask": []

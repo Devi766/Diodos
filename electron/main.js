@@ -650,30 +650,46 @@ registerConfigIconHandlers(app);
 const { registerConverterHandlers } = require('./ipc-handlers/converter');
 registerConverterHandlers(app, dbManager);
 
-// 导入批量测速模块
-const {
-  initBatchSpeedtest,
-  runProxySpeedtest,
-  testUdpConnectivity,
-  saveSpeedtestReport,
-  getSpeedtestReports,
-  getSpeedtestReport,
-  generateSpeedtestReportWithPuppeteer,
-  copySpeedtestReportWithPuppeteer,
-  cancelBatchSpeedtest
-} = require('./batchspeedtest');
+// 注册 UWP 回环豁免管理处理器
+const loopbackManager = require('./loopback-manager');
 
-// 初始化批量测速模块
-// 注意：这里传递的是函数引用和 state 对象，而不是具体的值
-// 这样可以确保在调用时获取最新的 state.activeApiConfig
-initBatchSpeedtest({
-  switchNode: switchNode,
-  fetchMihomoAPI: fetchMihomoAPI,
-  get activeApiConfig() {
-    return state.activeApiConfig;
+ipcMain.handle('loopback:get-apps', async () => {
+  try {
+    return await loopbackManager.getAppsWithLoopbackStatus();
+  } catch (error) {
+    console.error('[IPC] loopback:get-apps 失败:', error);
+    return { success: false, error: error.message, apps: [], isAdmin: false };
   }
 });
-console.log('[启动] 批量测速模块已初始化');
+
+ipcMain.handle('loopback:save-config', async (_, exemptSids) => {
+  try {
+    return await loopbackManager.saveLoopbackConfig(exemptSids);
+  } catch (error) {
+    console.error('[IPC] loopback:save-config 失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('loopback:add-exemption', async (_, sid) => {
+  try {
+    return await loopbackManager.addLoopbackExemption(sid);
+  } catch (error) {
+    console.error('[IPC] loopback:add-exemption 失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('loopback:remove-exemption', async (_, sid) => {
+  try {
+    return await loopbackManager.removeLoopbackExemption(sid);
+  } catch (error) {
+    console.error('[IPC] loopback:remove-exemption 失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 导入批量测速模块
 
 const {
   ensureUserSettingsFile,
@@ -2446,78 +2462,6 @@ app.whenReady().then(async () => {
     }
   }, 1000);
 
-  // 注册批量测速相关的 IPC handlers
-  ipcMain.handle('run-proxy-speedtest', async (event, options) => {
-    try {
-      return await runProxySpeedtest(options);
-    } catch (error) {
-      console.error('代理测速失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('test-udp-connectivity', async (event, options) => {
-    try {
-      return await testUdpConnectivity(options);
-    } catch (error) {
-      console.error('UDP连通性测试失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('save-speedtest-report', async (event, reportData) => {
-    try {
-      return await saveSpeedtestReport(reportData);
-    } catch (error) {
-      console.error('保存测速报告失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('get-speedtest-reports', async () => {
-    try {
-      return await getSpeedtestReports();
-    } catch (error) {
-      console.error('获取测速报告列表失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('get-speedtest-report', async (event, reportId) => {
-    try {
-      return await getSpeedtestReport(reportId);
-    } catch (error) {
-      console.error('获取测速报告失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('generate-speedtest-report-pdf', async (event, reportData) => {
-    try {
-      return await generateSpeedtestReportWithPuppeteer(reportData);
-    } catch (error) {
-      console.error('生成测速报告PDF失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('copy-speedtest-report', async (event, reportData) => {
-    try {
-      return await copySpeedtestReportWithPuppeteer(reportData);
-    } catch (error) {
-      console.error('复制测速报告失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('cancel-batch-speedtest', async () => {
-    try {
-      return cancelBatchSpeedtest();
-    } catch (error) {
-      console.error('取消测速失败:', error);
-      return { success: false, error: error.message };
-    }
-  });
 
   // 注册API: 获取当前代理设置
   ipcMain.handle('get-proxy-settings', async () => {

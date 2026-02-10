@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle } from 'lucide-react';
 import { useThemeColor } from '@/hooks/useThemeColor';
 
@@ -25,16 +26,16 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <>
       {/* 背景遮罩 */}
       <div
-        className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm z-50 transition-all data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm z-[100]"
         onClick={onCancel}
       />
 
       {/* 对话框 */}
-      <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-xl grid gap-4 glass-panel card-surface rounded-[28px] p-8 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+      <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] w-full max-w-xl grid gap-4 glass-panel card-surface rounded-[28px] p-8">
         {/* 图标和标题 */}
         <div className="flex items-start gap-4">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
@@ -76,7 +77,8 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </button>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 };
 
