@@ -612,7 +612,7 @@
     "selectType": "选择内核类型",
     "stable": "稳定版",
     "alpha": "Alpha 预发布版",
-    "smart": "Smart 智能内核",
+    "smart": "Smart 分支内核",
     "specific": "指定版本",
     "mihomoDesc": "来自 MetaCubeX/mihomo 的最新稳定版本",
     "mihomo-alphaDesc": "来自 MetaCubeX/mihomo 的 Alpha 预发布版本，包含最新特性",
