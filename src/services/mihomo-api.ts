@@ -285,6 +285,7 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
         proxy: string
         size?: number
         extra?: {
+          disabled?: boolean
           hitCount?: number
           missCount?: number
           hitAt?: string
@@ -356,6 +357,17 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
     });
   }
 
+  /**
+   * 切换规则启用/禁用状态
+   * @param data - { [ruleIndex]: boolean } true=禁用, false=启用
+   */
+  const toggleRuleDisabled = async (data: Record<number, boolean>) => {
+    return await makeRequest('/rules/disable', {
+      method: 'PATCH',
+      body: data,
+    });
+  }
+
   return {
     configs,
     patchConfigs,
@@ -367,6 +379,7 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
     putProxies,
     connections,
     matchRules,
+    toggleRuleDisabled,
     proxyProviders,
     updateProxyProvider,
     ruleProviders,
