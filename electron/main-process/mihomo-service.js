@@ -19,6 +19,43 @@ module.exports = function initMihomoService(context) {
   const { RunningMode, setRunningMode, getRunningMode, isServiceMode, getSocketPath, getServiceSocketPath, getSidecarSocketPath } = require('../utils/running-mode');
   console.log('[mihomo-service] applyOverrides函数已导入:', typeof applyOverrides);
 
+  async function waitForProcessExit(proc, timeoutMs = 5000) {
+    if (!proc) return true;
+    if (proc.exitCode !== null) return true;
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        resolve(ok);
+      };
+
+      const timer = setTimeout(() => {
+        try {
+          proc.removeListener('close', onClose);
+          proc.removeListener('exit', onClose);
+          proc.removeListener('error', onError);
+        } catch {}
+        done(false);
+      }, timeoutMs);
+
+      const onClose = () => {
+        clearTimeout(timer);
+        done(true);
+      };
+
+      const onError = () => {
+        clearTimeout(timer);
+        done(false);
+      };
+
+      proc.once('close', onClose);
+      proc.once('exit', onClose);
+      proc.once('error', onError);
+    });
+  }
+
   // 安全向渲染进程发送消息，避免在窗口销毁后触发“Object has been destroyed”异常
   function safeSend(channel, ...args) {
     try {
@@ -50,7 +87,9 @@ module.exports = function initMihomoService(context) {
 
     const tunEnabled = dbManager ? dbManager.getSetting('tunModeEnabled', false) : false;
 
-    if ((isMac || isLinux) && tunEnabled) {
+    // 仅 macOS 使用系统授权副本内核。
+    // Linux 没有系统副本路径概念，避免与 tunManager.getKernelPath 互相调用形成递归。
+    if (isMac && tunEnabled) {
       if (context.tunManager && typeof context.tunManager.getKernelPath === 'function') {
         const systemKernel = context.tunManager.getKernelPath();
         if (systemKernel && fs.existsSync(systemKernel)) {
@@ -838,12 +877,19 @@ module.exports = function initMihomoService(context) {
         console.log('已解析配置文件，包含代理节点：', configData.proxies.length);
       }
 
-      // 清理旧的 socket 文件
-      await cleanupSocketFile();
-
       if (state.mihomoProcess) {
-        state.mihomoProcess.kill();
+        const previousProcess = state.mihomoProcess;
+        try {
+          previousProcess.kill('SIGTERM');
+        } catch {}
+        await waitForProcessExit(previousProcess, 5000);
+        if (state.mihomoProcess === previousProcess) {
+          state.mihomoProcess = null;
+        }
       }
+
+      // 清理旧的 socket 文件（必须在旧进程退出后）
+      await cleanupSocketFile();
 
       state.configFilePath = configPath;
       state.preferredConfig = configPath; // 同时更新用户选择的配置
@@ -867,8 +913,23 @@ module.exports = function initMihomoService(context) {
       // 在 Unix 系统上确保内核文件有执行权限
       if (process.platform !== 'win32') {
         try {
-          fs.chmodSync(binPath, 0o755);
-          console.log('[startMihomo] 已设置内核文件执行权限:', binPath);
+          const stat = fs.statSync(binPath);
+          const currentMode = stat.mode & 0o7777;
+          const desiredMode = currentMode | 0o111;
+          // 仅补齐执行位，保留 setuid/setgid 等特殊位，避免破坏已授权内核权限
+          if (desiredMode !== currentMode) {
+            fs.chmodSync(binPath, desiredMode);
+            console.log('[startMihomo] 已补齐内核执行权限:', {
+              path: binPath,
+              from: currentMode.toString(8),
+              to: desiredMode.toString(8)
+            });
+          } else {
+            console.log('[startMihomo] 内核执行权限已满足，保持原权限位:', {
+              path: binPath,
+              mode: currentMode.toString(8)
+            });
+          }
         } catch (error) {
           console.error('[startMihomo] 设置执行权限失败:', error);
           // 继续尝试启动,可能已经有权限了
@@ -1115,7 +1176,7 @@ module.exports = function initMihomoService(context) {
       // 使用已经设置好的 socketPath（sidecar 模式）
       console.log('[Socket] Mihomo 启动参数:', controllerParam, socketPath);
 
-      state.mihomoProcess = spawn(binPath, [
+      const spawnedProcess = spawn(binPath, [
         '-d', mihomoDir,
         '-f', overrideConfigPath,
         controllerParam, socketPath  // 使用 socket 而不是 HTTP 端口
@@ -1129,13 +1190,15 @@ module.exports = function initMihomoService(context) {
         windowsHide: false,
         stdio: ['ignore', 'pipe', 'pipe']
       });
+      state.mihomoProcess = spawnedProcess;
+      const spawnedPid = spawnedProcess.pid;
 
       // 收集 stdout 和 stderr 输出用于错误提示
       let stdoutOutput = '';
       let stderrOutput = '';
       let fatalErrorDetected = false;
 
-      state.mihomoProcess.stdout.on('data', (data) => {
+      spawnedProcess.stdout.on('data', (data) => {
         const logContent = data.toString();
         stdoutOutput += logContent;  // 收集 stdout 输出
         console.log(`mihomo stdout: ${logContent}`);
@@ -1193,7 +1256,7 @@ module.exports = function initMihomoService(context) {
         process.stdout.write(data);
       });
 
-      state.mihomoProcess.stderr.on('data', (data) => {
+      spawnedProcess.stderr.on('data', (data) => {
         const errorText = data.toString();
         stderrOutput += errorText;  // 收集 stderr 输出
         console.error(`mihomo stderr: ${errorText}`);
@@ -1201,10 +1264,15 @@ module.exports = function initMihomoService(context) {
         process.stderr.write(data);
       });
 
-      state.mihomoProcess.on('close', (code) => {
+      spawnedProcess.on('close', (code) => {
         console.log(`mihomo process exited with code ${code}`);
+        // 仅处理当前活跃进程的退出，避免旧进程 close 事件覆盖新进程状态
+        if (!state.mihomoProcess || state.mihomoProcess.pid !== spawnedPid) {
+          console.log('[startMihomo] Ignore stale process close event:', spawnedPid);
+          return;
+        }
         if (typeof context.handleMihomoProcessExit === 'function') {
-          context.handleMihomoProcessExit(code);
+          context.handleMihomoProcessExit(code, spawnedPid);
         }
       });
 
@@ -1230,8 +1298,18 @@ module.exports = function initMihomoService(context) {
       }
 
       for (let i = 0; i < maxRetries; i++) {
-        // 首先检查进程是否已退出
-        if (state.mihomoProcess && state.mihomoProcess.exitCode !== null) {
+        // 首先检查当前启动进程是否仍为活跃进程且未退出
+        if (!state.mihomoProcess || state.mihomoProcess.pid !== spawnedPid) {
+          const errorMessage = '内核启动失败：进程状态异常（旧进程事件覆盖）';
+          console.error('[startMihomo] Process state mismatch during startup:', {
+            spawnedPid,
+            activePid: state.mihomoProcess?.pid
+          });
+          safeSend('mihomo-start-failed', { error: errorMessage });
+          return { success: false, error: errorMessage };
+        }
+
+        if (state.mihomoProcess.exitCode !== null) {
           console.error(`Mihomo在启动过程中退出，退出代码: ${state.mihomoProcess.exitCode}`);
 
           // 构建详细的错误信息
@@ -1318,7 +1396,7 @@ module.exports = function initMihomoService(context) {
         console.error('保存最后使用的配置失败:', saveError);
       }
 
-      if (state.mihomoProcess) {
+      if (state.mihomoProcess && state.mihomoProcess.pid === spawnedPid) {
         // 设置运行模式为 sidecar 模式
         setRunningMode(RunningMode.SIDECAR);
         console.log('[startMihomo] Sidecar 模式启动成功');
@@ -1364,8 +1442,14 @@ module.exports = function initMihomoService(context) {
       } else if (currentMode === RunningMode.SIDECAR) {
         // Sidecar 模式：直接 kill 进程
         if (state.mihomoProcess) {
-          state.mihomoProcess.kill();
-          state.mihomoProcess = null;
+          const previousProcess = state.mihomoProcess;
+          try {
+            previousProcess.kill('SIGTERM');
+          } catch {}
+          await waitForProcessExit(previousProcess, 5000);
+          if (state.mihomoProcess === previousProcess) {
+            state.mihomoProcess = null;
+          }
           console.log('[stopMihomo] 已停止 sidecar 进程');
         }
       }
@@ -1608,8 +1692,14 @@ module.exports = function initMihomoService(context) {
       const currentConfig = state.configFilePath;
 
       if (state.mihomoProcess) {
-        state.mihomoProcess.kill();
-        state.mihomoProcess = null;
+        const previousProcess = state.mihomoProcess;
+        try {
+          previousProcess.kill('SIGTERM');
+        } catch {}
+        await waitForProcessExit(previousProcess, 5000);
+        if (state.mihomoProcess === previousProcess) {
+          state.mihomoProcess = null;
+        }
         if (typeof context.stopTrafficStatsUpdate === 'function') {
           context.stopTrafficStatsUpdate();
         }
@@ -1623,8 +1713,13 @@ module.exports = function initMihomoService(context) {
       }
 
       if (currentConfig) {
-        const success = await startMihomo(currentConfig);
-        return { success, message: success ? '服务已重启' : '重启失败' };
+        const result = await startMihomo(currentConfig);
+        const success = typeof result === 'object' ? !!result?.success : !!result;
+        return {
+          success,
+          message: success ? '服务已重启' : '重启失败',
+          ...(success ? {} : { error: result?.error || '启动失败' })
+        };
       }
 
       return { success: false, message: '没有活动的配置文件' };
@@ -1667,8 +1762,14 @@ module.exports = function initMihomoService(context) {
       } else if (state.mihomoProcess) {
         // Sidecar 模式：直接停止进程
         console.log('[restartMihomo] Sidecar 模式，停止当前进程...');
-        state.mihomoProcess.kill();
-        state.mihomoProcess = null;
+        const previousProcess = state.mihomoProcess;
+        try {
+          previousProcess.kill('SIGTERM');
+        } catch {}
+        await waitForProcessExit(previousProcess, 5000);
+        if (state.mihomoProcess === previousProcess) {
+          state.mihomoProcess = null;
+        }
         if (typeof context.stopTrafficStatsUpdate === 'function') {
           context.stopTrafficStatsUpdate();
         }

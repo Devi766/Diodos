@@ -14,6 +14,7 @@ const finalhandler = require('finalhandler');
 const security = require('./security');
 const { enableAcrylic } = require('./windows/acrylic');
 const axios = require('axios');
+const { RunningMode, setRunningMode } = require('./utils/running-mode');
 
 // 新的 helper 服务是独立的 Go 程序，不再需要 service-worker 模式
 {
@@ -401,9 +402,14 @@ context.stopConnectionsWebSocket = stopConnectionsWebSocket;
 context.updateCurrentNodeInfo = updateCurrentNodeInfo;
 
 // Mihomo进程意外停止时的处理函数
-function handleMihomoProcessExit(code) {
-  console.log(`Mihomo process exited, code: ${code}`);
+function handleMihomoProcessExit(code, exitedPid = null) {
+  if (exitedPid && state.mihomoProcess && state.mihomoProcess.pid !== exitedPid) {
+    console.log(`[MihomoExit] Ignore stale exit event: pid=${exitedPid}, activePid=${state.mihomoProcess.pid}`);
+    return;
+  }
+  console.log(`Mihomo process exited, code: ${code}, pid: ${exitedPid ?? 'unknown'}`);
   state.mihomoProcess = null;
+  setRunningMode(RunningMode.NOT_RUNNING);
   stopTrafficStatsUpdate();
   stopConnectionsWebSocket();
   stopMihomoLogs();

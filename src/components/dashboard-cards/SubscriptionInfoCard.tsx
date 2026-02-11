@@ -212,9 +212,9 @@ export function SubscriptionInfoCard() {
                   <Clock className="h-3 w-3 text-muted-foreground" />
                   <span className="text-xs text-muted-foreground">{t('dashboard.expiryDate')}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-col items-end leading-tight">
                   <span className="text-xs text-foreground">{expiryInfo.date.toLocaleDateString()}</span>
-                  <span className={`text-[10px] font-medium ${getExpiryColor(expiryInfo.daysLeft)}`}>
+                  <span className={`mt-0.5 text-[10px] font-medium ${getExpiryColor(expiryInfo.daysLeft)}`}>
                     {expiryInfo.daysLeft > 0
                       ? t('dashboard.daysRemaining', { days: expiryInfo.daysLeft })
                       : t('dashboard.expired')}
