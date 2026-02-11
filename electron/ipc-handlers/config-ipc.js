@@ -68,45 +68,63 @@ function registerConfigIpcHandlers(deps) {
   // Kernel config
   // =====================================================================
 
-  ipcMain.handle('get-kernel-config', () => {
-    try {
-      const userSettings = context.getUserSettings ? context.getUserSettings() : {};
-      console.log('[get-kernel-config] Reading config from user settings');
+  // Kernel config fields that live at the top level of a mihomo YAML
+  const kernelFields = [
+    'ipv6', 'log-level', 'mixed-port', 'allow-lan',
+    'lan-allowed-ips', 'lan-disallowed-ips',
+    'external-controller', 'secret', 'authentication', 'skip-auth-prefixes',
+    'unified-delay', 'tcp-concurrent', 'disable-keep-alive',
+    'keep-alive-idle', 'keep-alive-interval',
+    'global-client-fingerprint', 'find-process-mode', 'interface-name', 'profile',
+  ];
 
-      return {
-        success: true,
-        config: {
-          ipv6: userSettings.ipv6,
-          'log-level': userSettings['log-level'],
-          'mixed-port': userSettings['mixed-port'],
-          'allow-lan': userSettings['allow-lan'],
-          'lan-allowed-ips': userSettings['lan-allowed-ips'],
-          'lan-disallowed-ips': userSettings['lan-disallowed-ips'],
-          'external-controller': userSettings['external-controller'],
-          secret: userSettings.secret,
-          authentication: userSettings.authentication,
-          'skip-auth-prefixes': userSettings['skip-auth-prefixes'],
-          'unified-delay': userSettings['unified-delay'],
-          'tcp-concurrent': userSettings['tcp-concurrent'],
-          'disable-keep-alive': userSettings['disable-keep-alive'],
-          'keep-alive-idle': userSettings['keep-alive-idle'],
-          'keep-alive-interval': userSettings['keep-alive-interval'],
-          'global-client-fingerprint': userSettings['global-client-fingerprint'],
-          'find-process-mode': userSettings['find-process-mode'],
-          'interface-name': userSettings['interface-name'],
-          profile: userSettings.profile,
-        },
-      };
+  ipcMain.handle('get-kernel-config', (event, configPath) => {
+    try {
+      let source;
+      if (configPath && fs.existsSync(configPath)) {
+        console.log('[get-kernel-config] Reading from subscription YAML:', configPath);
+        const content = fs.readFileSync(configPath, 'utf8');
+        source = yaml.load(content) || {};
+      } else {
+        console.log('[get-kernel-config] Reading from user settings');
+        source = context.getUserSettings ? context.getUserSettings() : {};
+      }
+
+      const config = {};
+      for (const key of kernelFields) {
+        if (source[key] !== undefined) config[key] = source[key];
+      }
+
+      return { success: true, config };
     } catch (error) {
       console.error('Failed to get kernel config:', error);
       return { success: false, error: error.message };
     }
   });
 
-  ipcMain.handle('save-kernel-config', async (event, kernelConfig) => {
+  ipcMain.handle('save-kernel-config', async (event, kernelConfig, configPath) => {
     try {
       console.log('[save-kernel-config] ========== Saving kernel config ==========');
 
+      if (configPath && fs.existsSync(configPath)) {
+        // Write directly to subscription YAML file
+        console.log('[save-kernel-config] Writing to subscription YAML:', configPath);
+        const content = fs.readFileSync(configPath, 'utf8');
+        const config = yaml.load(content) || {};
+
+        for (const key of kernelFields) {
+          if (kernelConfig[key] !== undefined && kernelConfig[key] !== '') {
+            config[key] = kernelConfig[key];
+          } else {
+            delete config[key];
+          }
+        }
+
+        fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+        return { success: true, restarted: false, message: 'kernel config saved to YAML' };
+      }
+
+      // Fallback: save to user settings (no configPath)
       const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
 
       const filteredConfig = { ...kernelConfig };
@@ -146,26 +164,50 @@ function registerConfigIpcHandlers(deps) {
     'direct-nameserver': ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query'],
   };
 
-  ipcMain.handle('get-dns-config', () => {
+  ipcMain.handle('get-dns-config', (event, configPath) => {
     try {
-      const userSettings = context.getUserSettings ? context.getUserSettings() : {};
-      let dnsConfig = userSettings.dns;
+      let dnsConfig;
+      let hosts = {};
+
+      if (configPath && fs.existsSync(configPath)) {
+        console.log('[get-dns-config] Reading from subscription YAML:', configPath);
+        const content = fs.readFileSync(configPath, 'utf8');
+        const config = yaml.load(content) || {};
+        dnsConfig = config.dns;
+        hosts = config.hosts || {};
+      } else {
+        const userSettings = context.getUserSettings ? context.getUserSettings() : {};
+        dnsConfig = userSettings.dns;
+        hosts = userSettings.hosts || {};
+      }
 
       if (!dnsConfig || Object.keys(dnsConfig).length === 0) {
-        console.log('[get-dns-config] New user detected, applying default DNS config');
+        console.log('[get-dns-config] No DNS config found, applying defaults');
         dnsConfig = defaultDnsConfig;
       }
 
-      return { success: true, config: dnsConfig, hosts: userSettings.hosts || {} };
+      return { success: true, config: dnsConfig, hosts };
     } catch (error) {
       console.error('Failed to get DNS config:', error);
       return { success: false, error: error.message };
     }
   });
 
-  ipcMain.handle('save-dns-config', async (event, dnsConfig) => {
+  ipcMain.handle('save-dns-config', async (event, dnsConfig, configPath) => {
     try {
       console.log('[save-dns-config] ========== Saving DNS config ==========');
+
+      if (configPath && fs.existsSync(configPath)) {
+        // Write directly to subscription YAML file
+        console.log('[save-dns-config] Writing to subscription YAML:', configPath);
+        const content = fs.readFileSync(configPath, 'utf8');
+        const config = yaml.load(content) || {};
+        config.dns = dnsConfig;
+        fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+        return { success: true, restarted: false, message: 'dns config saved to YAML' };
+      }
+
+      // Fallback: save to user settings (no configPath)
       const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
       const newSettings = { ...currentSettings, dns: dnsConfig };
       return await saveConfigAndRestart('dns', currentSettings, newSettings);
@@ -254,6 +296,147 @@ function registerConfigIpcHandlers(deps) {
     } catch (error) {
       console.error('[save-sniffer-config] ========== Failed ==========');
       console.error('[save-sniffer-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // =====================================================================
+  // Proxy Groups config (read/write subscription YAML directly)
+  // =====================================================================
+
+  ipcMain.handle('get-proxy-groups-config', (event, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      return { success: true, groups: config['proxy-groups'] || [] };
+    } catch (error) {
+      console.error('[get-proxy-groups-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-proxy-groups-config', (event, groups, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      config['proxy-groups'] = groups;
+      fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+      return { success: true };
+    } catch (error) {
+      console.error('[save-proxy-groups-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // =====================================================================
+  // Rules config (read/write subscription YAML directly)
+  // =====================================================================
+
+  ipcMain.handle('get-rules-config', (event, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      return { success: true, rules: config.rules || [] };
+    } catch (error) {
+      console.error('[get-rules-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-rules-config', (event, rules, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      config.rules = rules;
+      fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+      return { success: true };
+    } catch (error) {
+      console.error('[save-rules-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // =====================================================================
+  // Providers config (read/write subscription YAML directly)
+  // =====================================================================
+
+  ipcMain.handle('get-providers-config', (event, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      return {
+        success: true,
+        proxyProviders: config['proxy-providers'] || {},
+        ruleProviders: config['rule-providers'] || {},
+      };
+    } catch (error) {
+      console.error('[get-providers-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-providers-config', (event, proxyProviders, ruleProviders, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      config['proxy-providers'] = proxyProviders;
+      config['rule-providers'] = ruleProviders;
+      fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+      return { success: true };
+    } catch (error) {
+      console.error('[save-providers-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // =====================================================================
+  // Proxies config (read/write subscription YAML directly)
+  // =====================================================================
+
+  ipcMain.handle('get-proxies-config', (event, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      return { success: true, proxies: config.proxies || [] };
+    } catch (error) {
+      console.error('[get-proxies-config] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('save-proxies-config', (event, proxies, configPath) => {
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'Config file not found' };
+      }
+      const content = fs.readFileSync(configPath, 'utf8');
+      const config = yaml.load(content) || {};
+      config.proxies = proxies;
+      fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: -1 }), 'utf8');
+      return { success: true };
+    } catch (error) {
+      console.error('[save-proxies-config] Error:', error);
       return { success: false, error: error.message };
     }
   });

@@ -317,6 +317,25 @@ export interface ElectronAPI {
   updateRuleProvider: (providerName: string) => Promise<{ success: boolean, error?: string }>;
   getRuntimeConfig: () => Promise<{ success: boolean, data?: any, error?: string }>;
 
+  // 配置编辑器
+  getKernelConfig: (configPath?: string) => Promise<{ success: boolean; config?: any; error?: string }>;
+  saveKernelConfig: (config: any, configPath?: string) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;
+  getDnsConfig: (configPath?: string) => Promise<{ success: boolean; config?: any; hosts?: Record<string, string | string[]>; error?: string }>;
+  saveDnsConfig: (config: any, configPath?: string) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;
+  saveHostsConfig: (hosts: Array<{ domain: string; value: string }>, configPath?: string) => Promise<{ success: boolean; error?: string }>;
+  getSnifferConfig: (configPath?: string) => Promise<{ success: boolean; config?: any; error?: string }>;
+  saveSnifferConfig: (config: any, configPath?: string) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;
+
+  // 代理组/规则/提供者配置（直接读写订阅 YAML）
+  getProxyGroupsConfig: (configPath: string) => Promise<{ success: boolean; groups?: any[]; error?: string }>;
+  saveProxyGroupsConfig: (groups: any[], configPath: string) => Promise<{ success: boolean; error?: string }>;
+  getRulesConfig: (configPath: string) => Promise<{ success: boolean; rules?: string[]; error?: string }>;
+  saveRulesConfig: (rules: string[], configPath: string) => Promise<{ success: boolean; error?: string }>;
+  getProvidersConfig: (configPath: string) => Promise<{ success: boolean; proxyProviders?: Record<string, any>; ruleProviders?: Record<string, any>; error?: string }>;
+  saveProvidersConfig: (proxyProviders: Record<string, any>, ruleProviders: Record<string, any>, configPath: string) => Promise<{ success: boolean; error?: string }>;
+  getProxiesConfig: (configPath: string) => Promise<{ success: boolean; proxies?: any[]; error?: string }>;
+  saveProxiesConfig: (proxies: any[], configPath: string) => Promise<{ success: boolean; error?: string }>;
+
   // 覆写管理
   getOverrides: () => Promise<any[]>;
   addOverride: (item: any) => Promise<any>;

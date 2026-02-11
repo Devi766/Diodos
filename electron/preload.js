@@ -537,12 +537,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getIconDataURL: (processPath) => ipcRenderer.invoke('get-icon-dataurl', processPath),
 
   // 内核配置
-  getKernelConfig: () => ipcRenderer.invoke('get-kernel-config'),
-  saveKernelConfig: (config) => ipcRenderer.invoke('save-kernel-config', config),
+  getKernelConfig: (configPath) => ipcRenderer.invoke('get-kernel-config', configPath),
+  saveKernelConfig: (config, configPath) => ipcRenderer.invoke('save-kernel-config', config, configPath),
 
   // DNS 配置
-  getDnsConfig: () => ipcRenderer.invoke('get-dns-config'),
-  saveDnsConfig: (config) => ipcRenderer.invoke('save-dns-config', config),
+  getDnsConfig: (configPath) => ipcRenderer.invoke('get-dns-config', configPath),
+  saveDnsConfig: (config, configPath) => ipcRenderer.invoke('save-dns-config', config, configPath),
 
   // Hosts 配置
   saveHostsConfig: (hosts) => ipcRenderer.invoke('save-hosts-config', hosts),
@@ -550,6 +550,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Sniffer 配置
   getSnifferConfig: () => ipcRenderer.invoke('get-sniffer-config'),
   saveSnifferConfig: (config) => ipcRenderer.invoke('save-sniffer-config', config),
+
+  // 代理组/规则/提供者配置（直接读写订阅 YAML）
+  getProxyGroupsConfig: (configPath) => ipcRenderer.invoke('get-proxy-groups-config', configPath),
+  saveProxyGroupsConfig: (groups, configPath) => ipcRenderer.invoke('save-proxy-groups-config', groups, configPath),
+  getRulesConfig: (configPath) => ipcRenderer.invoke('get-rules-config', configPath),
+  saveRulesConfig: (rules, configPath) => ipcRenderer.invoke('save-rules-config', rules, configPath),
+  getProvidersConfig: (configPath) => ipcRenderer.invoke('get-providers-config', configPath),
+  saveProvidersConfig: (pp, rp, configPath) => ipcRenderer.invoke('save-providers-config', pp, rp, configPath),
+  getProxiesConfig: (configPath) => ipcRenderer.invoke('get-proxies-config', configPath),
+  saveProxiesConfig: (proxies, configPath) => ipcRenderer.invoke('save-proxies-config', proxies, configPath),
 
   // 流量历史
   getTrafficToday: () => ipcRenderer.invoke('traffic-history:get-today'),

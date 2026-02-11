@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Toast from '@radix-ui/react-toast';
-import { Cross2Icon, PlusIcon, TrashIcon, GlobeIcon, Pencil1Icon, ReloadIcon, ExternalLinkIcon, UploadIcon, CheckIcon, PlayIcon, DragHandleDots2Icon } from '@radix-ui/react-icons';
+import { Cross2Icon, PlusIcon, TrashIcon, GlobeIcon, Pencil1Icon, ReloadIcon, ExternalLinkIcon, UploadIcon, CheckIcon, PlayIcon, DragHandleDots2Icon, MixerHorizontalIcon } from '@radix-ui/react-icons';
 import axios from 'axios';
 import Link from 'next/link';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import { useTranslation } from 'react-i18next';
+import ConfigEditor from '@/components/ConfigEditor';
 
 type Subscription = {
   name: string;
@@ -228,6 +229,10 @@ export default function SubscriptionManager() {
   const [editingOverrides, setEditingOverrides] = useState<string[]>([]);
   const [availableOverrides, setAvailableOverrides] = useState<any[]>([]);
   const [editingUpdateInterval, setEditingUpdateInterval] = useState<number>(0);
+
+  // 可视化编辑对话框相关状态
+  const [isVisualEditDialogOpen, setIsVisualEditDialogOpen] = useState(false);
+  const [visualEditingSub, setVisualEditingSub] = useState<Subscription | null>(null);
 
   // 元素引用，用于滚动到视图中
   const draggedItemRef = useRef<HTMLDivElement | null>(null);
@@ -1603,6 +1608,19 @@ export default function SubscriptionManager() {
               {t('subscriptions.edit')}
             </button>
 
+            {/* 可视化编辑 */}
+            <button
+              onClick={() => {
+                setVisualEditingSub(contextMenuSub);
+                setIsVisualEditDialogOpen(true);
+                closeContextMenu();
+              }}
+              className="flex w-full items-center px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 dark:text-slate-200 dark:hover:bg-blue-900/20"
+            >
+              <MixerHorizontalIcon className="mr-2 h-4 w-4" />
+              {t('subscriptions.visualEdit')}
+            </button>
+
             {/* 打开文件 */}
             <button
               onClick={() => {
@@ -1846,6 +1864,44 @@ export default function SubscriptionManager() {
                 <Cross2Icon className="h-4 w-4" />
               </button>
             </Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* 可视化编辑对话框 */}
+      <Dialog.Root open={isVisualEditDialogOpen} onOpenChange={setIsVisualEditDialogOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[95] w-[min(900px,92vw)] max-h-[85vh] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#2a2a2a] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
+              <Dialog.Title className="flex items-center text-lg font-semibold text-slate-900 dark:text-white">
+                <MixerHorizontalIcon className="mr-2 h-5 w-5 text-blue-500" />
+                {t('subscriptions.visualEdit')}
+                {visualEditingSub && (
+                  <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
+                    - {visualEditingSub.name}
+                  </span>
+                )}
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button
+                  aria-label="Close"
+                  className="rounded-full bg-slate-100/70 p-1.5 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-700 dark:bg-slate-700/60 dark:text-slate-200 dark:hover:bg-slate-700"
+                >
+                  <Cross2Icon className="h-4 w-4" />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 pb-4 custom-scrollbar">
+              {visualEditingSub && (
+                <ConfigEditor
+                  configPath={visualEditingSub.path}
+                  onSaved={() => {
+                    loadSubscriptions();
+                  }}
+                />
+              )}
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

@@ -148,10 +148,10 @@ export function SubscriptionInfoCard() {
       </div>
 
       {/* 主体：左圆环 + 右信息 */}
-      <div className="flex flex-1 items-center gap-6 mt-2">
+      <div className="flex flex-1 items-center gap-4 lg:gap-6 mt-2">
         {/* 圆环进度 */}
-        <div className="relative flex-shrink-0">
-          <svg width="160" height="160" viewBox="0 0 160 160">
+        <div className="relative flex-shrink-0 w-[110px] h-[110px] lg:w-[160px] lg:h-[160px]">
+          <svg className="w-full h-full" viewBox="0 0 160 160">
             <defs>
               <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor={strokeColor.start} />
@@ -175,8 +175,8 @@ export function SubscriptionInfoCard() {
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             {trafficInfo ? (
               <>
-                <span className="text-2xl font-bold text-foreground">{Math.round(pct)}%</span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">{t('dashboard.usedTraffic')}</span>
+                <span className="text-lg lg:text-2xl font-bold text-foreground">{Math.round(pct)}%</span>
+                <span className="text-[9px] lg:text-[10px] text-muted-foreground mt-0.5">{t('dashboard.usedTraffic')}</span>
               </>
             ) : (
               <span className="text-xs text-muted-foreground">--</span>

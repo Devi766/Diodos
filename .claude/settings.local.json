@@ -32,7 +32,11 @@
       "Bash(powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File - <<'PSEOF'\ntry {\n  $cs = Get-Content 'electron\\\\loopback-helper.cs' -Raw -Encoding UTF8\n  Add-Type -TypeDefinition $cs\n  $result = [NetworkIsolationHelper]::EnumAppContainers\\(\\)\n  Write-Output \"SUCCESS: length=$\\($result.Length\\)\"\n  Write-Output $result.Substring\\(0, [Math]::Min\\(300, $result.Length\\)\\)\n} catch {\n  Write-Output \"ERROR: $\\($_.Exception.Message\\)\"\n}\nPSEOF)",
       "Bash(xargs cat:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(npx next build:*)"
+      "Bash(npx next build:*)",
+      "Bash(netstat:*)",
+      "Bash(netsh interface ipv4 show excludedportrange:*)",
+      "Bash(wc:*)",
+      "Bash(node -e:*)"
     ],
     "deny": [],
     "ask": []
