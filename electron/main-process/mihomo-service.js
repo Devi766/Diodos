@@ -977,13 +977,6 @@ module.exports = function initMihomoService(context) {
               return { success: true, viaService: true };
             } else {
               console.warn('[startMihomo] 服务模式启动失败:', result.error);
-              // 服务模式下启动失败，不回退到直接启动模式（会因权限问题失败）
-              // 而是提示用户检查服务状态
-              const { dialog } = require('electron');
-              dialog.showErrorBox(
-                '服务模式启动失败',
-                '通过服务启动内核失败。\n\n请检查：\n1. 服务是否正常运行\n2. 尝试在 TUN 设置页面重启服务\n\n错误信息：' + (result.error || '未知错误')
-              );
               // 重置运行模式
               setRunningMode(RunningMode.NOT_RUNNING);
               return { success: false, error: result.error || '服务模式启动失败' };

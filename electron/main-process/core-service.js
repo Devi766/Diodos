@@ -175,13 +175,44 @@ class CoreService {
         fs.mkdirSync(logDir, { recursive: true });
       }
 
+      // 清空旧日志，确保读到的是本次启动的输出
+      try { fs.writeFileSync(logFile, '', 'utf8'); } catch {}
+
       await helperIpc.startCore(binPath, configDir, configFile, logFile, extCtlPipe);
 
       console.log('[CoreService] Core started via helper service');
       return { success: true };
     } catch (error) {
       console.error('[CoreService] Start core failed:', error);
-      return { success: false, error: error.message || 'Failed to start core' };
+
+      // 尝试从内核日志文件中提取具体错误信息
+      let detail = '';
+      try {
+        const logFile = path.join(app.getPath('userData'), 'logs', 'mihomo.log');
+        if (fs.existsSync(logFile)) {
+          const logContent = fs.readFileSync(logFile, 'utf8').trim();
+          if (logContent) {
+            // 提取 level=fatal 或 level=error 的消息
+            const fatalMatch = logContent.match(/level=fatal msg="([^"]+)"/);
+            const errorMatch = logContent.match(/level=error msg="([^"]+)"/);
+            if (fatalMatch) {
+              detail = fatalMatch[1];
+            } else if (errorMatch) {
+              detail = errorMatch[1];
+            } else {
+              // 取最后几行作为错误信息
+              const lines = logContent.split('\n').filter(l => l.trim());
+              detail = lines.slice(-3).join('\n');
+            }
+          }
+        }
+      } catch (logErr) {
+        console.error('[CoreService] Failed to read log file:', logErr);
+      }
+
+      const baseMsg = error.message || 'Failed to start core';
+      const fullError = detail ? `${baseMsg}\n${detail}` : baseMsg;
+      return { success: false, error: fullError };
     }
   }
 

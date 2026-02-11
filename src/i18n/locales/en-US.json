@@ -70,7 +70,7 @@
     "currentNode": "Current Node",
     "notSelected": "Not Selected",
     "noConfigAvailable": "No configuration file available, please import a configuration in subscription management first",
-    "serviceStarted": "Mihomo service started",
+    "serviceStarted": "Service started",
     "startFailed": "Failed to start service",
     "startFailedWithError": "Start failed: {{message}}",
     "serviceStopped": "Service stopped",

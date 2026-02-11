@@ -166,33 +166,70 @@ function startCore(corePath, configPath) {
         currentCorePath = corePath;
         currentConfigPath = configPath;
 
+        let stdoutBuf = '';
+        let stderrBuf = '';
+        let settled = false;
+
         mihomoProcess.stdout.on('data', (data) => {
-          log('CORE', data.toString().trim());
+          const text = data.toString().trim();
+          stdoutBuf += text + '\n';
+          log('CORE', text);
         });
 
         mihomoProcess.stderr.on('data', (data) => {
-          log('CORE-ERR', data.toString().trim());
+          const text = data.toString().trim();
+          stderrBuf += text + '\n';
+          log('CORE-ERR', text);
         });
 
         mihomoProcess.on('error', (err) => {
           log('ERROR', `Mihomo process error: ${err.message}`);
           mihomoProcess = null;
+          if (!settled) {
+            settled = true;
+            reject(new Error(`内核进程错误: ${err.message}`));
+          }
         });
 
         mihomoProcess.on('exit', (code, signal) => {
           log('INFO', `Mihomo exited with code ${code}, signal ${signal}`);
           mihomoProcess = null;
+          if (!settled) {
+            settled = true;
+            // Extract fatal error from stdout
+            let errorDetail = '';
+            const fatalMatch = stdoutBuf.match(/level=fatal msg="([^"]+)"/);
+            if (fatalMatch) {
+              errorDetail = fatalMatch[1];
+            } else if (stderrBuf.trim()) {
+              errorDetail = stderrBuf.trim().split('\n').slice(-3).join('\n');
+            }
+            const msg = errorDetail
+              ? `内核启动失败 (exit ${code}): ${errorDetail}`
+              : `内核启动失败，退出代码: ${code}`;
+            reject(new Error(msg));
+          }
         });
 
         // 等待一小段时间确认进程启动
         setTimeout(() => {
-          if (mihomoProcess && !mihomoProcess.killed) {
-            log('INFO', 'Mihomo started successfully');
-            resolve({ success: true, pid: mihomoProcess.pid });
-          } else {
-            reject(new Error('Mihomo 启动失败'));
+          if (!settled) {
+            settled = true;
+            if (mihomoProcess && !mihomoProcess.killed) {
+              log('INFO', 'Mihomo started successfully');
+              resolve({ success: true, pid: mihomoProcess.pid });
+            } else {
+              let errorDetail = '';
+              const fatalMatch = stdoutBuf.match(/level=fatal msg="([^"]+)"/);
+              if (fatalMatch) {
+                errorDetail = fatalMatch[1];
+              } else if (stderrBuf.trim()) {
+                errorDetail = stderrBuf.trim().split('\n').slice(-3).join('\n');
+              }
+              reject(new Error(errorDetail || 'Mihomo 启动失败'));
+            }
           }
-        }, 1000);
+        }, 1500);
       } catch (err) {
         log('ERROR', `Failed to start Mihomo: ${err.message}`);
         reject(err);

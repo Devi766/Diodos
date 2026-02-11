@@ -162,6 +162,7 @@ export default function Dashboard() {
   const [hasAdminPermission, setHasAdminPermission] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showAddCardDialog, setShowAddCardDialog] = useState(false);
+  const [startErrorMsg, setStartErrorMsg] = useState<string | null>(null);
   const [connections, setConnections] = useState<any[]>([]);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [downloadTotal, setDownloadTotal] = useState(0);
@@ -927,11 +928,14 @@ export default function Dashboard() {
         await syncCurrentNode();
         await syncProxyMode();
       } else {
-        showBanner({ type: 'error', message: t('dashboard.startFailed') });
+        const errDetail = typeof result === 'object' && (result as any).error
+          ? (result as any).error
+          : '';
+        setStartErrorMsg(errDetail || t('dashboard.startFailed'));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      showBanner({ type: 'error', message: t('dashboard.startFailedWithError', { message }) });
+      setStartErrorMsg(message);
     } finally {
       setIsServiceBusy(false);
     }
@@ -1445,6 +1449,22 @@ export default function Dashboard() {
                 {t('dashboard.confirmEnable')}
               </button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!startErrorMsg} onOpenChange={(open) => { if (!open) setStartErrorMsg(null); }}>
+        <DialogContent className="max-h-[70vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{t('dashboard.startFailed')}</DialogTitle>
+          </DialogHeader>
+          <pre className="whitespace-pre-wrap break-words text-sm text-red-600 dark:text-red-400 font-mono bg-red-50 dark:bg-red-900/20 rounded-lg p-4 overflow-y-auto flex-1 min-h-0">
+            {startErrorMsg}
+          </pre>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStartErrorMsg(null)}>
+              {t('common.confirm')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

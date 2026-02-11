@@ -70,7 +70,7 @@
     "currentNode": "当前节点",
     "notSelected": "未选择",
     "noConfigAvailable": "未找到可用的配置文件，请先在订阅管理中导入配置",
-    "serviceStarted": "Mihomo 服务已启动",
+    "serviceStarted": "服务启动成功",
     "startFailed": "启动服务失败",
     "startFailedWithError": "启动失败: {{message}}",
     "serviceStopped": "服务已停止",
