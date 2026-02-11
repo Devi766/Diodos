@@ -364,6 +364,11 @@ func validateBinPath(binPath string) error {
 
 	// 4. 检查路径是否在允许的目录内
 	allowed := getAllowedCoreDirs()
+	log.Printf("Validating path: %s", realPath)
+	log.Printf("Allowed dirs (%d):", len(allowed))
+	for i, dir := range allowed {
+		log.Printf("  [%d] %s", i, dir)
+	}
 	realPathLower := strings.ToLower(realPath)
 	for _, dir := range allowed {
 		prefix := strings.ToLower(dir) + string(filepath.Separator)
@@ -373,7 +378,7 @@ func validateBinPath(binPath string) error {
 		}
 	}
 
-	return fmt.Errorf("path %s not in any allowed directory", realPath)
+	return fmt.Errorf("path %s not in any allowed directory (allowed: %v)", realPath, allowed)
 }
 
 // getAllowedCoreDirs 动态推导允许的目录列表
@@ -413,7 +418,7 @@ func getAllowedCoreDirs() []string {
 	if sysDrive == "" {
 		sysDrive = "C:"
 	}
-	fallbackUsersDir := filepath.Join(sysDrive, "Users")
+	fallbackUsersDir := sysDrive + `\Users`
 	found := false
 	for _, d := range usersDirs {
 		if strings.EqualFold(d, fallbackUsersDir) {

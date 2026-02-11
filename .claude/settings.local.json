@@ -40,7 +40,10 @@
       "WebFetch(domain:aajax.top)",
       "Bash(git log:*)",
       "Bash(go vet:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(go test:*)",
+      "Bash(del \"F:\\\\code\\\\FlyClash-PC\\\\flycast-ui\\\\native\\\\helper\\\\debug_test.go\")"
     ],
     "deny": [],
     "ask": []
