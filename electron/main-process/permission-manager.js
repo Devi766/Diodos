@@ -4,6 +4,19 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+function shellEscape(arg) {
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
+function escapeXml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 /**
  * Windows 权限管理器
  * 负责创建和管理 Windows 计划任务以获取管理员权限
@@ -51,7 +64,7 @@ class PermissionManager {
   <Triggers />
   <Principals>
     <Principal id="Author">
-      <UserId>${username}</UserId>
+      <UserId>${escapeXml(username)}</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
@@ -77,7 +90,7 @@ class PermissionManager {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>${exePath}</Command>
+      <Command>${escapeXml(exePath)}</Command>
     </Exec>
   </Actions>
 </Task>`;
@@ -258,9 +271,9 @@ class PermissionManager {
 
     try {
       if (process.platform === 'darwin') {
-        const shell = `chown root:admin ${corePath.replace(/ /g, '\\ ')}\nchmod +sx ${corePath.replace(/ /g, '\\ ')}`;
-        const command = `do shell script "${shell}" with administrator privileges`;
-        await execPromise(`osascript -e '${command}'`);
+        const escaped = shellEscape(corePath);
+        const script = `do shell script "chown root:admin ${escaped} && chmod +sx ${escaped}" with administrator privileges`;
+        await execFilePromise('osascript', ['-e', script]);
       } else if (process.platform === 'linux') {
         // 优先尝试为内核设置能力, 失败则回退到 setuid root
         try {
@@ -333,9 +346,9 @@ class PermissionManager {
 
     try {
       if (process.platform === 'darwin') {
-        const shell = `chmod a-s ${corePath.replace(' ', '\\\\ ')}`;
-        const command = `do shell script "${shell}" with administrator privileges`;
-        await execPromise(`osascript -e '${command}'`);
+        const escaped = shellEscape(corePath);
+        const script = `do shell script "chmod a-s ${escaped}" with administrator privileges`;
+        await execFilePromise('osascript', ['-e', script]);
       } else if (process.platform === 'linux') {
         try {
           await execFilePromise('pkexec', ['setcap', '-r', corePath]);

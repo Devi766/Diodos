@@ -11,8 +11,9 @@
 module.exports = function initTunManager(context) {
   const { fs, path, spawn, execSync } = context;
   const { promisify } = require('util');
-  const { execFile } = require('child_process');
+  const { execFile, execFileSync } = require('child_process');
   const execFilePromise = promisify(execFile);
+  const crypto = require('crypto');
 
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
@@ -453,7 +454,8 @@ module.exports = function initTunManager(context) {
           console.log('[TunManager] Using service mode for authorization');
 
           if (needsCopy) {
-            const tmpPath = '/tmp/flycast-mihomo-' + Date.now();
+            const os = require('os');
+            const tmpPath = path.join(os.tmpdir(), 'flycast-mihomo-' + crypto.randomBytes(8).toString('hex'));
             try {
               fs.copyFileSync(sourceKernelPath, tmpPath);
               fs.chmodSync(tmpPath, 0o755);
@@ -479,7 +481,8 @@ module.exports = function initTunManager(context) {
 
         console.log('[TunManager] Using osascript to copy and authorize kernel');
 
-        const tmpPath = '/tmp/flycast-mihomo-' + Date.now();
+        const os = require('os');
+        const tmpPath = path.join(os.tmpdir(), 'flycast-mihomo-' + crypto.randomBytes(8).toString('hex'));
         try {
           fs.copyFileSync(sourceKernelPath, tmpPath);
           fs.chmodSync(tmpPath, 0o755);
@@ -546,11 +549,11 @@ module.exports = function initTunManager(context) {
         }
 
         try {
-          execSync(`pkexec setcap cap_net_admin,cap_net_bind_service=+eip "${kernelPath}"`, { stdio: 'ignore' });
+          execFileSync('pkexec', ['setcap', 'cap_net_admin,cap_net_bind_service=+eip', kernelPath], { stdio: 'ignore' });
         } catch {
           try {
-            execSync(`pkexec chown root:root "${kernelPath}"`, { stdio: 'ignore' });
-            execSync(`pkexec chmod +sx "${kernelPath}"`, { stdio: 'ignore' });
+            execFileSync('pkexec', ['chown', 'root:root', kernelPath], { stdio: 'ignore' });
+            execFileSync('pkexec', ['chmod', '+sx', kernelPath], { stdio: 'ignore' });
           } catch (e) {
             return { success: false, error: getUserFriendlyError(e, 'authorization') };
           }

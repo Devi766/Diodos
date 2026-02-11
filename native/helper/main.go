@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"crypto/hmac"
+	crypto_rand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,7 +17,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -93,11 +96,52 @@ type VersionData struct {
 	Version string `json:"version"`
 }
 
+const (
+	keyFileDir = "FlyClash"
+	keyFileName = "service-key"
+	keyLength   = 32
+)
+
+func getKeyFilePath() string {
+	pd := os.Getenv("ProgramData")
+	if pd == "" {
+		pd = `C:\ProgramData`
+	}
+	return filepath.Join(pd, keyFileDir, keyFileName)
+}
+
+func loadOrCreateKey() ([]byte, error) {
+	keyPath := getKeyFilePath()
+	os.MkdirAll(filepath.Dir(keyPath), 0755)
+
+	// 尝试读取已有密钥
+	if data, err := os.ReadFile(keyPath); err == nil && len(data) == keyLength {
+		return data, nil
+	}
+
+	// 生成新密钥
+	key := make([]byte, keyLength)
+	if _, err := crypto_rand.Read(key); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, key, 0644); err != nil {
+		return nil, err
+	}
+	log.Printf("Generated new service key at %s", keyPath)
+	return key, nil
+}
+
 func init() {
-	// 派生密钥
-	h := sha256.New()
-	h.Write([]byte(secretSeed))
-	secretKey = h.Sum(nil)
+	key, err := loadOrCreateKey()
+	if err != nil {
+		// 回退到硬编码密钥
+		log.Printf("Warning: dynamic key failed (%v), using static fallback", err)
+		h := sha256.New()
+		h.Write([]byte(secretSeed))
+		secretKey = h.Sum(nil)
+		return
+	}
+	secretKey = key
 }
 
 func main() {
@@ -294,7 +338,129 @@ func handleCommand(conn net.Conn, req *IpcRequest) {
 	}
 }
 
+// validateBinPath 验证内核路径是否在允许的目录内
+func validateBinPath(binPath string) error {
+	// 1. 解析为绝对路径
+	absPath, err := filepath.Abs(binPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve absolute path: %v", err)
+	}
+	absPath = filepath.Clean(absPath)
+
+	// 2. 解析符号链接（防止 symlink 攻击）
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve symlinks: %v", err)
+	}
+
+	// 3. 文件必须存在且是普通文件
+	info, err := os.Stat(realPath)
+	if err != nil {
+		return fmt.Errorf("file not found: %v", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path is a directory")
+	}
+
+	// 4. 检查路径是否在允许的目录内
+	allowed := getAllowedCoreDirs()
+	realPathLower := strings.ToLower(realPath)
+	for _, dir := range allowed {
+		prefix := strings.ToLower(dir) + string(filepath.Separator)
+		if strings.HasPrefix(realPathLower, prefix) {
+			log.Printf("Path validated: %s (in allowed dir: %s)", realPath, dir)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("path %s not in any allowed directory", realPath)
+}
+
+// getAllowedCoreDirs 动态推导允许的目录列表
+func getAllowedCoreDirs() []string {
+	var dirs []string
+
+	// 1. Helper 自身所在目录及其 cores 子目录
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Clean(filepath.Dir(exePath))
+		dirs = append(dirs, exeDir)
+		dirs = append(dirs, filepath.Join(exeDir, "cores"))
+		// 打包后 helper 在 resources/ 下，cores 在 resources/cores/
+		parentDir := filepath.Dir(exeDir)
+		dirs = append(dirs, filepath.Join(parentDir, "cores"))
+	}
+
+	// 2. 当前用户的 AppData
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		dirs = append(dirs, filepath.Join(appData, "FlyClash", "cores"))
+	}
+	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+		dirs = append(dirs, filepath.Join(localAppData, "FlyClash", "cores"))
+	}
+
+	// 3. 所有用户的 profile 目录下的 FlyClash/cores
+	//    SYSTEM 服务无法直接获取调用者的 APPDATA，
+	//    所以枚举 C:\Users\*\AppData\Roaming\FlyClash\cores
+	if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+		usersDir := filepath.Dir(userProfile)
+		if entries, err := os.ReadDir(usersDir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					dirs = append(dirs,
+						filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "FlyClash", "cores"))
+					dirs = append(dirs,
+						filepath.Join(usersDir, e.Name(), "AppData", "Local", "FlyClash", "cores"))
+				}
+			}
+		}
+	}
+
+	// 4. ProgramData
+	if pd := os.Getenv("ProgramData"); pd != "" {
+		dirs = append(dirs, filepath.Join(pd, "FlyClash", "cores"))
+	}
+
+	// 5. macOS/Linux 系统目录
+	if runtime.GOOS == "darwin" {
+		dirs = append(dirs, "/Library/Application Support/Flycast")
+	}
+	if runtime.GOOS == "linux" {
+		dirs = append(dirs, "/opt/flycast")
+		if u, err := user.Current(); err == nil {
+			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "FlyClash", "cores"))
+		}
+	}
+
+	// 规范化
+	result := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		result = append(result, filepath.Clean(d))
+	}
+	return result
+}
+
+// validateConfigPaths 验证配置路径
+func validateConfigPaths(configDir, configFile string) error {
+	info, err := os.Stat(configDir)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("invalid config directory: %s", configDir)
+	}
+	lower := strings.ToLower(configFile)
+	if !strings.HasSuffix(lower, ".yaml") && !strings.HasSuffix(lower, ".yml") {
+		return fmt.Errorf("config file must be .yaml or .yml")
+	}
+	return nil
+}
+
 func startCore(payload *StartCorePayload) error {
+	// 安全验证
+	if err := validateBinPath(payload.BinPath); err != nil {
+		return fmt.Errorf("security: bin_path rejected: %v", err)
+	}
+	if err := validateConfigPaths(payload.ConfigDir, payload.ConfigFile); err != nil {
+		return fmt.Errorf("security: config rejected: %v", err)
+	}
+
 	coreMutex.Lock()
 
 	// 如果已经在运行，先停止

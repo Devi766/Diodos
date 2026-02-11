@@ -14,8 +14,25 @@ const SECRET_SEED = 'flyclash-helper-service-secret-key-v1';
 const MESSAGE_EXPIRY_SECS = 30;
 const SERVICE_NAME = 'FlyClashHelperService';
 
-// 派生密钥
-const secretKey = crypto.createHash('sha256').update(SECRET_SEED).digest();
+// 派生密钥（优先读取动态密钥，回退到硬编码）
+function loadSecretKey() {
+  // 尝试读取动态密钥
+  const pd = process.env.ProgramData || 'C:\\ProgramData';
+  const keyPath = path.join(pd, 'FlyClash', 'service-key');
+  try {
+    const data = fs.readFileSync(keyPath);
+    if (data.length === 32) {
+      console.log('[HelperIPC] Loaded dynamic secret key');
+      return data;
+    }
+  } catch {}
+
+  // 回退到硬编码密钥（兼容旧版服务）
+  console.warn('[HelperIPC] Dynamic key not found, using static fallback');
+  return crypto.createHash('sha256').update(SECRET_SEED).digest();
+}
+
+const secretKey = loadSecretKey();
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

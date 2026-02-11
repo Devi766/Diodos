@@ -36,7 +36,11 @@
       "Bash(netstat:*)",
       "Bash(netsh interface ipv4 show excludedportrange:*)",
       "Bash(wc:*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "WebFetch(domain:aajax.top)",
+      "Bash(git log:*)",
+      "Bash(go vet:*)",
+      "Bash(go build:*)"
     ],
     "deny": [],
     "ask": []
