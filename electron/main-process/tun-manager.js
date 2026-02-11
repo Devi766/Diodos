@@ -107,6 +107,22 @@ module.exports = function initTunManager(context) {
     return systemPath;
   }
 
+  function isSameKernelBinary(sourcePath, targetPath) {
+    try {
+      if (!sourcePath || !targetPath) return false;
+      if (!fs.existsSync(sourcePath) || !fs.existsSync(targetPath)) return false;
+
+      const sourceStat = fs.statSync(sourcePath);
+      const targetStat = fs.statSync(targetPath);
+      if (sourceStat.size !== targetStat.size) return false;
+
+      return fs.readFileSync(sourcePath).compare(fs.readFileSync(targetPath)) === 0;
+    } catch (e) {
+      console.warn('[TunManager] Failed to compare kernel binaries:', e?.message || e);
+      return false;
+    }
+  }
+
   function getKernelPath() {
     if (isMac) {
       const systemPath = getSystemKernelPath();
@@ -144,23 +160,43 @@ module.exports = function initTunManager(context) {
   }
 
   function getSourceKernelPath() {
+    const systemPath = getSystemKernelPath();
+
     try {
-      const kernelPath = context.mihomoService?.findMihomoExecutable?.();
-      if (kernelPath && fs.existsSync(kernelPath)) {
-        return kernelPath;
+      const managedPath = context.coreManager?.getCorePath?.();
+      if (managedPath && fs.existsSync(managedPath) && path.resolve(managedPath) !== path.resolve(systemPath)) {
+        return managedPath;
       }
     } catch (e) {
-      console.error('[TunManager] Failed to get kernel path from mihomoService:', e);
+      console.warn('[TunManager] Failed to get source kernel from coreManager:', e?.message || e);
     }
 
     try {
       if (typeof context.getKernelExecutablePath === 'function') {
         const kernelPath = context.getKernelExecutablePath();
-        if (kernelPath && fs.existsSync(kernelPath)) {
+        if (kernelPath && fs.existsSync(kernelPath) && path.resolve(kernelPath) !== path.resolve(systemPath)) {
           return kernelPath;
         }
       }
     } catch {}
+
+    try {
+      if (typeof context.resolveDefaultKernelPath === 'function') {
+        const defaultPath = context.resolveDefaultKernelPath();
+        if (defaultPath && fs.existsSync(defaultPath) && path.resolve(defaultPath) !== path.resolve(systemPath)) {
+          return defaultPath;
+        }
+      }
+    } catch {}
+
+    try {
+      const kernelPath = context.mihomoService?.findMihomoExecutable?.();
+      if (kernelPath && fs.existsSync(kernelPath) && path.resolve(kernelPath) !== path.resolve(systemPath)) {
+        return kernelPath;
+      }
+    } catch (e) {
+      console.error('[TunManager] Failed to get kernel path from mihomoService:', e);
+    }
 
     return '';
   }
@@ -441,9 +477,9 @@ module.exports = function initTunManager(context) {
         const systemPath = getSystemKernelPath();
 
         const existingProbe = await probeAuthorization(systemPath);
+        const samePath = path.resolve(sourceKernelPath) === path.resolve(systemPath);
         const needsCopy = !fs.existsSync(systemPath) ||
-                         (fs.existsSync(systemPath) &&
-                          fs.readFileSync(sourceKernelPath).compare(fs.readFileSync(systemPath)) !== 0);
+                         (!samePath && !isSameKernelBinary(sourceKernelPath, systemPath));
 
         // 只有权限OK且版本一致才跳过，否则必须重新复制并授权
         if (existingProbe.ok && !needsCopy) {
@@ -669,10 +705,8 @@ module.exports = function initTunManager(context) {
     }
 
     try {
-      const sourceContent = fs.readFileSync(sourceKernelPath);
-      const systemContent = fs.readFileSync(systemPath);
-
-      if (sourceContent.compare(systemContent) !== 0) {
+      const sameKernel = isSameKernelBinary(sourceKernelPath, systemPath);
+      if (!sameKernel) {
         const sourceStat = fs.statSync(sourceKernelPath);
         const systemStat = fs.statSync(systemPath);
         console.log('[TunManager] Kernel update detected:', {
@@ -742,29 +776,15 @@ module.exports = function initTunManager(context) {
           console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
 
           if (isMac) {
-            // macOS: 检查系统内核权限 + 版本一致性
-            const systemKernelPath = getSystemKernelPath();
-            const sourceKernelPath = getSourceKernelPath();
-            let authorized = false;
-
-            if (fs.existsSync(systemKernelPath)) {
-              const systemProbe = await probeAuthorization(systemKernelPath);
-              // 权限OK且版本一致才算授权通过
-              let versionMatch = true;
-              if (sourceKernelPath && fs.existsSync(sourceKernelPath)) {
-                try {
-                  versionMatch = fs.readFileSync(sourceKernelPath).compare(fs.readFileSync(systemKernelPath)) === 0;
-                } catch {}
-              }
-              authorized = systemProbe.ok && versionMatch;
-              console.log('[TunManager] System kernel check:', {
-                probeOk: systemProbe.ok, versionMatch, authorized
-              });
-            }
-
-            if (!authorized) {
-              console.warn('[TunManager] macOS kernel not authorized or outdated');
-              return { success: false, error: '缺少必要权限或内核已更新，请先进行授权', needsAuth: true };
+            const perm = await checkPermission();
+            if (!perm || !perm.success || !perm.hasPermission) {
+              const reason = perm?.details?.reason;
+              const isKernelUpdated = reason === 'kernel_updated';
+              const error = isKernelUpdated
+                ? '缺少必要权限或内核已更新，请先进行授权'
+                : '缺少必要权限，请先进行授权';
+              console.warn('[TunManager] macOS kernel permission check failed:', perm?.details || {});
+              return { success: false, error, needsAuth: true };
             }
           } else if (isLinux) {
             // Linux: 直接检查当前内核权限
@@ -934,18 +954,47 @@ module.exports = function initTunManager(context) {
 
         if (fs.existsSync(systemKernelPath)) {
           const systemProbe = await probeAuthorization(systemKernelPath);
+          const sourceKernelPath = getSourceKernelPath();
+          let versionMatch = true;
+          if (sourceKernelPath && fs.existsSync(sourceKernelPath) &&
+              path.resolve(sourceKernelPath) !== path.resolve(systemKernelPath)) {
+            versionMatch = isSameKernelBinary(sourceKernelPath, systemKernelPath);
+          }
+
           console.log('[TunManager] System kernel probe result:', {
             path: systemKernelPath,
             ok: systemProbe.ok,
-            issues: systemProbe.issues
+            issues: systemProbe.issues,
+            versionMatch
           });
 
-          if (systemProbe.ok) {
+          if (systemProbe.ok && versionMatch) {
             console.log('[TunManager] ✓ System kernel is authorized');
             return {
               success: true,
               hasPermission: true,
-              details: { path: systemKernelPath, type: 'system' }
+              details: {
+                path: systemKernelPath,
+                sourcePath: sourceKernelPath,
+                type: 'system',
+                versionMatch: true
+              }
+            };
+          }
+
+          if (systemProbe.ok && !versionMatch) {
+            console.warn('[TunManager] System kernel is authorized but outdated, re-authorization required');
+            return {
+              success: true,
+              hasPermission: false,
+              details: {
+                path: systemKernelPath,
+                sourcePath: sourceKernelPath,
+                type: 'system',
+                reason: 'kernel_updated',
+                versionMatch: false,
+                needsAuth: true
+              }
             };
           }
         }
