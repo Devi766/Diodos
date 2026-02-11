@@ -390,26 +390,52 @@ func getAllowedCoreDirs() []string {
 		dirs = append(dirs, filepath.Join(parentDir, "cores"))
 	}
 
-	// 2. 当前用户的 AppData
+	// 2. 当前用户的 AppData（含大小写变体）
 	if appData := os.Getenv("APPDATA"); appData != "" {
 		dirs = append(dirs, filepath.Join(appData, "FlyClash", "cores"))
+		dirs = append(dirs, filepath.Join(appData, "flyclash", "cores"))
 	}
 	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
 		dirs = append(dirs, filepath.Join(localAppData, "FlyClash", "cores"))
+		dirs = append(dirs, filepath.Join(localAppData, "flyclash", "cores"))
 	}
 
 	// 3. 所有用户的 profile 目录下的 FlyClash/cores
-	//    SYSTEM 服务无法直接获取调用者的 APPDATA，
-	//    所以枚举 C:\Users\*\AppData\Roaming\FlyClash\cores
+	//    SYSTEM 服务的 USERPROFILE 指向 system32\config\systemprofile，
+	//    所以直接枚举系统盘的 Users 目录
+	usersDirs := []string{}
 	if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
 		usersDir := filepath.Dir(userProfile)
+		usersDirs = append(usersDirs, usersDir)
+	}
+	// SYSTEM 账户下 USERPROFILE 不在 C:\Users，需要硬编码 fallback
+	sysDrive := os.Getenv("SystemDrive")
+	if sysDrive == "" {
+		sysDrive = "C:"
+	}
+	fallbackUsersDir := filepath.Join(sysDrive, "Users")
+	found := false
+	for _, d := range usersDirs {
+		if strings.EqualFold(d, fallbackUsersDir) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		usersDirs = append(usersDirs, fallbackUsersDir)
+	}
+	for _, usersDir := range usersDirs {
 		if entries, err := os.ReadDir(usersDir); err == nil {
 			for _, e := range entries {
 				if e.IsDir() {
 					dirs = append(dirs,
 						filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "FlyClash", "cores"))
 					dirs = append(dirs,
+						filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "flyclash", "cores"))
+					dirs = append(dirs,
 						filepath.Join(usersDir, e.Name(), "AppData", "Local", "FlyClash", "cores"))
+					dirs = append(dirs,
+						filepath.Join(usersDir, e.Name(), "AppData", "Local", "flyclash", "cores"))
 				}
 			}
 		}
@@ -426,8 +452,21 @@ func getAllowedCoreDirs() []string {
 	}
 	if runtime.GOOS == "linux" {
 		dirs = append(dirs, "/opt/flycast")
+		// 当前用户（可能是 root）
 		if u, err := user.Current(); err == nil {
 			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "FlyClash", "cores"))
+			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "flyclash", "cores"))
+		}
+		// 以 root/systemd 运行时枚举 /home/* 下所有用户
+		if entries, err := os.ReadDir("/home"); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					dirs = append(dirs,
+						filepath.Join("/home", e.Name(), ".local", "share", "FlyClash", "cores"))
+					dirs = append(dirs,
+						filepath.Join("/home", e.Name(), ".local", "share", "flyclash", "cores"))
+				}
+			}
 		}
 	}
 

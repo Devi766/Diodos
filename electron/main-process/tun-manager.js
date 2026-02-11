@@ -740,25 +740,21 @@ module.exports = function initTunManager(context) {
         } else {
           console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
 
-          // 首先检查系统内核是否已授权
+          // 首先检查系统内核是否已授权（macOS）
           const systemKernelPath = getSystemKernelPath();
-          let useSystemKernel = false;
+          let authorized = false;
 
-          if (fs.existsSync(systemKernelPath)) {
+          if (isMac && fs.existsSync(systemKernelPath)) {
             const systemProbe = await probeAuthorization(systemKernelPath);
             console.log('[TunManager] System kernel authorization probe:', {
               path: systemKernelPath,
               ok: systemProbe.ok,
               issues: systemProbe.issues
             });
-
-            if (systemProbe.ok) {
-              useSystemKernel = true;
-              console.log('[TunManager] Will use authorized system kernel');
-            }
+            authorized = systemProbe.ok;
           }
 
-          if (!useSystemKernel) {
+          if (!authorized) {
             // 系统内核不可用，检查当前内核
             const kernelPath = getKernelPath();
             const probe = await probeAuthorization(kernelPath);
@@ -772,20 +768,19 @@ module.exports = function initTunManager(context) {
               console.warn('[TunManager] Missing permissions, cannot enable TUN');
               return { success: false, error: '缺少必要权限，请先进行授权' };
             }
+            authorized = true;
           }
 
-          const syncResult = await autoSyncKernel();
-          if (syncResult.needsManualAuth) {
-            console.warn('[TunManager] Custom kernel updated, manual authorization required');
-            return {
-              success: false,
-              error: '检测到自定义内核已更新，请重新授权以同步到系统目录',
-              needsAuth: true
-            };
-          }
-
-          if (syncResult.synced) {
-            console.log('[TunManager] Custom kernel auto-synced');
+          // macOS: 后台尝试同步内核到系统目录，失败不阻塞 TUN 启动
+          if (isMac) {
+            try {
+              const syncResult = await autoSyncKernel();
+              if (syncResult.synced) {
+                console.log('[TunManager] Custom kernel auto-synced');
+              }
+            } catch (e) {
+              console.warn('[TunManager] Auto-sync failed (non-blocking):', e?.message || e);
+            }
           }
 
           console.log('[TunManager] Authorization check passed, proceeding to enable TUN');
