@@ -3,6 +3,10 @@
  * 统一管理内核的运行模式
  */
 
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+
 // 运行模式枚举
 const RunningMode = {
   SERVICE: 'service',     // 通过 Windows 服务运行
@@ -67,15 +71,7 @@ function getSocketPath() {
   }
 
   // Sidecar 模式使用动态路径
-  if (process.platform === 'win32') {
-    const sessionId = process.env.SESSIONNAME || process.env.USERNAME || 'default';
-    const processId = process.pid;
-    return `\\\\.\\pipe\\FlyClash\\mihomo-${sessionId}-${processId}`;
-  } else {
-    const uid = process.getuid ? process.getuid() : 'unknown';
-    const processId = process.pid;
-    return `/tmp/flyclash-mihomo-${uid}-${processId}.sock`;
-  }
+  return getSidecarSocketPath();
 }
 
 /**
@@ -96,7 +92,12 @@ function getSidecarSocketPath() {
   } else {
     const uid = process.getuid ? process.getuid() : 'unknown';
     const processId = process.pid;
-    return `/tmp/flyclash-mihomo-${uid}-${processId}.sock`;
+    const socketDir = path.join(os.tmpdir(), `flyclash-${uid}`);
+    try {
+      fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(socketDir, 0o700);
+    } catch {}
+    return path.join(socketDir, `mihomo-${processId}.sock`);
   }
 }
 

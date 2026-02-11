@@ -1,6 +1,7 @@
 const path = require('path');
 const os = require('os');
 const { app } = require('electron');
+const fsSync = require('fs');
 
 // 服务模式下使用固定的管道名称
 const SERVICE_MODE_PIPE_NAME = '\\\\.\\pipe\\flycast-mihomo-service';
@@ -47,7 +48,12 @@ function getMihomoSocketPath() {
     }
     const uid = process.getuid ? process.getuid() : 'unknown';
     const processId = process.pid;
-    return `/tmp/flyclash-mihomo-${uid}-${processId}.sock`;
+    const socketDir = path.join(os.tmpdir(), `flyclash-${uid}`);
+    try {
+      fsSync.mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+      fsSync.chmodSync(socketDir, 0o700);
+    } catch {}
+    return path.join(socketDir, `mihomo-${processId}.sock`);
   }
 }
 
