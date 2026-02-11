@@ -441,14 +441,15 @@ module.exports = function initTunManager(context) {
         const systemPath = getSystemKernelPath();
 
         const existingProbe = await probeAuthorization(systemPath);
-        if (existingProbe.ok) {
-          console.log('[TunManager] System kernel already authorized, no password needed');
-          return { success: true, message: 'Kernel already authorized' };
-        }
-
         const needsCopy = !fs.existsSync(systemPath) ||
                          (fs.existsSync(systemPath) &&
                           fs.readFileSync(sourceKernelPath).compare(fs.readFileSync(systemPath)) !== 0);
+
+        // 只有权限OK且版本一致才跳过，否则必须重新复制并授权
+        if (existingProbe.ok && !needsCopy) {
+          console.log('[TunManager] System kernel already authorized and up-to-date');
+          return { success: true, message: 'Kernel already authorized' };
+        }
 
         if (useService) {
           console.log('[TunManager] Using service mode for authorization');
@@ -740,46 +741,42 @@ module.exports = function initTunManager(context) {
         } else {
           console.log('[TunManager] Toggling TUN to enabled, checking authorization...');
 
-          // 首先检查系统内核是否已授权（macOS）
-          const systemKernelPath = getSystemKernelPath();
-          let authorized = false;
+          if (isMac) {
+            // macOS: 检查系统内核权限 + 版本一致性
+            const systemKernelPath = getSystemKernelPath();
+            const sourceKernelPath = getSourceKernelPath();
+            let authorized = false;
 
-          if (isMac && fs.existsSync(systemKernelPath)) {
-            const systemProbe = await probeAuthorization(systemKernelPath);
-            console.log('[TunManager] System kernel authorization probe:', {
-              path: systemKernelPath,
-              ok: systemProbe.ok,
-              issues: systemProbe.issues
-            });
-            authorized = systemProbe.ok;
-          }
+            if (fs.existsSync(systemKernelPath)) {
+              const systemProbe = await probeAuthorization(systemKernelPath);
+              // 权限OK且版本一致才算授权通过
+              let versionMatch = true;
+              if (sourceKernelPath && fs.existsSync(sourceKernelPath)) {
+                try {
+                  versionMatch = fs.readFileSync(sourceKernelPath).compare(fs.readFileSync(systemKernelPath)) === 0;
+                } catch {}
+              }
+              authorized = systemProbe.ok && versionMatch;
+              console.log('[TunManager] System kernel check:', {
+                probeOk: systemProbe.ok, versionMatch, authorized
+              });
+            }
 
-          if (!authorized) {
-            // 系统内核不可用，检查当前内核
+            if (!authorized) {
+              console.warn('[TunManager] macOS kernel not authorized or outdated');
+              return { success: false, error: '缺少必要权限或内核已更新，请先进行授权', needsAuth: true };
+            }
+          } else if (isLinux) {
+            // Linux: 直接检查当前内核权限
             const kernelPath = getKernelPath();
             const probe = await probeAuthorization(kernelPath);
-            console.log('[TunManager] Current kernel authorization probe:', {
-              path: kernelPath,
-              ok: probe.ok,
-              issues: probe.issues
+            console.log('[TunManager] Linux kernel authorization probe:', {
+              path: kernelPath, ok: probe.ok, issues: probe.issues
             });
 
             if (!probe.ok) {
               console.warn('[TunManager] Missing permissions, cannot enable TUN');
               return { success: false, error: '缺少必要权限，请先进行授权' };
-            }
-            authorized = true;
-          }
-
-          // macOS: 后台尝试同步内核到系统目录，失败不阻塞 TUN 启动
-          if (isMac) {
-            try {
-              const syncResult = await autoSyncKernel();
-              if (syncResult.synced) {
-                console.log('[TunManager] Custom kernel auto-synced');
-              }
-            } catch (e) {
-              console.warn('[TunManager] Auto-sync failed (non-blocking):', e?.message || e);
             }
           }
 
