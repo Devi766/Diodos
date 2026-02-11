@@ -776,6 +776,9 @@ class CoreManager {
       this.setCurrentCoreType(coreType, specificVersion);
       this.dbManager?.setSetting('core_custom_path', null);
 
+      // macOS/Linux: 如果 TUN 模式已授权，自动同步新内核到系统目录
+      await this._syncKernelForTun();
+
       // 重启内核服务
       if (this.context.mihomoService && typeof this.context.mihomoService.restartMihomo === 'function') {
         const configPath = this.context.state?.configFilePath;
@@ -788,6 +791,30 @@ class CoreManager {
     } catch (error) {
       console.error('[CoreManager] 切换内核失败:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 切换内核后，自动同步新内核到系统目录以保持 TUN 授权
+   */
+  async _syncKernelForTun() {
+    if (process.platform === 'win32') return; // Windows 通过服务模式，不需要同步
+
+    try {
+      const tunManager = this.context.tunManager;
+      if (!tunManager) return;
+
+      // 检查是否需要同步（系统内核存在说明之前授权过）
+      if (typeof tunManager.autoSyncKernel === 'function') {
+        const syncResult = await tunManager.autoSyncKernel();
+        if (syncResult.synced) {
+          console.log('[CoreManager] 新内核已自动同步到系统目录');
+        } else if (syncResult.needsManualAuth) {
+          console.log('[CoreManager] 新内核需要手动重新授权 TUN 权限');
+        }
+      }
+    } catch (e) {
+      console.warn('[CoreManager] TUN 内核同步失败:', e.message);
     }
   }
 

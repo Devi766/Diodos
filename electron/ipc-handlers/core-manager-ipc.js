@@ -192,6 +192,12 @@ function registerCoreManagerIpcHandlers({ state, context, dbManager }) {
         return { success: false, error: 'Database not initialized' };
       }
       context.dbManager.setSetting('core_custom_path', customPath);
+
+      // macOS/Linux: 同步新内核到系统目录以保持 TUN 授权
+      if (context.coreManager && typeof context.coreManager._syncKernelForTun === 'function') {
+        await context.coreManager._syncKernelForTun();
+      }
+
       return { success: true };
     } catch (error) {
       console.error('[IPC] 设置自定义内核路径失败:', error);
