@@ -864,13 +864,19 @@ export default function ProxyNodes() {
       scheduleSoftRefresh();
     };
 
+    const onProxyIconChanged = () => {
+      scheduleSoftRefresh();
+    };
+
     if (typeof window !== 'undefined') {
       window.addEventListener('profile-updated', onProfileUpdated);
+      window.addEventListener('proxy-icon-changed', onProxyIconChanged);
     }
 
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('profile-updated', onProfileUpdated);
+        window.removeEventListener('proxy-icon-changed', onProxyIconChanged);
       }
     };
   }, []);

@@ -20,6 +20,7 @@ import {
 } from '@radix-ui/react-icons';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
+import { Bot } from 'lucide-react';
 import TitleBar from '@/components/TitleBar';
 import { showToast } from '@/components/ui/toast';
 import { useTranslation } from 'react-i18next';
@@ -203,6 +204,7 @@ export default function Layout({ children }: LayoutProps) {
         </svg>
       ) },
       { name: t('nav.logs'), href: '/logs', icon: <InfoCircledIcon className="w-5 h-5" /> },
+      { name: t('nav.aiAssistant'), href: '/ai-assistant', icon: <Bot className="w-5 h-5" /> },
       { name: t('nav.settings'), href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
     ];
 
@@ -796,7 +798,12 @@ export default function Layout({ children }: LayoutProps) {
     pathname.startsWith('/providers') ||
     pathname.startsWith('/converter') ||
     pathname.startsWith('/logs') ||
+    pathname.startsWith('/ai-assistant') ||
+    pathname.startsWith('/ai-settings') ||
     pathname.startsWith('/proxy-icon-settings');
+
+  // Pages that manage their own internal scrolling and need full height passthrough
+  const isFullHeight = pathname.startsWith('/ai-assistant');
 
   return (
     <>
@@ -903,15 +910,17 @@ export default function Layout({ children }: LayoutProps) {
 
           <div
             className={classNames(
-              'flex flex-1 flex-col min-w-0 overflow-y-auto custom-scrollbar',
+              'flex flex-1 flex-col min-w-0',
+              isFullHeight ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar',
               { 'glass-panel card-surface rounded-2xl': !isPlainView }
             )}
             data-hoverable={!isPlainView ? 'false' : undefined}
           >
-            <main className="relative flex-1 min-w-0">
+            <main className={classNames('relative flex-1 min-w-0', isFullHeight && 'h-full overflow-hidden')}>
               <div
                 className={classNames(
-                  'w-full min-w-0 py-5 sm:py-6 md:py-6',
+                  'w-full min-w-0',
+                  isFullHeight ? 'h-full flex flex-col py-3 sm:py-4 md:py-4' : 'py-5 sm:py-6 md:py-6',
                   isPlainView
                     ? 'pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'
                     : 'mx-auto max-w-[1400px] pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'

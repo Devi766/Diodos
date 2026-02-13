@@ -4,6 +4,8 @@ const { ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const yaml = require('js-yaml');
+const http = require('http');
+const https = require('https');
 
 /**
  * Register kernel/DNS/sniffer configuration IPC handlers.
@@ -15,6 +17,11 @@ const yaml = require('js-yaml');
  */
 function registerConfigIpcHandlers(deps) {
   const { context, userDataPath } = deps;
+
+  // AI debug log: renderer -> main process terminal
+  ipcMain.on('ai-debug-log', (event, args) => {
+    console.log('[AI-Renderer]', ...args);
+  });
 
   // =====================================================================
   // Helper: save config section and optionally restart service
@@ -439,6 +446,181 @@ function registerConfigIpcHandlers(deps) {
       console.error('[save-proxies-config] Error:', error);
       return { success: false, error: error.message };
     }
+  });
+
+  // =====================================================================
+  // AI Assistant: raw config file read/write/validate
+  // =====================================================================
+
+  ipcMain.handle('ai-read-config-file', async () => {
+    try {
+      const configPath = context.state?.configFilePath;
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'No active config file' };
+      }
+      const content = await fs.promises.readFile(configPath, 'utf8');
+      return { success: true, content, path: configPath };
+    } catch (error) {
+      console.error('[ai-read-config-file] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('ai-write-config-file', async (event, content) => {
+    try {
+      const configPath = context.state?.configFilePath;
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'No active config file' };
+      }
+      await fs.promises.writeFile(configPath, content, 'utf8');
+      return { success: true, path: configPath };
+    } catch (error) {
+      console.error('[ai-write-config-file] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('ai-validate-config', async (event, content) => {
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      yaml.load(content);
+      return { valid: true };
+    } catch (error) {
+      return { valid: false, error: error.message };
+    }
+  });
+
+  // Atomic edit: read + replace + validate + write in one IPC call
+  ipcMain.handle('ai-edit-config-atomic', async (event, oldString, newString) => {
+    try {
+      const t0 = Date.now();
+      if (!oldString) {
+        return { success: false, error: 'old_string is empty' };
+      }
+      const configPath = context.state?.configFilePath;
+      if (!configPath || !fs.existsSync(configPath)) {
+        return { success: false, error: 'No active config file' };
+      }
+
+      const t1 = Date.now();
+      const content = await fs.promises.readFile(configPath, 'utf8');
+      console.log(`[ai-edit-config-atomic] readFile: ${Date.now() - t1}ms, size=${content.length}`);
+
+      if (!content.includes(oldString)) {
+        return { success: false, error: 'old_string_not_found', content };
+      }
+
+      // Count occurrences
+      let count = 0;
+      let idx = -1;
+      while ((idx = content.indexOf(oldString, idx + 1)) !== -1) count++;
+      if (count > 1) {
+        return { success: false, error: 'multiple_matches', matchCount: count };
+      }
+
+      const newContent = content.replace(oldString, newString);
+
+      // Yield before CPU-intensive YAML parsing
+      await new Promise((resolve) => setImmediate(resolve));
+      const t2 = Date.now();
+      try {
+        yaml.load(newContent);
+      } catch (yamlError) {
+        console.log(`[ai-edit-config-atomic] yaml.load FAILED: ${Date.now() - t2}ms`);
+        return { success: false, error: 'yaml_invalid', yamlError: yamlError.message };
+      }
+      console.log(`[ai-edit-config-atomic] yaml.load: ${Date.now() - t2}ms`);
+
+      const t3 = Date.now();
+      await fs.promises.writeFile(configPath, newContent, 'utf8');
+      console.log(`[ai-edit-config-atomic] writeFile: ${Date.now() - t3}ms`);
+      console.log(`[ai-edit-config-atomic] total: ${Date.now() - t0}ms`);
+      return { success: true };
+    } catch (error) {
+      console.error('[ai-edit-config-atomic] Error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // =======================================================================
+  // AI API Proxy – bypass CORS for Claude / any API endpoint
+  // =======================================================================
+  const activeAiStreams = new Map();
+
+  // Non-streaming proxy (for testConnection etc.)
+  ipcMain.handle('ai-proxy-fetch', async (_event, { url, method, headers, body, timeout }) => {
+    return new Promise((resolve, reject) => {
+      const mod = new URL(url).protocol === 'https:' ? https : http;
+      const req = mod.request(url, { method: method || 'GET', headers }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk.toString(); });
+        res.on('end', () => {
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            body: data,
+          });
+        });
+        res.on('error', (err) => reject(err));
+      });
+      req.on('error', (err) => reject(err));
+      req.setTimeout(timeout || 15000, () => req.destroy(new Error('Request timeout')));
+      if (body) req.write(body);
+      req.end();
+    });
+  });
+
+  // Streaming proxy – returns response info, then pushes chunks via events
+  ipcMain.handle('ai-proxy-stream-start', async (event, { url, method, headers, body, requestId, timeout }) => {
+    return new Promise((resolve, reject) => {
+      const mod = new URL(url).protocol === 'https:' ? https : http;
+      const req = mod.request(url, { method: method || 'POST', headers }, (res) => {
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        if (!ok) {
+          // Collect error body then resolve
+          let errBody = '';
+          res.on('data', (c) => { errBody += c.toString(); });
+          res.on('end', () => {
+            activeAiStreams.delete(requestId);
+            resolve({ ok: false, status: res.statusCode, errorBody: errBody });
+          });
+          return;
+        }
+        // Resolve with header info immediately, then stream chunks
+        resolve({ ok: true, status: res.statusCode });
+        res.on('data', (chunk) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai-proxy-stream-chunk', requestId, chunk);
+          }
+        });
+        res.on('end', () => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai-proxy-stream-end', requestId);
+          }
+          activeAiStreams.delete(requestId);
+        });
+        res.on('error', (err) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('ai-proxy-stream-error', requestId, err.message);
+          }
+          activeAiStreams.delete(requestId);
+        });
+      });
+      req.on('error', (err) => {
+        activeAiStreams.delete(requestId);
+        reject(err);
+      });
+      req.setTimeout(timeout || 60000, () => req.destroy(new Error('请求超时，请检查网络连接')));
+      activeAiStreams.set(requestId, req);
+      if (body) req.write(body);
+      req.end();
+    });
+  });
+
+  // Abort a streaming request
+  ipcMain.handle('ai-proxy-stream-abort', async (_event, requestId) => {
+    const req = activeAiStreams.get(requestId);
+    if (req) { req.destroy(); activeAiStreams.delete(requestId); }
   });
 }
 

@@ -64,6 +64,8 @@ interface MihomoApiResponse {
 }
 
 export interface ElectronAPI {
+  // Debug log to terminal
+  debugLog: (...args: any[]) => void;
   // 导航相关
   loadPage: (pageName: string) => Promise<{ success: boolean, error?: string }>;
 
@@ -335,6 +337,20 @@ export interface ElectronAPI {
   saveProvidersConfig: (proxyProviders: Record<string, any>, ruleProviders: Record<string, any>, configPath: string) => Promise<{ success: boolean; error?: string }>;
   getProxiesConfig: (configPath: string) => Promise<{ success: boolean; proxies?: any[]; error?: string }>;
   saveProxiesConfig: (proxies: any[], configPath: string) => Promise<{ success: boolean; error?: string }>;
+
+  // AI Assistant: raw config file read/write/validate
+  readConfigFile: () => Promise<{ success: boolean; content?: string; path?: string; error?: string }>;
+  writeConfigFile: (content: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  validateConfig: (content: string) => Promise<{ valid: boolean; error?: string }>;
+  editConfigAtomic: (oldString: string, newString: string) => Promise<{ success: boolean; error?: string; matchCount?: number; yamlError?: string; content?: string }>;
+
+  // AI API proxy (bypass CORS)
+  aiProxyFetch: (config: { url: string; method?: string; headers?: Record<string, string>; body?: string; timeout?: number }) => Promise<{ ok: boolean; status: number; body: string }>;
+  aiProxyStreamStart: (config: { url: string; method?: string; headers?: Record<string, string>; body?: string; requestId: string; timeout?: number }) => Promise<{ ok: boolean; status: number; errorBody?: string }>;
+  aiProxyStreamAbort: (requestId: string) => Promise<void>;
+  onAiProxyStreamChunk: (callback: (requestId: string, chunk: Uint8Array) => void) => () => void;
+  onAiProxyStreamEnd: (callback: (requestId: string) => void) => () => void;
+  onAiProxyStreamError: (callback: (requestId: string, error: string) => void) => () => void;
 
   // 覆写管理
   getOverrides: () => Promise<any[]>;
