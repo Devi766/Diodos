@@ -650,6 +650,14 @@ class CoreManager {
           }
         });
 
+        // 某些网络环境下可能只触发 close 不触发 end/aborted，补充兜底避免 Promise 悬挂
+        response.on('close', () => {
+          if (settled) return;
+          if (totalSize > 0 && downloadedSize < totalSize) {
+            finish(new Error(`下载连接提前关闭: ${downloadedSize}/${totalSize}`));
+          }
+        });
+
         response.pipe(file);
 
         file.on('finish', () => {
@@ -657,8 +665,9 @@ class CoreManager {
             return finish(new Error(`下载不完整: ${downloadedSize}/${totalSize}`));
           }
           file.close();
-          if (onProgress && totalSize) {
-            onProgress(100, totalSize, totalSize);
+          if (onProgress) {
+            const finalTotal = totalSize || downloadedSize || 1;
+            onProgress(100, downloadedSize || finalTotal, finalTotal);
           }
           finish();
         });

@@ -392,23 +392,27 @@ export default function ProxyNodes() {
   }, [mihomoRunning]);
 
   // 过滤节点组
-  const filteredGroups = groups.map(group => {
-    const filteredNodes = group.nodes.filter(node =>
-      node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      node.server.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-    return { ...group, nodes: filteredNodes };
-  }).filter(group => group.nodes.length > 0);
+  const filteredGroups = React.useMemo(() => {
+    return groups.map(group => {
+      const filteredNodes = group.nodes.filter(node =>
+        node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        node.server.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      return { ...group, nodes: filteredNodes };
+    }).filter(group => group.nodes.length > 0);
+  }, [groups, searchTerm]);
 
   // 收藏的节点过滤
-  const favoriteFilteredGroups = groups.map(group => {
-    const favoriteNodesList = group.nodes.filter(node =>
-      (favoriteNodes.has(node.name)) &&
-      (node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-       node.server.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-    return { ...group, nodes: favoriteNodesList };
-  }).filter(group => group.nodes.length > 0);
+  const favoriteFilteredGroups = React.useMemo(() => {
+    return groups.map(group => {
+      const favoriteNodesList = group.nodes.filter(node =>
+        (favoriteNodes.has(node.name)) &&
+        (node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+         node.server.toLowerCase().includes(searchTerm.toLowerCase()))
+      );
+      return { ...group, nodes: favoriteNodesList };
+    }).filter(group => group.nodes.length > 0);
+  }, [groups, favoriteNodes, searchTerm]);
 
   // 获取节点列表
   const fetchProxies = async () => {
@@ -1287,12 +1291,12 @@ export default function ProxyNodes() {
     // 根据排序模式对节点进行排序
     const sortedNodes = React.useMemo(() => {
       if (sortMode === 'latency') {
+        const getLatencyWeight = (delay?: number) =>
+          typeof delay === 'number' && delay > 0 ? delay : Number.POSITIVE_INFINITY;
+
         return [...group.nodes].sort((a, b) => {
-          // 没有延迟的节点排在最后
-          if (!a.delay && !b.delay) return 0;
-          if (!a.delay) return 1;
-          if (!b.delay) return -1;
-          return a.delay - b.delay;
+          // 无延迟/超时(0)/异常值统一排在最后
+          return getLatencyWeight(a.delay) - getLatencyWeight(b.delay);
         });
       }
       return group.nodes;
@@ -1390,7 +1394,7 @@ export default function ProxyNodes() {
     
     // 内容渲染函数 - 仅在内容加载时渲染
     const renderContent = () => {
-      if (group.nodes.length > 100) {
+      if (sortedNodes.length > 100) {
         // 对于大量节点使用虚拟化渲染
         return (
           <div style={{ height: 'auto', width: '100%', minHeight: '400px' }}>
@@ -1400,7 +1404,7 @@ export default function ProxyNodes() {
                 const columnCount = Math.min(optimalColumns, 6);
 
                 const columnWidth = width / columnCount;
-                const rowCount = Math.ceil(group.nodes.length / columnCount);
+                const rowCount = Math.ceil(sortedNodes.length / columnCount);
                 // 卡片固定高度
                 const rowHeight = 90;
                 
@@ -1418,7 +1422,7 @@ export default function ProxyNodes() {
                   >
                     {({ columnIndex, rowIndex, style }) => {
                       const index = rowIndex * columnCount + columnIndex;
-                      const node = group.nodes[index];
+                      const node = sortedNodes[index];
                       
                       if (!node) return null;
                       

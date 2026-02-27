@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
 import { Input } from './ui/input';
@@ -14,11 +14,13 @@ import {
   arrayMove, SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { FixedSizeList } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
 import {
   Settings2, Globe, Save, Loader2,
   Plus, Trash2, Network, Shield, Fingerprint, Cable,
   Server, Lock, ChevronRight, Users, List,
-  Database, Search, ChevronDown, GripVertical, Zap, Link2
+  Database, Search, ChevronDown, GripVertical, Zap, Link2,
 } from 'lucide-react';
 
 interface KernelConfig {
@@ -820,7 +822,7 @@ function ProxyGroupEditForm({ group, idx, updateGroup, t }: { group: any; idx: n
   );
 }
 
-// ==================== Rules Tab ====================
+// ==================== Rules Tab (Virtualized) ====================
 function RulesTab({ rules, setRules, t }: {
   rules: string[];
   setRules: React.Dispatch<React.SetStateAction<string[]>>;
@@ -829,19 +831,33 @@ function RulesTab({ rules, setRules, t }: {
   const [searchQuery, setSearchQuery] = useState('');
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editValue, setEditValue] = useState('');
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), useSensor(KeyboardSensor));
+  const [dragging, setDragging] = useState<{
+    fromIdx: number;
+    toIdx: number;
+    pointerX: number;
+    pointerY: number;
+    text: string;
+  } | null>(null);
+
+  const listRef = useRef<FixedSizeList>(null);
+  const listOuterRef = useRef<HTMLDivElement>(null);
+  const dragLayerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ fromIdx: number; toIdx: number; text: string } | null>(null);
+
+  const ITEM_HEIGHT = 36;
+  const AUTO_SCROLL_EDGE = 36;
+  const AUTO_SCROLL_STEP = 14;
 
   const filteredRules = useMemo(() => {
     const mapped = rules.map((r, i) => ({ rule: r, idx: i }));
     return searchQuery ? mapped.filter(({ rule }) => rule.toLowerCase().includes(searchQuery.toLowerCase())) : mapped;
   }, [rules, searchQuery]);
 
-  const ids = useMemo(() => filteredRules.map(({ idx }) => `rule-${idx}`), [filteredRules]);
-
   const addRule = () => {
     setRules((prev) => ['DOMAIN-SUFFIX,,PROXY', ...prev]);
     setEditingIdx(0);
     setEditValue('DOMAIN-SUFFIX,,PROXY');
+    listRef.current?.scrollToItem(0, 'start');
   };
   const removeRule = (idx: number) => {
     setRules((prev) => prev.filter((_, i) => i !== idx));
@@ -854,16 +870,125 @@ function RulesTab({ rules, setRules, t }: {
     }
     setEditingIdx(null);
   };
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldRealIdx = filteredRules[ids.indexOf(active.id as string)]?.idx;
-      const newRealIdx = filteredRules[ids.indexOf(over.id as string)]?.idx;
-      if (oldRealIdx !== undefined && newRealIdx !== undefined) {
-        setRules((prev) => arrayMove(prev, oldRealIdx, newRealIdx));
-      }
+
+  const startDrag = useCallback((originalIdx: number, text: string, e: React.PointerEvent) => {
+    if (searchQuery) return;
+    e.preventDefault();
+    const listEl = listOuterRef.current;
+    if (!listEl || filteredRules.length === 0) return;
+    dragRef.current = { fromIdx: originalIdx, toIdx: originalIdx, text };
+    setDragging({ fromIdx: originalIdx, toIdx: originalIdx, pointerX: e.clientX, pointerY: e.clientY, text });
+
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore pointer capture failures and fallback to document listeners.
     }
-  };
+
+    const onMove = (ev: PointerEvent) => {
+      const state = dragRef.current;
+      if (!state) return;
+      const rect = listEl.getBoundingClientRect();
+      if (ev.clientY < rect.top + AUTO_SCROLL_EDGE) listEl.scrollTop -= AUTO_SCROLL_STEP;
+      else if (ev.clientY > rect.bottom - AUTO_SCROLL_EDGE) listEl.scrollTop += AUTO_SCROLL_STEP;
+
+      const relY = ev.clientY - rect.top + listEl.scrollTop;
+      const fIdx = Math.min(Math.max(0, Math.floor(relY / ITEM_HEIGHT)), filteredRules.length - 1);
+      const targetIdx = filteredRules[fIdx]?.idx ?? state.fromIdx;
+      state.toIdx = targetIdx;
+
+      setDragging({
+        fromIdx: state.fromIdx,
+        toIdx: state.toIdx,
+        pointerX: ev.clientX,
+        pointerY: ev.clientY,
+        text: state.text,
+      });
+    };
+
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      const state = dragRef.current;
+      dragRef.current = null;
+      setDragging(null);
+      if (!state || state.fromIdx === state.toIdx) return;
+
+      setRules((prev) => {
+        const next = [...prev];
+        const [item] = next.splice(state.fromIdx, 1);
+        next.splice(state.toIdx, 0, item);
+        return next;
+      });
+      setEditingIdx((prev) => {
+        if (prev === null) return prev;
+        if (prev === state.fromIdx) return state.toIdx;
+        if (state.fromIdx < prev && state.toIdx >= prev) return prev - 1;
+        if (state.fromIdx > prev && state.toIdx <= prev) return prev + 1;
+        return prev;
+      });
+    };
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  }, [searchQuery, filteredRules, setRules]);
+
+  const sourceFilteredIdx = dragging ? filteredRules.findIndex(({ idx }) => idx === dragging.fromIdx) : -1;
+  const targetFilteredIdx = dragging ? filteredRules.findIndex(({ idx }) => idx === dragging.toIdx) : -1;
+  const insertAfter = sourceFilteredIdx >= 0 && targetFilteredIdx >= 0 && targetFilteredIdx > sourceFilteredIdx;
+  const lineTop = targetFilteredIdx >= 0 ? (targetFilteredIdx + (insertAfter ? 1 : 0)) * ITEM_HEIGHT - (listOuterRef.current?.scrollTop || 0) : 0;
+  const dragPreviewStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!dragging) return undefined;
+    const layerRect = dragLayerRef.current?.getBoundingClientRect();
+    if (!layerRect) return undefined;
+    const relativeX = dragging.pointerX - layerRect.left;
+    const relativeY = dragging.pointerY - layerRect.top;
+    const nearRightEdge = relativeX > layerRect.width - 320;
+    const clampedX = Math.min(Math.max(12, relativeX), layerRect.width - 12);
+    const clampedY = Math.min(Math.max(12, relativeY), layerRect.height - 12);
+    return {
+      left: `${clampedX}px`,
+      top: `${clampedY}px`,
+      transform: nearRightEdge ? 'translate(calc(-100% - 14px), -50%)' : 'translate(14px, -50%)',
+    };
+  }, [dragging]);
+
+  const RuleRow = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
+    const { rule, idx } = filteredRules[index];
+    const isEditing = editingIdx === idx;
+    const canDrag = !searchQuery;
+    const isDraggingSelf = dragging?.fromIdx === idx;
+    const isDropTarget = dragging?.toIdx === idx && dragging?.fromIdx !== idx;
+    return (
+      <div style={style} className="px-1">
+        <div className={`flex items-center gap-1 group rounded-md transition-colors h-[32px] ${isDropTarget ? 'bg-blue-50 dark:bg-blue-900/15' : 'hover:bg-gray-50 dark:hover:bg-[#1f1f1f]'} ${isDraggingSelf ? 'opacity-45' : ''}`}>
+          <div
+            onPointerDown={canDrag ? (e) => startDrag(idx, rule, e) : undefined}
+            className={`shrink-0 p-1 rounded text-gray-300 dark:text-gray-600 transition-colors touch-none ${canDrag ? 'cursor-grab active:cursor-grabbing hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-500 dark:hover:text-gray-400' : 'opacity-30 cursor-not-allowed'}`}
+          >
+            <GripVertical className="w-3 h-3" />
+          </div>
+          {isEditing ? (
+            <input type="text"
+              className="flex-1 px-2.5 py-1 text-[13px] border border-blue-400 dark:border-blue-500 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={confirmEdit}
+              onKeyDown={(e) => { if (e.key === 'Enter') confirmEdit(); if (e.key === 'Escape') setEditingIdx(null); }}
+              autoFocus />
+          ) : (
+            <span className="flex-1 px-2.5 py-1 text-[13px] font-mono text-gray-600 dark:text-gray-300 cursor-pointer rounded-md truncate"
+              onClick={() => startEdit(idx, rule)}
+              title={rule}>{rule}</span>
+          )}
+          <button onClick={() => removeRule(idx)}
+            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-transparent group-hover:text-gray-300 dark:group-hover:text-gray-600 hover:!text-red-500 transition-colors shrink-0">
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    );
+  }, [filteredRules, editingIdx, editValue, searchQuery, dragging, startDrag]);
 
   return (
     <SectionCard icon={<List className="w-4 h-4" />} title={t('configEditor.rulesTitle')} desc={`${rules.length} ${t('configEditor.rulesCount')}`}
@@ -872,35 +997,42 @@ function RulesTab({ rules, setRules, t }: {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
         <input type="text" className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 transition-all" placeholder={t('configEditor.searchRules')} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
       </div>
-      <div className="max-h-[420px] overflow-y-auto custom-scrollbar -mx-1 px-1">
+      <div ref={dragLayerRef} className="h-[420px] relative">
         {filteredRules.length === 0 ? (
           <EmptyState text={t('configEditor.noRules')} />
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-              <div className="space-y-1">
-                {filteredRules.map(({ rule, idx }, fi) => (
-                  <SortableItem key={ids[fi]} id={ids[fi]}>
-                    {({ dragHandleProps }) => (
-                      <div className="flex items-center gap-1.5 group rounded-md hover:bg-gray-50 dark:hover:bg-[#1f1f1f] transition-colors">
-                        <button {...dragHandleProps} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 transition-colors shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <GripVertical className="w-3 h-3" />
-                        </button>
-                        {editingIdx === idx ? (
-                          <input type="text" className="flex-1 px-2.5 py-1.5 text-[13px] border border-blue-400 dark:border-blue-500 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20" value={editValue} onChange={(e) => setEditValue(e.target.value)} onBlur={confirmEdit} onKeyDown={(e) => { if (e.key === 'Enter') confirmEdit(); if (e.key === 'Escape') setEditingIdx(null); }} autoFocus />
-                        ) : (
-                          <span className="flex-1 px-2.5 py-1.5 text-[13px] font-mono text-gray-600 dark:text-gray-300 cursor-pointer rounded-md truncate" onClick={() => startEdit(idx, rule)} title={rule}>{rule}</span>
-                        )}
-                        <button onClick={() => removeRule(idx)} className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-transparent group-hover:text-gray-300 dark:group-hover:text-gray-600 hover:!text-red-500 transition-colors shrink-0">
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    )}
-                  </SortableItem>
-                ))}
+          <AutoSizer>
+            {({ height, width }: { height: number; width: number }) => (
+              <div className="relative">
+                <FixedSizeList
+                  ref={listRef}
+                  outerRef={listOuterRef}
+                  height={height}
+                  width={width}
+                  itemCount={filteredRules.length}
+                  itemSize={ITEM_HEIGHT}
+                  className="custom-scrollbar"
+                  overscanCount={10}
+                >
+                  {RuleRow}
+                </FixedSizeList>
+                {dragging && (
+                  <div
+                    className="absolute left-2 right-2 h-0.5 bg-blue-500 rounded-full pointer-events-none z-40"
+                    style={{ top: `${Math.min(Math.max(0, lineTop), height)}px` }}
+                  />
+                )}
               </div>
-            </SortableContext>
-          </DndContext>
+            )}
+          </AutoSizer>
+        )}
+        {dragging && (
+          <div
+            className="absolute pointer-events-none z-[90] max-w-[560px] px-2.5 py-1 rounded-md border border-blue-300/70 dark:border-blue-700/70 bg-white/95 dark:bg-[#2a2a2a]/95 text-[12px] font-mono text-gray-700 dark:text-gray-200 shadow-lg"
+            style={dragPreviewStyle}
+          >
+            {dragging.text}
+          </div>
         )}
       </div>
     </SectionCard>

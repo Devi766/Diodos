@@ -259,7 +259,7 @@ export default function CoreManager() {
 
     const unsubscribe = window.electronAPI.onCoreDownloadProgress((data) => {
       setDownloadProgress(data);
-      if (data.progress >= 99.9) {
+      if (data.progress >= 100) {
         setExtracting(true);
       }
     });

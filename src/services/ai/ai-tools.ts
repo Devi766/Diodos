@@ -185,20 +185,21 @@ export const aiToolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'manage_overrides',
-    description: '管理覆写脚本：列出、创建、删除、启用/禁用、更新远程覆写',
+    description: '管理覆写脚本：列出、创建、删除、启用/禁用、更新远程覆写、关联订阅。覆写分为全局覆写（对所有订阅生效）和订阅特定覆写（需关联到订阅才生效）。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'create', 'delete', 'enable', 'disable', 'update_remote'],
-          description: '操作类型',
+          enum: ['list', 'create', 'delete', 'enable', 'disable', 'update_remote', 'associate'],
+          description: '操作类型。associate: 将覆写关联到当前订阅',
         },
-        id: { type: 'string', description: '覆写 ID（delete/enable/disable/update_remote 时使用）' },
+        id: { type: 'string', description: '覆写 ID（delete/enable/disable/update_remote/associate 时使用）' },
         name: { type: 'string', description: '覆写名称（create 时必填）' },
         content: { type: 'string', description: '覆写内容（create 时使用，JavaScript 或 YAML）' },
-        type: { type: 'string', enum: ['javascript', 'yaml'], description: '覆写类型（create 时使用），默认 yaml' },
+        type: { type: 'string', enum: ['javascript', 'yaml'], description: '覆写文件类型（create 时使用），默认 yaml' },
         url: { type: 'string', description: '远程覆写 URL（create 时使用，填写后为远程覆写）' },
+        global: { type: 'boolean', description: '是否为全局覆写（create 时使用），默认 true。全局覆写对所有订阅生效，非全局需通过 associate 关联到订阅' },
       },
       required: ['action'],
     },
@@ -703,24 +704,31 @@ export async function executeTool(
         if (action === 'list') {
           const overrides: any[] = await window.electronAPI.getOverrides() || [];
           const items = overrides.map((o: any) => ({
-            id: o.id, name: o.name, type: o.type, enabled: o.enabled,
+            id: o.id, name: o.name, type: o.type, ext: o.ext, enabled: o.enabled, global: o.global,
             url: o.url || undefined,
           }));
           return { success: true, content: `共 ${items.length} 个覆写`, data: { count: items.length, overrides: items } };
         }
         if (action === 'create') {
           if (!args.name) return { success: false, content: '缺少 name 参数' };
+          const extMap: Record<string, string> = { javascript: 'js', yaml: 'yaml' };
+          const fileType = args.type || 'yaml';
+          const ext = extMap[fileType] || 'yaml';
+          const defaultContent = ext === 'js'
+            ? '// JavaScript 覆写脚本\nfunction main(config) {\n  return config;\n}\n'
+            : '# YAML 覆写配置\n';
           const newItem: any = {
             name: args.name,
-            type: args.type || 'yaml',
+            type: args.url ? 'remote' : 'local',
+            ext,
+            file: args.content || defaultContent,
             enabled: true,
+            global: args.global !== undefined ? args.global : true,
           };
           if (args.url) newItem.url = args.url;
           const result = await window.electronAPI.addOverride(newItem);
-          if (args.content && result?.id) {
-            await window.electronAPI.updateOverrideFileContent(result.id, args.content);
-          }
-          return { success: true, content: `覆写 "${args.name}" 已创建` };
+          await reloadConfig();
+          return { success: true, content: `覆写 "${args.name}" 已创建（${newItem.global ? '全局' : '需关联订阅'}）`, data: { id: result?.id } };
         }
         if (action === 'delete') {
           if (!args.id) return { success: false, content: '缺少 id 参数' };
@@ -730,12 +738,25 @@ export async function executeTool(
         if (action === 'enable' || action === 'disable') {
           if (!args.id) return { success: false, content: '缺少 id 参数' };
           await window.electronAPI.updateOverride(args.id, { enabled: action === 'enable' });
+          await reloadConfig();
           return { success: true, content: `覆写已${action === 'enable' ? '启用' : '禁用'}` };
         }
         if (action === 'update_remote') {
           if (!args.id) return { success: false, content: '缺少 id 参数' };
           await window.electronAPI.updateRemoteOverride(args.id);
           return { success: true, content: '远程覆写已更新' };
+        }
+        if (action === 'associate') {
+          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          const configPath = await window.electronAPI?.getActiveConfig?.();
+          if (!configPath) return { success: false, content: '没有活动的订阅配置' };
+          const currentOverrides: string[] = await window.electronAPI.getSubscriptionOverrides?.(configPath) || [];
+          if (!currentOverrides.includes(args.id)) {
+            currentOverrides.push(args.id);
+            await window.electronAPI.setSubscriptionOverrides?.(configPath, currentOverrides);
+          }
+          await reloadConfig();
+          return { success: true, content: `覆写已关联到当前订阅` };
         }
         return { success: false, content: `不支持的操作: ${action}` };
       }

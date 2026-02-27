@@ -191,6 +191,16 @@ class OverrideManager {
       throw new Error('覆写项不存在');
     }
 
+    // If a local file exists (either local type or remotely-added but locally edited), read it
+    if (item.fileName) {
+      const filePath = path.join(this.filesDir, item.fileName);
+      try {
+        return await fs.readFile(filePath, 'utf-8');
+      } catch {
+        // Local file missing – fall through to remote fetch if applicable
+      }
+    }
+
     if (item.type === 'remote') {
       const fetchFn = await this.context.get('resolveFetchFn')();
       const response = await fetchFn(item.url);
@@ -198,11 +208,6 @@ class OverrideManager {
         throw new Error(`获取远程文件失败: ${response.statusText}`);
       }
       return await response.text();
-    }
-
-    if (item.type === 'local' && item.fileName) {
-      const filePath = path.join(this.filesDir, item.fileName);
-      return await fs.readFile(filePath, 'utf-8');
     }
 
     return '';
@@ -214,10 +219,6 @@ class OverrideManager {
     
     if (!item) {
       throw new Error('覆写项不存在');
-    }
-
-    if (item.type !== 'local') {
-      throw new Error('只能编辑本地文件');
     }
 
     if (!item.fileName) {
