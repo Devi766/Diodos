@@ -37,7 +37,7 @@
     "electron:build:mac:x64": "npm run prepare:mac:x64 && next build --no-lint && electron-builder --mac --x64",
     "electron:build:mac:arm64": "npm run prepare:mac:arm64 && next build --no-lint && electron-builder --mac --arm64",
     "electron:build:mac:universal": "next build --no-lint && npm run prepare:mac:x64 && npm run prepare:mac:arm64 && electron-builder --mac --x64 --arm64",
-    "clean": "node clean.js"
+    "clean": "node -e \"const fs=require('fs');['.next','out','dist','release'].forEach(d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}})\""
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

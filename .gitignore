@@ -1,7 +1,5 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-nul
-
 # dependencies
 /node_modules
 /.pnp
@@ -12,8 +10,13 @@ nul
 !.yarn/releases
 !.yarn/versions
 
-/cores/mihomo-windows-amd64.exe
+# Mihomo/Clash core binaries
+/cores/
+
+# extra resources (sidecar, files)
 /extra
+
+# release & dist output
 /release
 /dist
 
@@ -22,6 +25,7 @@ nul
 
 # local build config
 electron-builder.local.yml
+
 # testing
 /coverage
 
@@ -36,13 +40,14 @@ electron-builder.local.yml
 .DS_Store
 *.pem
 
-# debug
+# debug & logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
 
 # vercel
@@ -52,15 +57,47 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# AI generated directories
+# AI / editor generated
 .claude/
 .playwright-mcp/
+.windsurfrules
+.vscode/
+.config/
 
-# AI generated docs (keep README.md)
-/*.md
-!README.md
-/docs/
+# npm cache
+.npm/
+
+# Binary executables - should not be in source control
+*.exe
+
+# GeoIP databases - download at build time
+tools/data/*.mmdb
+tools/data/*.dat
+tools/data/*.metadb
+
+# Local build/clean scripts
+*.bat
+*.ps1
+
+# Backup & temp files
+*.bak
+main_backup.js
+package.json.bak
 
 # Large JSON release caches
 metacubex_releases.json
 vernesong_releases.json
+
+# Windows null device artifact
+nul
+
+# Temp fix scripts
+fix.js
+electron/fix.js
+
+# docs (auto-generated)
+/docs/
+
+# *.md except README
+/*.md
+!README.md
