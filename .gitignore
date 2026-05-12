@@ -78,6 +78,8 @@ tools/data/*.metadb
 # Local build/clean scripts
 *.bat
 *.ps1
+# 例外：CI 编译 sysproxy 用的脚本必须入库
+!native/sysproxy/build-all.bat
 
 # Backup & temp files
 *.bak

@@ -32,7 +32,7 @@ jobs:
       - name: Build SysProxy
         run: |
           cd native/sysproxy
-          ./build-all.bat ${{ matrix.arch }}
+          call build-all.bat ${{ matrix.arch }}
         shell: cmd
 
       - name: Build Helper Service
