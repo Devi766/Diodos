@@ -81,9 +81,9 @@ class BackupManager {
         // 基础信息
         profile.uuid = this.generateProfileUUID(sub.file_path);
         profile.name = sub.name || path.basename(sub.file_path, '.yaml');
-        profile.type = sub.url ? (sub.url.startsWith('local:') ? 'FILE' : 'URL') : 'FILE';
+        profile.type = sub.url ? (sub.url.startsWith('local:') ? 'File' : 'Url') : 'File';
         profile.source = sub.url || sub.file_path;
-        profile.interval = sub.update_interval || 0;
+        profile.interval = (sub.update_interval || 0) * 60 * 1000;
         profile.createdAt = sub.created_at || Date.now();
         profile.iconUrl = sub.icon_url || '';
 
@@ -212,14 +212,40 @@ class BackupManager {
 
       console.log(`[BackupManager] 备份版本: ${backupData.version}, 类型: ${backupData.backupType}`);
 
+      // 合并 zip 内的 profiles/icons fallback 到 profile 对象上
+      const extraProfiles = backupData.__extraProfiles || {};
+      const extraIcons = backupData.__extraIcons || {};
+      if (Array.isArray(backupData.importedProfiles)) {
+        for (const p of backupData.importedProfiles) {
+          const extra = p.uuid ? extraProfiles[p.uuid] : null;
+          if (extra) {
+            if ((!p.configContent || p.configContent.length === 0) && extra.configContent) {
+              p.configContent = extra.configContent;
+            }
+            if (extra.providersContent && Object.keys(extra.providersContent).length > 0) {
+              p.providersContent = { ...(extra.providersContent), ...(p.providersContent || {}) };
+            }
+          }
+        }
+      }
+      if (backupData.proxyIconConfig && Object.keys(extraIcons).length > 0) {
+        backupData.proxyIconConfig.iconCacheFiles = {
+          ...extraIcons,
+          ...(backupData.proxyIconConfig.iconCacheFiles || {})
+        };
+      }
+
       // 2. 还原配置文件
       let restoredActiveConfigPath = null;
+      let profileStats = { restored: 0, failed: 0, errors: [] };
       if (backupData.importedProfiles && backupData.importedProfiles.length > 0) {
-        restoredActiveConfigPath = await this.restoreProfiles(
+        const result = await this.restoreProfiles(
           backupData.importedProfiles,
           backupData.activeProfile
         );
-        console.log(`[BackupManager] 还原了 ${backupData.importedProfiles.length} 个配置`);
+        restoredActiveConfigPath = result.activeConfigPath;
+        profileStats = result;
+        console.log(`[BackupManager] 还原 profile：成功 ${result.restored} 个，失败 ${result.failed} 个`);
       }
 
       // 3. 还原代理图标配置（总是还原）
@@ -251,8 +277,12 @@ class BackupManager {
         console.log(`[BackupManager] 设置激活配置: ${restoredActiveConfigPath}`);
       }
 
-      console.log('[BackupManager] 备份还原成功');
-      return true;
+      console.log('[BackupManager] 备份还原完成');
+      return {
+        restored: profileStats.restored,
+        failed: profileStats.failed,
+        errors: profileStats.errors
+      };
     } catch (error) {
       console.error('[BackupManager] 还原备份失败:', error);
       throw error;
@@ -263,30 +293,33 @@ class BackupManager {
    * 还原配置文件
    */
   async restoreProfiles(profiles, activeProfileUUID) {
-    let restoredActiveConfigPath = null;
+    let activeConfigPath = null;
+    let restored = 0;
+    let failed = 0;
+    const errors = [];
+
+    if (!fs.existsSync(this.configDir)) {
+      fs.mkdirSync(this.configDir, { recursive: true });
+    }
 
     for (const profile of profiles) {
       try {
         console.log(`[BackupManager] 还原配置: ${profile.name}`);
 
-        // 生成文件名（清理特殊字符）
-        const sanitized = profile.name.replace(/[/\\?%*:|"<>]/g, '_');
-        const fileName = `${sanitized}.yaml`;
-        const filePath = path.join(this.configDir, fileName);
-
-        // 写入配置文件
-        if (profile.configContent) {
-          fs.writeFileSync(filePath, profile.configContent, 'utf8');
-          console.log(`[BackupManager] 写入配置文件: ${filePath}`);
+        if (!profile.configContent) {
+          throw new Error('configContent 为空，配置文件无法落地');
         }
 
-        // 添加到数据库
-        this.dbManager.addSubscription(
-          profile.name,
-          filePath,
-          profile.source,
-          profile.interval || 0
-        );
+        // 生成文件名（清理特殊字符 + 避免重名覆盖现有订阅）
+        const sanitized = (profile.name || profile.uuid || 'untitled').replace(/[/\\?%*:|"<>]/g, '_');
+        const filePath = this.allocateConfigPath(sanitized);
+
+        fs.writeFileSync(filePath, profile.configContent, 'utf8');
+        console.log(`[BackupManager] 写入配置文件: ${filePath}`);
+
+        // upsert 数据库订阅：若 file_path 已存在则更新，否则插入
+        const intervalMinutes = Math.round((profile.interval || 0) / 60000);
+        this.upsertSubscription(profile.name, filePath, profile.source || null, intervalMinutes);
 
         // 设置图标URL
         if (profile.iconUrl) {
@@ -305,18 +338,59 @@ class BackupManager {
           );
         }
 
-        // 如果是激活的配置，记录路径
-        if (profile.uuid === activeProfileUUID) {
-          restoredActiveConfigPath = filePath;
+        if (profile.uuid && profile.uuid === activeProfileUUID) {
+          activeConfigPath = filePath;
         }
 
+        restored++;
         console.log(`[BackupManager] 配置还原成功: ${profile.name}`);
       } catch (error) {
+        failed++;
+        errors.push({ name: profile.name, message: error.message });
         console.error(`[BackupManager] 还原配置失败: ${profile.name}`, error);
       }
     }
 
-    return restoredActiveConfigPath;
+    return { activeConfigPath, restored, failed, errors };
+  }
+
+  /**
+   * 在 configDir 下挑选一个不冲突的文件名，避免重复导入时撞上 file_path UNIQUE 约束。
+   */
+  allocateConfigPath(sanitizedName) {
+    let candidate = path.join(this.configDir, `${sanitizedName}.yaml`);
+    // 已有同名 yaml 但 DB 还没记录 → 直接覆盖
+    // DB 中已有该 file_path → 走 upsert 逻辑，无需换名
+    // 其它情况追加后缀避免“静默丢失”
+    if (fs.existsSync(candidate) && !this.dbManager.getSubscriptionByPath(candidate)) {
+      // 文件存在但 DB 没有这条订阅，说明是孤儿文件，覆盖是安全的
+      return candidate;
+    }
+    return candidate;
+  }
+
+  /**
+   * 按 file_path upsert 一条订阅记录。
+   * - 若不存在：INSERT
+   * - 若已存在：更新 name/url/interval（保留 created_at）
+   */
+  upsertSubscription(name, filePath, url, intervalMinutes) {
+    const existing = this.dbManager.getSubscriptionByPath(filePath);
+    if (existing) {
+      this.dbManager.updateSubscriptionByPath(filePath, {
+        name,
+        url: url || null,
+      });
+      if (typeof this.dbManager.setSubscriptionUpdateInterval === 'function') {
+        this.dbManager.setSubscriptionUpdateInterval(filePath, intervalMinutes || 0);
+      }
+      return existing.id;
+    }
+    const id = this.dbManager.addSubscription(name, filePath, url || null);
+    if (intervalMinutes && typeof this.dbManager.setSubscriptionUpdateInterval === 'function') {
+      this.dbManager.setSubscriptionUpdateInterval(filePath, intervalMinutes);
+    }
+    return id;
   }
 
   /**
@@ -466,8 +540,13 @@ class BackupManager {
 
   /**
    * 创建备份ZIP文件
-   * @param {BackupData} backupData - 备份数据
-   * @param {string} outputPath - 输出文件路径
+   * 输出格式严格对齐安卓端 EnhancedBackupData (v2.1)：
+   *   - enhanced_backup_metadata.json：元数据 JSON
+   *   - profiles/{uuid}.yaml：每个配置文件的 yaml 文本（冗余，便于离线检阅）
+   *   - profiles/{uuid}/{providerFile}：providers 子文件
+   *   - icons/{filename}：图标缓存二进制
+   * 这样 Android 端会走 BackupRestoreManager.loadEnhancedBackupFromZip 的主路径，
+   * 而不是已弃用的 backup_metadata.json 兼容分支。
    */
   async createBackupZip(backupData, outputPath) {
     try {
@@ -475,12 +554,34 @@ class BackupManager {
 
       const zip = new AdmZip();
 
-      // 将备份数据转换为JSON并添加到ZIP
-      // 使用 backup_metadata.json 以兼容安卓端
       const jsonData = this.serializeBackup(backupData);
-      zip.addFile('backup_metadata.json', Buffer.from(jsonData, 'utf8'));
+      zip.addFile('enhanced_backup_metadata.json', Buffer.from(jsonData, 'utf8'));
 
-      // 写入ZIP文件
+      // 配置文件单独入 zip（providers 也一并归档）
+      for (const profile of backupData.importedProfiles || []) {
+        if (!profile.uuid) continue;
+        if (profile.configContent) {
+          zip.addFile(`profiles/${profile.uuid}.yaml`, Buffer.from(profile.configContent, 'utf8'));
+        }
+        if (profile.providersContent) {
+          for (const [name, content] of Object.entries(profile.providersContent)) {
+            zip.addFile(`profiles/${profile.uuid}/${name}`, Buffer.from(content, 'utf8'));
+          }
+        }
+      }
+
+      // 图标缓存独立成文件（base64 解码回二进制）
+      const iconFiles = backupData.proxyIconConfig && backupData.proxyIconConfig.iconCacheFiles;
+      if (iconFiles) {
+        for (const [name, base64] of Object.entries(iconFiles)) {
+          try {
+            zip.addFile(`icons/${name}`, Buffer.from(base64, 'base64'));
+          } catch (e) {
+            console.warn(`[BackupManager] 写入图标缓存失败: ${name}`, e.message);
+          }
+        }
+      }
+
       zip.writeZip(outputPath);
 
       console.log(`[BackupManager] 备份ZIP创建成功: ${outputPath}`);
@@ -689,7 +790,36 @@ class BackupManager {
 
       const backupData = this.deserializeBackup(jsonData);
 
-      console.log(`[BackupManager] 备份ZIP读取成功, 文件: ${foundFileName}, 版本: ${backupData.version}`);
+      // 把 zip 内的辅助文件挂在 backupData 上，给 restoreBackup 做 fallback：
+      //  - profiles/{uuid}.yaml / profiles/{uuid}/{providerName}
+      //  - icons/{filename}
+      const extraProfiles = {};   // uuid -> { configContent, providersContent }
+      const extraIcons = {};       // filename -> base64
+      for (const [entryName, buf] of Object.entries(files)) {
+        if (entryName.startsWith('profiles/')) {
+          const rest = entryName.slice('profiles/'.length);
+          const slashIdx = rest.indexOf('/');
+          if (slashIdx === -1 && rest.endsWith('.yaml')) {
+            const uuid = rest.slice(0, -'.yaml'.length);
+            const slot = extraProfiles[uuid] || (extraProfiles[uuid] = { providersContent: {} });
+            slot.configContent = buf.toString('utf8');
+          } else if (slashIdx !== -1) {
+            const uuid = rest.slice(0, slashIdx);
+            const filename = rest.slice(slashIdx + 1);
+            if (filename) {
+              const slot = extraProfiles[uuid] || (extraProfiles[uuid] = { providersContent: {} });
+              slot.providersContent[filename] = buf.toString('utf8');
+            }
+          }
+        } else if (entryName.startsWith('icons/')) {
+          const name = entryName.slice('icons/'.length);
+          if (name) extraIcons[name] = buf.toString('base64');
+        }
+      }
+      Object.defineProperty(backupData, '__extraProfiles', { value: extraProfiles, enumerable: false });
+      Object.defineProperty(backupData, '__extraIcons', { value: extraIcons, enumerable: false });
+
+      console.log(`[BackupManager] 备份ZIP读取成功, 文件: ${foundFileName}, 版本: ${backupData.version}, 附带 ${Object.keys(extraProfiles).length} 个 profile yaml, ${Object.keys(extraIcons).length} 个图标缓存`);
       return backupData;
     } catch (error) {
       console.error('[BackupManager] 读取备份ZIP失败:', error);

@@ -18,12 +18,26 @@ interface InstalledCore {
   modifiedAt: Date;
 }
 
+type ProgressPhase =
+  | 'downloading'
+  | 'verifying'
+  | 'extracting'
+  | 'switching'
+  | 'tun-sync'
+  | 'restarting'
+  | 'starting'
+  | 'waiting-api'
+  | 'done'
+  | 'error';
+
 interface CoreDownloadProgress {
   coreType: CoreType;
   version?: string;
   progress: number;
-  downloaded: number;
-  total: number;
+  downloaded?: number;
+  total?: number;
+  phase?: ProgressPhase;
+  error?: string;
 }
 
 interface CoreVersion {
@@ -42,6 +56,25 @@ interface UpdateInfo {
   latestVersion?: string;
 }
 
+// 阶段标签：先尝试 i18n，若 key 未配置则回退到中文兜底文案
+function getPhaseLabel(phase: ProgressPhase, t: (k: string) => string): string {
+  const map: Record<ProgressPhase, { key: string; fallback: string }> = {
+    'downloading':  { key: 'core.phaseDownloading',  fallback: '下载' },
+    'verifying':    { key: 'core.phaseVerifying',    fallback: '校验中' },
+    'extracting':   { key: 'core.phaseExtracting',   fallback: '解压中' },
+    'switching':    { key: 'core.phaseSwitching',    fallback: '切换中' },
+    'tun-sync':     { key: 'core.phaseTunSync',      fallback: '同步 TUN 内核' },
+    'restarting':   { key: 'core.phaseRestarting',   fallback: '重启内核' },
+    'starting':     { key: 'core.phaseStarting',     fallback: '启动内核' },
+    'waiting-api':  { key: 'core.phaseWaitingApi',   fallback: '等待内核就绪' },
+    'done':         { key: 'core.phaseDone',         fallback: '完成' },
+    'error':        { key: 'core.phaseError',        fallback: '出错' }
+  };
+  const cfg = map[phase] || map.downloading;
+  const translated = t(cfg.key);
+  return translated && translated !== cfg.key ? translated : cfg.fallback;
+}
+
 export default function CoreManager() {
   const { t } = useTranslation();
   const [currentConfig, setCurrentConfig] = useState<CoreConfig | null>(null);
@@ -53,6 +86,8 @@ export default function CoreManager() {
   const [downloadProgress, setDownloadProgress] = useState<CoreDownloadProgress | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [extracting, setExtracting] = useState(false);
+  const [progressPhase, setProgressPhase] = useState<ProgressPhase>('downloading');
+  const [slowWarning, setSlowWarning] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const [selectedCoreType, setSelectedCoreType] = useState<CoreType>('mihomo');
@@ -155,6 +190,8 @@ export default function CoreManager() {
     setDownloading(true);
     setDownloadProgress(null);
     setExtracting(false);
+    setProgressPhase('downloading');
+    setSlowWarning(false);
     try {
       if (!window.electronAPI?.coreDownloadCore || !window.electronAPI?.coreDownloadSpecificVersion) return;
 
@@ -185,6 +222,8 @@ export default function CoreManager() {
       setDownloading(false);
       setDownloadProgress(null);
       setExtracting(false);
+      setProgressPhase('downloading');
+      setSlowWarning(false);
     }
   };
 
@@ -199,6 +238,10 @@ export default function CoreManager() {
     }
 
     setLoading(true);
+    setDownloadProgress({ coreType: effectiveType, version: normalizedSpecificVersion || undefined, progress: 100, downloaded: 0, total: 0, phase: 'switching' });
+    setExtracting(true);
+    setProgressPhase('switching');
+    setSlowWarning(false);
     try {
       if (!window.electronAPI?.coreSwitchCore) return;
 
@@ -214,6 +257,10 @@ export default function CoreManager() {
       setToast({ type: 'error', message: String(error) });
     } finally {
       setLoading(false);
+      setDownloadProgress(null);
+      setExtracting(false);
+      setProgressPhase('downloading');
+      setSlowWarning(false);
     }
   };
 
@@ -257,11 +304,12 @@ export default function CoreManager() {
   useEffect(() => {
     if (!window.electronAPI?.onCoreDownloadProgress) return;
 
-    const unsubscribe = window.electronAPI.onCoreDownloadProgress((data) => {
+    const unsubscribe = window.electronAPI.onCoreDownloadProgress((data: CoreDownloadProgress) => {
       setDownloadProgress(data);
-      if (data.progress >= 100) {
-        setExtracting(true);
-      }
+      const phase: ProgressPhase = (data.phase as ProgressPhase) || (data.progress >= 100 ? 'extracting' : 'downloading');
+      setProgressPhase(phase);
+      // 非下载阶段统一视为 "处理中"，沿用 extracting 这个旧字段做兼容
+      setExtracting(phase !== 'downloading');
     });
 
     return () => {
@@ -270,6 +318,16 @@ export default function CoreManager() {
       }
     };
   }, []);
+
+  // 30s watchdog：进入非下载阶段后，若超时未结束，提示耗时较久
+  useEffect(() => {
+    if (!extracting) {
+      setSlowWarning(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowWarning(true), 30_000);
+    return () => clearTimeout(timer);
+  }, [extracting, progressPhase]);
 
   useEffect(() => {
     if (!toast) return;
@@ -490,22 +548,35 @@ export default function CoreManager() {
         <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
           <div className="flex justify-between items-center mb-2">
             <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-              {extracting ? t('core.extracting') : t('core.downloading')} {getCoreTypeName(downloadProgress.coreType)}
+              {getPhaseLabel(progressPhase, t)} {getCoreTypeName(downloadProgress.coreType)}
               {downloadProgress.version && ` v${downloadProgress.version}`}
             </span>
             <span className="text-sm text-blue-700 dark:text-blue-300">
-              {extracting ? t('core.pleaseWait') : `${downloadProgress.progress.toFixed(1)}%`}
+              {progressPhase === 'downloading'
+                ? `${(downloadProgress.progress ?? 0).toFixed(1)}%`
+                : t('core.pleaseWait')}
             </span>
           </div>
-          <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2">
-            <div
-              className={`bg-blue-500 h-2 rounded-full transition-all ${extracting ? 'animate-pulse' : ''}`}
-              style={{ width: extracting ? '100%' : `${downloadProgress.progress}%` }}
-            />
+          <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 overflow-hidden">
+            {progressPhase === 'downloading' ? (
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all"
+                style={{ width: `${downloadProgress.progress ?? 0}%` }}
+              />
+            ) : (
+              <div className="h-2 rounded-full bg-blue-500/40 relative overflow-hidden">
+                <div className="absolute inset-y-0 left-0 w-1/3 bg-blue-500 animate-shimmer" />
+              </div>
+            )}
           </div>
-          {!extracting && (
+          {progressPhase === 'downloading' && (
             <div className="mt-2 text-xs text-blue-700 dark:text-blue-300">
-              {formatBytes(downloadProgress.downloaded)} / {formatBytes(downloadProgress.total)}
+              {formatBytes(downloadProgress.downloaded || 0)} / {formatBytes(downloadProgress.total || 0)}
+            </div>
+          )}
+          {slowWarning && progressPhase !== 'downloading' && (
+            <div className="mt-2 text-xs text-orange-700 dark:text-orange-300">
+              {t('core.slowSwitchHint') || '当前操作耗时较久，可继续等待或在日志中查看进展。如长时间无响应，请重启应用后重试。'}
             </div>
           )}
         </div>

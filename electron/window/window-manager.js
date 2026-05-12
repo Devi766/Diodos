@@ -294,7 +294,6 @@ function createWindowManager(deps) {
     scheduleStartupUpdateCheck();
 
     state.mainWindow.on('minimize', () => {
-      console.log('[Debug] Window minimized, reducing update frequency');
       stopTrafficStatsUpdate();
       state.trafficStatsInterval = setInterval(() => {
         updateTrafficStats();
@@ -306,7 +305,6 @@ function createWindowManager(deps) {
     });
 
     state.mainWindow.on('restore', () => {
-      console.log('[Debug] Window restored, resuming normal update frequency');
       stopTrafficStatsUpdate();
       startTrafficStatsUpdate();
 

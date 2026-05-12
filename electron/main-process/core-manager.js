@@ -364,15 +364,29 @@ class CoreManager {
     console.log('[CoreManager] 下载文件:', asset.name);
     const tempFile = path.join(this.coresDir, `${asset.name}.tmp`);
 
+    // 安全 emit：onProgress 可接受 (progress, downloaded, total) 旧签名或 {phase, ...} 新对象签名。
+    // 这里只在新阶段切换时主动派发对象，下载阶段保留旧数字签名以减少改动。
+    const emitPhase = (phase, extra = {}) => {
+      if (typeof onProgress === 'function') {
+        try { onProgress({ phase, progress: 100, ...extra }); } catch (e) { /* ignore */ }
+      }
+    };
+
     try {
+      emitPhase('downloading', { progress: 0 });
       await this.downloadFile(asset.browser_download_url, tempFile, onProgress);
+
+      emitPhase('verifying');
       this.validateArchiveFile(tempFile, asset.name);
+
+      emitPhase('extracting');
       const extractedPath = await this.extractCore(tempFile, coreType, version, asset.name);
 
       if (process.platform !== 'win32') {
         fs.chmodSync(extractedPath, 0o755);
       }
 
+      emitPhase('done');
       console.log('[CoreManager] 内核下载完成:', extractedPath);
 
       return {
@@ -767,7 +781,13 @@ class CoreManager {
   /**
    * 切换内核
    */
-  async switchCore(coreType, specificVersion = null) {
+  async switchCore(coreType, specificVersion = null, onProgress = null) {
+    const emit = (phase, extra = {}) => {
+      if (typeof onProgress === 'function') {
+        try { onProgress({ phase, progress: 100, ...extra }); } catch (e) { /* ignore */ }
+      }
+    };
+
     try {
       console.log('[CoreManager] 切换内核:', coreType, specificVersion);
 
@@ -781,24 +801,33 @@ class CoreManager {
         throw new Error('内核文件不存在，请先下载');
       }
 
+      emit('switching');
+
       // 保存配置
       this.setCurrentCoreType(coreType, specificVersion);
       this.dbManager?.setSetting('core_custom_path', null);
 
       // macOS/Linux: 如果 TUN 模式已授权，自动同步新内核到系统目录
+      emit('tun-sync');
       await this._syncKernelForTun();
 
       // 重启内核服务
       if (this.context.mihomoService && typeof this.context.mihomoService.restartMihomo === 'function') {
         const configPath = this.context.state?.configFilePath;
         if (configPath) {
-          await this.context.mihomoService.restartMihomo(configPath);
+          emit('restarting');
+          await this.context.mihomoService.restartMihomo(configPath, (subPhase) => {
+            // mihomo-service 内部如果支持回调，则把它的 sub-phase 透传出去
+            emit(subPhase || 'restarting');
+          });
         }
       }
 
+      emit('done');
       return { success: true };
     } catch (error) {
       console.error('[CoreManager] 切换内核失败:', error);
+      emit('error', { error: error.message });
       throw error;
     }
   }

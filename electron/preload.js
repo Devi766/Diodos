@@ -4,28 +4,25 @@ const { contextBridge, ipcRenderer } = require('electron');
 let securityToken = null;
 let tokenExpiry = 0;
 
-// 获取新的安全令牌
 async function getSecurityToken() {
   try {
-    // 检查当前令牌是否有效
     if (securityToken && tokenExpiry > Date.now()) {
       return { success: true, token: securityToken };
     }
-    
-    // 获取新令牌
+
     const result = await ipcRenderer.invoke('get-auth-token');
-    
+
     if (result && result.success && result.token) {
       securityToken = result.token;
-      tokenExpiry = result.expiry || (Date.now() + 5 * 60 * 1000); // 默认5分钟
+      tokenExpiry = result.expiry || (Date.now() + 5 * 60 * 1000);
       return { success: true, token: securityToken };
     }
-    
-    console.error('无法获取安全令牌:', result.error || '未知错误');
-    return { success: false, error: result.error || '无法获取安全令牌' };
+
+    console.error('[Auth] Failed to obtain security token:', result.error || 'Unknown error');
+    return { success: false, error: result.error || 'Failed to obtain security token' };
   } catch (error) {
-    console.error('令牌获取异常:', error);
-    return { success: false, error: `令牌获取异常: ${error.message}` };
+    console.error('[Auth] Token retrieval error:', error);
+    return { success: false, error: `Token retrieval failed: ${error.message}` };
   }
 }
 
@@ -138,31 +135,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 媒体服务检测
   testMediaStreaming: (serviceName, checkUrl) => ipcRenderer.invoke('test-media-streaming', serviceName, checkUrl),
   
-  // Socket 模式: 通过 IPC 调用 main process 的 fetchMihomoAPI
-  // 前端无法直接访问 Unix Socket / Named Pipe,必须通过 main process
   requestMihomoAPI: async (endpoint, options = {}) => {
     try {
-      console.log(`[Socket] preload.js - 开始发送API请求: ${endpoint}`);
-
-      // 直接通过 IPC 调用 main process 的 API 函数
-      // main process 会返回 { ok, status, data } 格式的对象
       const response = await ipcRenderer.invoke('request-mihomo-api', endpoint, options);
-
-      console.log(`[Socket] preload.js - 请求响应:`, response.ok ? '成功' : '失败');
-
-      // 包装成兼容旧代码的格式
       return {
         ok: response.ok,
         status: response.status,
         statusText: response.ok ? 'OK' : 'Error',
         headers: {},
         data: response.data,
-        // 兼容旧代码的 json() 和 text() 方法
         json: async () => response.data,
         text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
       };
     } catch (error) {
-      console.error('[Socket] preload.js - Mihomo API请求失败:', error);
+      console.error('[API] Mihomo API request failed:', error);
       throw error;
     }
   },
@@ -224,36 +210,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 获取当前配置文件名称
   getCurrentConfigName: () => ipcRenderer.invoke('get-current-config-name'),
   
-  // 系统代理管理 - 添加安全令牌
   toggleSystemProxy: async (enabled) => {
     try {
       const tokenResult = await getSecurityToken();
       if (!tokenResult.success) {
-        console.error('切换系统代理失败: 无法获取安全令牌');
         return { success: false, error: tokenResult.error };
       }
-      
       return await ipcRenderer.invoke('toggleSystemProxy', tokenResult.token, enabled);
     } catch (error) {
-      console.error('切换系统代理异常:', error);
-      return { success: false, error: `操作异常: ${error.message}` };
+      console.error('[IPC] toggleSystemProxy error:', error);
+      return { success: false, error: `Operation failed: ${error.message}` };
     }
   },
   getProxyStatus: () => ipcRenderer.invoke('getProxyStatus'),
   
-  // TUN模式管理 - 使用新的令牌验证机制
   toggleTunMode: async (enabled) => {
     try {
       const tokenResult = await getSecurityToken();
       if (!tokenResult.success) {
-        console.error('切换TUN模式失败: 无法获取安全令牌');
         return { success: false, error: tokenResult.error };
       }
-
       return await ipcRenderer.invoke('toggleTunMode', tokenResult.token, enabled);
     } catch (error) {
-      console.error('切换TUN模式异常:', error);
-      return { success: false, error: `操作异常: ${error.message}` };
+      console.error('[IPC] toggleTunMode error:', error);
+      return { success: false, error: `Operation failed: ${error.message}` };
     }
   },
   getTunStatus: () => ipcRenderer.invoke('getTunStatus'),
@@ -292,28 +272,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     try {
       const tokenResult = await getSecurityToken();
       if (!tokenResult.success) {
-        console.error('打开文件失败: 无法获取安全令牌');
         return { success: false, error: tokenResult.error };
       }
-      
       return await ipcRenderer.invoke('open-file', tokenResult.token, filePath);
     } catch (error) {
-      console.error('打开文件异常:', error);
-      return { success: false, error: `操作异常: ${error.message}` };
+      console.error('[IPC] openFile error:', error);
+      return { success: false, error: `Operation failed: ${error.message}` };
     }
   },
   openFileLocation: async (filePath) => {
     try {
       const tokenResult = await getSecurityToken();
       if (!tokenResult.success) {
-        console.error('打开文件位置失败: 无法获取安全令牌');
         return { success: false, error: tokenResult.error };
       }
-
       return await ipcRenderer.invoke('open-file-location', tokenResult.token, filePath);
     } catch (error) {
-      console.error('打开文件位置异常:', error);
-      return { success: false, error: `操作异常: ${error.message}` };
+      console.error('[IPC] openFileLocation error:', error);
+      return { success: false, error: `Operation failed: ${error.message}` };
     }
   },
   

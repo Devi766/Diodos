@@ -1,97 +1,64 @@
 import { useState } from 'react';
 
 /**
- * 节点切换钩子
- * 用于处理节点切换相关的逻辑
+ * Hook for handling proxy node switching operations.
  */
 export const useProxySwitcher = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * 切换节点
-   * @param nodeName 节点名称
-   * @param groupName 分组名称，默认为GLOBAL
+   * Switch the active proxy node within a group.
+   * @param nodeName - Target node name
+   * @param groupName - Proxy group name (defaults to GLOBAL)
    */
   const switchNode = async (nodeName: string, groupName: string = 'GLOBAL') => {
     setIsLoading(true);
     setError(null);
-    
-    console.log(`[DEBUG] ====== 开始切换节点 ======`);
-    console.log(`[DEBUG] 目标节点: ${nodeName}`);
-    console.log(`[DEBUG] 目标组: ${groupName}`);
-    
+
     try {
-      // 使用electronAPI中的requestMihomoAPI函数
-      // 1. 关闭现有连接以避免冲突
+      // Close existing connections to avoid stale state
       try {
-        console.log('[DEBUG] 步骤1: 尝试关闭所有现有连接...');
-        const closeResponse = await window.electronAPI!.requestMihomoAPI('/connections', {
-          method: 'DELETE'
-        });
-        console.log(`[DEBUG] 关闭连接响应: ${closeResponse.status} ${closeResponse.statusText}`);
-      } catch (err) {
-        console.warn('[DEBUG] 关闭连接失败，继续执行:', err);
+        await window.electronAPI!.requestMihomoAPI('/connections', { method: 'DELETE' });
+      } catch {
+        // Non-fatal; proceed even if closing connections fails
       }
-      
-      // 2. 切换节点
-      const requestBody = { name: nodeName };
-      console.log(`[DEBUG] 步骤2: 发送切换节点请求`);
-      console.log(`[DEBUG] 请求目标: /proxies/${encodeURIComponent(groupName)}`);
-      console.log(`[DEBUG] 请求方法: PUT`);
-      console.log(`[DEBUG] 请求体: ${JSON.stringify(requestBody)}`);
-      
+
       const response = await window.electronAPI!.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nodeName })
       });
-      
-      console.log(`[DEBUG] 切换节点响应状态: ${response.status} ${response.statusText}`);
-      
+
       if (response.status === 204 || response.ok) {
-        // 3. 验证节点是否切换成功
-        console.log('[DEBUG] 步骤3: 等待200ms后验证节点是否切换成功');
+        // Allow the core to settle before verifying
         await new Promise(resolve => setTimeout(resolve, 200));
-        
-        console.log(`[DEBUG] 验证请求: GET /proxies/${encodeURIComponent(groupName)}`);
+
         const verifyResponse = await window.electronAPI!.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`);
         const verifyData = await verifyResponse.json();
-        
-        console.log(`[DEBUG] 验证结果: 当前选中的节点是 ${verifyData.now}`);
-        
+
         if (verifyData.now !== nodeName) {
-          throw new Error(`节点切换验证失败: 期望 ${nodeName}, 实际 ${verifyData.now || '未知'}`);
+          throw new Error(`Node switch verification failed: expected "${nodeName}", got "${verifyData.now ?? 'unknown'}"`);
         }
-        
-        // 不再通知主进程节点已变更，避免引起界面闪烁
-        console.log(`[DEBUG] ====== 节点切换成功 ======`);
+
         return true;
       } else {
-        let errorMessage = '节点切换失败';
+        let errorMessage = 'Failed to switch node';
         try {
           const errorData = await response.json();
-          console.log(`[DEBUG] 错误响应内容:`, errorData);
-          if (errorData && errorData.message) {
+          if (errorData?.message) {
             errorMessage = errorData.message;
           }
-        } catch (e) {
-          // 如果JSON解析失败，使用HTTP状态作为错误信息
-          errorMessage = `节点切换失败: ${response.status} ${response.statusText}`;
+        } catch {
+          errorMessage = `Failed to switch node: ${response.status} ${response.statusText}`;
         }
-        
-        console.error(`[DEBUG] ====== 节点切换失败 ======`);
-        console.error(`[DEBUG] 错误信息: ${errorMessage}`);
+
         setError(errorMessage);
         return false;
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '节点切换失败';
-      console.error(`[DEBUG] ====== 节点切换出错 ======`);
-      console.error(`[DEBUG] 错误信息: ${errorMessage}`);
-      console.error(`[DEBUG] 错误详情:`, err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to switch node';
+      console.error('[ProxySwitcher] Switch failed:', err);
       setError(errorMessage);
       return false;
     } finally {
@@ -100,44 +67,29 @@ export const useProxySwitcher = () => {
   };
 
   /**
-   * 测试节点延迟
-   * @param nodeName 节点名称
-   * @param testUrl 测试URL，默认为Google的测试页面
-   * @param timeout 超时时间，默认5000毫秒
+   * Test the latency of a proxy node.
+   * @param nodeName - Node name to test
+   * @param testUrl - URL to use for the latency test
+   * @param timeout - Timeout in milliseconds
+   * @returns Delay in ms, or -1 on failure
    */
   const testNodeDelay = async (
-    nodeName: string, 
-    testUrl: string = 'http://www.gstatic.com/generate_204', 
+    nodeName: string,
+    testUrl: string = 'http://www.gstatic.com/generate_204',
     timeout: number = 5000
   ) => {
     try {
-      console.log(`[DEBUG] 开始测试节点延迟: ${nodeName}`);
-      console.log(`[DEBUG] 测试URL: ${testUrl}, 超时: ${timeout}ms`);
-      
-      // 使用electronAPI.requestMihomoAPI进行测试
       const urlPath = `/proxies/${encodeURIComponent(nodeName)}/delay?url=${encodeURIComponent(testUrl)}&timeout=${timeout}`;
-      
-      console.log(`[DEBUG] 发送延迟测试请求: GET ${urlPath}`);
       const response = await window.electronAPI!.requestMihomoAPI(urlPath);
-      
-      console.log(`[DEBUG] 延迟测试响应: ${response.status} ${response.statusText}`);
-      
+
       if (response.ok) {
         const data = await response.json();
-        console.log(`[DEBUG] 节点 ${nodeName} 延迟测试结果: ${data.delay}ms`);
         return data.delay;
       } else {
-        try {
-          const errorData = await response.text();
-          console.error(`[DEBUG] 测试节点延迟失败: ${response.status} ${response.statusText}, 错误内容: ${errorData}`);
-        } catch (e) {
-          console.error(`[DEBUG] 测试节点延迟失败: ${response.status} ${response.statusText}`);
-        }
         return -1;
       }
-    } catch (err) {
-      console.error('[DEBUG] 测试节点延迟出错:', err);
-      return -1; // 返回-1表示测试失败
+    } catch {
+      return -1;
     }
   };
 
@@ -147,4 +99,4 @@ export const useProxySwitcher = () => {
     isLoading,
     error,
   };
-}; 
+};

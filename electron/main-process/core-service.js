@@ -10,6 +10,22 @@ const { execSync } = require('child_process');
 const helperIpc = require('./helper-ipc');
 
 /**
+ * 用超时包裹一个 Promise；超时后 resolve 一个标记结果，避免 helper 服务通信卡死永久挂起。
+ */
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`[CoreService] ${label} 超时 ${ms}ms，按已完成处理`);
+        resolve({ __timedOut: true });
+      }, ms);
+    })
+  ]);
+}
+
+/**
  * Windows 核心服务管理类
  */
 class CoreService {
@@ -225,9 +241,26 @@ class CoreService {
     }
 
     try {
-      // 即使服务不可用也尝试停止
-      if (await helperIpc.isServiceAvailable()) {
-        await helperIpc.stopCore();
+      // isServiceAvailable / stopCore 都可能因 helper 服务挂死而永久 await，必须加超时。
+      // 超时即按"已停止"处理，让切换内核的上层流程不至于卡死。
+      const availResult = await withTimeout(
+        helperIpc.isServiceAvailable(),
+        2000,
+        'helperIpc.isServiceAvailable'
+      );
+      if (availResult && availResult.__timedOut) {
+        console.warn('[CoreService] helperIpc.isServiceAvailable 超时，跳过 stopCore');
+        return { success: true, timedOut: true };
+      }
+      if (availResult === true) {
+        const stopResult = await withTimeout(
+          helperIpc.stopCore(),
+          5000,
+          'helperIpc.stopCore'
+        );
+        if (stopResult && stopResult.__timedOut) {
+          return { success: true, timedOut: true };
+        }
       }
 
       console.log('[CoreService] Core stopped via helper service');

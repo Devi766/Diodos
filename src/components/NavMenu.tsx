@@ -44,8 +44,6 @@ export default function NavMenu() {
       e.preventDefault();
       // 更新当前活动页面
       setActivePage(item.pageName);
-      // 使用loadPage方法导航
-      console.log(`点击导航：${item.name}, 页面: ${item.pageName}`);
       window.electronAPI.loadPage(item.pageName);
     }
   };

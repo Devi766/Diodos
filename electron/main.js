@@ -16,13 +16,7 @@ const { enableAcrylic } = require('./windows/acrylic');
 const axios = require('axios');
 const { RunningMode, setRunningMode } = require('./utils/running-mode');
 
-// 新的 helper 服务是独立的 Go 程序，不再需要 service-worker 模式
-{
-
-// 导入媒体检测模块
 const { testMediaStreaming } = require('./mediatest');
-
-// 导入图标提取模块
 const { getIconDataURL } = require('./icon');
 
 // 从 package.json 读取版本号
@@ -321,11 +315,9 @@ async function checkMihomoService() {
 // WebSocket managers
 // =====================================================================
 
-// 获取总连接信息和总流量
 async function fetchConnectionsInfo() {
   try {
     if (!state.activeApiConfig) {
-      console.error('[Debug] Cannot get connection info: API config unavailable');
       return;
     }
 
@@ -346,14 +338,12 @@ async function fetchConnectionsInfo() {
         if (state.mainWindow && !state.mainWindow.isDestroyed()) {
           state.mainWindow.webContents.send('connections-update', state.lastConnectionsInfo);
         }
-      } else {
-        console.error(`[Debug] Connection info request failed: status ${response.status}`);
       }
     } catch (fetchError) {
-      console.error('[Debug] Fetch operation failed:', fetchError);
+      console.error('[Connections] Fetch failed:', fetchError);
     }
   } catch (error) {
-    console.error('[Debug] Failed to get connection info:', error);
+    console.error('[Connections] Failed to retrieve connection info:', error);
   }
 }
 
@@ -617,7 +607,6 @@ app.whenReady().then(async () => {
 // =====================================================================
 
 function cleanupWebSockets() {
-  console.log('[Debug] Cleaning up all WebSocket connections');
   if (state.trafficWebSocket) {
     state.trafficWebSocket.close();
     state.trafficWebSocket = null;
@@ -671,5 +660,3 @@ const { createProtocolHandler } = require('./protocol/protocol-handler');
 const protocolHandler = createProtocolHandler({ state, app });
 const { handleProtocolUrl } = protocolHandler;
 protocolHandler.registerProtocolEvents();
-
-} // end of !isServiceWorkerMode

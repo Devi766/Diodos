@@ -1,68 +1,29 @@
-// 媒体服务检测模块
+// Media service availability detection module
 const { HttpsProxyAgent } = require('https-proxy-agent');
-const fs = require('fs').promises;
-const path = require('path');
-const os = require('os');
 
-// Public API tokens for media service detection (not user credentials)
+// Public API tokens used for region detection (not user credentials)
 const DISNEY_PLUS_PUBLIC_TOKEN = 'ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84';
 const YOUTUBE_DETECTION_COOKIE = 'YSC=FSCWhKo2Zgw; VISITOR_PRIVACY_METADATA=CgJERRIEEgAgYQ%3D%3D; PREF=f7=4000';
 
-// 日志记录器
+const isDev = process.env.NODE_ENV === 'development';
+
 const logger = {
-  logFile: path.join(os.tmpdir(), 'mediatest-log.txt'),
-  
-  async log(message, level = 'INFO') {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [${level}] ${message}\n`;
-    
-    // 控制台输出
-    console.log(logMessage);
-    
-    try {
-      // 写入文件
-      await fs.appendFile(this.logFile, logMessage, 'utf8');
-    } catch (error) {
-      console.error('无法写入日志文件:', error);
+  log(message, level = 'INFO') {
+    if (isDev) {
+      console.log(`[MediaTest] [${level}] ${message}`);
     }
   },
-  
-  async error(message) {
-    await this.log(message, 'ERROR');
-  },
-  
-  async debug(message) {
-    await this.log(message, 'DEBUG');
-  },
-  
-  async logResponse(serviceName, url, response, html) {
-    await this.log(`${serviceName} 响应码: ${response.status}`, 'DEBUG');
-    
-    // 记录响应头
-    const headers = [];
-    response.headers.forEach((value, name) => {
-      headers.push(`${name}: ${value}`);
-    });
-    await this.log(`${serviceName} 响应头:\n${headers.join('\n')}`, 'DEBUG');
-    
-    // 记录HTML片段（最多1000字符）
-    if (html) {
-      const snippet = html.substring(0, 1000) + (html.length > 1000 ? '...' : '');
-      await this.log(`${serviceName} HTML片段:\n${snippet}`, 'DEBUG');
+
+  async logResponse(service, url, response, body) {
+    if (isDev) {
+      console.log(`[MediaTest] [${service}] ${response.status} ${url}`);
     }
   },
-  
-  async clearLog() {
-    try {
-      await fs.writeFile(this.logFile, '', 'utf8');
-      await this.log('日志已清空', 'INFO');
-    } catch (error) {
-      console.error('无法清空日志文件:', error);
+
+  error(message) {
+    if (isDev) {
+      console.error(`[MediaTest] [ERROR] ${message}`);
     }
-  },
-  
-  async getLogPath() {
-    return this.logFile;
   }
 };
 

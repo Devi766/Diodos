@@ -16,7 +16,8 @@ const BackupType = {
  */
 class BackupData {
   constructor() {
-    this.version = '1.2'; // 与安卓端版本号一致
+    // 与安卓端 EnhancedBackupData 保持一致，让 Android 走 loadEnhancedBackupFromZip 主路径
+    this.version = '2.1';
     this.timestamp = Date.now();
     this.backupType = BackupType.CONFIG_ONLY;
     this.activeProfile = null; // UUID string of active profile

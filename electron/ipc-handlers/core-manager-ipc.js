@@ -19,6 +19,40 @@ const fs = require('fs');
  */
 function registerCoreManagerIpcHandlers({ state, context, dbManager }) {
 
+  /**
+   * 兼容两种回调签名：
+   *  - 旧: onProgress(progress: number, downloaded: number, total: number)
+   *  - 新: onProgress({ phase, progress?, downloaded?, total?, error? })
+   * 统一封装为 send('core:download-progress', { coreType, version, phase, progress, ... })。
+   */
+  function makeProgressEmitter(coreType, version) {
+    let lastSentAt = 0;
+    return (...args) => {
+      if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+
+      let payload;
+      if (args.length === 1 && args[0] && typeof args[0] === 'object') {
+        payload = { phase: 'downloading', ...args[0] };
+      } else {
+        const [progress, downloaded, total] = args;
+        payload = { phase: 'downloading', progress, downloaded, total };
+      }
+
+      // 仅下载阶段做节流，其它阶段事件较少且重要，立即派发
+      if (payload.phase === 'downloading' && payload.progress < 100) {
+        const now = Date.now();
+        if (now - lastSentAt < 100) return;
+        lastSentAt = now;
+      }
+
+      state.mainWindow.webContents.send('core:download-progress', {
+        coreType,
+        version,
+        ...payload
+      });
+    };
+  }
+
   // 获取当前内核配置
   ipcMain.handle('core:get-current-config', async () => {
     try {
@@ -99,17 +133,8 @@ function registerCoreManagerIpcHandlers({ state, context, dbManager }) {
         return { success: false, error: 'CoreManager not initialized' };
       }
 
-      const result = await context.coreManager.downloadSpecificVersion(coreType, version, (progress, downloaded, total) => {
-        if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-          state.mainWindow.webContents.send('core:download-progress', {
-            coreType,
-            version,
-            progress,
-            downloaded,
-            total
-          });
-        }
-      });
+      const emit = makeProgressEmitter(coreType, version);
+      const result = await context.coreManager.downloadSpecificVersion(coreType, version, emit);
 
       return result;
     } catch (error) {
@@ -139,16 +164,8 @@ function registerCoreManagerIpcHandlers({ state, context, dbManager }) {
         return { success: false, error: 'CoreManager not initialized' };
       }
 
-      const result = await context.coreManager.downloadCore(coreType, (progress, downloaded, total) => {
-        if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-          state.mainWindow.webContents.send('core:download-progress', {
-            coreType,
-            progress,
-            downloaded,
-            total
-          });
-        }
-      });
+      const emit = makeProgressEmitter(coreType, null);
+      const result = await context.coreManager.downloadCore(coreType, emit);
 
       return result;
     } catch (error) {
@@ -163,7 +180,8 @@ function registerCoreManagerIpcHandlers({ state, context, dbManager }) {
       if (!context.coreManager) {
         return { success: false, error: 'CoreManager not initialized' };
       }
-      const result = await context.coreManager.switchCore(coreType, specificVersion);
+      const emit = makeProgressEmitter(coreType, specificVersion || null);
+      const result = await context.coreManager.switchCore(coreType, specificVersion, emit);
       return result;
     } catch (error) {
       console.error('[IPC] 切换内核失败:', error);

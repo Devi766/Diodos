@@ -81,11 +81,23 @@ module.exports = function registerBackupHandlers(context) {
       // 读取备份数据
       const backupData = await backupManager.extractBackupZip(filePath);
 
-      // 还原备份
-      await backupManager.restoreBackup(backupData);
+      // 还原备份；restoreBackup 现在返回 { restored, failed, errors }
+      const stats = await backupManager.restoreBackup(backupData);
 
-      console.log(`[IPC] 本地备份还原成功`);
-      return { success: true };
+      const profileCount = Array.isArray(backupData.importedProfiles) ? backupData.importedProfiles.length : 0;
+      if (profileCount > 0 && stats.restored === 0) {
+        // 元数据里有订阅但一条都没还原成功，作为失败上报
+        const firstErr = stats.errors[0]?.message || '未知错误';
+        console.warn('[IPC] 本地备份还原：所有配置均失败', stats.errors);
+        return {
+          success: false,
+          error: `所有 ${profileCount} 个配置都未能还原（首条错误：${firstErr}）`,
+          stats
+        };
+      }
+
+      console.log(`[IPC] 本地备份还原完成：成功 ${stats.restored}，失败 ${stats.failed}`);
+      return { success: true, stats };
     } catch (error) {
       console.error('[IPC] 还原本地备份失败:', error);
       return { success: false, error: error.message };
@@ -210,15 +222,25 @@ module.exports = function registerBackupHandlers(context) {
       const backupData = await backupManager.extractBackupZip(tempFilePath);
 
       // 还原备份
-      await backupManager.restoreBackup(backupData);
+      const stats = await backupManager.restoreBackup(backupData);
 
       // 删除临时文件
       if (fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
       }
 
-      console.log('[IPC] WebDAV备份下载并还原成功');
-      return { success: true };
+      const profileCount = Array.isArray(backupData.importedProfiles) ? backupData.importedProfiles.length : 0;
+      if (profileCount > 0 && stats.restored === 0) {
+        const firstErr = stats.errors[0]?.message || '未知错误';
+        return {
+          success: false,
+          error: `所有 ${profileCount} 个配置都未能还原（首条错误：${firstErr}）`,
+          stats
+        };
+      }
+
+      console.log(`[IPC] WebDAV备份还原完成：成功 ${stats.restored}，失败 ${stats.failed}`);
+      return { success: true, stats };
     } catch (error) {
       console.error('[IPC] WebDAV备份下载失败:', error);
       return { success: false, error: error.message };

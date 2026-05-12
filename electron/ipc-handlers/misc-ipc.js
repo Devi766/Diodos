@@ -450,9 +450,7 @@ function registerMiscIpcHandlers(deps) {
 
   ipcMain.handle('request-mihomo-api', async (event, endpoint, options = {}) => {
     try {
-      console.log(`[Socket] IPC handler - API request: ${endpoint}`);
       const response = await fetchMihomoAPI(endpoint, options);
-      console.log('[Socket] IPC handler - API request succeeded');
 
       let data = null;
       try {
