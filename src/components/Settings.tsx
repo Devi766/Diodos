@@ -1334,7 +1334,7 @@ export default function Settings() {
                 <div className="flex flex-wrap gap-3 w-full max-w-lg justify-center">
                   <a
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-gray-200 to-gray-300 hover:from-gray-300 hover:to-gray-400 dark:from-gray-700 dark:to-gray-800 dark:hover:from-gray-600 dark:hover:to-gray-700 text-gray-800 dark:text-gray-200 rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
-                    href="https://t.me/flyclash"
+                    href="https://t.me/flyclash_chat"
                     target="_blank"
                     rel="noopener noreferrer"
                   >

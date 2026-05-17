@@ -20,7 +20,7 @@ FlyClash是一个基于Clash内核的现代化代理客户端，拥有美观的�
 
 ## 交流社区
 
-加入我们的 [Telegram 交流群](https://t.me/flyclash) 获取最新消息、使用帮助和与其他用户交流。
+加入我们的 [Telegram 交流群](https://t.me/flyclash_chat) 获取最新消息、使用帮助和与其他用户交流。
 
 ## 安装
 
