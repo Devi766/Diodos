@@ -2014,7 +2014,7 @@ fn service_status() -> Value {
     if !cfg!(target_os = "windows") {
         return success(json!({ "installed": false, "running": false, "mode": "unsupported" }));
     }
-    let output = command_output("sc", &["query", "FlyClashTun"]);
+    let output = command_output("sc", &["query", "FlyClashHelperService"]);
     match output {
         Ok(text) => success(json!({
             "installed": true,
@@ -2028,6 +2028,22 @@ fn service_status() -> Value {
             "error": error
         })),
     }
+}
+
+fn find_helper_executable(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("tools").join("flyclash-helper.exe"));
+        candidates.push(resource_dir.join("flyclash-helper.exe"));
+    }
+    if let Ok(current) = std::env::current_dir() {
+        candidates.push(current.join("tools").join("flyclash-helper.exe"));
+    }
+    candidates.push(PathBuf::from("tools").join("flyclash-helper.exe"));
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| "未找到 flyclash-helper.exe".to_string())
 }
 
 fn default_sniffer_config() -> Value {
@@ -3262,21 +3278,8 @@ async fn tauri_compat_call(
             if !cfg!(target_os = "windows") {
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
-                let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-                let bin_path = format!("\"{}\" --service", exe.to_string_lossy());
-                match command_output(
-                    "sc",
-                    &[
-                        "create",
-                        "FlyClashTun",
-                        "binPath=",
-                        &bin_path,
-                        "start=",
-                        "demand",
-                        "DisplayName=",
-                        "FlyClash TUN Service",
-                    ],
-                ) {
+                let helper = find_helper_executable(&app)?;
+                match command_output(&helper.to_string_lossy(), &["-install"]) {
                     Ok(_) => Ok(success(json!({ "message": "service installed" }))),
                     Err(error) => Ok(json!({ "success": false, "error": error })),
                 }
@@ -3286,8 +3289,8 @@ async fn tauri_compat_call(
             if !cfg!(target_os = "windows") {
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
-                let _ = command_output("sc", &["stop", "FlyClashTun"]);
-                match command_output("sc", &["delete", "FlyClashTun"]) {
+                let helper = find_helper_executable(&app)?;
+                match command_output(&helper.to_string_lossy(), &["-uninstall"]) {
                     Ok(_) => Ok(success(json!({ "message": "service uninstalled" }))),
                     Err(error) => Ok(json!({ "success": false, "error": error })),
                 }
@@ -3297,7 +3300,7 @@ async fn tauri_compat_call(
             if !cfg!(target_os = "windows") {
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
-                match command_output("sc", &["start", "FlyClashTun"]) {
+                match command_output("sc", &["start", "FlyClashHelperService"]) {
                     Ok(_) => Ok(success(json!({ "message": "service started" }))),
                     Err(error) => Ok(json!({ "success": false, "error": error })),
                 }
@@ -3307,7 +3310,7 @@ async fn tauri_compat_call(
             if !cfg!(target_os = "windows") {
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
-                match command_output("sc", &["stop", "FlyClashTun"]) {
+                match command_output("sc", &["stop", "FlyClashHelperService"]) {
                     Ok(_) => Ok(success(json!({ "message": "service stopped" }))),
                     Err(error) => Ok(json!({ "success": false, "error": error })),
                 }
