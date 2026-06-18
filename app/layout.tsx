@@ -2,6 +2,7 @@
 
 import "./globals.css";
 import { useEffect, useState } from "react";
+import Script from "next/script";
 import { ToastContainer } from "@/components/ui/toast";
 import '@/i18n';
 
@@ -180,6 +181,7 @@ export default function RootLayout({
         <title>FlyClash</title>
         <meta name="description" content="现代、美观的Clash客户端，基于Mihomo内核" />
         <link rel="icon" href="/favicon.ico" />
+        <Script src="/tauri-compat.js" strategy="beforeInteractive" />
       </head>
       <body className="antialiased min-h-screen text-foreground">
           {children}

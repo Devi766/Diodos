@@ -19,6 +19,8 @@
 # release & dist output
 /release
 /dist
+/src-tauri/target/
+/src-tauri/gen/
 
 # sysproxy build artifacts (built by GitHub Actions)
 /tools/sysproxy*.exe

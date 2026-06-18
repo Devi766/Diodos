@@ -37,6 +37,9 @@
     "electron:build:mac:x64": "npm run prepare:mac:x64 && next build --no-lint && electron-builder --mac --x64",
     "electron:build:mac:arm64": "npm run prepare:mac:arm64 && next build --no-lint && electron-builder --mac --arm64",
     "electron:build:mac:universal": "next build --no-lint && npm run prepare:mac:x64 && npm run prepare:mac:arm64 && electron-builder --mac --x64 --arm64",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "clean": "node -e \"const fs=require('fs');['.next','out','dist','release'].forEach(d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}})\""
   },
   "dependencies": {
@@ -105,6 +108,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",
     "@tailwindcss/postcss": "^4",
+    "@tauri-apps/cli": "2.11.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
