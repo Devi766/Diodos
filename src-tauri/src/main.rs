@@ -3037,7 +3037,45 @@ async fn tauri_compat_call(
             fs::write(&path, bytes).map_err(|err| err.to_string())?;
             restore_backup_zip(&app, &path)
         }
-        "backupWebDAVList" | "backup-webdav-list" => Ok(success(json!({ "backups": [] }))),
+        "backupWebDAVList" | "backup-webdav-list" => {
+            let config = webdav_config(&app)?;
+            let result = webdav_request(&app, "PROPFIND", webdav_url(&config, None)?, None).await?;
+            let text = result.get("text").and_then(Value::as_str).unwrap_or("");
+            let href_re = Regex::new(r"(?i)<[^:>]*:?href>([^<]+)</[^:>]*:?href>")
+                .map_err(|err| err.to_string())?;
+            let size_re =
+                Regex::new(r"(?i)<[^:>]*:?getcontentlength>(\d+)</[^:>]*:?getcontentlength>")
+                    .map_err(|err| err.to_string())?;
+            let modified_re =
+                Regex::new(r"(?i)<[^:>]*:?getlastmodified>([^<]+)</[^:>]*:?getlastmodified>")
+                    .map_err(|err| err.to_string())?;
+            let sizes = size_re
+                .captures_iter(text)
+                .filter_map(|capture| capture.get(1).and_then(|m| m.as_str().parse::<u64>().ok()))
+                .collect::<Vec<_>>();
+            let modified = modified_re
+                .captures_iter(text)
+                .filter_map(|capture| capture.get(1).map(|m| m.as_str().to_string()))
+                .collect::<Vec<_>>();
+            let backups = href_re
+                .captures_iter(text)
+                .filter_map(|capture| capture.get(1).map(|m| m.as_str().to_string()))
+                .filter_map(|href| {
+                    let decoded = href.replace("%20", " ");
+                    let name = decoded.rsplit('/').next()?.to_string();
+                    name.ends_with(".zip").then_some(name)
+                })
+                .enumerate()
+                .map(|(index, name)| {
+                    json!({
+                        "name": name,
+                        "size": sizes.get(index).copied().unwrap_or(0),
+                        "lastModified": modified.get(index).cloned().unwrap_or_default()
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(success(json!({ "backups": backups })))
+        }
         "backupWebDAVDelete" | "backup-webdav-delete" => {
             let config = webdav_config(&app)?;
             let file_name = arg_string(&args, 0).unwrap_or_default();
