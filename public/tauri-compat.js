@@ -7,6 +7,10 @@
     return window.__TAURI__ && window.__TAURI__.core;
   }
 
+  function tauriEvent() {
+    return window.__TAURI__ && window.__TAURI__.event;
+  }
+
   async function call(method, args) {
     const core = tauriCore();
     if (!core || typeof core.invoke !== "function") {
@@ -46,6 +50,20 @@
 
   function noopUnsubscribe() {}
 
+  function listen(eventName, handler) {
+    const event = tauriEvent();
+    if (!event || typeof event.listen !== "function") {
+      return noopUnsubscribe;
+    }
+    let unlisten = null;
+    event.listen(eventName, (event) => handler(event.payload)).then((fn) => {
+      unlisten = fn;
+    }).catch(() => {});
+    return function unsubscribe() {
+      if (typeof unlisten === "function") unlisten();
+    };
+  }
+
   const api = new Proxy(
     {
       debugLog: (...args) => console.debug("[FlyClash Tauri]", ...args),
@@ -58,6 +76,8 @@
       fetchWithProxy: async (...args) => wrapResponse(await call("fetchWithProxy", args)),
       configIcon: {
         getIcon: async (...args) => call("configIcon.getIcon", args),
+        clearCache: async (...args) => call("configIcon.clearCache", args),
+        getCacheSize: async (...args) => call("configIcon.getCacheSize", args),
       },
       proxyIcon: {
         getConfig: async (...args) => call("proxyIcon.getConfig", args),
@@ -72,6 +92,8 @@
       loopback: {
         getApps: async (...args) => call("loopback.getApps", args),
         saveConfig: async (...args) => call("loopback.saveConfig", args),
+        addExemption: async (...args) => call("loopback.addExemption", args),
+        removeExemption: async (...args) => call("loopback.removeExemption", args),
       },
       converter: {
         startServer: async (...args) => call("converter.startServer", args),
@@ -83,8 +105,31 @@
         convertWithTemplate: async (...args) => call("converter.convertWithTemplate", args),
         convert: async (...args) => call("converter.convert", args),
         createSubscription: async (...args) => call("converter.createSubscription", args),
+        deleteSubscription: async (...args) => call("converter.deleteSubscription", args),
+        listSubscriptions: async (...args) => call("converter.listSubscriptions", args),
         addToConfig: async (...args) => call("converter.addToConfig", args),
+        getTemplate: async (...args) => call("converter.getTemplate", args),
+        getSettings: async (...args) => call("converter.getSettings", args),
+        saveSettings: async (...args) => call("converter.saveSettings", args),
       },
+      backupCreateLocal: async (...args) => call("backupCreateLocal", args),
+      backupRestoreLocal: async (...args) => call("backupRestoreLocal", args),
+      backupWebDAVTest: async (...args) => call("backupWebDAVTest", args),
+      backupWebDAVUpload: async (...args) => call("backupWebDAVUpload", args),
+      backupWebDAVDownload: async (...args) => call("backupWebDAVDownload", args),
+      backupWebDAVList: async (...args) => call("backupWebDAVList", args),
+      backupWebDAVDelete: async (...args) => call("backupWebDAVDelete", args),
+      backupWebDAVSaveConfig: async (...args) => call("backupWebDAVSaveConfig", args),
+      backupWebDAVGetConfig: async (...args) => call("backupWebDAVGetConfig", args),
+      onAiProxyStreamChunk: (callback) => listen("ai-proxy-stream-chunk", (payload) => {
+        callback(payload.requestId, new Uint8Array(payload.chunk || []));
+      }),
+      onAiProxyStreamEnd: (callback) => listen("ai-proxy-stream-end", (payload) => {
+        callback(payload.requestId);
+      }),
+      onAiProxyStreamError: (callback) => listen("ai-proxy-stream-error", (payload) => {
+        callback(payload.requestId, payload.error || "");
+      }),
       onMessage: on,
       onThemeChanged: () => noopUnsubscribe,
       removeThemeListener: noopUnsubscribe,

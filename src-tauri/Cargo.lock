@@ -950,6 +950,7 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
  "open",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -959,6 +960,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "urlencoding",
  "zip",
 ]
 
@@ -4451,6 +4453,12 @@ dependencies = [
  "serde",
  "serde_derive",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "urlpattern"

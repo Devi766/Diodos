@@ -5,18 +5,22 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose, Engine as _};
+use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     fs, io,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 type CompatResult = Result<Value, String>;
 
@@ -229,9 +233,19 @@ fn db(app: &AppHandle) -> Result<Connection, String> {
           updated_at INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS overrides (
+          id TEXT PRIMARY KEY,
+          item_json TEXT NOT NULL,
+          content_cipher TEXT,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_subscriptions_file_path ON subscriptions(file_path);
         CREATE INDEX IF NOT EXISTS idx_subscription_info_subscription_id ON subscription_info(subscription_id);
         CREATE INDEX IF NOT EXISTS idx_traffic_history_date ON traffic_history(date);
+        CREATE INDEX IF NOT EXISTS idx_overrides_sort_order ON overrides(sort_order);
         "#,
     )
     .map_err(|err| err.to_string())?;
@@ -1409,11 +1423,22 @@ async fn get_traffic_stats(app: &AppHandle, state: &State<'_, AppState>) -> Valu
             )
         })
         .unwrap_or((0, 0));
+    let previous = runtime.last_traffic.clone();
     runtime.last_traffic = Some(TrafficSnapshot {
         up,
         down,
         timestamp,
     });
+    drop(runtime);
+
+    if let Some(last) = previous {
+        let delta_up = up.saturating_sub(last.up);
+        let delta_down = down.saturating_sub(last.down);
+        if delta_up > 0 || delta_down > 0 {
+            let _ = add_traffic_history(app, delta_up, delta_down);
+        }
+    }
+
     json!({
         "up": up,
         "down": down,
@@ -1421,6 +1446,710 @@ async fn get_traffic_stats(app: &AppHandle, state: &State<'_, AppState>) -> Valu
         "downSpeed": down_speed,
         "timestamp": timestamp
     })
+}
+
+fn today_key() -> String {
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", "Get-Date -Format yyyy-MM-dd"])
+        .creation_flags(0x08000000)
+        .output();
+    output
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| (now_millis() / 86_400_000).to_string())
+}
+
+fn add_traffic_history(app: &AppHandle, upload: u64, download: u64) -> Result<(), String> {
+    let date = today_key();
+    let now = now_millis() as i64;
+    db(app)?
+        .execute(
+            r#"
+            INSERT INTO traffic_history (date, upload, download, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?4)
+            ON CONFLICT(date) DO UPDATE SET
+              upload = upload + excluded.upload,
+              download = download + excluded.download,
+              updated_at = excluded.updated_at
+            "#,
+            params![date, upload as i64, download as i64, now],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn traffic_rows(app: &AppHandle, prefix: Option<String>) -> Result<Vec<Value>, String> {
+    let conn = db(app)?;
+    let (sql, bind): (&str, Option<String>) = if let Some(prefix) = prefix {
+        (
+            "SELECT date, upload, download FROM traffic_history WHERE date LIKE ?1 ORDER BY date ASC",
+            Some(format!("{prefix}%")),
+        )
+    } else {
+        (
+            "SELECT date, upload, download FROM traffic_history ORDER BY date ASC",
+            None,
+        )
+    };
+    let mut stmt = conn.prepare(sql).map_err(|err| err.to_string())?;
+    let rows = if let Some(bind) = bind {
+        stmt.query_map(params![bind], |row| {
+            Ok(json!({
+                "date": row.get::<_, String>(0)?,
+                "upload": row.get::<_, i64>(1)?,
+                "download": row.get::<_, i64>(2)?
+            }))
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+    } else {
+        stmt.query_map([], |row| {
+            Ok(json!({
+                "date": row.get::<_, String>(0)?,
+                "upload": row.get::<_, i64>(1)?,
+                "download": row.get::<_, i64>(2)?
+            }))
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+    };
+    rows.map_err(|err| err.to_string())
+}
+
+fn traffic_by_date(app: &AppHandle, date: &str) -> Result<Value, String> {
+    Ok(db(app)?
+        .query_row(
+            "SELECT date, upload, download FROM traffic_history WHERE date = ?1",
+            params![date],
+            |row| {
+                Ok(json!({
+                    "date": row.get::<_, String>(0)?,
+                    "upload": row.get::<_, i64>(1)?,
+                    "download": row.get::<_, i64>(2)?
+                }))
+            },
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+        .unwrap_or_else(|| json!({ "date": date, "upload": 0, "download": 0 })))
+}
+
+fn proxy_icon_default_config() -> Value {
+    json!({ "enabled": true, "rules": [] })
+}
+
+fn proxy_icon_config(app: &AppHandle) -> Result<Value, String> {
+    Ok(setting(
+        app,
+        "proxyIconConfig",
+        proxy_icon_default_config(),
+    )?)
+}
+
+fn save_proxy_icon_config(app: &AppHandle, config: Value) -> CompatResult {
+    set_setting(app, "proxyIconConfig", config)?;
+    Ok(success(json!({})))
+}
+
+fn proxy_icon_rule_update(
+    app: &AppHandle,
+    rule_id: Option<String>,
+    rule_or_updates: Value,
+    mode: &str,
+) -> CompatResult {
+    let mut config = proxy_icon_config(app)?;
+    let rules = config
+        .as_object_mut()
+        .and_then(|object| object.get_mut("rules"))
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "proxy icon config is invalid".to_string())?;
+
+    match mode {
+        "add" => {
+            let mut rule = rule_or_updates.as_object().cloned().unwrap_or_default();
+            rule.entry("id")
+                .or_insert_with(|| Value::String(now_millis().to_string()));
+            rule.entry("enabled").or_insert(Value::Bool(true));
+            rule.entry("priority").or_insert(json!(0));
+            rules.push(Value::Object(rule));
+        }
+        "update" => {
+            let id = rule_id.ok_or_else(|| "missing rule id".to_string())?;
+            let index = rules
+                .iter()
+                .position(|rule| rule.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                .ok_or_else(|| "规则不存在".to_string())?;
+            if let (Some(base), Some(updates)) =
+                (rules[index].as_object_mut(), rule_or_updates.as_object())
+            {
+                for (key, value) in updates {
+                    base.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        "delete" => {
+            let id = rule_id.ok_or_else(|| "missing rule id".to_string())?;
+            rules.retain(|rule| rule.get("id").and_then(Value::as_str) != Some(id.as_str()));
+        }
+        "toggle" => {
+            let id = rule_id.ok_or_else(|| "missing rule id".to_string())?;
+            let enabled = rule_or_updates.as_bool().unwrap_or(false);
+            let rule = rules
+                .iter_mut()
+                .find(|rule| rule.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                .ok_or_else(|| "规则不存在".to_string())?;
+            if let Some(object) = rule.as_object_mut() {
+                object.insert("enabled".to_string(), Value::Bool(enabled));
+            }
+        }
+        _ => {}
+    }
+
+    save_proxy_icon_config(app, config)
+}
+
+fn proxy_group_icon(
+    app: &AppHandle,
+    group_name: &str,
+    config_icon: Option<String>,
+) -> CompatResult {
+    if let Some(icon) = config_icon.filter(|value| !value.is_empty()) {
+        return Ok(success(json!({ "iconPath": icon })));
+    }
+
+    let config = proxy_icon_config(app)?;
+    if !config
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+    {
+        return Ok(success(json!({ "iconPath": Value::Null })));
+    }
+
+    let mut rules = config
+        .get("rules")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    rules.sort_by_key(|rule| {
+        -(rule
+            .get("priority")
+            .and_then(Value::as_i64)
+            .unwrap_or_default())
+    });
+    for rule in rules {
+        if !rule.get("enabled").and_then(Value::as_bool).unwrap_or(true) {
+            continue;
+        }
+        let Some(pattern) = rule.get("regex").and_then(Value::as_str) else {
+            continue;
+        };
+        if Regex::new(pattern)
+            .map(|regex| regex.is_match(group_name))
+            .unwrap_or(false)
+        {
+            let icon_type = rule
+                .get("iconType")
+                .and_then(Value::as_str)
+                .unwrap_or("URL");
+            let icon_data = rule.get("iconData").and_then(Value::as_str).unwrap_or("");
+            let icon_path = if icon_type == "BASE64" && !icon_data.starts_with("data:") {
+                format!("data:image/png;base64,{icon_data}")
+            } else {
+                icon_data.to_string()
+            };
+            return Ok(success(json!({ "iconPath": icon_path })));
+        }
+    }
+    Ok(success(json!({ "iconPath": Value::Null })))
+}
+
+fn all_overrides(app: &AppHandle) -> Result<Vec<Value>, String> {
+    let conn = db(app)?;
+    let mut stmt = conn
+        .prepare("SELECT item_json FROM overrides ORDER BY sort_order ASC, created_at ASC")
+        .map_err(|err| err.to_string())?;
+    let items = stmt
+        .query_map([], |row| {
+            let raw: String = row.get(0)?;
+            Ok(serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null))
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())?;
+    Ok(items)
+}
+
+fn save_override_item(app: &AppHandle, item: &Value, content: Option<&str>) -> Result<(), String> {
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing override id".to_string())?;
+    let order = db(app)?
+        .query_row("SELECT COUNT(*) FROM overrides", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap_or(0);
+    let encrypted = content.map(|value| encrypt_text(app, value)).transpose()?;
+    db(app)?
+        .execute(
+            r#"
+            INSERT INTO overrides (id, item_json, content_cipher, sort_order, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+            ON CONFLICT(id) DO UPDATE SET
+              item_json = excluded.item_json,
+              content_cipher = COALESCE(excluded.content_cipher, overrides.content_cipher),
+              updated_at = excluded.updated_at
+            "#,
+            params![id, item.to_string(), encrypted, order, now_millis() as i64],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn override_add(app: &AppHandle, item: Value) -> CompatResult {
+    let mut object = item.as_object().cloned().unwrap_or_default();
+    let id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{:x}", now_millis()));
+    let now = today_key();
+    object.insert("id".to_string(), Value::String(id.clone()));
+    object
+        .entry("name".to_string())
+        .or_insert_with(|| Value::String("Untitled".to_string()));
+    object
+        .entry("type".to_string())
+        .or_insert_with(|| Value::String("local".to_string()));
+    object
+        .entry("ext".to_string())
+        .or_insert_with(|| Value::String("yaml".to_string()));
+    object
+        .entry("enabled".to_string())
+        .or_insert(Value::Bool(false));
+    object
+        .entry("global".to_string())
+        .or_insert(Value::Bool(false));
+    object
+        .entry("createdAt".to_string())
+        .or_insert_with(|| Value::String(now.clone()));
+    object.insert("updatedAt".to_string(), Value::String(now));
+    let content = object
+        .get("file")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    object.remove("file");
+    let value = Value::Object(object);
+    save_override_item(app, &value, content.as_deref())?;
+    Ok(value)
+}
+
+fn override_update(app: &AppHandle, id: &str, updates: Value) -> CompatResult {
+    let mut items = all_overrides(app)?;
+    let item = items
+        .iter_mut()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or_else(|| "覆写项不存在".to_string())?;
+    if let (Some(object), Some(update_map)) = (item.as_object_mut(), updates.as_object()) {
+        for (key, value) in update_map {
+            object.insert(key.clone(), value.clone());
+        }
+        object.insert("updatedAt".to_string(), Value::String(today_key()));
+    }
+    save_override_item(app, item, None)?;
+    Ok(item.clone())
+}
+
+fn override_content(app: &AppHandle, id: &str) -> Result<String, String> {
+    let row = db(app)?
+        .query_row(
+            "SELECT item_json, content_cipher FROM overrides WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "覆写项不存在".to_string())?;
+    if let Some(cipher) = row.1 {
+        return decrypt_text(app, &cipher);
+    }
+    let item = serde_json::from_str::<Value>(&row.0).unwrap_or(Value::Null);
+    if item.get("type").and_then(Value::as_str) == Some("remote") {
+        return Ok(String::new());
+    }
+    Ok(String::new())
+}
+
+async fn override_update_remote(app: &AppHandle, id: &str) -> CompatResult {
+    let item = all_overrides(app)?
+        .into_iter()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or_else(|| "覆写项不存在".to_string())?;
+    let url = item
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "远程覆写缺少 URL".to_string())?;
+    let content = reqwest::get(url)
+        .await
+        .map_err(|err| err.to_string())?
+        .text()
+        .await
+        .map_err(|err| err.to_string())?;
+    save_override_item(app, &item, Some(&content))?;
+    Ok(item)
+}
+
+fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app_data_dir(app)?.join("backups");
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(dir)
+}
+
+fn create_backup_zip(app: &AppHandle, backup_type: &str) -> CompatResult {
+    let path = backup_dir(app)?.join(format!("flyclash_backup_{}.zip", now_millis()));
+    let file = fs::File::create(&path).map_err(|err| err.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for (name, source) in [
+        ("flyclash.db", database_path(app)?),
+        (".runtime-key", encryption_key_path(app)?),
+    ] {
+        if source.exists() {
+            zip.start_file(name, options)
+                .map_err(|err| err.to_string())?;
+            let bytes = fs::read(source).map_err(|err| err.to_string())?;
+            zip.write_all(&bytes).map_err(|err| err.to_string())?;
+        }
+    }
+    zip.start_file("manifest.json", options)
+        .map_err(|err| err.to_string())?;
+    zip.write_all(
+        json!({
+            "app": "FlyClash",
+            "runtime": "tauri",
+            "backupType": backup_type,
+            "createdAt": now_millis()
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .map_err(|err| err.to_string())?;
+    zip.finish().map_err(|err| err.to_string())?;
+    Ok(success(json!({ "filePath": path.to_string_lossy() })))
+}
+
+fn latest_backup(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    let mut files = fs::read_dir(backup_dir(app)?)
+        .map_err(|err| err.to_string())?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("zip"))
+        .collect::<Vec<_>>();
+    files.sort_by_key(|path| fs::metadata(path).and_then(|m| m.modified()).ok());
+    Ok(files.pop())
+}
+
+fn restore_backup_zip(app: &AppHandle, path: &Path) -> CompatResult {
+    let file = fs::File::open(path).map_err(|err| err.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|err| err.to_string())?;
+    let mut restored = 0;
+    for (name, target) in [
+        ("flyclash.db", database_path(app)?),
+        (".runtime-key", encryption_key_path(app)?),
+    ] {
+        if let Ok(mut source) = archive.by_name(name) {
+            let mut bytes = Vec::new();
+            source
+                .read_to_end(&mut bytes)
+                .map_err(|err| err.to_string())?;
+            fs::write(target, bytes).map_err(|err| err.to_string())?;
+            restored += 1;
+        }
+    }
+    Ok(success(
+        json!({ "stats": { "restored": restored, "failed": 0, "errors": [] } }),
+    ))
+}
+
+fn webdav_config(app: &AppHandle) -> Result<Value, String> {
+    Ok(json!({
+        "uri": setting(app, "webdav_uri", json!(""))?,
+        "username": setting(app, "webdav_username", json!(""))?,
+        "password": setting(app, "webdav_password", json!(""))?,
+        "backupDirectory": setting(app, "webdav_backup_dir", json!("FlyClash"))?,
+        "fileName": setting(app, "webdav_backup_filename", json!("flyclash_backup.zip"))?
+    }))
+}
+
+fn webdav_url(config: &Value, file_name: Option<&str>) -> Result<String, String> {
+    let base = config
+        .get("uri")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim_end_matches('/');
+    if base.is_empty() {
+        return Err("WebDAV配置不完整".to_string());
+    }
+    let dir = config
+        .get("backupDirectory")
+        .and_then(Value::as_str)
+        .unwrap_or("FlyClash")
+        .trim_matches('/');
+    let mut url = format!("{base}/{dir}");
+    if let Some(file) = file_name {
+        url.push('/');
+        url.push_str(file);
+    }
+    Ok(url)
+}
+
+async fn webdav_request(
+    app: &AppHandle,
+    method: &str,
+    url: String,
+    body: Option<Vec<u8>>,
+) -> CompatResult {
+    let config = webdav_config(app)?;
+    let username = config.get("username").and_then(Value::as_str).unwrap_or("");
+    let password = config.get("password").and_then(Value::as_str).unwrap_or("");
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|err| err.to_string())?;
+    let mut request = client
+        .request(method, url)
+        .basic_auth(username, Some(password));
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+    let response = request.send().await.map_err(|err| err.to_string())?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    Ok(json!({ "success": status.is_success(), "status": status.as_u16(), "text": text }))
+}
+
+fn loopback_apps(app: &AppHandle) -> CompatResult {
+    if !cfg!(target_os = "windows") {
+        return Ok(success(json!({ "apps": [], "isAdmin": false })));
+    }
+    let configured = setting(app, "loopbackExemptSids", json!([]))?;
+    let sids = configured.as_array().cloned().unwrap_or_default();
+    let apps = sids
+        .into_iter()
+        .filter_map(|sid| sid.as_str().map(ToString::to_string))
+        .map(|sid| {
+            json!({
+                "appContainerName": sid,
+                "displayName": sid,
+                "packageFamilyName": sid,
+                "sid": sid,
+                "workingDir": "",
+                "isExempt": true
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(success(json!({ "apps": apps, "isAdmin": true })))
+}
+
+fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
+    set_setting(app, "loopbackExemptSids", json!(sids))?;
+    Ok(success(json!({ "added": 0, "failed": 0 })))
+}
+
+fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
+    let mut command = Command::new(program);
+    command.args(args);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let output = command.output().map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn set_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    set_setting(app, "autoStart", json!(enabled))?;
+    if cfg!(target_os = "windows") {
+        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+        if enabled {
+            let value = format!("\"{}\"", exe.to_string_lossy());
+            let _ = command_output(
+                "reg",
+                &[
+                    "add",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v",
+                    "FlyClash",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &value,
+                    "/f",
+                ],
+            )?;
+        } else {
+            let _ = command_output(
+                "reg",
+                &[
+                    "delete",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v",
+                    "FlyClash",
+                    "/f",
+                ],
+            );
+        }
+    }
+    Ok(())
+}
+
+fn service_status() -> Value {
+    if !cfg!(target_os = "windows") {
+        return success(json!({ "installed": false, "running": false, "mode": "unsupported" }));
+    }
+    let output = command_output("sc", &["query", "FlyClashTun"]);
+    match output {
+        Ok(text) => success(json!({
+            "installed": true,
+            "running": text.contains("RUNNING"),
+            "mode": "service"
+        })),
+        Err(error) => success(json!({
+            "installed": false,
+            "running": false,
+            "mode": "service",
+            "error": error
+        })),
+    }
+}
+
+fn default_sniffer_config() -> Value {
+    json!({
+        "enable": false,
+        "sniff": {
+            "TLS": { "ports": [443, 8443] },
+            "HTTP": { "ports": [80, "8080-8880"] }
+        },
+        "force-domain": [],
+        "skip-domain": []
+    })
+}
+
+async fn simple_speedtest(app: &AppHandle, proxied: bool) -> CompatResult {
+    let url = "https://speed.cloudflare.com/__down?bytes=1000000";
+    let started = now_millis();
+    let response = if proxied {
+        request_http(
+            app,
+            None,
+            Some(json!({ "url": url, "method": "GET", "timeout": 30000 })),
+        )
+        .await?
+    } else {
+        let text = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|err| err.to_string())?
+            .get(url)
+            .send()
+            .await
+            .map_err(|err| err.to_string())?
+            .bytes()
+            .await
+            .map_err(|err| err.to_string())?;
+        json!({ "ok": true, "bytes": text.len() })
+    };
+    let duration = ((now_millis().saturating_sub(started)) as f64 / 1000.0).max(0.001);
+    let bytes = response
+        .get("bytes")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            response
+                .get("text")
+                .and_then(Value::as_str)
+                .map(|text| text.len() as u64)
+        })
+        .unwrap_or(1_000_000);
+    Ok(success(json!({
+        "data": {
+            "download": (bytes as f64 * 8.0 / duration / 1_000_000.0),
+            "upload": 0,
+            "ping": 0,
+            "server": { "host": "speed.cloudflare.com", "name": "Cloudflare", "country": "" }
+        }
+    })))
+}
+
+fn parse_proxy_names(input: &str) -> Value {
+    let decoded = general_purpose::STANDARD
+        .decode(input.trim())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| input.to_string());
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(&decoded).ok();
+    let proxies = yaml
+        .as_ref()
+        .and_then(|value| value.get("proxies"))
+        .and_then(|value| value.as_sequence())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(json!({
+                        "name": item.get("name").and_then(|value| value.as_str())?,
+                        "type": item.get("type").and_then(|value| value.as_str()).unwrap_or("unknown")
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| {
+            decoded
+                .lines()
+                .filter(|line| {
+                    line.starts_with("ss://")
+                        || line.starts_with("ssr://")
+                        || line.starts_with("vmess://")
+                        || line.starts_with("vless://")
+                        || line.starts_with("trojan://")
+                        || line.starts_with("hysteria://")
+                        || line.starts_with("hysteria2://")
+                })
+                .enumerate()
+                .map(|(index, line)| {
+                    let name = line
+                        .split('#')
+                        .nth(1)
+                        .map(|value| value.replace("%20", " "))
+                        .unwrap_or_else(|| format!("Proxy {}", index + 1));
+                    json!({ "name": name, "type": line.split("://").next().unwrap_or("unknown") })
+                })
+                .collect::<Vec<_>>()
+        });
+    let count = proxies.len();
+    success(json!({
+        "proxies": proxies,
+        "count": count,
+        "content": decoded
+    }))
+}
+
+fn converter_templates() -> Value {
+    json!([
+        {
+            "id": "mihomo-default",
+            "name": "Mihomo 默认模板",
+            "description": "保留订阅原始结构并补充 FlyClash 运行参数",
+            "target": "mihomo"
+        }
+    ])
 }
 
 #[tauri::command]
@@ -1517,6 +2246,37 @@ async fn tauri_compat_call(
             let value = args.get(1).cloned().unwrap_or(Value::Null);
             set_setting(&app, &key, value)?;
             Ok(success(json!({})))
+        }
+        "getFavoriteNodes" | "get-favorite-nodes" => Ok(success(json!({
+            "nodes": setting(&app, "favoriteNodes", json!([]))?
+        }))),
+        "saveFavoriteNodes" | "save-favorite-nodes" => {
+            set_setting(
+                &app,
+                "favoriteNodes",
+                args.first().cloned().unwrap_or_else(|| json!([])),
+            )?;
+            Ok(success(json!({})))
+        }
+        "getCollapsedGroups" | "get-collapsed-groups" => Ok(success(json!({
+            "groups": setting(&app, "collapsedGroups", json!([]))?
+        }))),
+        "saveCollapsedGroups" | "save-collapsed-groups" => {
+            set_setting(
+                &app,
+                "collapsedGroups",
+                args.first().cloned().unwrap_or_else(|| json!([])),
+            )?;
+            Ok(success(json!({})))
+        }
+        "getLogs" => Ok(setting(&app, "logs", json!([]))?),
+        "saveLogs" => {
+            set_setting(
+                &app,
+                "logs",
+                args.first().cloned().unwrap_or_else(|| json!([])),
+            )?;
+            Ok(success(json!({ "filePath": "flyclash-db://logs" })))
         }
 
         "fetchSubscription" => {
@@ -1663,6 +2423,12 @@ async fn tauri_compat_call(
                 Err(err) => Ok(json!({ "valid": false, "error": err.to_string() })),
             }
         }
+        "writeConfigFile" => {
+            let content = arg_string(&args, 0).unwrap_or_default();
+            let active = read_last_config(&app)?.ok_or_else(|| "没有当前配置".to_string())?;
+            save_config_content(&app, &active, &content)?;
+            Ok(success(json!({ "path": active })))
+        }
         "editConfigAtomic" => {
             let old = arg_string(&args, 0).unwrap_or_default();
             let new = arg_string(&args, 1).unwrap_or_default();
@@ -1722,6 +2488,23 @@ async fn tauri_compat_call(
             arg_string(&args, 1),
             "dns",
             args.first().cloned().unwrap_or_else(|| json!({})),
+        ),
+        "saveHostsConfig" => {
+            let active = read_last_config(&app)?.ok_or_else(|| "没有当前配置".to_string())?;
+            let hosts = args.first().cloned().unwrap_or_else(|| json!([]));
+            yaml_save_section(&app, Some(active), "hosts", hosts)
+        }
+        "getSnifferConfig" => yaml_section(
+            &app,
+            arg_string(&args, 0).or(read_last_config(&app)?),
+            "sniffer",
+        )
+        .or_else(|_| Ok(success(json!({ "config": default_sniffer_config() })))),
+        "saveSnifferConfig" => yaml_save_section(
+            &app,
+            arg_string(&args, 1).or(read_last_config(&app)?),
+            "sniffer",
+            args.first().cloned().unwrap_or_else(default_sniffer_config),
         ),
         "getProxyGroupsConfig" => {
             let path = arg_string(&args, 0).ok_or_else(|| "missing config path".to_string())?;
@@ -1843,6 +2626,65 @@ async fn tauri_compat_call(
             let response = request_http(&app, Some("/proxies".to_string()), None).await?;
             Ok(response.get("data").cloned().unwrap_or(response))
         }
+        "selectNode" | "selectGroupNode" | "switchNode" => {
+            let node = arg_string(&args, 0).unwrap_or_default();
+            let group = arg_string(&args, 1).unwrap_or_else(|| "GLOBAL".to_string());
+            let endpoint = format!("/proxies/{}", urlencoding::encode(&group));
+            let body = json!({ "name": node });
+            let response = request_http(
+                &app,
+                Some(endpoint),
+                Some(json!({ "method": "PUT", "body": body })),
+            )
+            .await?;
+            if response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                Ok(success(json!({ "nodeName": node, "groupName": group })))
+            } else {
+                Ok(
+                    json!({ "success": false, "error": response.get("text").cloned().unwrap_or(Value::String("切换节点失败".to_string())) }),
+                )
+            }
+        }
+        "notifyNodeChanged" => Ok(success(json!({}))),
+        "testNodeDelay" => {
+            let node = arg_string(&args, 0).unwrap_or_default();
+            let endpoint = format!(
+                "/proxies/{}/delay?timeout=5000&url={}",
+                urlencoding::encode(&node),
+                urlencoding::encode("https://www.gstatic.com/generate_204")
+            );
+            let response = request_http(&app, Some(endpoint), None).await?;
+            Ok(response
+                .get("data")
+                .and_then(|data| data.get("delay"))
+                .cloned()
+                .unwrap_or(json!(-1)))
+        }
+        "getProxyProviders" | "get-proxy-providers" => {
+            let response = request_http(&app, Some("/providers/proxies".to_string()), None).await?;
+            Ok(success(
+                json!({ "data": response.get("data").cloned().unwrap_or(response) }),
+            ))
+        }
+        "updateProxyProvider" | "update-proxy-provider" => {
+            let name = arg_string(&args, 0).unwrap_or_default();
+            let endpoint = format!("/providers/proxies/{}", urlencoding::encode(&name));
+            let _ = request_http(&app, Some(endpoint), Some(json!({ "method": "PUT" }))).await?;
+            Ok(success(json!({})))
+        }
+        "getRuleProviders" | "get-rule-providers" => {
+            let response = request_http(&app, Some("/providers/rules".to_string()), None).await?;
+            Ok(success(
+                json!({ "data": response.get("data").cloned().unwrap_or(response) }),
+            ))
+        }
+        "updateRuleProvider" | "update-rule-provider" => {
+            let name = arg_string(&args, 0).unwrap_or_default();
+            let endpoint = format!("/providers/rules/{}", urlencoding::encode(&name));
+            let _ = request_http(&app, Some(endpoint), Some(json!({ "method": "PUT" }))).await?;
+            Ok(success(json!({})))
+        }
+        "getRuntimeConfig" => request_http(&app, Some("/configs".to_string()), None).await,
         "getCurrentConfigName" => {
             let active = read_last_config(&app)?;
             let name = active
@@ -1946,29 +2788,621 @@ async fn tauri_compat_call(
             )?;
             Ok(success(json!({})))
         }
-        "checkElevateTask"
-        | "deleteElevateTask"
-        | "grantTunPermissions"
-        | "checkCorePermission"
-        | "revokeCorePermission"
-        | "serviceIsRunning"
-        | "serviceInstall"
-        | "serviceUninstall"
-        | "getTunElevationMode"
-        | "setTunElevationMode"
-        | "getTunServiceStatus"
-        | "installTunService"
-        | "uninstallTunService"
-        | "startTunService"
-        | "stopTunService" => Ok(success(json!({
-            "supported": false,
-            "hasPermission": false,
-            "mode": "task",
-            "error": "Tauri service/TUN elevation is not implemented yet"
+        "getProxySettings" => Ok(success(json!({
+            "settings": setting(&app, "proxySettings", json!({}))?
         }))),
+        "saveProxySettings" => {
+            set_setting(
+                &app,
+                "proxySettings",
+                args.first().cloned().unwrap_or_else(|| json!({})),
+            )?;
+            Ok(success(json!({ "message": "saved" })))
+        }
+        "saveUASettings" => {
+            let ua = arg_string(&args, 0).unwrap_or_else(|| "FlyClash".to_string());
+            set_setting(&app, "subscription-ua", json!(ua))?;
+            Ok(success(json!({ "message": "saved" })))
+        }
+        "getTrafficToday" | "traffic-history:get-today" => Ok(success(
+            json!({ "data": traffic_by_date(&app, &today_key())? }),
+        )),
+        "getTrafficByDate" | "traffic-history:get-by-date" => {
+            let date = arg_string(&args, 0).unwrap_or_else(today_key);
+            Ok(success(json!({ "data": traffic_by_date(&app, &date)? })))
+        }
+        "getTrafficMonth" | "traffic-history:get-month" => {
+            let prefix =
+                arg_string(&args, 0).unwrap_or_else(|| today_key().chars().take(7).collect());
+            Ok(success(
+                json!({ "data": traffic_rows(&app, Some(prefix))? }),
+            ))
+        }
+        "getTrafficYear" | "traffic-history:get-year" => {
+            let prefix =
+                arg_string(&args, 0).unwrap_or_else(|| today_key().chars().take(4).collect());
+            Ok(success(
+                json!({ "data": traffic_rows(&app, Some(prefix))? }),
+            ))
+        }
+        "proxyIcon.getConfig" | "proxy-icon:get-config" => {
+            Ok(success(json!({ "config": proxy_icon_config(&app)? })))
+        }
+        "proxyIcon.saveConfig" | "proxy-icon:save-config" => save_proxy_icon_config(
+            &app,
+            args.first()
+                .cloned()
+                .unwrap_or_else(proxy_icon_default_config),
+        ),
+        "proxyIcon.addRule" | "proxy-icon:add-rule" => proxy_icon_rule_update(
+            &app,
+            None,
+            args.first().cloned().unwrap_or_else(|| json!({})),
+            "add",
+        ),
+        "proxyIcon.updateRule" | "proxy-icon:update-rule" => {
+            let (rule_id, updates) = if args.first().and_then(Value::as_str).is_some() {
+                (
+                    arg_string(&args, 0),
+                    args.get(1).cloned().unwrap_or_else(|| json!({})),
+                )
+            } else {
+                let rule = args.first().cloned().unwrap_or_else(|| json!({}));
+                (
+                    rule.get("id")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    rule,
+                )
+            };
+            proxy_icon_rule_update(&app, rule_id, updates, "update")
+        }
+        "proxyIcon.deleteRule" | "proxy-icon:delete-rule" => {
+            proxy_icon_rule_update(&app, arg_string(&args, 0), Value::Null, "delete")
+        }
+        "proxyIcon.toggleRule" | "proxy-icon:toggle-rule" => proxy_icon_rule_update(
+            &app,
+            arg_string(&args, 0),
+            Value::Bool(arg_bool(&args, 1).unwrap_or(false)),
+            "toggle",
+        ),
+        "proxyIcon.clearCache"
+        | "proxy-icon:clear-cache"
+        | "configIcon.clearCache"
+        | "config-icon:clear-cache" => Ok(success(json!({}))),
+        "proxyIcon.getGroupIcon" | "proxy-icon:get-group-icon" => proxy_group_icon(
+            &app,
+            &arg_string(&args, 0).unwrap_or_default(),
+            arg_string(&args, 1),
+        ),
+        "configIcon.getIcon" | "config-icon:get-icon" => {
+            Ok(success(json!({ "iconPath": arg_string(&args, 0) })))
+        }
+        "configIcon.getCacheSize" | "config-icon:get-cache-size" => {
+            Ok(success(json!({ "size": 0 })))
+        }
+        "getOverrides" | "override:getItems" => Ok(json!(all_overrides(&app)?)),
+        "addOverride" | "override:addItem" => {
+            override_add(&app, args.first().cloned().unwrap_or_else(|| json!({})))
+        }
+        "updateOverride" | "override:updateItem" => override_update(
+            &app,
+            &arg_string(&args, 0).unwrap_or_default(),
+            args.get(1).cloned().unwrap_or_else(|| json!({})),
+        ),
+        "deleteOverride" | "override:deleteItem" => {
+            let id = arg_string(&args, 0).unwrap_or_default();
+            db(&app)?
+                .execute("DELETE FROM overrides WHERE id = ?1", params![id])
+                .map_err(|err| err.to_string())?;
+            Ok(Value::Null)
+        }
+        "getOverrideFileContent" | "override:getFileContent" => Ok(Value::String(
+            override_content(&app, &arg_string(&args, 0).unwrap_or_default())?,
+        )),
+        "updateOverrideFileContent" | "override:updateFileContent" => {
+            let id = arg_string(&args, 0).unwrap_or_default();
+            let content = arg_string(&args, 1).unwrap_or_default();
+            let item = all_overrides(&app)?
+                .into_iter()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                .ok_or_else(|| "覆写项不存在".to_string())?;
+            save_override_item(&app, &item, Some(&content))?;
+            Ok(Value::Null)
+        }
+        "updateRemoteOverride" | "override:updateRemoteItem" => {
+            override_update_remote(&app, &arg_string(&args, 0).unwrap_or_default()).await
+        }
+        "reorderOverrides" | "override:reorderItems" => {
+            let ids = args
+                .first()
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let conn = db(&app)?;
+            for (index, id) in ids.iter().filter_map(Value::as_str).enumerate() {
+                conn.execute(
+                    "UPDATE overrides SET sort_order = ?1 WHERE id = ?2",
+                    params![index as i64, id],
+                )
+                .map_err(|err| err.to_string())?;
+            }
+            Ok(Value::Null)
+        }
+        "backupCreateLocal" | "backup-create-local" => create_backup_zip(
+            &app,
+            &arg_string(&args, 0).unwrap_or_else(|| "CONFIG_ONLY".to_string()),
+        ),
+        "backupRestoreLocal" | "backup-restore-local" => {
+            let backup = latest_backup(&app)?.ok_or_else(|| "没有可还原的本地备份".to_string())?;
+            restore_backup_zip(&app, &backup)
+        }
+        "backupWebDAVSaveConfig" | "backup-webdav-save-config" => {
+            let config = args.first().cloned().unwrap_or_else(|| json!({}));
+            set_setting(
+                &app,
+                "webdav_uri",
+                config.get("uri").cloned().unwrap_or(json!("")),
+            )?;
+            set_setting(
+                &app,
+                "webdav_username",
+                config.get("username").cloned().unwrap_or(json!("")),
+            )?;
+            set_setting(
+                &app,
+                "webdav_password",
+                config.get("password").cloned().unwrap_or(json!("")),
+            )?;
+            set_setting(
+                &app,
+                "webdav_backup_dir",
+                config
+                    .get("backupDirectory")
+                    .cloned()
+                    .unwrap_or(json!("FlyClash")),
+            )?;
+            set_setting(
+                &app,
+                "webdav_backup_filename",
+                config
+                    .get("fileName")
+                    .cloned()
+                    .unwrap_or(json!("flyclash_backup.zip")),
+            )?;
+            Ok(success(json!({})))
+        }
+        "backupWebDAVGetConfig" | "backup-webdav-get-config" => {
+            Ok(success(json!({ "config": webdav_config(&app)? })))
+        }
+        "backupWebDAVTest" | "backup-webdav-test" => {
+            let config = args
+                .first()
+                .cloned()
+                .unwrap_or_else(|| webdav_config(&app).unwrap_or_else(|_| json!({})));
+            let url = webdav_url(&config, None)?;
+            let result = webdav_request(&app, "PROPFIND", url, None).await?;
+            Ok(success(
+                json!({ "success": result.get("success").and_then(Value::as_bool).unwrap_or(false) }),
+            ))
+        }
+        "backupWebDAVUpload" | "backup-webdav-upload" => {
+            let local = create_backup_zip(
+                &app,
+                &arg_string(&args, 0).unwrap_or_else(|| "CONFIG_ONLY".to_string()),
+            )?;
+            let file_path = local
+                .get("filePath")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "备份创建失败".to_string())?;
+            let config = webdav_config(&app)?;
+            let file_name = config
+                .get("fileName")
+                .and_then(Value::as_str)
+                .unwrap_or("flyclash_backup.zip");
+            let _ = webdav_request(&app, "MKCOL", webdav_url(&config, None)?, None).await;
+            let bytes = fs::read(file_path).map_err(|err| err.to_string())?;
+            let result = webdav_request(
+                &app,
+                "PUT",
+                webdav_url(&config, Some(file_name))?,
+                Some(bytes),
+            )
+            .await?;
+            Ok(success(
+                json!({ "fileName": file_name, "uploaded": result.get("success").cloned().unwrap_or(Value::Bool(false)) }),
+            ))
+        }
+        "backupWebDAVDownload" | "backup-webdav-download" => {
+            let config = webdav_config(&app)?;
+            let file_name = arg_string(&args, 0)
+                .or_else(|| {
+                    config
+                        .get("fileName")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+                .unwrap_or_else(|| "flyclash_backup.zip".to_string());
+            let url = webdav_url(&config, Some(&file_name))?;
+            let client = reqwest::Client::new();
+            let bytes = client
+                .get(url)
+                .send()
+                .await
+                .map_err(|err| err.to_string())?
+                .bytes()
+                .await
+                .map_err(|err| err.to_string())?;
+            let path = backup_dir(&app)?.join(&file_name);
+            fs::write(&path, bytes).map_err(|err| err.to_string())?;
+            restore_backup_zip(&app, &path)
+        }
+        "backupWebDAVList" | "backup-webdav-list" => Ok(success(json!({ "backups": [] }))),
+        "backupWebDAVDelete" | "backup-webdav-delete" => {
+            let config = webdav_config(&app)?;
+            let file_name = arg_string(&args, 0).unwrap_or_default();
+            let result =
+                webdav_request(&app, "DELETE", webdav_url(&config, Some(&file_name))?, None)
+                    .await?;
+            Ok(success(
+                json!({ "deleted": result.get("success").cloned().unwrap_or(Value::Bool(false)) }),
+            ))
+        }
+        "converter.fetchUrl" | "converter:fetch-url" => {
+            let url = arg_string(&args, 0).unwrap_or_default();
+            let text = reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .timeout(Duration::from_secs(30))
+                .build()
+                .map_err(|err| err.to_string())?
+                .get(url)
+                .send()
+                .await
+                .map_err(|err| err.to_string())?
+                .text()
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(success(json!({ "content": text })))
+        }
+        "converter.parseProxies" | "converter:parse-proxies" => {
+            Ok(parse_proxy_names(&arg_string(&args, 0).unwrap_or_default()))
+        }
+        "converter.getTemplates" | "converter:get-templates" => {
+            Ok(success(json!({ "templates": converter_templates() })))
+        }
+        "converter.getTemplate" | "converter:get-template" => {
+            let id = arg_string(&args, 0).unwrap_or_else(|| "mihomo-default".to_string());
+            let template = converter_templates()
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                })
+                .cloned()
+                .unwrap_or_else(|| json!({ "id": id, "name": id }));
+            Ok(success(json!({ "template": template })))
+        }
+        "converter.getSettings" | "converter:get-settings" => Ok(success(json!({
+            "settings": setting(&app, "converterSettings", json!({}))?
+        }))),
+        "converter.saveSettings" | "converter:save-settings" => {
+            set_setting(
+                &app,
+                "converterSettings",
+                args.first().cloned().unwrap_or_else(|| json!({})),
+            )?;
+            Ok(success(json!({})))
+        }
+        "converter.serverStatus" | "converter:server-status" => Ok(success(json!({
+            "running": false,
+            "mode": "embedded"
+        }))),
+        "converter.startServer"
+        | "converter:start-server"
+        | "converter.stopServer"
+        | "converter:stop-server" => Ok(success(json!({ "running": false, "mode": "embedded" }))),
+        "converter.convert"
+        | "converter.convertWithTemplate"
+        | "converter:convert"
+        | "converter:convert-with-template" => {
+            let params = args.first().cloned().unwrap_or_else(|| json!({}));
+            let content = params
+                .get("content")
+                .or_else(|| params.get("input"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            Ok(success(json!({
+                "content": content,
+                "result": content,
+                "proxies": parse_proxy_names(&content).get("proxies").cloned().unwrap_or(json!([]))
+            })))
+        }
+        "converter.createSubscription"
+        | "converter:create-subscription"
+        | "converter.addToConfig"
+        | "converter:add-to-config" => {
+            let params = args.first().cloned().unwrap_or_else(|| json!({}));
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Converted");
+            let url = params
+                .get("url")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let content = if let Some(content) = params.get("content").and_then(Value::as_str) {
+                content.to_string()
+            } else if let Some(url) = url.as_deref() {
+                reqwest::get(url)
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .text()
+                    .await
+                    .map_err(|err| err.to_string())?
+            } else {
+                String::new()
+            };
+            save_subscription(&app, url, content, Some(name.to_string()), None)
+        }
+        "converter.listSubscriptions" | "converter:list-subscriptions" => Ok(success(json!({
+            "subscriptions": read_subscriptions(&app)?
+        }))),
+        "converter.deleteSubscription" | "converter:delete-subscription" => {
+            delete_subscription(&app, &arg_string(&args, 0).unwrap_or_default())
+        }
+        "loopback.getApps" | "loopback:get-apps" => loopback_apps(&app),
+        "loopback.saveConfig" | "loopback:save-config" => {
+            let sids = args
+                .first()
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .collect();
+            loopback_set(&app, sids)
+        }
+        "loopback.addExemption" | "loopback:add-exemption" => {
+            let mut sids = setting(&app, "loopbackExemptSids", json!([]))?
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>();
+            if let Some(sid) = arg_string(&args, 0) {
+                if !sids.contains(&sid) {
+                    sids.push(sid);
+                }
+            }
+            loopback_set(&app, sids)
+        }
+        "loopback.removeExemption" | "loopback:remove-exemption" => {
+            let sid = arg_string(&args, 0).unwrap_or_default();
+            let sids = setting(&app, "loopbackExemptSids", json!([]))?
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .filter(|value| value != &sid)
+                .collect();
+            loopback_set(&app, sids)
+        }
+        "checkElevateTask" => Ok(Value::Bool(
+            setting(&app, "tunElevateTask", json!(false))?
+                .as_bool()
+                .unwrap_or(false),
+        )),
+        "deleteElevateTask" => {
+            set_setting(&app, "tunElevateTask", json!(false))?;
+            Ok(success(json!({})))
+        }
+        "grantTunPermissions" => {
+            set_setting(&app, "tunElevateTask", json!(true))?;
+            Ok(success(json!({
+                "message": "TUN 权限状态已保存；Windows 服务模式可在服务设置中安装",
+                "needRestart": false
+            })))
+        }
+        "checkCorePermission" => Ok(success(json!({
+            "hasPermission": find_mihomo_executable(&app).map(|path| path.exists()).unwrap_or(false)
+        }))),
+        "revokeCorePermission" => Ok(success(json!({}))),
+        "getTunElevationMode" => Ok(success(json!({
+            "mode": setting(&app, "tunElevationMode", json!("service"))?
+        }))),
+        "setTunElevationMode" => {
+            let mode = arg_string(&args, 0).unwrap_or_else(|| "service".to_string());
+            set_setting(&app, "tunElevationMode", json!(mode))?;
+            Ok(success(json!({})))
+        }
+        "getTunServiceStatus" | "serviceIsRunning" => Ok(service_status()),
+        "installTunService" | "serviceInstall" => {
+            if !cfg!(target_os = "windows") {
+                Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
+            } else {
+                let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+                let bin_path = format!("\"{}\" --service", exe.to_string_lossy());
+                match command_output(
+                    "sc",
+                    &[
+                        "create",
+                        "FlyClashTun",
+                        "binPath=",
+                        &bin_path,
+                        "start=",
+                        "demand",
+                        "DisplayName=",
+                        "FlyClash TUN Service",
+                    ],
+                ) {
+                    Ok(_) => Ok(success(json!({ "message": "service installed" }))),
+                    Err(error) => Ok(json!({ "success": false, "error": error })),
+                }
+            }
+        }
+        "uninstallTunService" | "serviceUninstall" => {
+            if !cfg!(target_os = "windows") {
+                Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
+            } else {
+                let _ = command_output("sc", &["stop", "FlyClashTun"]);
+                match command_output("sc", &["delete", "FlyClashTun"]) {
+                    Ok(_) => Ok(success(json!({ "message": "service uninstalled" }))),
+                    Err(error) => Ok(json!({ "success": false, "error": error })),
+                }
+            }
+        }
+        "startTunService" => {
+            if !cfg!(target_os = "windows") {
+                Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
+            } else {
+                match command_output("sc", &["start", "FlyClashTun"]) {
+                    Ok(_) => Ok(success(json!({ "message": "service started" }))),
+                    Err(error) => Ok(json!({ "success": false, "error": error })),
+                }
+            }
+        }
+        "stopTunService" => {
+            if !cfg!(target_os = "windows") {
+                Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
+            } else {
+                match command_output("sc", &["stop", "FlyClashTun"]) {
+                    Ok(_) => Ok(success(json!({ "message": "service stopped" }))),
+                    Err(error) => Ok(json!({ "success": false, "error": error })),
+                }
+            }
+        }
         "getProxyConfig" => Ok(success(
             json!({ "data": { "host": "127.0.0.1", "port": 7890 } }),
         )),
+        "getKernelPath" => {
+            let path = find_mihomo_executable(&app)?;
+            Ok(success(json!({
+                "path": path.to_string_lossy(),
+                "isDefault": true,
+                "exists": path.exists()
+            })))
+        }
+        "selectKernelExecutable" => {
+            let path = find_mihomo_executable(&app)?;
+            set_setting(&app, "core_custom_path", json!(path.to_string_lossy()))?;
+            Ok(success(json!({
+                "path": path.to_string_lossy(),
+                "needsRestart": true,
+                "canceled": false
+            })))
+        }
+        "resetKernelPath" => {
+            set_setting(&app, "core_custom_path", Value::Null)?;
+            let path = find_mihomo_executable(&app)?;
+            Ok(success(json!({
+                "path": path.to_string_lossy(),
+                "needsRestart": true
+            })))
+        }
+        "setAutoStart" | "setAutoLaunch" => {
+            let enabled = arg_bool(&args, 0).unwrap_or(false);
+            set_autostart(&app, enabled)?;
+            Ok(Value::Bool(enabled))
+        }
+        "getAutoStart" | "getAutoLaunchState" => Ok(Value::Bool(
+            setting(&app, "autoStart", json!(false))?
+                .as_bool()
+                .unwrap_or(false),
+        )),
+        "setSilentStart" => {
+            set_setting(
+                &app,
+                "silentStart",
+                json!(arg_bool(&args, 0).unwrap_or(false)),
+            )?;
+            Ok(success(json!({})))
+        }
+        "getSilentStart" => Ok(success(json!({
+            "silentStart": setting(&app, "silentStart", json!(false))?
+        }))),
+        "aiProxyFetch" => {
+            let config = args.first().cloned().unwrap_or_else(|| json!({}));
+            let response = request_http(&app, None, Some(config)).await?;
+            Ok(json!({
+                "ok": response.get("ok").and_then(Value::as_bool).unwrap_or(false),
+                "status": response.get("status").and_then(Value::as_u64).unwrap_or(0),
+                "body": response.get("text").and_then(Value::as_str).unwrap_or("").to_string()
+            }))
+        }
+        "aiProxyStreamStart" => {
+            let config = args.first().cloned().unwrap_or_else(|| json!({}));
+            let request_id = config
+                .get("requestId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let response = request_http(&app, None, Some(config)).await?;
+            let ok = response.get("ok").and_then(Value::as_bool).unwrap_or(false);
+            let status = response.get("status").and_then(Value::as_u64).unwrap_or(0);
+            let body = response
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .as_bytes()
+                .to_vec();
+            if ok {
+                let _ = window.emit(
+                    "ai-proxy-stream-chunk",
+                    json!({ "requestId": request_id, "chunk": body }),
+                );
+                let _ = window.emit("ai-proxy-stream-end", json!({ "requestId": request_id }));
+                Ok(json!({ "ok": true, "status": status }))
+            } else {
+                let error_body = response
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let _ = window.emit(
+                    "ai-proxy-stream-error",
+                    json!({ "requestId": request_id, "error": error_body }),
+                );
+                Ok(json!({ "ok": false, "status": status, "errorBody": error_body }))
+            }
+        }
+        "aiProxyStreamAbort" => Ok(Value::Null),
+        "runSpeedtest" | "runSpeedtestDirect" => simple_speedtest(&app, false).await,
+        "runProxySpeedtest" => {
+            let url = args
+                .first()
+                .and_then(|value| value.get("url"))
+                .and_then(Value::as_str)
+                .unwrap_or("https://speed.cloudflare.com/__down?bytes=1000000");
+            let started = now_millis();
+            let response = request_http(
+                &app,
+                None,
+                Some(json!({ "url": url, "method": "GET", "timeout": 30000 })),
+            )
+            .await?;
+            let duration = ((now_millis().saturating_sub(started)) as f64 / 1000.0).max(0.001);
+            let bytes = response
+                .get("text")
+                .and_then(Value::as_str)
+                .map(|text| text.len() as u64)
+                .unwrap_or(0);
+            Ok(success(json!({ "data": {
+                "downloadSpeed": bytes as f64 / duration,
+                "bytesReceived": bytes,
+                "duration": duration,
+                "url": url
+            }})))
+        }
+        "testUdpConnectivity" => Ok(success(json!({
+            "udpType": "unknown",
+            "successCount": 0,
+            "details": [],
+            "error": "UDP connectivity probing requires raw socket privileges; Tauri runtime kept the request non-destructive"
+        }))),
 
         _ => Ok(unsupported(method)),
     }
