@@ -34,6 +34,10 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
+    "resources": [
+      "../extra/sidecar/mihomo.exe",
+      "../tools"
+    ],
     "shortDescription": "FlyClash Desktop",
     "longDescription": "FlyClash is a desktop proxy client based on Mihomo.",
     "icon": [
