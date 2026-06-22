@@ -246,6 +246,48 @@ const resolveGeoIP = () =>
     file: 'geoip.dat',
     downloadURL: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat`
   })
+const resolveGeoMeta = () =>
+  resolveResource({
+    file: 'geoip.metadb',
+    downloadURL: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb`
+  })
+const resolveASN = () =>
+  resolveResource({
+    file: 'ASN.mmdb',
+    downloadURL: `https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb`
+  })
+
+async function resolveSpeedtest() {
+  if (platform !== 'win32') {
+    return
+  }
+
+  const url = 'https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip'
+  const tempDir = path.join(TEMP_DIR, 'speedtest')
+  const tempZip = path.join(tempDir, 'ookla-speedtest-1.2.0-win64.zip')
+  const targetPath = path.join(cwd, 'tools', 'speedtest.exe')
+
+  fs.rmSync(tempDir, { recursive: true, force: true })
+  fs.mkdirSync(tempDir, { recursive: true })
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+
+  try {
+    await downloadFile(url, tempZip)
+    const zip = new AdmZip(tempZip)
+    const entry = zip
+      .getEntries()
+      .find((item) => !item.isDirectory && path.basename(item.entryName).toLowerCase() === 'speedtest.exe')
+
+    if (!entry) {
+      throw new Error('speedtest.exe not found in Ookla archive')
+    }
+
+    fs.writeFileSync(targetPath, entry.getData())
+    console.log(`[INFO]: speedtest.exe finished`)
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+}
 
 const tasks = [
   {
@@ -261,7 +303,10 @@ const tasks = [
   },
   { name: 'mmdb', func: resolveMmdb, retry: 5 },
   { name: 'geosite', func: resolveGeosite, retry: 5 },
-  { name: 'geoip', func: resolveGeoIP, retry: 5 }
+  { name: 'geoip', func: resolveGeoIP, retry: 5 },
+  { name: 'geoip-metadb', func: resolveGeoMeta, retry: 5 },
+  { name: 'asn', func: resolveASN, retry: 5 },
+  { name: 'speedtest', func: resolveSpeedtest, retry: 5, winOnly: true }
 ]
 
 async function runTask() {
@@ -291,6 +336,5 @@ async function runTask() {
   return runTask()
 }
 
-runTask()
-runTask()
+await runTask()
 
