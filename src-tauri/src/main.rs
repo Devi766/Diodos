@@ -5947,11 +5947,26 @@ fn parse_config_order(app: &AppHandle, config_path: Option<String>) -> Value {
                 .iter()
                 .filter_map(|group| {
                     let name = group.get("name").and_then(|value| value.as_str())?;
+                    let group_type = group
+                        .get("type")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("select");
                     let hidden = group
                         .get("hidden")
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false);
-                    Some(json!({ "name": name, "hidden": hidden }))
+                    let proxies = yaml_string_array(group.get("proxies"));
+                    let icon = group
+                        .get("icon")
+                        .and_then(|value| value.as_str())
+                        .map(ToString::to_string);
+                    Some(json!({
+                        "name": name,
+                        "type": group_type,
+                        "proxies": proxies,
+                        "hidden": hidden,
+                        "icon": icon
+                    }))
                 })
                 .collect::<Vec<_>>()
         })

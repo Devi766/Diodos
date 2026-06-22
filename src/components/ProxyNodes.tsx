@@ -54,6 +54,13 @@ type ProxyGroup = {
   icon?: string | null;
 };
 
+type ProxyMode = 'rule' | 'global' | 'direct';
+
+type ProxyGroupsCacheValue = ProxyGroup[] | {
+  mode?: unknown;
+  groups?: unknown;
+};
+
 type MihomoProxy = {
   type: string;
   all?: string[];
@@ -80,9 +87,45 @@ const proxyNodesViewCache: {
   loaded: false,
 };
 
-const readProxyGroupsSessionCache = (): ProxyGroup[] => {
+const normalizeProxyMode = (value: unknown, fallback: ProxyMode = 'rule'): ProxyMode => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === 'global' || normalized === 'direct' || normalized === 'rule'
+    ? normalized
+    : fallback;
+};
+
+const readCachedProxyMode = (fallback: ProxyMode = 'rule'): ProxyMode => {
+  return normalizeProxyMode(readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.proxyMode), fallback);
+};
+
+const filterProxyGroupsForMode = (items: ProxyGroup[], mode: ProxyMode): ProxyGroup[] => {
+  if (mode === 'direct') return [];
+  if (mode === 'global') return items.filter(group => group.name === 'GLOBAL');
+  return items.filter(group => group.name !== 'GLOBAL');
+};
+
+const unpackProxyGroupsCache = (cached: unknown): { mode?: ProxyMode; groups: ProxyGroup[] } => {
+  if (Array.isArray(cached)) {
+    return { groups: cached as ProxyGroup[] };
+  }
+
+  if (cached && typeof cached === 'object') {
+    const record = cached as ProxyGroupsCacheValue;
+    const mode = record.mode === undefined || record.mode === null
+      ? undefined
+      : normalizeProxyMode(record.mode, 'rule');
+    const groups = Array.isArray(record.groups) ? record.groups as ProxyGroup[] : [];
+    return { mode, groups };
+  }
+
+  return { groups: [] };
+};
+
+const readProxyGroupsSessionCache = (fallbackMode: ProxyMode = readCachedProxyMode()): ProxyGroup[] => {
   const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
-  return Array.isArray(cached) ? cached as ProxyGroup[] : [];
+  const unpacked = unpackProxyGroupsCache(cached);
+  const mode = unpacked.mode || fallbackMode;
+  return filterProxyGroupsForMode(unpacked.groups, mode);
 };
 
 const readCachedMihomoRunning = (): boolean | null => {
@@ -127,15 +170,19 @@ export default function ProxyNodes() {
   const { t } = useTranslation();
   const [groups, setGroups] = useState<ProxyGroup[]>(() => {
     if (proxyNodesViewCache.groups.length > 0) {
-      return proxyNodesViewCache.groups;
+      return filterProxyGroupsForMode(
+        proxyNodesViewCache.groups,
+        readCachedProxyMode(normalizeProxyMode(proxyNodesViewCache.currentMode)),
+      );
     }
 
-    const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
-    if (Array.isArray(cached)) {
-      const cachedGroups = cached as ProxyGroup[];
-      proxyNodesViewCache.groups = cachedGroups;
-      proxyNodesViewCache.loaded = true;
-      return cachedGroups;
+    if (hasAppDataCache(PROXY_GROUPS_CACHE_KEY)) {
+      const cachedGroups = readProxyGroupsSessionCache();
+      if (cachedGroups.length > 0) {
+        proxyNodesViewCache.groups = cachedGroups;
+        proxyNodesViewCache.loaded = true;
+        return cachedGroups;
+      }
     }
 
     return [];
@@ -261,7 +308,9 @@ export default function ProxyNodes() {
   const LAYOUT_SETTING_KEY = 'proxyGroupsLayoutMode';
   const SORT_MODE_KEY = 'nodesSortMode';
 
-  const [currentMode, setCurrentMode] = useState<string>(() => proxyNodesViewCache.currentMode);
+  const [currentMode, setCurrentMode] = useState<ProxyMode>(() => {
+    return readCachedProxyMode(normalizeProxyMode(proxyNodesViewCache.currentMode));
+  });
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
     if (typeof window === 'undefined') {
       return 'single';
@@ -286,6 +335,9 @@ export default function ProxyNodes() {
       return 'default';
     }
   });
+  const groupsRef = useRef(groups);
+  const currentModeRef = useRef<ProxyMode>(currentMode);
+  const fetchGenerationRef = useRef(0);
   const layoutModeRef = useRef<LayoutMode>(layoutMode);
   const sortModeRef = useRef<NodesSortMode>(sortMode);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
@@ -293,6 +345,7 @@ export default function ProxyNodes() {
   let mihomoAPI = useMihomoAPI();
 
   useEffect(() => {
+    groupsRef.current = groups;
     proxyNodesViewCache.groups = groups;
   }, [groups]);
 
@@ -301,6 +354,7 @@ export default function ProxyNodes() {
   }, [mihomoRunning]);
 
   useEffect(() => {
+    currentModeRef.current = currentMode;
     proxyNodesViewCache.currentMode = currentMode;
   }, [currentMode]);
 
@@ -317,13 +371,18 @@ export default function ProxyNodes() {
   useEffect(() => {
     return subscribeAppDataCache(PROXY_GROUPS_CACHE_KEY, () => {
       const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
-      if (!Array.isArray(cached)) return;
-      const cachedGroups = cached as ProxyGroup[];
+      if (!cached) return;
+      const unpacked = unpackProxyGroupsCache(cached);
+      const cachedMode = unpacked.mode || readCachedProxyMode(currentModeRef.current);
+      const cachedGroups = filterProxyGroupsForMode(unpacked.groups, cachedMode);
       const cachedRunning = readCachedMihomoRunning();
       proxyNodesViewCache.groups = cachedGroups;
       proxyNodesViewCache.loaded = true;
       proxyNodesViewCache.mihomoRunning = cachedRunning ?? cachedGroups.length > 0;
+      proxyNodesViewCache.currentMode = cachedMode;
+      currentModeRef.current = cachedMode;
       setGroups(cachedGroups);
+      setCurrentMode(cachedMode);
       setMihomoRunning(cachedRunning ?? cachedGroups.length > 0);
       setIsLoading(false);
       isInitialLoadRef.current = false;
@@ -729,7 +788,11 @@ export default function ProxyNodes() {
 
   // 获取节点列表
   const fetchProxies = async () => {
-    if (isInitialLoadRef.current && groups.length === 0 && !proxyNodesViewCache.loaded) {
+    const requestId = fetchGenerationRef.current + 1;
+    fetchGenerationRef.current = requestId;
+    const isLatestRequest = () => fetchGenerationRef.current === requestId;
+
+    if (isInitialLoadRef.current && groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
       setIsLoading(true);
     }
 
@@ -738,43 +801,54 @@ export default function ProxyNodes() {
       try {
         // 使用API验证mihomo是否运行
         const versionInfo = await mihomoAPI.version();
+        if (!isLatestRequest()) return;
         if (versionInfo) {
           setMihomoRunning(true);
         } else {
-          if (groups.length === 0 && !proxyNodesViewCache.loaded) {
+          if (groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
             setMihomoRunning(false);
           }
           writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
-          writeAppDataCache(PROXY_GROUPS_CACHE_KEY, []);
+          writeAppDataCache(PROXY_GROUPS_CACHE_KEY, {
+            mode: currentModeRef.current,
+            groups: [],
+          });
           // 只在初始加载时才设置loading为false
-          if (groups.length === 0) {
+          if (groupsRef.current.length === 0) {
             setIsLoading(false);
           }
           return;
         }
       } catch (error) {
+        if (!isLatestRequest()) return;
         if (isDev) {
           console.debug('Mihomo未运行:', error);
         }
-        if (groups.length === 0 && !proxyNodesViewCache.loaded) {
+        if (groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
           setMihomoRunning(false);
         }
         writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
-        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, []);
+        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, {
+          mode: currentModeRef.current,
+          groups: [],
+        });
         // 只在初始加载时才设置loading为false
-        if (groups.length === 0) {
+        if (groupsRef.current.length === 0) {
           setIsLoading(false);
         }
         return;
       }
 
       // 获取当前模式
-      let currentProxyMode = 'rule';
+      let currentProxyMode = currentModeRef.current;
       try {
         const config = await mihomoAPI.configs();
-        currentProxyMode = config.mode;
+        if (!isLatestRequest()) return;
+        currentProxyMode = normalizeProxyMode(config.mode, currentModeRef.current);
         setCurrentMode(currentProxyMode);
+        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
       } catch (error) {
+        if (!isLatestRequest()) return;
         console.error('获取当前模式失败:', error);
       }
 
@@ -784,8 +858,13 @@ export default function ProxyNodes() {
           console.log('直连模式，不加载节点列表');
         }
         writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
-        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, []);
+        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
+        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, {
+          mode: currentProxyMode,
+          groups: [],
+        });
         setGroups([]);
+        setSelectedNode(null);
         if (isInitialLoadRef.current) {
           setIsLoading(false);
           isInitialLoadRef.current = false;
@@ -806,6 +885,7 @@ export default function ProxyNodes() {
             console.log('[调试] 开始从配置文件获取代理组顺序');
           }
           const result = await api.getConfigOrder();
+          if (!isLatestRequest()) return;
           if (isDev) {
             console.log('[调试] 获取配置文件顺序结果:', result);
           }
@@ -839,6 +919,7 @@ export default function ProxyNodes() {
 
       // 获取代理信息
       const proxiesData = await mihomoAPI.proxies();
+      if (!isLatestRequest()) return;
       if (!proxiesData || !proxiesData.proxies) {
         throw new Error('获取代理信息失败');
       }
@@ -854,6 +935,7 @@ export default function ProxyNodes() {
       }
 
       const groupsData: ProxyGroup[] = [];
+      let nextSelectedNode: string | null = null;
       
       // 根据当前模式决定如何显示节点
       if (currentProxyMode === 'global') {
@@ -874,7 +956,7 @@ export default function ProxyNodes() {
                 console.log('[调试] GLOBAL 代理组设置了 hidden:true，跳过展示');
               }
               if (globalData.now) {
-                setSelectedNode(globalData.now);
+                nextSelectedNode = globalData.now;
               }
             } else {
 
@@ -1007,8 +1089,8 @@ export default function ProxyNodes() {
           }
 
           // 优先使用上一轮已经展示给用户的分组顺序，避免在配置暂时不可用时顺序跳动
-          if (groups.length > 0) {
-            const existingOrder = groups.map(g => g.name);
+          if (groupsRef.current.length > 0) {
+            const existingOrder = groupsRef.current.map(g => g.name);
             const knownSet = new Set(existingOrder);
 
             // 先按现有顺序保留仍然存在的分组
@@ -1156,7 +1238,7 @@ export default function ProxyNodes() {
       // 遍历所有组找出被选中的节点
       for (const group of groupsData) {
         if (group.now) {
-          setSelectedNode(group.now);
+          nextSelectedNode = group.now;
           break;
         }
       }
@@ -1165,18 +1247,26 @@ export default function ProxyNodes() {
       if (isDev) {
         console.log(`最终构建了${groupsData.length}个代理组`);
       }
+      if (!isLatestRequest()) return;
+      const visibleGroups = filterProxyGroupsForMode(groupsData, currentProxyMode);
       try {
         writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
-        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, groupsData);
+        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
+        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, {
+          mode: currentProxyMode,
+          groups: visibleGroups,
+        });
       } catch (error) {
         console.error('Failed to cache proxy groups:', error);
       }
-      setGroups(groupsData);
+      setSelectedNode(nextSelectedNode);
+      setGroups(visibleGroups);
     } catch (error) {
+      if (!isLatestRequest()) return;
       console.error('获取代理失败:', error);
       showError(t('nodes.fetchFailed', { error: formatNodesError(error) }));
     } finally {
-      if (isInitialLoadRef.current) {
+      if (isLatestRequest() && isInitialLoadRef.current) {
         setIsLoading(false);
         isInitialLoadRef.current = false;
       }
@@ -1865,12 +1955,15 @@ export default function ProxyNodes() {
 
   // 处理模式切换
   const handleModeChange = async (mode: string) => {
+    const nextMode = normalizeProxyMode(mode, currentModeRef.current);
     try {
       // 更新UI状态
-      setCurrentMode(mode);
+      setCurrentMode(nextMode);
+      setGroups(prev => filterProxyGroupsForMode(prev, nextMode));
+      writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, nextMode, { broadcast: false });
       
       // 更新Mihomo配置
-      await mihomoAPI.patchConfigs({ mode });
+      await mihomoAPI.patchConfigs({ mode: nextMode });
       
       // 清除连接是后续清理动作，失败不代表模式切换失败
       try {
@@ -1888,12 +1981,12 @@ export default function ProxyNodes() {
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('profile-updated', {
-          detail: { source: 'proxy-nodes', action: 'mode-changed', mode },
+          detail: { source: 'proxy-nodes', action: 'mode-changed', mode: nextMode },
         }));
       }
       
       // 显示成功提示
-      const modeText = mode === 'rule' ? t('nodes.ruleMode') : mode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
+      const modeText = nextMode === 'rule' ? t('nodes.ruleMode') : nextMode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
       showSuccess(t('nodes.switchedToMode', { mode: modeText }));
     } catch (error) {
       console.error('切换模式失败:', error);
@@ -1902,7 +1995,10 @@ export default function ProxyNodes() {
       // 失败时恢复UI状态
       try {
         const config = await mihomoAPI.configs();
-        setCurrentMode(config.mode);
+        const restoredMode = normalizeProxyMode(config.mode, currentModeRef.current);
+        setCurrentMode(restoredMode);
+        setGroups(prev => filterProxyGroupsForMode(prev, restoredMode));
+        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, restoredMode, { broadcast: false });
       } catch {}
     }
   };
