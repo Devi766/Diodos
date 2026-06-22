@@ -24,7 +24,7 @@ type Subscription = {
   usedTraffic?: string | null;
   remainingTraffic?: string | null;
   expiryDate?: string | null;
-  lastUpdated?: string;
+  lastUpdated?: string | number | null;
   // 新增：排序索引
   order?: number;
   // 新增：自定义图标URL (原始URL)
@@ -88,6 +88,43 @@ const SUBSCRIPTIONS_CACHE_KEY = APP_DATA_CACHE_KEYS.subscriptions;
 const formatSubscriptionError = (error: unknown, fallback = '操作失败') => {
   const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
   return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? '订阅 API 不可用' : message;
+};
+
+const formatSubscriptionLastUpdated = (value?: string | number | null): string => {
+  if (value === null || value === undefined) return '';
+  const raw = String(value).trim();
+  if (!raw || raw === '0') return '';
+
+  const numericValue = typeof value === 'number' || /^-?\d+(\.\d+)?$/.test(raw)
+    ? Number(raw)
+    : Number.NaN;
+
+  let date: Date | null = null;
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    let millis = numericValue;
+    if (millis < 1_000_000_000_000) {
+      millis *= 1000;
+    } else if (millis > 1_000_000_000_000_000) {
+      millis = Math.floor(millis / 1000);
+    }
+    date = new Date(millis);
+  } else {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      date = parsed;
+    }
+  }
+
+  if (!date || Number.isNaN(date.getTime())) return raw;
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 };
 
 const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => Promise<any>> => {
@@ -2491,7 +2528,7 @@ export default function SubscriptionManager() {
                         </div>
 
                         {/* 最后更新时间 */}
-                        {sub.lastUpdated && (
+                        {formatSubscriptionLastUpdated(sub.lastUpdated) && (
                           <div className="mt-1 flex items-center justify-between border-t border-gray-200 pt-1 text-[10px] text-gray-400 dark:border-gray-700 dark:text-gray-500">
                             <span className="flex items-center">
                               <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2499,7 +2536,7 @@ export default function SubscriptionManager() {
                               </svg>
                               {t('subscriptions.lastUpdated')}
                             </span>
-                            <span>{sub.lastUpdated}</span>
+                            <span>{formatSubscriptionLastUpdated(sub.lastUpdated)}</span>
                           </div>
                         )}
                       </div>

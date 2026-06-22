@@ -467,20 +467,54 @@ fn encryption_key_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join(".runtime-key"))
 }
 
-fn load_or_create_key(app: &AppHandle) -> Result<[u8; 32], String> {
+fn load_or_create_key_material(app: &AppHandle) -> Result<Vec<u8>, String> {
     let key_path = encryption_key_path(app)?;
     if key_path.exists() {
-        let bytes = fs::read(key_path).map_err(|err| err.to_string())?;
-        let digest = Sha256::digest(&bytes);
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&digest);
-        return Ok(key);
+        return fs::read(key_path).map_err(|err| err.to_string());
     }
 
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).map_err(|err| err.to_string())?;
     fs::write(key_path, seed).map_err(|err| err.to_string())?;
-    Ok(seed)
+    Ok(seed.to_vec())
+}
+
+fn key_from_material(material: &[u8]) -> [u8; 32] {
+    if material.len() == 32 {
+        let mut key = [0u8; 32];
+        key.copy_from_slice(material);
+        return key;
+    }
+
+    let digest = Sha256::digest(material);
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&digest);
+    key
+}
+
+fn legacy_hashed_key_from_material(material: &[u8]) -> [u8; 32] {
+    let digest = Sha256::digest(material);
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&digest);
+    key
+}
+
+fn load_or_create_key(app: &AppHandle) -> Result<[u8; 32], String> {
+    let material = load_or_create_key_material(app)?;
+    Ok(key_from_material(&material))
+}
+
+fn decrypt_payload_with_key(key: &[u8; 32], payload: &[u8]) -> Result<String, String> {
+    if payload.len() < 13 {
+        return Err("encrypted payload is too short".to_string());
+    }
+
+    let (nonce, cipher_text) = payload.split_at(12);
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|err| err.to_string())?;
+    let plain = cipher
+        .decrypt(Nonce::from_slice(nonce), cipher_text)
+        .map_err(|err| err.to_string())?;
+    String::from_utf8(plain).map_err(|err| err.to_string())
 }
 
 fn encrypt_text(app: &AppHandle, plain: &str) -> Result<String, String> {
@@ -496,20 +530,29 @@ fn encrypt_text(app: &AppHandle, plain: &str) -> Result<String, String> {
     Ok(general_purpose::STANDARD.encode(payload))
 }
 
-fn decrypt_text(app: &AppHandle, encoded: &str) -> Result<String, String> {
+fn decrypt_text_with_status(app: &AppHandle, encoded: &str) -> Result<(String, bool), String> {
     let payload = general_purpose::STANDARD
         .decode(encoded)
         .map_err(|err| err.to_string())?;
-    if payload.len() < 13 {
-        return Err("encrypted payload is too short".to_string());
+    let material = load_or_create_key_material(app)?;
+    let primary_key = key_from_material(&material);
+
+    match decrypt_payload_with_key(&primary_key, &payload) {
+        Ok(plain) => Ok((plain, false)),
+        Err(primary_error) => {
+            let legacy_key = legacy_hashed_key_from_material(&material);
+            if legacy_key != primary_key {
+                if let Ok(plain) = decrypt_payload_with_key(&legacy_key, &payload) {
+                    return Ok((plain, true));
+                }
+            }
+            Err(primary_error)
+        }
     }
-    let (nonce, cipher_text) = payload.split_at(12);
-    let key = load_or_create_key(app)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|err| err.to_string())?;
-    let plain = cipher
-        .decrypt(Nonce::from_slice(nonce), cipher_text)
-        .map_err(|err| err.to_string())?;
-    String::from_utf8(plain).map_err(|err| err.to_string())
+}
+
+fn decrypt_text(app: &AppHandle, encoded: &str) -> Result<String, String> {
+    decrypt_text_with_status(app, encoded).map(|(plain, _)| plain)
 }
 
 fn db(app: &AppHandle) -> Result<Connection, String> {
@@ -1998,6 +2041,10 @@ fn save_subscription(
         .map_err(|err| err.to_string())?;
     }
 
+    if let Err(error) = sync_exported_config(app, &logical_path, &content) {
+        eprintln!("[subscription-export] failed to export saved config: {error}");
+    }
+
     Ok(json!({ "success": true, "filePath": logical_path }))
 }
 
@@ -2337,6 +2384,9 @@ fn edit_subscription(app: &AppHandle, params: Value) -> CompatResult {
     if changed == 0 {
         return Ok(json!({ "success": false, "error": "订阅未更新" }));
     }
+    if let Err(error) = rename_exported_config(app, &old_path, &new_path) {
+        eprintln!("[subscription-export] failed to rename exported config: {error}");
+    }
     Ok(success(json!({ "oldPath": old_path, "newPath": new_path })))
 }
 
@@ -2416,7 +2466,42 @@ fn config_content(app: &AppHandle, file_path: &str) -> Result<String, String> {
             .optional()
             .map_err(|err| err.to_string())?
             .ok_or_else(|| "配置不存在".to_string())?;
-        return decrypt_text(app, &encrypted);
+        return match decrypt_text_with_status(app, &encrypted) {
+            Ok((content, used_legacy_key)) => {
+                if used_legacy_key {
+                    if let Err(error) = save_config_content(app, &file_path, &content) {
+                        eprintln!(
+                            "[subscription-crypto] failed to migrate legacy config key: {error}"
+                        );
+                    }
+                } else if let Err(error) = sync_exported_config(app, &file_path, &content) {
+                    eprintln!("[subscription-export] failed to refresh exported config: {error}");
+                }
+                Ok(content)
+            }
+            Err(decrypt_error) => {
+                let exported = exported_config_path(app, &file_path)?;
+                if exported.is_file() {
+                    match fs::read_to_string(&exported) {
+                        Ok(content) if !content.trim().is_empty() => {
+                            if let Err(error) = save_config_content(app, &file_path, &content) {
+                                eprintln!(
+                                    "[subscription-crypto] failed to recover exported config: {error}"
+                                );
+                            }
+                            return Ok(content);
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!(
+                                "[subscription-export] failed to read exported config fallback: {error}"
+                            );
+                        }
+                    }
+                }
+                Err(decrypt_error)
+            }
+        };
     }
 
     fs::read_to_string(&file_path).map_err(|err| err.to_string())
@@ -2434,6 +2519,9 @@ fn save_config_content(app: &AppHandle, file_path: &str, content: &str) -> Resul
             .map_err(|err| err.to_string())?;
         if updated == 0 {
             return Err("订阅不存在".to_string());
+        }
+        if let Err(error) = sync_exported_config(app, &file_path, content) {
+            eprintln!("[subscription-export] failed to export updated config: {error}");
         }
         return Ok(());
     }
@@ -2458,6 +2546,41 @@ fn exported_config_path(app: &AppHandle, file_path: &str) -> Result<PathBuf, Str
     let dir = app_data_dir(app)?.join("exported-configs");
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     Ok(dir.join(file_name))
+}
+
+fn sync_exported_config(app: &AppHandle, file_path: &str, content: &str) -> Result<(), String> {
+    if !file_path.starts_with("flyclash-db://") {
+        return Ok(());
+    }
+
+    let path = exported_config_path(app, file_path)?;
+    fs::write(path, content).map_err(|err| err.to_string())
+}
+
+fn rename_exported_config(app: &AppHandle, old_path: &str, new_path: &str) -> Result<(), String> {
+    if old_path == new_path
+        || !old_path.starts_with("flyclash-db://")
+        || !new_path.starts_with("flyclash-db://")
+    {
+        return Ok(());
+    }
+
+    let old_export = exported_config_path(app, old_path)?;
+    if !old_export.exists() {
+        return Ok(());
+    }
+
+    let new_export = exported_config_path(app, new_path)?;
+    if let Some(parent) = new_export.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::rename(&old_export, &new_export)
+        .or_else(|_| {
+            fs::copy(&old_export, &new_export)?;
+            fs::remove_file(&old_export)
+        })
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 fn materialize_config_for_open(app: &AppHandle, target: &str) -> Result<PathBuf, String> {
