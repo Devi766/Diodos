@@ -84,12 +84,44 @@ export const mihomoClient = {
     return (await loadMihomoApi()).getVersion();
   },
 
+  async flushFakeIp() {
+    return (await loadMihomoApi()).flushFakeIp();
+  },
+
+  async flushDNS() {
+    return (await loadMihomoApi()).flushDNS();
+  },
+
   async getRuntimeConfig() {
     return (await loadMihomoApi()).getBaseConfig();
   },
 
+  async reloadConfig(force: boolean, configPath: string) {
+    return (await loadMihomoApi()).reloadConfig(force, configPath);
+  },
+
   async patchRuntimeConfig(data: Record<string, unknown>) {
     return (await loadMihomoApi()).patchBaseConfig(data);
+  },
+
+  async updateGeo() {
+    return (await loadMihomoApi()).updateGeo();
+  },
+
+  async restart() {
+    return (await loadMihomoApi()).restart();
+  },
+
+  async getGroups() {
+    return (await loadMihomoApi()).getGroups();
+  },
+
+  async getGroupByName(groupName: string) {
+    return (await loadMihomoApi()).getGroupByName(groupName);
+  },
+
+  async delayGroup(groupName: string, testUrl: string, timeout: number) {
+    return (await loadMihomoApi()).delayGroup(groupName, testUrl, timeout);
   },
 
   async getProxies() {
@@ -102,6 +134,10 @@ export const mihomoClient = {
 
   async selectNodeForGroup(groupName: string, node: string) {
     return (await loadMihomoApi()).selectNodeForGroup(groupName, node);
+  },
+
+  async unfixedProxy(groupName: string) {
+    return (await loadMihomoApi()).unfixedProxy(groupName);
   },
 
   async getConnections() {
@@ -120,8 +156,20 @@ export const mihomoClient = {
     return (await loadMihomoApi()).getProxyProviders();
   },
 
+  async getProxyProviderByName(providerName: string) {
+    return (await loadMihomoApi()).getProxyProviderByName(providerName);
+  },
+
   async updateProxyProvider(providerName: string) {
     return (await loadMihomoApi()).updateProxyProvider(providerName);
+  },
+
+  async healthcheckProxyProvider(providerName: string) {
+    return (await loadMihomoApi()).healthcheckProxyProvider(providerName);
+  },
+
+  async getRules() {
+    return (await loadMihomoApi()).getRules();
   },
 
   async getRuleProviders() {
@@ -170,11 +218,32 @@ export const mihomoClient = {
       if (method === 'GET' && segments[0] === 'version') {
         return toCompatResponse(await api.getVersion()) as MihomoCompatResponse<T>;
       }
+      if (method === 'POST' && segments.join('/') === 'cache/fakeip/flush') {
+        await api.flushFakeIp();
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
+      if (method === 'POST' && segments.join('/') === 'cache/dns/flush') {
+        await api.flushDNS();
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
       if (method === 'GET' && segments[0] === 'configs') {
         return toCompatResponse(await api.getBaseConfig()) as MihomoCompatResponse<T>;
       }
       if (method === 'PATCH' && segments[0] === 'configs') {
         await api.patchBaseConfig(body);
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
+      if (method === 'PUT' && segments[0] === 'configs') {
+        if (!body?.path) return toCompatError('Missing config path') as MihomoCompatResponse<T>;
+        await api.reloadConfig(url.searchParams.get('force') === 'true', String(body.path));
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
+      if (method === 'POST' && segments.join('/') === 'configs/geo') {
+        await api.updateGeo();
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
+      if (method === 'POST' && segments[0] === 'restart') {
+        await api.restart();
         return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
       }
       if (method === 'GET' && segments[0] === 'connections') {
@@ -188,6 +257,18 @@ export const mihomoClient = {
         await api.closeConnection(segments[1]);
         return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
       }
+      if (method === 'GET' && segments[0] === 'group' && !segments[1]) {
+        return toCompatResponse(await api.getGroups()) as MihomoCompatResponse<T>;
+      }
+      if (method === 'GET' && segments[0] === 'group' && segments[1] && !segments[2]) {
+        return toCompatResponse(await api.getGroupByName(segments[1])) as MihomoCompatResponse<T>;
+      }
+      if (method === 'GET' && segments[0] === 'group' && segments[1] && segments[2] === 'delay') {
+        const timeout = Number(url.searchParams.get('timeout') || 10000);
+        const testUrl =
+          url.searchParams.get('url') || 'https://www.gstatic.com/generate_204';
+        return toCompatResponse(await api.delayGroup(segments[1], testUrl, timeout)) as MihomoCompatResponse<T>;
+      }
       if (method === 'GET' && segments[0] === 'proxies' && !segments[1]) {
         return toCompatResponse(await api.getProxies()) as MihomoCompatResponse<T>;
       }
@@ -199,17 +280,31 @@ export const mihomoClient = {
         await api.selectNodeForGroup(segments[1], String(body.name));
         return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
       }
+      if (method === 'DELETE' && segments[0] === 'proxies' && segments[1]) {
+        await api.unfixedProxy(segments[1]);
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
       if (method === 'GET' && segments[0] === 'proxies' && segments[2] === 'delay') {
         const timeout = Number(url.searchParams.get('timeout') || 10000);
         const testUrl =
           url.searchParams.get('url') || 'https://www.gstatic.com/generate_204';
         return toCompatResponse(await api.delayProxyByName(segments[1], testUrl, timeout)) as MihomoCompatResponse<T>;
       }
+      if (method === 'GET' && segments[0] === 'rules' && !segments[1]) {
+        return toCompatResponse(await api.getRules()) as MihomoCompatResponse<T>;
+      }
       if (method === 'GET' && segments.join('/') === 'providers/proxies') {
         return toCompatResponse(await api.getProxyProviders()) as MihomoCompatResponse<T>;
       }
+      if (method === 'GET' && segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && !segments[3]) {
+        return toCompatResponse(await api.getProxyProviderByName(segments[2])) as MihomoCompatResponse<T>;
+      }
       if (method === 'PUT' && segments[0] === 'providers' && segments[1] === 'proxies' && segments[2]) {
         await api.updateProxyProvider(segments[2]);
+        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
+      }
+      if (method === 'GET' && segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && segments[3] === 'healthcheck') {
+        await api.healthcheckProxyProvider(segments[2]);
         return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
       }
       if (method === 'GET' && segments.join('/') === 'providers/rules') {
