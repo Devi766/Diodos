@@ -98,6 +98,7 @@
     "serve-static": "^2.2.0",
     "sonner": "^2.0.3",
     "swr": "^2.3.3",
+    "tauri-plugin-mihomo-api": "https://codeload.github.com/clash-verge-rev/tauri-plugin-mihomo/tar.gz/ff75ee3edd61923e6c76a7f3cf3c3fbd0f8e22c0",
     "tailwind-merge": "^3.2.0",
     "tailwindcss-animate": "^1.0.7",
     "twemoji": "14.0.2",

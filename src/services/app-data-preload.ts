@@ -5,6 +5,7 @@ import {
   hasAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
+import { mihomoClient } from '@/services/mihomo-client';
 
 type PreloadOptions = {
   force?: boolean;
@@ -48,12 +49,7 @@ const providerMap = (result: any) => {
 };
 
 const requestMihomo = async (endpoint: string) => {
-  const requestMihomoAPI = window.electronAPI?.requestMihomoAPI;
-  if (typeof requestMihomoAPI !== 'function') {
-    throw new Error('requestMihomoAPI unavailable');
-  }
-
-  const response: unknown = await requestMihomoAPI(endpoint);
+  const response: unknown = await mihomoClient.request(endpoint);
   if (!response) throw new Error(`${endpoint} returned empty response`);
   if (isRecord(response) && response.success === false) {
     throw new Error(String(response.error || response.message || `${endpoint} failed`));

@@ -36,6 +36,7 @@ import {
   readAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
+import { mihomoClient } from '@/services/mihomo-client';
 
 type ProxyMode = 'rule' | 'global' | 'direct';
 
@@ -271,10 +272,6 @@ export default function Dashboard() {
 
   const getProxiesSnapshot = useCallback(
     async (force = false): Promise<Record<string, any>> => {
-      if (!electron?.requestMihomoAPI) {
-        return {};
-      }
-
       const now = Date.now();
       const snapshot = proxiesSnapshotRef.current;
       if (!force && snapshot.data && now - snapshot.timestamp < 1500) {
@@ -282,8 +279,7 @@ export default function Dashboard() {
       }
 
       try {
-        const response = await electron.requestMihomoAPI('/proxies');
-        const payload: any = response?.data ?? response;
+        const payload: any = await mihomoClient.getProxies();
         const proxies = payload?.proxies ?? payload;
         const normalized =
           proxies && typeof proxies === 'object' && !Array.isArray(proxies) ? { ...proxies } : {};
@@ -298,7 +294,7 @@ export default function Dashboard() {
         return proxiesSnapshotRef.current.data ?? {};
       }
     },
-    [electron]
+    []
   );
 
   const resolveEffectiveNode = useCallback(
@@ -315,10 +311,6 @@ export default function Dashboard() {
         return null;
       }
 
-      if (!electron?.requestMihomoAPI) {
-        return start;
-      }
-
       const snapshot = await getProxiesSnapshot(options?.forceRefresh === true);
       const visited = new Set<string>();
 
@@ -329,8 +321,7 @@ export default function Dashboard() {
         let info = snapshot[normalized];
         if (!info) {
           try {
-            const response = await electron.requestMihomoAPI(`/proxies/${encodeURIComponent(normalized)}`);
-            const payload: any = response?.data ?? response;
+            const payload: any = await mihomoClient.getProxyByName(normalized);
             if (payload && typeof payload === 'object') {
               const merged = { ...(snapshot[normalized] || {}), ...payload };
               snapshot[normalized] = merged;
@@ -379,7 +370,7 @@ export default function Dashboard() {
         return start;
       }
     },
-    [electron, getProxiesSnapshot]
+    [getProxiesSnapshot]
   );
 
   const commitCurrentNode = useCallback(
@@ -402,15 +393,6 @@ export default function Dashboard() {
       const base = typeof rawNodeName === 'string' ? rawNodeName.trim() : '';
       const fallback = typeof fallbackGroup === 'string' ? fallbackGroup.trim() : '';
 
-      if (!electron?.requestMihomoAPI) {
-        if (base && !isLikelyGroupOrBuiltin(base)) {
-          commitCurrentNode(base);
-        } else if (fallback && !isLikelyGroupOrBuiltin(fallback)) {
-          commitCurrentNode(fallback);
-        }
-        return;
-      }
-
       if (!base && !fallback) {
         return;
       }
@@ -426,7 +408,7 @@ export default function Dashboard() {
         }
       })();
     },
-    [commitCurrentNode, electron, resolveEffectiveNode]
+    [commitCurrentNode, resolveEffectiveNode]
   );
 
   const MODE_LABELS: Record<ProxyMode, string> = {
@@ -506,29 +488,26 @@ export default function Dashboard() {
 
       let resolvedNode: string | null = null;
 
-      if (electron.requestMihomoAPI) {
-        for (const groupName of candidateGroups) {
-          if (resolvedNode) break;
-          try {
-            const response = await electron.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`);
-            const payload: any = response?.data ?? response;
-            if (payload && typeof payload === 'object') {
-              const merged = { ...(snapshotCache[groupName] || {}), ...payload };
-              snapshotCache[groupName] = merged;
-              if (proxiesSnapshotRef.current.data) {
-                proxiesSnapshotRef.current.data[groupName] = merged;
-              }
-
-              const finalNode = await resolveEffectiveNode(
-                typeof payload.now === 'string' && payload.now.length > 0 ? payload.now : null,
-                groupName
-              );
-              if (finalNode && finalNode.length > 0) {
-                resolvedNode = finalNode;
-              }
+      for (const groupName of candidateGroups) {
+        if (resolvedNode) break;
+        try {
+          const payload: any = await mihomoClient.getProxyByName(groupName);
+          if (payload && typeof payload === 'object') {
+            const merged = { ...(snapshotCache[groupName] || {}), ...payload };
+            snapshotCache[groupName] = merged;
+            if (proxiesSnapshotRef.current.data) {
+              proxiesSnapshotRef.current.data[groupName] = merged;
             }
-          } catch {}
-        }
+
+            const finalNode = await resolveEffectiveNode(
+              typeof payload.now === 'string' && payload.now.length > 0 ? payload.now : null,
+              groupName
+            );
+            if (finalNode && finalNode.length > 0) {
+              resolvedNode = finalNode;
+            }
+          }
+        } catch {}
       }
 
       if (!resolvedNode) {
@@ -573,17 +552,15 @@ export default function Dashboard() {
   }, [commitCurrentNode, electron, getProxiesSnapshot, hydrateConnections, isRunning, primaryProxyGroup, proxyMode, resolveEffectiveNode]);
 
   const fetchProxyMode = useCallback(async (): Promise<ProxyMode | null> => {
-    if (!electron?.requestMihomoAPI) return null;
     try {
-      const response = await electron.requestMihomoAPI('/configs');
-      const payload: any = response?.data ?? response;
+      const payload: any = await mihomoClient.getRuntimeConfig();
       const modeValue = typeof payload?.mode === 'string' ? payload.mode.toLowerCase() : null;
       if (modeValue === 'rule' || modeValue === 'global' || modeValue === 'direct') {
         return modeValue as ProxyMode;
       }
     } catch {}
     return null;
-  }, [electron]);
+  }, []);
 
   const syncProxyMode = useCallback(async () => {
     const mode = await fetchProxyMode();
@@ -992,14 +969,13 @@ export default function Dashboard() {
 
   // 获取连接列表
   useEffect(() => {
-    if (!electron?.requestMihomoAPI || !isRunning) return;
+    if (!isRunning) return;
     let disposed = false;
 
     const fetchConnections = async () => {
       try {
-        const response = await electron.requestMihomoAPI('/connections');
-        if (!disposed && response?.data) {
-          const data = response.data;
+        const data = await mihomoClient.getConnections();
+        if (!disposed && data) {
           if (data.connections && Array.isArray(data.connections)) {
             setConnections(data.connections);
           }
@@ -1365,41 +1341,13 @@ export default function Dashboard() {
 
   const handleModeSwitch = useCallback(
     async (nextMode: ProxyMode) => {
-      if (!electron?.requestMihomoAPI) {
-        showBanner({ type: 'error', message: t('dashboard.proxyModeNotSupported') });
-        return;
-      }
       if (isModeUpdating || proxyMode === nextMode) {
         return;
       }
       setIsModeUpdating(true);
       showBanner(null);
       try {
-        const response = await electron.requestMihomoAPI('/configs', {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ mode: nextMode })
-        });
-        const responsePayload = response as any;
-
-        const success =
-          typeof responsePayload?.success === 'boolean'
-            ? responsePayload.success
-            : typeof responsePayload?.ok === 'boolean'
-            ? responsePayload.ok
-            : typeof responsePayload?.status === 'number'
-            ? responsePayload.status >= 200 && responsePayload.status < 300
-            : true;
-
-        if (!success) {
-          const errorDetail =
-            typeof responsePayload?.data === 'string'
-              ? responsePayload.data
-              : responsePayload?.data?.message || responsePayload?.error || responsePayload?.message || responsePayload?.statusText || t('dashboard.switchProxyModeFailedTitle');
-          throw new Error(formatDashboardError(errorDetail, t('dashboard.switchProxyModeFailedTitle')));
-        }
+        await mihomoClient.patchRuntimeConfig({ mode: nextMode });
 
         setProxyMode(nextMode);
         showBanner({ type: 'success', message: t('dashboard.switchedToMode', { mode: MODE_LABELS[nextMode] }) });
@@ -1413,7 +1361,7 @@ export default function Dashboard() {
         setIsModeUpdating(false);
       }
     },
-    [electron, formatDashboardError, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
+    [formatDashboardError, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
   );
 
   const handleResetDashboardLayout = useCallback(async () => {

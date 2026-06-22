@@ -6,6 +6,20 @@ const root = process.cwd();
 const readText = (relativePath) =>
   fs.readFileSync(path.join(root, relativePath), 'utf8');
 
+const listFiles = (directory, extension) => {
+  const entries = fs.readdirSync(path.join(root, directory), { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const relativePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFiles(relativePath, extension));
+    } else if (entry.isFile() && entry.name.endsWith(extension)) {
+      files.push(relativePath);
+    }
+  }
+  return files;
+};
+
 const findMatchingBrace = (source, openIndex) => {
   let depth = 0;
   let quote = null;
@@ -68,6 +82,41 @@ const countBraces = (line) => {
   }
 
   return delta;
+};
+
+const findMatchingParen = (source, openIndex) => {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+
+  for (let index = openIndex; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '(') {
+      depth += 1;
+    } else if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+
+  return -1;
 };
 
 const extractApiObject = (source, marker) => {
@@ -143,11 +192,66 @@ const extractCompatApi = (source) => {
   };
 };
 
+const collectStringLiterals = (source, names) => {
+  for (const match of source.matchAll(/"([A-Za-z0-9_.:-]+)"/g)) {
+    names.add(match[1]);
+  }
+};
+
 const extractBackendMethods = (source) => {
+  const names = new Set();
+  let searchIndex = 0;
+
+  while (true) {
+    const matchStart = source.indexOf('match method {', searchIndex);
+    if (matchStart < 0) break;
+    searchIndex = matchStart + 'match method {'.length;
+
+    const openIndex = source.indexOf('{', matchStart);
+    const closeIndex = findMatchingBrace(source, openIndex);
+    if (openIndex < 0 || closeIndex < 0) continue;
+    const matchBody = source.slice(openIndex + 1, closeIndex);
+    let depth = 1;
+
+    for (const line of matchBody.split(/\r?\n/)) {
+      const trimmed = line.trimStart();
+      if (depth === 1 && (trimmed.startsWith('"') || trimmed.startsWith('| "'))) {
+        collectStringLiterals(line, names);
+      }
+      depth += countBraces(line);
+    }
+  }
+
+  searchIndex = 0;
+  while (true) {
+    const matchesStart = source.indexOf('matches!(method,', searchIndex);
+    if (matchesStart < 0) break;
+    searchIndex = matchesStart + 'matches!(method,'.length;
+
+    const openIndex = source.indexOf('(', matchesStart);
+    const closeIndex = findMatchingParen(source, openIndex);
+    if (openIndex < 0 || closeIndex < 0) continue;
+    collectStringLiterals(source.slice(openIndex + 1, closeIndex), names);
+  }
+
+  return names;
+};
+
+const extractBackendMethodsFromFiles = (relativePaths) => {
+  const names = new Set();
+  for (const relativePath of relativePaths) {
+    for (const name of extractBackendMethods(readText(relativePath))) {
+      names.add(name);
+    }
+  }
+  return names;
+};
+
+const extractLegacyBackendMethods = (source) => {
   const start = source.indexOf('async fn tauri_compat_call');
-  if (start < 0) throw new Error('Could not find tauri_compat_call');
+  if (start < 0) return new Set();
   const matchStart = source.indexOf('match method {', start);
-  if (matchStart < 0) throw new Error('Could not find method match');
+  if (matchStart < 0) return new Set();
   const openIndex = source.indexOf('{', matchStart);
   const closeIndex = findMatchingBrace(source, openIndex);
   const matchBody = source.slice(openIndex + 1, closeIndex);
@@ -172,7 +276,10 @@ const difference = (left, right) => sort([...left].filter((item) => !right.has(i
 
 const electron = extractElectronApi(readText('electron/preload.js'));
 const compat = extractCompatApi(readText('public/tauri-compat.js'));
-const backend = extractBackendMethods(readText('src-tauri/src/main.rs'));
+const backend = extractBackendMethodsFromFiles(listFiles('src-tauri/src', '.rs'));
+for (const name of extractLegacyBackendMethods(readText('src-tauri/src/main.rs'))) {
+  backend.add(name);
+}
 
 const report = {
   counts: {

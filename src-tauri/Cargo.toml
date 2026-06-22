@@ -28,6 +28,7 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-deep-link = "2.4.9"
+tauri-plugin-mihomo = { git = "https://github.com/clash-verge-rev/tauri-plugin-mihomo", rev = "ff75ee3edd61923e6c76a7f3cf3c3fbd0f8e22c0" }
 tauri-plugin-single-instance = "2.4.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 urlencoding = "2"

@@ -1,4 +1,4 @@
-import { ofetch } from 'ofetch'
+import { mihomoClient } from './mihomo-client'
 
 export interface MihomoConfig {
   port: number
@@ -52,160 +52,29 @@ export const useMihomoAPI = (controllerConfig?: {
   host?: string | null
   port?: string | null
   secret?: string | null
-  controllerMode?: 'socket' | 'http'
+  controllerMode?: 'ipc' | 'socket' | 'http'
   httpFallback?: boolean
 }) => {
-  // 使用默认值，如果没有提供自定义配置
-  const host = controllerConfig?.host || '127.0.0.1';
-  const port = controllerConfig?.port || '9090';
+  void controllerConfig;
   
   /**
-   * 创建统一的请求函数
-   * 1. 优先使用electronAPI.requestMihomoAPI (自动添加密钥认证)
-   * 2. 如果electronAPI不可用，使用带认证头的ofetch
+   * 创建统一的 IPC 请求函数。
+   * 旧 API 仍保留 endpoint 形状，但内部只走 tauri-plugin-mihomo-api。
    */
   const makeRequest = async <T = any>(endpoint: string, options: any = {}) => {
-    try {
-      // 判断是否在browser环境中有electronAPI
-      if (typeof window !== 'undefined' && window.electronAPI?.requestMihomoAPI) {
-        // 转换params为URL查询参数
-        if (options.params) {
-          const url = new URL(
-            endpoint.startsWith('http') ? endpoint : endpoint.startsWith('/') ? endpoint : `/${endpoint}`,
-            'http://mihomo'
-          );
-          Object.entries(options.params).forEach(([key, value]) => {
-            if (value !== undefined) {
-              url.searchParams.append(key, String(value));
-            }
-          });
-          
-          // 替换endpoint为带查询参数的URL
-          endpoint = endpoint.startsWith('http') ? url.toString() : url.pathname + url.search;
-        }
-        
-        // 准备请求选项
-        const requestOptions: RequestInit = {
-          method: options.method || 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(options.headers || {})
-          }
-        };
-        
-        // Always try to fetch the secret from electronAPI
-        if (requestOptions.headers) {
-          try {
-            // 先尝试从electronAPI获取最新的密钥
-            const apiConfig = await window.electronAPI.getApiConfig();
-            if (apiConfig.success && apiConfig.secret) {
-              // 确保headers是一个对象并添加Authorization头
-              if (typeof requestOptions.headers === 'object') {
-                (requestOptions.headers as Record<string, string>)['Authorization'] = `Bearer ${apiConfig.secret}`;
-              }
-            }
-          } catch (error) {
-            // 忽略错误
-          }
-        }
-        
-        // 添加请求体
-        if (options.body) {
-          requestOptions.body = JSON.stringify(options.body);
-        }
-        
-        try {
-          // 发送请求
-          const response = await window.electronAPI.requestMihomoAPI(endpoint, requestOptions);
-          
-          // 检查响应是否存在
-          if (!response) {
-            throw new Error('API请求失败: 响应对象为空');
-          }
-          
-          // 返回JSON数据
-          if (response.ok) {
-            // 对于DELETE请求，可能不返回内容 (或者 response.data 可能为 null/undefined)
-            if (options.method === 'DELETE' || response.status === 204) {
-              return {} as T; // 或者可以返回 response.data 如果它有意义
-            }
-            
-            return response.data as T;
-          }
-          
-          // 处理错误响应
-          const errorStatus = response.status || '未知状态码';
-          const errorText = response.statusText || '未知错误';
-          // 尝试从 response.data 获取更详细的错误信息
-          const detailError = typeof response.data === 'string' ? response.data : (response.data?.message || errorText);
-          throw new Error(`API请求失败: ${errorStatus} ${detailError}`);
-        } catch (requestError) {
-          // 检查是否是mihomo服务未运行
-          const errorMsg = requestError instanceof Error ? requestError.message : String(requestError);
-          if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('Failed to fetch')) {
-            throw new Error('Mihomo服务未运行或无法访问');
-          }
-          
-          throw requestError;
-        }
+    const response = await mihomoClient.request<T>(endpoint, options);
+    if (response.ok) {
+      if (options.method === 'DELETE' || response.status === 204) {
+        return {} as T;
       }
-      
-      // 备用方案：使用ofetch
-      let apiConfig: Awaited<ReturnType<NonNullable<typeof window.electronAPI>['getApiConfig']>> | null = null;
-      if (typeof window !== 'undefined' && window.electronAPI?.getApiConfig) {
-        try {
-          apiConfig = await window.electronAPI.getApiConfig();
-        } catch (e) {
-          // 忽略错误
-        }
-      }
-
-      const resolvedControllerMode = controllerConfig?.controllerMode ?? apiConfig?.controllerMode;
-      const resolvedHttpFallback = controllerConfig?.httpFallback ?? apiConfig?.httpFallback;
-      if (resolvedControllerMode === 'socket' && resolvedHttpFallback !== true) {
-        throw new Error('Mihomo 控制器正在使用 socket 模式，当前环境缺少 Tauri 桥接，无法回退到 HTTP 9090');
-      }
-
-      // 创建带认证头的ofetch实例
-      const httpHost = controllerConfig?.host || apiConfig?.controllerHost || host;
-      const httpPort = controllerConfig?.port || apiConfig?.controllerPort || port;
-      const baseURL = `http://${httpHost}:${httpPort}`;
-      const headers: Record<string, string> = {};
-      
-      // For ofetch fallback, attempt to get secret from electronAPI if possible, 
-      // or use controllerConfig.secret if provided directly to useMihomoAPI (less common for UI calls)
-      let authorizationHeader = '';
-      if (apiConfig?.success && apiConfig.secret) {
-        authorizationHeader = `Bearer ${apiConfig.secret}`;
-      } else if (controllerConfig?.secret) {
-        authorizationHeader = `Bearer ${controllerConfig.secret}`;
-      }
-
-      if (authorizationHeader) {
-        headers['Authorization'] = authorizationHeader;
-      }
-      
-      // 创建ofetch实例
-      const request = ofetch.create({
-        baseURL,
-        headers
-      });
-      
-      try {
-        // 使用ofetch发送请求
-        return await request<T>(endpoint, options);
-      } catch (ofetchError) {
-        // 检查是否是mihomo服务未运行
-        const errorMsg = ofetchError instanceof Error ? ofetchError.message : String(ofetchError);
-        if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('Failed to fetch')) {
-          throw new Error('Mihomo服务未运行或无法访问');
-        }
-        
-        throw ofetchError;
-      }
-    } catch (error) {
-      throw error;
+      return response.data as T;
     }
+
+    const detailError =
+      typeof response.data === 'string'
+        ? response.data
+        : ((response.data as any)?.message ?? response.statusText);
+    throw new Error(`API请求失败: ${response.status || '未知状态码'} ${detailError}`);
   };
 
   /**

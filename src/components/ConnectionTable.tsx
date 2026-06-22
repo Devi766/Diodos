@@ -29,6 +29,7 @@ import {
   subscribeAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
+import { mihomoClient } from '@/services/mihomo-client';
 
 interface Connection {
   id: string;
@@ -348,21 +349,8 @@ export default function ConnectionTable() {
     setError(null);
 
     try {
-      const requestMihomoAPI = window.electronAPI?.requestMihomoAPI;
-      if (typeof requestMihomoAPI !== 'function') {
-        throw new Error(t('connections.apiUnavailable'));
-      }
-
-      const versionResponse = await requestMihomoAPI('/version');
-      if (versionResponse && !versionResponse.ok) {
-        throw new Error(readErrorMessage(versionResponse, t('connections.mihomoNotRunning')));
-      }
-
-      const connectionsResponse = await requestMihomoAPI('/connections');
-      if (isFailureResult(connectionsResponse)) {
-        throw new Error(readErrorMessage(connectionsResponse, t('connections.fetchError', { error: '' })));
-      }
-      const data = connectionsResponse?.data ?? connectionsResponse;
+      await mihomoClient.getVersion();
+      const data = await mihomoClient.getConnections();
 
       if (!data?.connections || !Array.isArray(data.connections)) {
         // 只在初始加载或从有数据变为无数据时才更新为空
@@ -372,9 +360,10 @@ export default function ConnectionTable() {
         return;
       }
 
-      writeAppDataCache(CONNECTIONS_CACHE_KEY, data.connections);
-      setConnections(data.connections);
-      setStats(calculateStats(data.connections));
+      const nextConnections = data.connections as unknown as Connection[];
+      writeAppDataCache(CONNECTIONS_CACHE_KEY, nextConnections);
+      setConnections(nextConnections);
+      setStats(calculateStats(nextConnections));
     } catch (err) {
       const message = formatConnectionError(err, t('connections.fetchError', { error: '' }));
       if (message === t('connections.mihomoNotRunning')) {
@@ -394,60 +383,13 @@ export default function ConnectionTable() {
     }
   }, [formatConnectionError, t]);
 
-  const deleteConnectionViaRequest = useCallback(async (endpoint: string, fallback: string) => {
-    const requestMihomoAPI = window.electronAPI?.requestMihomoAPI;
-    if (typeof requestMihomoAPI !== 'function') {
-      throw new Error(t('connections.apiUnavailable'));
-    }
-
-    const response = await requestMihomoAPI(endpoint, { method: 'DELETE' });
-    if (isFailureResult(response)) {
-      throw new Error(readErrorMessage(response, fallback));
-    }
-    if (response && typeof response === 'object' && 'ok' in response && !response.ok) {
-      throw new Error(readErrorMessage(response, fallback));
-    }
-  }, [t]);
-
   const closeAllConnectionsViaBridge = useCallback(async () => {
-    const nativeCloseAll = window.electronAPI?.closeAllConnections;
-    if (typeof nativeCloseAll === 'function') {
-      const result = await nativeCloseAll();
-      if (isFailureResult(result)) {
-        const message = readErrorMessage(result, t('connections.disconnectAllError', { error: '' }));
-        if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
-          throw new Error(message);
-        }
-        console.warn('closeAllConnections failed, falling back to requestMihomoAPI:', message);
-      } else if (isExplicitSuccess(result)) {
-        return;
-      } else {
-        console.warn('closeAllConnections returned an unrecognized result, falling back to requestMihomoAPI:', result);
-      }
-    }
-
-    await deleteConnectionViaRequest('/connections', t('connections.disconnectAllError', { error: '' }));
-  }, [deleteConnectionViaRequest, t]);
+    await mihomoClient.closeAllConnections();
+  }, []);
 
   const closeConnectionViaBridge = useCallback(async (id: string) => {
-    const nativeClose = window.electronAPI?.closeConnection;
-    if (typeof nativeClose === 'function') {
-      const result = await nativeClose(id);
-      if (isFailureResult(result)) {
-        const message = readErrorMessage(result, t('connections.disconnectError', { error: '' }));
-        if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
-          throw new Error(message);
-        }
-        console.warn('closeConnection failed, falling back to requestMihomoAPI:', message);
-      } else if (isExplicitSuccess(result)) {
-        return;
-      } else {
-        console.warn('closeConnection returned an unrecognized result, falling back to requestMihomoAPI:', result);
-      }
-    }
-
-    await deleteConnectionViaRequest(`/connections/${id}`, t('connections.disconnectError', { error: '' }));
-  }, [deleteConnectionViaRequest, t]);
+    await mihomoClient.closeConnection(id);
+  }, []);
 
   const closeAllConnections = async () => {
     if (closingAll || connections.length === 0) return;

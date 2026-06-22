@@ -237,7 +237,7 @@ interface MihomoApiResponse {
   text: () => Promise<string>;
 }
 
-type ControllerMode = 'socket' | 'http';
+type ControllerMode = 'ipc' | 'socket' | 'http';
 
 interface ApiConfigResult {
   success: boolean;

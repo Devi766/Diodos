@@ -27,6 +27,7 @@ import {
   subscribeAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
+import { mihomoClient } from '@/services/mihomo-client';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -110,7 +111,7 @@ const unpackProxyGroupsCache = (cached: unknown): { mode?: ProxyMode; groups: Pr
   }
 
   if (cached && typeof cached === 'object') {
-    const record = cached as ProxyGroupsCacheValue;
+    const record = cached as { mode?: unknown; groups?: unknown };
     const mode = record.mode === undefined || record.mode === null
       ? undefined
       : normalizeProxyMode(record.mode, 'rule');
@@ -2091,56 +2092,15 @@ export default function ProxyNodes() {
     }
     
     try {
-      const api = window.electronAPI;
+      if (isDev) {
+        console.log(`[调试] IPC 切换节点: ${groupName} -> ${nodeName}`);
+      }
 
-      if (typeof api?.selectNode === 'function') {
-        const result = await api.selectNode(nodeName, groupName);
-        if (!compatSuccess(result)) {
-          throw new Error(compatError(result, t('nodes.switchNodeFailed', { node: nodeName })));
-        }
+      await mihomoClient.selectNodeForGroup(groupName, nodeName);
 
-        if (typeof api.requestMihomoAPI === 'function') {
-          const verifyResponse = await api.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`);
-          if (!verifyResponse?.ok) {
-            throw new Error(responseError(verifyResponse, t('nodes.verifySwitchFailed', { node: nodeName })));
-          }
-          const verifyData = verifyResponse.data;
-          if (verifyData?.now !== nodeName) {
-            throw new Error(t('nodes.verifySwitchMismatch', { expected: nodeName, actual: verifyData?.now || t('nodes.unknown') }));
-          }
-        }
-      } else if (typeof api?.requestMihomoAPI === 'function') {
-        // Fallback: 发送切换请求，使用 electronAPI.requestMihomoAPI
-        const switchUrl = `/proxies/${encodeURIComponent(groupName)}`;
-        if (isDev) {
-          console.log(`[调试] 发送PUT请求到: ${switchUrl}`);
-          console.log(`[调试] 请求体: ${JSON.stringify({ name: nodeName })}`);
-        }
-
-        const switchResponse = await api.requestMihomoAPI(switchUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ name: nodeName })
-        });
-
-        if (!switchResponse?.ok) {
-          throw new Error(responseError(switchResponse, t('nodes.switchNodeFailed', { node: nodeName })));
-        }
-
-        // 验证切换结果
-        const verifyResponse = await api.requestMihomoAPI(switchUrl);
-        if (!verifyResponse?.ok) {
-          throw new Error(responseError(verifyResponse, t('nodes.verifySwitchFailed', { node: nodeName })));
-        }
-
-        const verifyData = verifyResponse.data;
-        if (verifyData?.now !== nodeName) {
-          throw new Error(t('nodes.verifySwitchMismatch', { expected: nodeName, actual: verifyData?.now || t('nodes.unknown') }));
-        }
-      } else {
-        await mihomoAPI.putProxies({ group: groupName, proxy: nodeName });
+      const verifyData: any = await mihomoClient.getProxyByName(groupName);
+      if (verifyData?.now !== nodeName) {
+        throw new Error(t('nodes.verifySwitchMismatch', { expected: nodeName, actual: verifyData?.now || t('nodes.unknown') }));
       }
 
       if (isMainGroup) {

@@ -337,6 +337,7 @@
   const api = new Proxy(
     {
       debugLog: (...args) => console.debug("[FlyClash Tauri]", ...args),
+      getAuthToken: null,
       getAppVersion: async (...args) =>
         callWithDefault("getAppVersion", args, "0.2.9", (result) => typeof result === "string"),
       getPlatform: async (...args) =>
@@ -390,14 +391,14 @@
           args,
           {
             success: true,
-            controllerHost: "127.0.0.1",
-            controllerPort: "9090",
+            controllerHost: null,
+            controllerPort: null,
             secret: "",
-            controllerMode: "http",
+            controllerMode: "ipc",
             socketPath: null,
             socketArg: null,
-            httpFallback: true,
-            "external-controller": "127.0.0.1:9090",
+            httpFallback: false,
+            "external-controller": null,
           },
           (result) => result && typeof result === "object" && result.success !== false
         ),

@@ -964,7 +964,7 @@
     "skipAuthPrefixesDesc": "每行一个 IP 段",
     "externalController": "外部控制器地址",
     "externalControllerDesc": "RESTful API 监听地址 (留空则不启动外部控制器)",
-    "externalControllerPlaceholder": "留空不启动,例如: 127.0.0.1:9090",
+    "externalControllerPlaceholder": "留空使用 IPC 模式",
     "secret": "访问密钥",
     "secretDesc": "RESTful API 访问密钥",
     "generateSecret": "生成密钥",

@@ -965,7 +965,7 @@
     "skipAuthPrefixesDesc": "One IP range per line",
     "externalController": "External Controller",
     "externalControllerDesc": "RESTful API listen address (leave empty to disable)",
-    "externalControllerPlaceholder": "Leave empty to disable, e.g.: 127.0.0.1:9090",
+    "externalControllerPlaceholder": "Leave empty to use IPC mode",
     "secret": "Secret",
     "secretDesc": "RESTful API access secret",
     "generateSecret": "Generate Secret",
