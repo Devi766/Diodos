@@ -35,7 +35,7 @@
     "targets": "all",
     "category": "Utility",
     "resources": [
-      "../extra/sidecar/mihomo.exe",
+      "../extra",
       "../tools"
     ],
     "shortDescription": "FlyClash Desktop",
