@@ -47,7 +47,7 @@ jobs:
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/appimage/*.AppImage
           - name: macos-x64
-            runner: macos-13
+            runner: macos-15-intel
             prepare_arch: x64
             bundles: dmg
             artifact_paths: |
