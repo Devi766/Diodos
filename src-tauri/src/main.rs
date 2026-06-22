@@ -1449,10 +1449,11 @@ async fn get_traffic_stats(app: &AppHandle, state: &State<'_, AppState>) -> Valu
 }
 
 fn today_key() -> String {
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", "Get-Date -Format yyyy-MM-dd"])
-        .creation_flags(0x08000000)
-        .output();
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoProfile", "-Command", "Get-Date -Format yyyy-MM-dd"]);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let output = command.output();
     output
         .ok()
         .and_then(|out| String::from_utf8(out.stdout).ok())
