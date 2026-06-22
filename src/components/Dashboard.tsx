@@ -29,8 +29,25 @@ import { CustomizableDashboard } from '@/components/CustomizableDashboard';
 import { Settings2, Plus, RotateCcw, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useThemeColor } from '@/hooks/useThemeColor';
+import { DASHBOARD_CONFIG_KEY, DEFAULT_DASHBOARD_CARDS } from '@/types/dashboard';
+import { getBrowserPlatform, getRuntimePlatform, RuntimePlatform } from '@/utils/platform';
+import {
+  APP_DATA_CACHE_KEYS,
+  readAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 
 type ProxyMode = 'rule' | 'global' | 'direct';
+
+const readCachedProxyMode = (): ProxyMode | null => {
+  const cached = readAppDataCache<string | null>(APP_DATA_CACHE_KEYS.proxyMode);
+  return cached === 'rule' || cached === 'global' || cached === 'direct' ? cached : null;
+};
+
+const readCachedActiveConfig = (): string | null => {
+  const cached = readAppDataCache<string | null>(APP_DATA_CACHE_KEYS.activeConfig);
+  return typeof cached === 'string' && cached.trim() ? cached : null;
+};
 
 type TrafficStats = {
   up: number;
@@ -54,9 +71,11 @@ type ConnectionsSnapshot = {
 };
 
 type BannerState = {
-  type: 'success' | 'error' | 'info';
+  type: 'success' | 'error' | 'info' | 'warning';
   message: string;
 };
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
 const GROUP_PROXY_TYPE_REGEX = /(selector|test|fallback|balance|relay|chain|auto|lazy|switch)/i;
 const KNOWN_GROUPS = new Set(['PROXY', 'GLOBAL', 'AUTO']);
@@ -100,11 +119,30 @@ const getFileName = (path?: string | null, t?: any) => {
   return name || path;
 };
 
+const toSubscriptionArray = (value: unknown): any[] => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+
+  const record = value as Record<string, unknown>;
+  const nested = record.data ?? record.subscriptions ?? record.items;
+  if (Array.isArray(nested)) return nested;
+
+  if (nested && typeof nested === 'object') {
+    const nestedRecord = nested as Record<string, unknown>;
+    if (Array.isArray(nestedRecord.subscriptions)) return nestedRecord.subscriptions;
+    if (Array.isArray(nestedRecord.items)) return nestedRecord.items;
+  }
+
+  return [];
+};
+
 const loadConfigIcon = async (configPath: string | null): Promise<string | null> => {
   if (!configPath || !window.electronAPI) return null;
 
   try {
-    const subs = await window.electronAPI.getSubscriptions();
+    const subs = toSubscriptionArray(await window.electronAPI.getSubscriptions());
+    if (subs.length === 0) return null;
+
     const sub = subs.find((s: any) => s.path === configPath);
 
     if (sub?.iconUrl && window.electronAPI.configIcon) {
@@ -125,29 +163,27 @@ const resolveElectron = () => {
   return window.electronAPI;
 };
 
+const notifyDashboardProfileUpdated = (detail: Record<string, unknown> = {}) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('profile-updated', {
+    detail: { source: 'dashboard', ...detail },
+  }));
+};
+
 export default function Dashboard() {
   const { t } = useTranslation();
   const themeColor = useThemeColor();
 
-  // 从sessionStorage初始化运行状态，避免闪烁
-  const [isRunning, setIsRunning] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      const cached = sessionStorage.getItem('mihomoRunningState');
-      return cached === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [isRunning, setIsRunning] = useState(false);
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [tunEnabled, setTunEnabled] = useState(false);
-  const [proxyMode, setProxyMode] = useState<ProxyMode | null>(null);
+  const [proxyMode, setProxyMode] = useState<ProxyMode | null>(() => readCachedProxyMode());
   const [isModeUpdating, setIsModeUpdating] = useState(false);
   const [isProxyUpdating, setIsProxyUpdating] = useState(false);
   const [isTunUpdating, setIsTunUpdating] = useState(false);
   const [isServiceBusy, setIsServiceBusy] = useState(false);
-  const [activeConfig, setActiveConfig] = useState<string | null>(null);
-  const [preferredConfig, setPreferredConfig] = useState<string | null>(null);
+  const [activeConfig, setActiveConfig] = useState<string | null>(() => readCachedActiveConfig());
+  const [preferredConfig, setPreferredConfig] = useState<string | null>(() => readCachedActiveConfig());
   const [activeConfigIcon, setActiveConfigIcon] = useState<string | null>(null);
   const [currentNode, setCurrentNode] = useState<string>('');
   const [primaryProxyGroup, setPrimaryProxyGroup] = useState<string>('PROXY');
@@ -168,18 +204,45 @@ export default function Dashboard() {
   const [downloadTotal, setDownloadTotal] = useState(0);
 
   const electron = useMemo(resolveElectron, []);
-  const platformFlags = useMemo(() => {
-    if (typeof navigator === 'undefined') {
-      return { isWindows: false, isMac: false, isLinux: false };
-    }
-    const ua = navigator.userAgent || '';
-    const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
-    const isWindows = /windows/i.test(ua) || /win/.test(platform);
-    const isMac = /macintosh|mac os x/i.test(ua) || /mac/.test(platform);
-    const isLinux = /linux/i.test(ua) || (!isWindows && /linux/.test(platform));
-    return { isWindows, isMac, isLinux };
+  const [runtimePlatform, setRuntimePlatform] = useState<RuntimePlatform>(() => getBrowserPlatform());
+  const isWindowsPlatform = runtimePlatform === 'win32';
+  const isMacPlatform = runtimePlatform === 'darwin';
+  const isLinuxPlatform = runtimePlatform === 'linux';
+
+  useEffect(() => {
+    let disposed = false;
+
+    void getRuntimePlatform().then((platform) => {
+      if (!disposed) {
+        setRuntimePlatform(platform);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
   }, []);
-  const { isWindows: isWindowsPlatform, isMac: isMacPlatform, isLinux: isLinuxPlatform } = platformFlags;
+
+  const formatDashboardError = useCallback((error: unknown, fallback = t('dashboard.operationFailed')) => {
+    const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
+    if (
+      message.includes(TAURI_RUNTIME_UNAVAILABLE) ||
+      message.includes('not implemented in the Tauri runtime')
+    ) {
+      return t('dashboard.apiUnavailable');
+    }
+    return message;
+  }, [t]);
+
+  const resultError = useCallback((result: any, fallback = t('dashboard.operationFailed')) => {
+    return formatDashboardError(result?.error || result?.message || result?.errorMessage, fallback);
+  }, [formatDashboardError, t]);
+
+  const normalizeConfigPath = useCallback((value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const path = value.trim();
+    return path ? path : null;
+  }, []);
 
   const tunDialogDescription = useMemo(() => {
     if (electron?.checkElevateTask) {
@@ -569,13 +632,83 @@ export default function Dashboard() {
     };
   }, [electron]);
 
-  // 保存运行状态到sessionStorage，避免页面刷新时闪烁
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      sessionStorage.setItem('mihomoRunningState', isRunning.toString());
-    } catch {}
+    if (!electron?.onProxyStatus) return;
+    const unsubscribe = electron.onProxyStatus((enabled: boolean) => {
+      setProxyEnabled(Boolean(enabled));
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [electron]);
+
+  useEffect(() => {
+    if (!electron?.onMihomoStopped) return;
+    const unsubscribe = electron.onMihomoStopped(() => {
+      setIsRunning(false);
+      commitCurrentNode('');
+      setTrafficSamples([]);
+      refreshProxyStatus();
+      refreshTunStatus();
+      notifyDashboardProfileUpdated({ action: 'service-stopped' });
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [electron, commitCurrentNode, refreshProxyStatus, refreshTunStatus]);
+
+  useEffect(() => {
+    if (!electron?.onServiceRestarted) return;
+    const unsubscribe = electron.onServiceRestarted((result: { success?: boolean }) => {
+      if (result?.success) {
+        setIsRunning(true);
+        syncCurrentNode();
+        syncProxyMode();
+      } else {
+        electron.isMihomoRunning?.().then((running) => {
+          setIsRunning(Boolean(running));
+        }).catch(() => {});
+      }
+      refreshProxyStatus();
+      refreshTunStatus();
+      notifyDashboardProfileUpdated({
+        action: result?.success ? 'service-restarted' : 'service-restart-status-changed',
+      });
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [electron, refreshProxyStatus, refreshTunStatus, syncCurrentNode, syncProxyMode]);
+
+  useEffect(() => {
+    const cached = readAppDataCache<boolean | string | undefined>(APP_DATA_CACHE_KEYS.mihomoRunning);
+    if (cached === true || cached === 'true') {
+      setIsRunning(true);
+    }
+  }, []);
+
+  // 保存运行状态到共享缓存，避免页面刷新/切换时丢失状态
+  useEffect(() => {
+    writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, isRunning);
   }, [isRunning]);
+
+  useEffect(() => {
+    if (proxyMode) {
+      writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, proxyMode);
+    }
+  }, [proxyMode]);
+
+  useEffect(() => {
+    if (activeConfig) {
+      writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, activeConfig);
+    }
+  }, [activeConfig]);
 
   useEffect(() => {
     if (!electron) return;
@@ -599,10 +732,11 @@ export default function Dashboard() {
 
       try {
         const config = await electron.getActiveConfig?.();
-        if (!cancelled && typeof config === 'string' && config.length > 0) {
-          setActiveConfig(config);
-          setPreferredConfig(config);
-          const iconPath = await loadConfigIcon(config);
+        const configPath = normalizeConfigPath(config);
+        if (!cancelled && configPath) {
+          setActiveConfig(configPath);
+          setPreferredConfig(configPath);
+          const iconPath = await loadConfigIcon(configPath);
           setActiveConfigIcon(iconPath);
         }
 
@@ -627,8 +761,8 @@ export default function Dashboard() {
       } catch {}
 
       try {
-        const subs = await electron.getSubscriptions?.();
-        if (!cancelled && Array.isArray(subs) && subs.length > 0) {
+        const subs = toSubscriptionArray(await electron.getSubscriptions?.());
+        if (!cancelled && subs.length > 0) {
           const first = subs[0];
           const path = typeof first === 'string' ? first : first?.path;
           if (path) {
@@ -674,8 +808,9 @@ export default function Dashboard() {
       if (data?.success) {
         console.log('[Dashboard] Setting isRunning = true from autostart event');
         setIsRunning(true);
-        if (data.configPath) {
-          setActiveConfig(data.configPath);
+        const configPath = normalizeConfigPath(data.configPath);
+        if (configPath) {
+          setActiveConfig(configPath);
         }
         syncCurrentNode();
         syncProxyMode();
@@ -691,7 +826,7 @@ export default function Dashboard() {
         unsubAutostart();
       }
     };
-  }, [electron, fetchProxyMode, hydrateConnections, syncCurrentNode, syncProxyMode]);
+  }, [electron, fetchProxyMode, hydrateConnections, normalizeConfigPath, syncCurrentNode, syncProxyMode]);
 
   // 周期性同步当前激活配置，避免在配置页面切换后 Dashboard 仍显示旧配置
   useEffect(() => {
@@ -701,10 +836,17 @@ export default function Dashboard() {
     const syncActiveConfig = async () => {
       try {
         const config = await electron.getActiveConfig?.();
-        if (!disposed && typeof config === 'string' && config.length > 0) {
-          setActiveConfig(config);
-          const iconPath = await loadConfigIcon(config);
+        if (disposed) return;
+
+        const configPath = normalizeConfigPath(config);
+        if (configPath) {
+          setActiveConfig(configPath);
+          setPreferredConfig(configPath);
+          const iconPath = await loadConfigIcon(configPath);
           setActiveConfigIcon(iconPath);
+        } else {
+          setActiveConfig(null);
+          setActiveConfigIcon(null);
         }
       } catch {
         // 忽略同步失败，避免影响其它功能
@@ -713,13 +855,27 @@ export default function Dashboard() {
 
     // 立即同步一次
     syncActiveConfig();
+    window.addEventListener('profile-updated', syncActiveConfig);
+    window.addEventListener('backup-restored', syncActiveConfig);
+    window.addEventListener('subscription-auto-updated', syncActiveConfig);
+    const unsubscribeActiveConfig = electron.onActiveConfigChanged?.(() => {
+      syncActiveConfig();
+    });
+    const unsubscribeAutoUpdated = electron.onSubscriptionAutoUpdated?.(() => {
+      syncActiveConfig();
+    });
     const timer = window.setInterval(syncActiveConfig, 5000);
 
     return () => {
       disposed = true;
+      window.removeEventListener('profile-updated', syncActiveConfig);
+      window.removeEventListener('backup-restored', syncActiveConfig);
+      window.removeEventListener('subscription-auto-updated', syncActiveConfig);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
       window.clearInterval(timer);
     };
-  }, [electron]);
+  }, [electron, normalizeConfigPath]);
 
   useEffect(() => {
     if (!electron?.getTrafficStats) return;
@@ -799,10 +955,12 @@ export default function Dashboard() {
       hydrateConnections(payload);
     };
 
-    electron.onConnectionsUpdate(handler);
+    const unsubscribe = electron.onConnectionsUpdate(handler);
 
     return () => {
-      electron.removeAllListeners?.('connections-update');
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
     };
   }, [electron, hydrateConnections]);
 
@@ -817,10 +975,12 @@ export default function Dashboard() {
       }
     };
 
-    electron.onNodeChanged(handler);
+    const unsubscribe = electron.onNodeChanged(handler);
 
     return () => {
-      electron.removeAllListeners?.('node-changed');
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
     };
   }, [electron, primaryProxyGroup, updateCurrentNodeDisplay]);
 
@@ -876,8 +1036,8 @@ export default function Dashboard() {
       return preferredConfig;
     }
     try {
-      const subs = await electron?.getSubscriptions?.();
-      if (Array.isArray(subs) && subs.length > 0) {
+      const subs = toSubscriptionArray(await electron?.getSubscriptions?.());
+      if (subs.length > 0) {
         const entry = subs[0];
         const path = typeof entry === 'string' ? entry : entry?.path;
         if (path) {
@@ -890,7 +1050,10 @@ export default function Dashboard() {
   };
 
   const handleStart = async () => {
-    if (!electron?.startMihomo) return;
+    if (!electron?.startMihomo) {
+      showBanner({ type: 'error', message: t('dashboard.apiUnavailable') });
+      return;
+    }
     if (isServiceBusy) return;
     setIsServiceBusy(true);
     showBanner(null);
@@ -901,7 +1064,12 @@ export default function Dashboard() {
         return;
       }
       const result = await electron.startMihomo(config);
-      const success = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+      const success =
+        typeof result === 'boolean'
+          ? result
+          : result && typeof result === 'object' && 'success' in result
+          ? Boolean((result as any).success)
+          : false;
 
       if (success) {
         setIsRunning(true);
@@ -927,28 +1095,39 @@ export default function Dashboard() {
         hydrateConnections(snapshot);
         await syncCurrentNode();
         await syncProxyMode();
+        notifyDashboardProfileUpdated({ action: 'service-started', filePath: config });
       } else {
-        const errDetail = typeof result === 'object' && (result as any).error
-          ? (result as any).error
-          : '';
-        setStartErrorMsg(errDetail || t('dashboard.startFailed'));
+        const errDetail = typeof result === 'object'
+          ? resultError(result, t('dashboard.startFailed'))
+          : t('dashboard.startFailed');
+        setStartErrorMsg(errDetail);
+        showBanner({ type: 'error', message: t('dashboard.startFailedWithError', { message: errDetail }) });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatDashboardError(error, t('dashboard.startFailed'));
       setStartErrorMsg(message);
+      showBanner({ type: 'error', message: t('dashboard.startFailedWithError', { message }) });
     } finally {
       setIsServiceBusy(false);
     }
   };
 
   const handleStop = async () => {
-    if (!electron?.stopMihomo) return;
+    if (!electron?.stopMihomo) {
+      showBanner({ type: 'error', message: t('dashboard.apiUnavailable') });
+      return;
+    }
     if (isServiceBusy) return;
     setIsServiceBusy(true);
     showBanner(null);
     try {
       const result = await electron.stopMihomo();
-      const success = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+      const success =
+        typeof result === 'boolean'
+          ? result
+          : result && typeof result === 'object' && 'success' in result
+          ? Boolean((result as any).success)
+          : false;
 
       if (success) {
         setIsRunning(false);
@@ -959,11 +1138,15 @@ export default function Dashboard() {
           setTunEnabled(false);
         }
         showBanner({ type: 'info', message: t('dashboard.serviceStopped') });
+        notifyDashboardProfileUpdated({ action: 'service-stopped' });
       } else {
-        showBanner({ type: 'error', message: t('dashboard.serviceAlreadyStopped') });
+        const message = typeof result === 'object'
+          ? resultError(result, t('dashboard.serviceAlreadyStopped'))
+          : t('dashboard.serviceAlreadyStopped');
+        showBanner({ type: 'error', message });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatDashboardError(error, t('dashboard.serviceAlreadyStopped'));
       showBanner({ type: 'error', message: t('dashboard.stopFailed', { message }) });
     } finally {
       setIsServiceBusy(false);
@@ -977,7 +1160,10 @@ export default function Dashboard() {
   };
 
   const handleProxyToggle = async (value: boolean) => {
-    if (!electron?.toggleSystemProxy) return;
+    if (!electron?.toggleSystemProxy) {
+      showBanner({ type: 'error', message: t('dashboard.apiUnavailable') });
+      return;
+    }
     if (isProxyUpdating) return;
     setIsProxyUpdating(true);
     showBanner(null);
@@ -986,28 +1172,30 @@ export default function Dashboard() {
       const success =
         typeof result === 'boolean'
           ? result
-          : result === undefined
-          ? value
-          : result === null
-          ? value
-          : (typeof result === 'object' && 'success' in result) ? Boolean(result.success) : true;
+          : result && typeof result === 'object' && 'success' in result
+          ? Boolean(result.success)
+          : false;
 
       if (!success) {
         const message =
           typeof result === 'object' && 'error' in result && result.error
-            ? result.error
+            ? formatDashboardError(result.error, t('dashboard.toggleSystemProxyFailed'))
             : t('dashboard.toggleSystemProxyFailed');
         showBanner({ type: 'error', message });
         await refreshProxyStatus();
         return;
       }
 
-      // 立即更新状态
-      setProxyEnabled(value);
-      showBanner({ type: 'success', message: t('dashboard.systemProxyToggled', { status: value ? t('dashboard.enabled') : t('dashboard.disabled') }) });
+      const actualEnabled =
+        result && typeof result === 'object' && 'enabled' in result && typeof result.enabled === 'boolean'
+          ? result.enabled
+          : value;
+      setProxyEnabled(actualEnabled);
+      showBanner({ type: 'success', message: t('dashboard.systemProxyToggled', { status: actualEnabled ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatDashboardError(error, t('dashboard.toggleSystemProxyFailed'));
       showBanner({ type: 'error', message: t('dashboard.toggleSystemProxyFailedWithError', { message }) });
+      await refreshProxyStatus();
     } finally {
       setIsProxyUpdating(false);
     }
@@ -1026,28 +1214,30 @@ export default function Dashboard() {
       const success =
         typeof result === 'boolean'
           ? result
-          : result === undefined
-          ? value
-          : result === null
-          ? value
-          : (typeof result === 'object' && 'success' in result) ? Boolean(result.success) : true;
+          : result && typeof result === 'object' && 'success' in result
+          ? Boolean(result.success)
+          : false;
 
       if (!success) {
         const message =
           typeof result === 'object' && 'error' in result && result.error
-            ? result.error
+            ? formatDashboardError(result.error, t('dashboard.toggleTunModeFailed'))
             : t('dashboard.toggleTunModeFailed');
         showBanner({ type: 'error', message });
         await refreshTunStatus();
         return;
       }
 
-      // 立即更新状态
-      setTunEnabled(value);
-      showBanner({ type: 'success', message: t('dashboard.tunModeToggled', { status: value ? t('dashboard.enabled') : t('dashboard.disabled') }) });
+      const actualEnabled =
+        result && typeof result === 'object' && 'enabled' in result && typeof result.enabled === 'boolean'
+          ? result.enabled
+          : value;
+      setTunEnabled(actualEnabled);
+      showBanner({ type: 'success', message: t('dashboard.tunModeToggled', { status: actualEnabled ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatDashboardError(error, t('dashboard.toggleTunModeFailed'));
       showBanner({ type: 'error', message: t('dashboard.toggleTunModeFailedWithError', { message }) });
+      await refreshTunStatus();
     } finally {
       setIsTunUpdating(false);
     }
@@ -1087,20 +1277,21 @@ export default function Dashboard() {
             return;
           } else if (serviceStatus?.installed) {
             // 服务已安装但未运行，提示用户启动服务
-            showBanner({ type: 'warning', message: 'TUN 服务未运行，请在 TUN 设置页面启动服务' });
+            showBanner({ type: 'warning', message: t('dashboard.tunServiceNotRunning') });
             // 刷新 TUN 状态确保与后端同步
             await refreshTunStatus();
             return;
           } else {
             // 服务未安装，提示用户安装服务
-            showBanner({ type: 'warning', message: 'TUN 服务未安装，请在 TUN 设置页面安装服务' });
+            showBanner({ type: 'warning', message: t('dashboard.tunServiceNotInstalled') });
             // 刷新 TUN 状态确保与后端同步
             await refreshTunStatus();
             return;
           }
         } else {
           // 计划任务模式：检查计划任务
-          const hasTask = await electron.checkElevateTask?.() || false;
+          const taskResult = await electron.checkElevateTask?.();
+          const hasTask = typeof taskResult === 'boolean' ? taskResult : false;
           console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
           setHasAdminPermission(hasTask);
           setTunConfirmOpen(true);
@@ -1116,7 +1307,8 @@ export default function Dashboard() {
       // 兼容旧版本：只有 checkElevateTask
       console.log('[Dashboard] Windows platform detected (legacy), showing confirmation dialog');
       try {
-        const hasTask = await electron.checkElevateTask();
+        const taskResult = await electron.checkElevateTask();
+        const hasTask = typeof taskResult === 'boolean' ? taskResult : false;
         console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
         setHasAdminPermission(hasTask);
         setTunConfirmOpen(true);
@@ -1139,20 +1331,20 @@ export default function Dashboard() {
         if (!hasPermission) {
           // 没有权限，直接弹出系统密码框授权（无自定义对话框）
           console.log('[Dashboard] No permission, requesting authorization via system dialog...');
-          showBanner({ type: 'info', message: '正在请求授权，请输入管理员密码...' });
+          showBanner({ type: 'info', message: t('dashboard.requestingTunAuthorization') });
 
           try {
             const authResult = await electron.grantTunPermissions();
             if (authResult.success) {
-              showBanner({ type: 'success', message: 'TUN 模式权限已成功授予，正在启用...' });
+              showBanner({ type: 'success', message: t('dashboard.tunPermissionGranted') });
               // 授权成功，自动开启 TUN 模式
               await runTunToggle(true);
             } else {
-              showBanner({ type: 'error', message: authResult.error || '授权失败' });
+              showBanner({ type: 'error', message: formatDashboardError(authResult.error, t('dashboard.tunAuthorizationFailed')) });
             }
           } catch (error) {
             console.error('Failed to grant TUN permissions:', error);
-            showBanner({ type: 'error', message: '授权失败，请重试' });
+            showBanner({ type: 'error', message: formatDashboardError(error, t('dashboard.tunAuthorizationFailed')) });
           }
         } else {
           // 已有权限，直接启用 TUN，不显示任何对话框
@@ -1161,7 +1353,7 @@ export default function Dashboard() {
         }
       } catch (error) {
         console.error('Failed to check core permission:', error);
-        showBanner({ type: 'error', message: '权限检查失败' });
+        showBanner({ type: 'error', message: formatDashboardError(error, t('dashboard.tunPermissionCheckFailed')) });
       }
       return;
     }
@@ -1190,20 +1382,23 @@ export default function Dashboard() {
           },
           body: JSON.stringify({ mode: nextMode })
         });
+        const responsePayload = response as any;
 
         const success =
-          typeof response?.ok === 'boolean'
-            ? response.ok
-            : typeof response?.status === 'number'
-            ? response.status >= 200 && response.status < 300
+          typeof responsePayload?.success === 'boolean'
+            ? responsePayload.success
+            : typeof responsePayload?.ok === 'boolean'
+            ? responsePayload.ok
+            : typeof responsePayload?.status === 'number'
+            ? responsePayload.status >= 200 && responsePayload.status < 300
             : true;
 
         if (!success) {
           const errorDetail =
-            typeof response?.data === 'string'
-              ? response.data
-              : response?.data?.message || response?.statusText || t('dashboard.toggleTunModeFailed');
-          throw new Error(errorDetail);
+            typeof responsePayload?.data === 'string'
+              ? responsePayload.data
+              : responsePayload?.data?.message || responsePayload?.error || responsePayload?.message || responsePayload?.statusText || t('dashboard.switchProxyModeFailedTitle');
+          throw new Error(formatDashboardError(errorDetail, t('dashboard.switchProxyModeFailedTitle')));
         }
 
         setProxyMode(nextMode);
@@ -1211,15 +1406,37 @@ export default function Dashboard() {
         // 传入新的模式，避免等待 React 状态更新
         await syncCurrentNode(nextMode);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = formatDashboardError(error, t('dashboard.switchProxyModeFailedTitle'));
         showBanner({ type: 'error', message: t('dashboard.switchProxyModeFailed', { message }) });
         await syncProxyMode();
       } finally {
         setIsModeUpdating(false);
       }
     },
-    [electron, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode]
+    [electron, formatDashboardError, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
   );
+
+  const handleResetDashboardLayout = useCallback(async () => {
+    if (!confirm(t('dashboard.confirmReset'))) {
+      return;
+    }
+
+    try {
+      if (electron?.setSetting) {
+        const result = await electron.setSetting(DASHBOARD_CONFIG_KEY, DEFAULT_DASHBOARD_CARDS);
+        if (result?.success === false) {
+          throw new Error(resultError(result, t('dashboard.layoutResetFailed')));
+        }
+      } else if (typeof window !== 'undefined') {
+        localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(DEFAULT_DASHBOARD_CARDS));
+      }
+
+      window.location.reload();
+    } catch (error) {
+      const message = formatDashboardError(error, t('dashboard.layoutResetFailed'));
+      showBanner({ type: 'error', message });
+    }
+  }, [electron, formatDashboardError, resultError, showBanner, t]);
 
   const metrics = [
     {
@@ -1303,12 +1520,7 @@ export default function Dashboard() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => {
-                    if (confirm(t('dashboard.confirmReset'))) {
-                      localStorage.removeItem('flyClash-dashboard-config');
-                      window.location.reload();
-                    }
-                  }}
+                  onClick={handleResetDashboardLayout}
                 >
                   <RotateCcw className="mr-1 h-3.5 w-3.5" /> {t('dashboard.reset')}
                 </Button>
@@ -1327,7 +1539,8 @@ export default function Dashboard() {
             'rounded-xl border px-4 py-3 text-sm shadow-sm transition-all duration-300 animate-in slide-in-from-top-2',
             banner.type === 'success' && 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400',
             banner.type === 'error' && 'border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-400',
-            banner.type === 'info' && 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/20 dark:text-slate-300'
+            banner.type === 'info' && 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/20 dark:text-slate-300',
+            banner.type === 'warning' && 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
           )}
         >
           {banner.message}
@@ -1356,10 +1569,7 @@ export default function Dashboard() {
         onEditModeChange={setIsEditMode}
         onAddCard={() => setShowAddCardDialog(true)}
         onReset={() => {
-          if (confirm(t('dashboard.confirmReset'))) {
-            localStorage.removeItem('flyClash-dashboard-config');
-            window.location.reload();
-          }
+          void handleResetDashboardLayout();
         }}
         showAddDialog={showAddCardDialog}
         onShowAddDialogChange={setShowAddCardDialog}
@@ -1388,15 +1598,15 @@ export default function Dashboard() {
                   try {
                     if (electron?.grantTunPermissions) {
                       const result = await electron.grantTunPermissions();
-                      if (result.success) {
+                      if (result?.success) {
                         if (result.needRestart) {
-                          showBanner({ type: 'info', message: '正在重启应用以获取管理员权限...' });
+                          showBanner({ type: 'info', message: t('dashboard.restartingForAdminPermission') });
                         } else {
-                          showBanner({ type: 'success', message: 'TUN 模式权限已成功授予，正在启用...' });
+                          showBanner({ type: 'success', message: t('dashboard.tunPermissionGranted') });
                           // 刷新权限状态
                           if (electron.checkElevateTask) {
-                            const hasTask = await electron.checkElevateTask();
-                            setHasAdminPermission(hasTask);
+                            const taskResult = await electron.checkElevateTask();
+                            setHasAdminPermission(typeof taskResult === 'boolean' ? taskResult : false);
                           } else if (electron.checkCorePermission) {
                             const check = await electron.checkCorePermission();
                             setHasAdminPermission(!!check?.hasPermission);
@@ -1405,12 +1615,14 @@ export default function Dashboard() {
                           await runTunToggle(true);
                         }
                       } else {
-                        showBanner({ type: 'error', message: result.error || '授权失败' });
+                        showBanner({ type: 'error', message: formatDashboardError(result?.error, t('dashboard.tunAuthorizationFailed')) });
                       }
+                    } else {
+                      showBanner({ type: 'error', message: t('dashboard.apiUnavailable') });
                     }
                   } catch (error) {
                     console.error('Failed to grant TUN permissions:', error);
-                    showBanner({ type: 'error', message: '授权失败，请重试' });
+                    showBanner({ type: 'error', message: formatDashboardError(error, t('dashboard.tunAuthorizationFailed')) });
                   }
                 }}
                 className="relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-11 px-5 transition-all hover:brightness-110"
@@ -1425,7 +1637,7 @@ export default function Dashboard() {
                   e.currentTarget.style.boxShadow = `0 20px 42px -22px ${themeColor}70`;
                 }}
               >
-                授权
+                {t('dashboard.authorize')}
               </button>
             ) : (
               <button

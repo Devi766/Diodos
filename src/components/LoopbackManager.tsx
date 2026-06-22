@@ -19,6 +19,23 @@ interface LoopbackAppItem {
   isExempt: boolean;
 }
 
+type LoopbackApi = NonNullable<NonNullable<Window['electronAPI']>['loopback']>;
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const getLoopbackApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI?.loopback;
+};
+
+const hasLoopbackMethod = <K extends string>(api: LoopbackApi | undefined, method: K): api is LoopbackApi & Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as unknown as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
 export default function LoopbackManager() {
   const { t } = useTranslation();
   const themeColor = useThemeColor();
@@ -33,30 +50,42 @@ export default function LoopbackManager() {
   // 是否有未保存的更改
   const hasChanges = exemptChanges.size > 0;
 
+  const friendlyError = useCallback((error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
+    return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? t('tools.loopback.apiUnavailable') : message;
+  }, [t]);
+
   // 加载应用列表
   const loadApps = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      if (!window.electronAPI?.loopback) {
-        setError(t('tools.loopback.noAccess'));
+      const api = getLoopbackApi();
+      if (!hasLoopbackMethod(api, 'getApps')) {
+        const message = t('tools.loopback.apiUnavailable');
+        setError(message);
+        toast.error(message);
         return;
       }
-      const result = await window.electronAPI.loopback.getApps();
+
+      const result = await api.getApps();
       if (result.success && result.apps) {
         setApps(result.apps);
         setExemptChanges(new Map());
       } else {
-        setError(result.error || t('tools.loopback.loadError'));
+        const message = friendlyError(result.error, t('tools.loopback.loadError'));
+        setError(message);
+        toast.error(message);
       }
     } catch (err: unknown) {
       console.error('Failed to load UWP app list:', err);
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message || t('tools.loopback.loadError'));
+      const message = friendlyError(err, t('tools.loopback.loadError'));
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [friendlyError, t]);
 
   useEffect(() => {
     loadApps();
@@ -142,7 +171,11 @@ export default function LoopbackManager() {
 
   // 保存配置
   const saveConfig = useCallback(async () => {
-    if (!window.electronAPI?.loopback) return;
+    const api = getLoopbackApi();
+    if (!hasLoopbackMethod(api, 'saveConfig')) {
+      toast.error(t('tools.loopback.apiUnavailable'));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -153,7 +186,7 @@ export default function LoopbackManager() {
         }
       }
 
-      const result = await window.electronAPI.loopback.saveConfig(exemptSids);
+      const result = await api.saveConfig(exemptSids);
       if (result.success) {
         toast.success(t('tools.loopback.saveSuccess', {
           count: exemptSids.length
@@ -161,17 +194,17 @@ export default function LoopbackManager() {
         await loadApps();
       } else {
         toast.error(t('tools.loopback.saveError', {
-          error: result.error || ''
+          error: friendlyError(result.error, t('tools.loopback.loadError'))
         }));
       }
     } catch (err: unknown) {
       console.error('Failed to save loopback exemption config:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      const message = friendlyError(err, t('tools.loopback.loadError'));
       toast.error(t('tools.loopback.saveError', { error: message }));
     } finally {
       setSaving(false);
     }
-  }, [apps, getEffectiveExempt, loadApps, t]);
+  }, [apps, friendlyError, getEffectiveExempt, loadApps, t]);
   // 加载中状态
   if (loading) {
     return (

@@ -3,6 +3,7 @@ import { Switch } from '@/components/ui/switch';
 import * as Toast from '@radix-ui/react-toast';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { useTranslation } from 'react-i18next';
+import { getBrowserPlatform, getRuntimePlatform } from '@/utils/platform';
 
 interface TunConfig {
   device: string;
@@ -17,10 +18,51 @@ interface TunConfig {
   autoSetDNS?: boolean;
 }
 
+type ElectronApi = NonNullable<Window['electronAPI']>;
+type TunResult = { success?: boolean; error?: string; message?: string };
+type TunServiceStatus = {
+  installed: boolean;
+  running: boolean;
+  mode?: string;
+  ipcAvailable?: boolean;
+  coreRunning?: boolean;
+  corePid?: number | null;
+  version?: string | null;
+  error?: string;
+};
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+const defaultServiceStatus: TunServiceStatus = { installed: false, running: false };
+
+const getTunApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI;
+};
+
+const hasMethod = <K extends string>(api: ElectronApi | undefined, method: K): api is ElectronApi & Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as unknown as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+const errorToMessage = (error: unknown, fallback: string) => {
+  if (!error) return fallback;
+  return error instanceof Error ? error.message : String(error);
+};
+
+const notifyProfileUpdated = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'tun-settings' } }));
+  }
+};
+
 const TunSettings: React.FC = () => {
   const { t } = useTranslation();
+  const defaultPlatform = getBrowserPlatform();
   const [config, setConfig] = useState<TunConfig>({
-    device: process.platform === 'darwin' ? 'utun' : 'mihomo',
+    device: defaultPlatform === 'darwin' ? 'utun' : 'mihomo',
     stack: 'system',
     autoRoute: true,
     autoRedirect: false,
@@ -29,7 +71,7 @@ const TunSettings: React.FC = () => {
     strictRoute: false,
     routeExcludeAddress: [],
     mtu: 1500,
-    autoSetDNS: process.platform === 'darwin',
+    autoSetDNS: defaultPlatform === 'darwin',
   });
   const [loading, setLoading] = useState(false);
   const [changed, setChanged] = useState(false);
@@ -43,8 +85,37 @@ const TunSettings: React.FC = () => {
 
   // Windows 服务模式相关状态
   const [elevationMode, setElevationMode] = useState<'service' | 'task'>('service');
-  const [serviceStatus, setServiceStatus] = useState<{ installed: boolean; running: boolean }>({ installed: false, running: false });
+  const [serviceStatus, setServiceStatus] = useState<TunServiceStatus>(defaultServiceStatus);
   const [serviceLoading, setServiceLoading] = useState(false);
+
+  const showToast = (title: string, description: string, type: 'success' | 'error') => {
+    setToastTitle(title);
+    setToastDescription(description);
+    setToastType(type);
+    setToastOpen(true);
+  };
+
+  const formatError = (error: unknown, fallback = t('tunSettings.unknownError')) => {
+    const message = errorToMessage(error, fallback);
+    return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? t('tunSettings.apiUnavailable') : message;
+  };
+
+  const showError = (description: string) => {
+    showToast(t('tunSettings.error'), description, 'error');
+  };
+
+  const showApiUnavailable = () => {
+    showError(t('tunSettings.apiUnavailable'));
+  };
+
+  const resultFailed = (result: TunResult | undefined, fallbackKey: string) => {
+    const fallback = t(fallbackKey);
+    return result?.error ? formatError(result.error, fallback) : fallback;
+  };
+
+  const getPlatformFromApi = async () => {
+    return getRuntimePlatform();
+  };
 
   useEffect(() => {
     loadConfig();
@@ -54,267 +125,358 @@ const TunSettings: React.FC = () => {
   }, []);
 
   const getPlatformInfo = async () => {
-    if (!window.electronAPI) return;
-
     try {
-      const platformInfo = await window.electronAPI.getPlatform?.() || process.platform;
+      const platformInfo = await getPlatformFromApi();
       setPlatform(platformInfo);
       console.log('[TunSettings] Platform info:', platformInfo);
     } catch (error) {
       console.error('Failed to get platform info:', error);
-      setPlatform(process.platform);
+      setPlatform(getBrowserPlatform());
+      showError(`${t('tunSettings.loadPlatformFailed')}: ${formatError(error)}`);
     }
   };
 
   const loadElevationMode = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!api) {
+      showApiUnavailable();
+      return;
+    }
 
     try {
-      const currentPlatform = await window.electronAPI.getPlatform?.() || process.platform;
+      const currentPlatform = await getPlatformFromApi();
       if (currentPlatform !== 'win32') return;
 
-      // 获取提升模式
-      if (window.electronAPI.getTunElevationMode) {
-        const result = await window.electronAPI.getTunElevationMode();
-        if (result.success && result.mode) {
-          setElevationMode(result.mode);
-        }
+      if (!hasMethod(api, 'getTunElevationMode')) {
+        showApiUnavailable();
+        return;
       }
 
-      // 获取服务状态
-      if (window.electronAPI.getTunServiceStatus) {
-        const status = await window.electronAPI.getTunServiceStatus();
-        if (status.success) {
-          setServiceStatus({
-            installed: status.installed || false,
-            running: status.running || false
-          });
-        }
+      const modeResult = await api.getTunElevationMode();
+      if (modeResult.success && modeResult.mode) {
+        setElevationMode(modeResult.mode);
+      } else {
+        showError(`${t('tunSettings.loadElevationModeFailed')}: ${resultFailed(modeResult, 'tunSettings.loadElevationModeFailed')}`);
+        if (formatError(modeResult.error).includes(t('tunSettings.apiUnavailable'))) return;
+      }
+
+      if (!hasMethod(api, 'getTunServiceStatus')) {
+        showApiUnavailable();
+        return;
+      }
+
+      const status = await api.getTunServiceStatus();
+      if (status.success) {
+        setServiceStatus({
+          installed: status.installed ?? status.serviceInstalled ?? false,
+          running: status.running ?? status.serviceRunning ?? false,
+          mode: status.mode,
+          ipcAvailable: status.ipcAvailable,
+          coreRunning: status.coreRunning,
+          corePid: status.corePid ?? null,
+          version: status.version ?? null,
+          error: status.error
+        });
+      } else {
+        setServiceStatus({
+          installed: status.installed ?? status.serviceInstalled ?? false,
+          running: status.running ?? status.serviceRunning ?? false,
+          mode: status.mode,
+          ipcAvailable: status.ipcAvailable,
+          coreRunning: status.coreRunning,
+          corePid: status.corePid ?? null,
+          version: status.version ?? null,
+          error: status.error
+        });
+        showError(`${t('tunSettings.loadServiceStatusFailed')}: ${resultFailed(status, 'tunSettings.loadServiceStatusFailed')}`);
       }
     } catch (error) {
       console.error('[TunSettings] Failed to load elevation mode:', error);
+      showError(`${t('tunSettings.loadElevationModeFailed')}: ${formatError(error)}`);
     }
   };
 
   const handleElevationModeChange = async (mode: 'service' | 'task') => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'setTunElevationMode')) {
+      showApiUnavailable();
+      return;
+    }
 
     setServiceLoading(true);
     try {
-      if (window.electronAPI.setTunElevationMode) {
-        const result = await window.electronAPI.setTunElevationMode(mode);
-        if (result.success) {
-          setElevationMode(mode);
-          showToast('成功', `已切换到${mode === 'service' ? '服务' : '计划任务'}模式`, 'success');
-        } else {
-          showToast('错误', result.error || '切换模式失败', 'error');
-        }
+      const result = await api.setTunElevationMode(mode);
+      if (result.success) {
+        setElevationMode(mode);
+        showToast(t('tunSettings.success'), t(mode === 'service' ? 'tunSettings.serviceModeEnabled' : 'tunSettings.taskModeEnabled'), 'success');
+      } else {
+        showError(`${t('tunSettings.setElevationModeFailed')}: ${resultFailed(result, 'tunSettings.setElevationModeFailed')}`);
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showError(`${t('tunSettings.setElevationModeFailed')}: ${formatError(error)}`);
     } finally {
       setServiceLoading(false);
     }
   };
 
   const handleInstallService = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'installTunService')) {
+      showApiUnavailable();
+      return;
+    }
 
     setServiceLoading(true);
     try {
-      if (window.electronAPI.installTunService) {
-        const result = await window.electronAPI.installTunService();
-        if (result.success) {
-          if (result.needRestart) {
-            showToast('成功', result.message || '正在请求管理员权限安装服务，应用将重新启动', 'success');
-          } else {
-            showToast('成功', result.message || '服务安装成功', 'success');
-          }
-          await loadElevationMode();
-          await checkPermissionStatus();
-        } else {
-          showToast('错误', result.error || '服务安装失败', 'error');
-        }
+      const result = await api.installTunService();
+      if (result.success) {
+        showToast(
+          t('tunSettings.success'),
+          result.message || (result.needRestart ? t('tunSettings.serviceInstallRestart') : t('tunSettings.serviceInstalled')),
+          'success'
+        );
+        await loadElevationMode();
+        await checkPermissionStatus();
+      } else {
+        showError(`${t('tunSettings.serviceInstallFailed')}: ${resultFailed(result, 'tunSettings.serviceInstallFailed')}`);
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showError(`${t('tunSettings.serviceInstallFailed')}: ${formatError(error)}`);
     } finally {
       setServiceLoading(false);
     }
   };
 
   const handleUninstallService = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'uninstallTunService')) {
+      showApiUnavailable();
+      return;
+    }
 
     setServiceLoading(true);
     try {
-      if (window.electronAPI.uninstallTunService) {
-        const result = await window.electronAPI.uninstallTunService();
-        if (result.success) {
-          showToast('成功', result.message || '服务卸载成功', 'success');
-          await loadElevationMode();
-          await checkPermissionStatus();
-        } else {
-          showToast('错误', result.error || '服务卸载失败', 'error');
-        }
+      const result = await api.uninstallTunService();
+      if (result.success) {
+        showToast(t('tunSettings.success'), result.message || t('tunSettings.serviceUninstalled'), 'success');
+        await loadElevationMode();
+        await checkPermissionStatus();
+      } else {
+        showError(`${t('tunSettings.serviceUninstallFailed')}: ${resultFailed(result, 'tunSettings.serviceUninstallFailed')}`);
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showError(`${t('tunSettings.serviceUninstallFailed')}: ${formatError(error)}`);
     } finally {
       setServiceLoading(false);
     }
   };
 
   const handleStartService = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'startTunService')) {
+      showApiUnavailable();
+      return;
+    }
 
     setServiceLoading(true);
     try {
-      if (window.electronAPI.startTunService) {
-        const result = await window.electronAPI.startTunService();
-        if (result.success) {
-          showToast('成功', result.message || '服务已启动', 'success');
-          await loadElevationMode();
-        } else {
-          showToast('错误', result.error || '服务启动失败', 'error');
-        }
+      const result = await api.startTunService();
+      if (result.success) {
+        showToast(t('tunSettings.success'), result.message || t('tunSettings.serviceStarted'), 'success');
+        await loadElevationMode();
+      } else {
+        showError(`${t('tunSettings.serviceStartFailed')}: ${resultFailed(result, 'tunSettings.serviceStartFailed')}`);
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showError(`${t('tunSettings.serviceStartFailed')}: ${formatError(error)}`);
     } finally {
       setServiceLoading(false);
     }
   };
 
   const handleStopService = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'stopTunService')) {
+      showApiUnavailable();
+      return;
+    }
 
     setServiceLoading(true);
     try {
-      if (window.electronAPI.stopTunService) {
-        const result = await window.electronAPI.stopTunService();
-        if (result.success) {
-          showToast('成功', result.message || '服务已停止', 'success');
-          await loadElevationMode();
-        } else {
-          showToast('错误', result.error || '服务停止失败', 'error');
-        }
+      const result = await api.stopTunService();
+      if (result.success) {
+        showToast(t('tunSettings.success'), result.message || t('tunSettings.serviceStopped'), 'success');
+        await loadElevationMode();
+      } else {
+        showError(`${t('tunSettings.serviceStopFailed')}: ${resultFailed(result, 'tunSettings.serviceStopFailed')}`);
       }
     } catch (error) {
-      showToast('错误', String(error), 'error');
+      showError(`${t('tunSettings.serviceStopFailed')}: ${formatError(error)}`);
     } finally {
       setServiceLoading(false);
     }
   };
 
+  const statusClass = (active?: boolean, warning?: boolean) => {
+    if (active) return 'text-green-600 dark:text-green-400';
+    if (warning) return 'text-yellow-600 dark:text-yellow-400';
+    return 'text-gray-500 dark:text-gray-400';
+  };
+
+  const serviceStateText = serviceStatus.running
+    ? t('tunSettings.serviceRunning')
+    : serviceStatus.installed
+      ? t('tunSettings.serviceInstalledStopped')
+      : t('tunSettings.serviceNotInstalled');
+
+  const serviceCoreText = serviceStatus.coreRunning
+    ? serviceStatus.corePid
+      ? `${t('tunSettings.serviceCoreRunning')} · PID ${serviceStatus.corePid}`
+      : t('tunSettings.serviceCoreRunning')
+    : t('tunSettings.serviceCoreStopped');
+
+  const isExpectedMissingServiceError = serviceStatus.error
+    ? /1060|does not exist|not exist|未安装|不存在/i.test(serviceStatus.error)
+    : false;
+  const serviceStatusError = serviceStatus.error && !isExpectedMissingServiceError ? serviceStatus.error : undefined;
+
   const checkPermissionStatus = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'checkCorePermission')) {
+      setPermissionStatus('unknown');
+      showApiUnavailable();
+      return;
+    }
 
     try {
-      // 统一通过 checkCorePermission 查询权限状态
-      if (window.electronAPI.checkCorePermission) {
-        const result = await window.electronAPI.checkCorePermission();
-        console.log('[TunSettings] checkCorePermission result:', result);
-        if (result && typeof result.hasPermission === 'boolean') {
-          setPermissionStatus(result.hasPermission ? 'granted' : 'not_granted');
-        } else {
-          setPermissionStatus('unknown');
-        }
+      const result = await api.checkCorePermission();
+      console.log('[TunSettings] checkCorePermission result:', result);
+      if (result?.success === false) {
+        setPermissionStatus('unknown');
+        showError(`${t('tunSettings.checkPermissionFailed')}: ${resultFailed(result, 'tunSettings.checkPermissionFailed')}`);
+        return;
+      }
+
+      if (result && typeof result.hasPermission === 'boolean') {
+        setPermissionStatus(result.hasPermission ? 'granted' : 'not_granted');
       } else {
-        console.warn('[TunSettings] checkCorePermission API not available');
         setPermissionStatus('unknown');
       }
     } catch (error) {
       console.error('Failed to check permission:', error);
       setPermissionStatus('unknown');
+      showError(`${t('tunSettings.checkPermissionFailed')}: ${formatError(error)}`);
     }
   };
 
-  const showToast = (title: string, description: string, type: 'success' | 'error') => {
-    setToastTitle(title);
-    setToastDescription(description);
-    setToastType(type);
-    setToastOpen(true);
-  };
-
   const loadConfig = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'getTunConfig')) {
+      showApiUnavailable();
+      return;
+    }
 
     try {
-      const result = await window.electronAPI.getTunConfig();
+      const result = await api.getTunConfig();
       if (result.success && result.config) {
         setConfig(result.config);
+      } else {
+        showError(`${t('tunSettings.loadTunConfigFailed')}: ${resultFailed(result, 'tunSettings.loadTunConfigFailed')}`);
       }
     } catch (error) {
       console.error(t('tunSettings.loadTunConfigFailed'), error);
+      showError(`${t('tunSettings.loadTunConfigFailed')}: ${formatError(error)}`);
     }
   };
 
   const handleSave = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'saveTunConfig')) {
+      showApiUnavailable();
+      return;
+    }
 
     setLoading(true);
     try {
-      const result = await window.electronAPI.saveTunConfig(config);
+      const result = await api.saveTunConfig(config);
       if (result.success) {
+        notifyProfileUpdated();
         showToast(t('tunSettings.success'), t('tunSettings.tunConfigSaved'), 'success');
         setChanged(false);
       } else {
-        showToast(t('tunSettings.error'), result.error || t('tunSettings.unknownError'), 'error');
+        showError(`${t('tunSettings.saveTunConfigFailed')}: ${resultFailed(result, 'tunSettings.saveTunConfigFailed')}`);
       }
     } catch (error) {
-      showToast(t('tunSettings.error'), String(error), 'error');
+      showError(`${t('tunSettings.saveTunConfigFailed')}: ${formatError(error)}`);
     } finally {
       setLoading(false);
     }
   };
 
   const handleGrantPermissions = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!hasMethod(api, 'grantTunPermissions')) {
+      showApiUnavailable();
+      return;
+    }
 
     setLoading(true);
     try {
-      const result = await window.electronAPI.grantTunPermissions();
+      const result = await api.grantTunPermissions();
       if (result.success) {
         showToast(t('tunSettings.success'), result.message || t('tunSettings.tunPermissionGranted'), 'success');
         await checkPermissionStatus();
       } else {
-        showToast(t('tunSettings.error'), result.error || t('tunSettings.unknownError'), 'error');
+        showError(`${t('tunSettings.grantPermissionFailed')}: ${resultFailed(result, 'tunSettings.grantPermissionFailed')}`);
       }
     } catch (error) {
-      showToast(t('tunSettings.error'), String(error), 'error');
+      showError(`${t('tunSettings.grantPermissionFailed')}: ${formatError(error)}`);
     } finally {
       setLoading(false);
     }
   };
 
   const handleRevokePermissions = async () => {
-    if (!window.electronAPI) return;
+    const api = getTunApi();
+    if (!api) {
+      showApiUnavailable();
+      return;
+    }
 
     setLoading(true);
     try {
-      const currentPlatform = await window.electronAPI.getPlatform?.() || process.platform;
+      const currentPlatform = await getPlatformFromApi();
       const isWindows = currentPlatform === 'win32';
 
-      if (isWindows && window.electronAPI.deleteElevateTask) {
-        const result = await window.electronAPI.deleteElevateTask();
-        if (result.success) {
-          showToast(t('tunSettings.success'), 'Permission task removed', 'success');
-          await checkPermissionStatus();
-        } else {
-          showToast(t('tunSettings.error'), result.error || 'Failed to remove task', 'error');
+      if (isWindows) {
+        if (!hasMethod(api, 'deleteElevateTask')) {
+          showApiUnavailable();
+          return;
         }
-      } else if (window.electronAPI.revokeCorePermission) {
-        const result = await window.electronAPI.revokeCorePermission();
+
+        const result = await api.deleteElevateTask();
         if (result.success) {
-          showToast(t('tunSettings.success'), 'Permissions revoked', 'success');
+          showToast(t('tunSettings.success'), t('tunSettings.removePermissionTaskSuccess'), 'success');
           await checkPermissionStatus();
         } else {
-          showToast(t('tunSettings.error'), result.error || 'Failed to revoke permissions', 'error');
+          showError(`${t('tunSettings.removePermissionTaskFailed')}: ${resultFailed(result, 'tunSettings.removePermissionTaskFailed')}`);
+        }
+      } else {
+        if (!hasMethod(api, 'revokeCorePermission')) {
+          showApiUnavailable();
+          return;
+        }
+
+        const result = await api.revokeCorePermission();
+        if (result.success) {
+          showToast(t('tunSettings.success'), t('tunSettings.permissionsRevoked'), 'success');
+          await checkPermissionStatus();
+        } else {
+          showError(`${t('tunSettings.revokePermissionFailed')}: ${resultFailed(result, 'tunSettings.revokePermissionFailed')}`);
         }
       }
     } catch (error) {
-      showToast(t('tunSettings.error'), String(error), 'error');
+      showError(`${t('tunSettings.revokePermissionFailed')}: ${formatError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -441,16 +603,36 @@ const TunSettings: React.FC = () => {
             {elevationMode === 'service' && (
               <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-600 dark:text-gray-300">服务状态</span>
-                  <span className={`text-xs font-medium ${
-                    serviceStatus.running
-                      ? 'text-green-600 dark:text-green-400'
-                      : serviceStatus.installed
-                        ? 'text-yellow-600 dark:text-yellow-400'
-                        : 'text-gray-500 dark:text-gray-400'
-                  }`}>
-                    {serviceStatus.running ? '运行中' : serviceStatus.installed ? '已安装但未运行' : '未安装'}
+                  <span className="text-xs text-gray-600 dark:text-gray-300">{t('tunSettings.helperService')}</span>
+                  <span className={`text-xs font-medium ${statusClass(serviceStatus.running, serviceStatus.installed)}`}>
+                    {serviceStateText}
                   </span>
+                </div>
+
+                <div className="space-y-1.5 text-xs mb-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-gray-500 dark:text-gray-400">{t('tunSettings.serviceIpc')}</span>
+                    <span className={`font-medium ${statusClass(serviceStatus.ipcAvailable, serviceStatus.running)}`}>
+                      {serviceStatus.ipcAvailable ? t('tunSettings.serviceIpcReady') : t('tunSettings.serviceIpcUnavailable')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-gray-500 dark:text-gray-400">{t('tunSettings.serviceCore')}</span>
+                    <span className={`font-medium ${statusClass(serviceStatus.coreRunning)}`}>
+                      {serviceCoreText}
+                    </span>
+                  </div>
+                  {serviceStatus.version && (
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-gray-500 dark:text-gray-400">{t('tunSettings.helperVersion')}</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-200">{serviceStatus.version}</span>
+                    </div>
+                  )}
+                  {serviceStatusError && (
+                    <div className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                      {t('tunSettings.serviceStatusError')}: {serviceStatusError}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 flex-wrap">

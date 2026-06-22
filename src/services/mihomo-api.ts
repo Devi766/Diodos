@@ -11,6 +11,17 @@ export interface MihomoConfig {
   'socks-port': number
   'external-controller': string
   secret: string
+  'geox-url'?: {
+    geoip?: string
+    geosite?: string
+    'geo-ip'?: string
+    'geo-site'?: string
+    mmdb?: string
+    asn?: string
+  }
+  'geodata-mode'?: boolean
+  'geo-auto-update'?: boolean
+  'geo-update-interval'?: number
 }
 
 export interface MihomoVersion {
@@ -37,7 +48,13 @@ export type MihomoDelayOptions = {
   timeout?: number
 }
 
-export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; secret?: string }) => {
+export const useMihomoAPI = (controllerConfig?: {
+  host?: string | null
+  port?: string | null
+  secret?: string | null
+  controllerMode?: 'socket' | 'http'
+  httpFallback?: boolean
+}) => {
   // 使用默认值，如果没有提供自定义配置
   const host = controllerConfig?.host || '127.0.0.1';
   const port = controllerConfig?.port || '9090';
@@ -53,7 +70,10 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
       if (typeof window !== 'undefined' && window.electronAPI?.requestMihomoAPI) {
         // 转换params为URL查询参数
         if (options.params) {
-          const url = new URL(endpoint.startsWith('http') ? endpoint : `http://${host}:${port}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`);
+          const url = new URL(
+            endpoint.startsWith('http') ? endpoint : endpoint.startsWith('/') ? endpoint : `/${endpoint}`,
+            'http://mihomo'
+          );
           Object.entries(options.params).forEach(([key, value]) => {
             if (value !== undefined) {
               url.searchParams.append(key, String(value));
@@ -131,22 +151,32 @@ export const useMihomoAPI = (controllerConfig?: { host?: string; port?: string; 
       }
       
       // 备用方案：使用ofetch
+      let apiConfig: Awaited<ReturnType<NonNullable<typeof window.electronAPI>['getApiConfig']>> | null = null;
+      if (typeof window !== 'undefined' && window.electronAPI?.getApiConfig) {
+        try {
+          apiConfig = await window.electronAPI.getApiConfig();
+        } catch (e) {
+          // 忽略错误
+        }
+      }
+
+      const resolvedControllerMode = controllerConfig?.controllerMode ?? apiConfig?.controllerMode;
+      const resolvedHttpFallback = controllerConfig?.httpFallback ?? apiConfig?.httpFallback;
+      if (resolvedControllerMode === 'socket' && resolvedHttpFallback !== true) {
+        throw new Error('Mihomo 控制器正在使用 socket 模式，当前环境缺少 Tauri 桥接，无法回退到 HTTP 9090');
+      }
+
       // 创建带认证头的ofetch实例
-      const baseURL = `http://${host}:${port}`;
+      const httpHost = controllerConfig?.host || apiConfig?.controllerHost || host;
+      const httpPort = controllerConfig?.port || apiConfig?.controllerPort || port;
+      const baseURL = `http://${httpHost}:${httpPort}`;
       const headers: Record<string, string> = {};
       
       // For ofetch fallback, attempt to get secret from electronAPI if possible, 
       // or use controllerConfig.secret if provided directly to useMihomoAPI (less common for UI calls)
       let authorizationHeader = '';
-      if (typeof window !== 'undefined' && window.electronAPI?.getApiConfig) {
-        try {
-          const apiConfig = await window.electronAPI.getApiConfig();
-          if (apiConfig.success && apiConfig.secret) {
-            authorizationHeader = `Bearer ${apiConfig.secret}`;
-          }
-        } catch (e) {
-          // 忽略错误
-        }
+      if (apiConfig?.success && apiConfig.secret) {
+        authorizationHeader = `Bearer ${apiConfig.secret}`;
       } else if (controllerConfig?.secret) {
         authorizationHeader = `Bearer ${controllerConfig.secret}`;
       }

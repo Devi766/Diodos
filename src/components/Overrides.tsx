@@ -9,6 +9,13 @@ import { Switch } from './ui/switch';
 import { useTranslation } from 'react-i18next';
 import { useThemeColor } from '../hooks/useThemeColor';
 import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
+import {
   DndContext,
   closestCenter,
   PointerSensor,
@@ -59,6 +66,67 @@ type OverrideItem = {
   enabled: boolean;
   global?: boolean;
   updatedAt?: string;
+};
+
+type RuntimeReloadResult = {
+  reloaded?: boolean;
+  skipped?: boolean;
+  reason?: string;
+  error?: string;
+  result?: {
+    success?: boolean;
+    reloaded?: boolean;
+    error?: string;
+    message?: string;
+  };
+};
+
+const getCompatError = (value: unknown, fallback: string) => {
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const error = record.error ?? record.message;
+    if (typeof error === 'string' && error.trim()) return error;
+  }
+  return fallback;
+};
+
+const toOverrideItems = (value: unknown): OverrideItem[] => {
+  if (Array.isArray(value)) return value as OverrideItem[];
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const nested = record.items ?? record.overrides ?? record.data;
+    if (Array.isArray(nested)) return nested as OverrideItem[];
+  }
+  return [];
+};
+
+const overridesViewCache: {
+  items: OverrideItem[];
+  loaded: boolean;
+} = {
+  items: [],
+  loaded: false,
+};
+
+const OVERRIDES_CACHE_KEY = APP_DATA_CACHE_KEYS.overrides;
+
+const readOverridesSessionCache = (): OverrideItem[] | null => {
+  const cached = readAppDataCache<unknown>(OVERRIDES_CACHE_KEY);
+  return Array.isArray(cached) ? cached as OverrideItem[] : null;
+};
+
+const hydrateOverridesFromSession = () => {
+  if (overridesViewCache.loaded) return;
+  const cached = readOverridesSessionCache();
+  if (!cached) return;
+  overridesViewCache.items = cached;
+  overridesViewCache.loaded = true;
+};
+
+const notifyProfileUpdated = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'overrides' } }));
+  }
 };
 
 // 可排序的卡片组件
@@ -252,8 +320,11 @@ function SortableOverrideCard({
 
 export default function Overrides() {
   const { t } = useTranslation();
-  const [items, setItems] = useState<OverrideItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [items, setItems] = useState<OverrideItem[]>(() => {
+    hydrateOverridesFromSession();
+    return overridesViewCache.items;
+  });
+  const [isLoading, setIsLoading] = useState(() => !overridesViewCache.loaded);
   const [url, setUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [fileOver, setFileOver] = useState(false);
@@ -261,18 +332,89 @@ export default function Overrides() {
   const [editingItem, setEditingItem] = useState<OverrideItem | null>(null);
   const [editingFile, setEditingFile] = useState<OverrideItem | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const itemsRef = useRef(items);
 
   // Toast 状态
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  const toastTimerRef = useRef<number | null>(null);
+
+  const errorToMessage = (error: unknown) => {
+    return error instanceof Error ? error.message : String(error || t('overrides.unknownError'));
+  };
+
+  const ensureActionSuccess = (result: unknown, fallbackMessage: string) => {
+    if (result && typeof result === 'object') {
+      const record = result as { success?: boolean; error?: string; message?: string };
+      if (record.success === false) {
+        throw new Error(record.error || record.message || fallbackMessage);
+      }
+    }
+  };
+
+  const getRuntimeReloadResult = (result: unknown): RuntimeReloadResult | null => {
+    if (!result || typeof result !== 'object') return null;
+    const runtimeReload = (result as { runtimeReload?: unknown }).runtimeReload;
+    return runtimeReload && typeof runtimeReload === 'object'
+      ? runtimeReload as RuntimeReloadResult
+      : null;
+  };
+
+  const getRuntimeReloadMessage = (result: unknown) => {
+    const runtimeReload = getRuntimeReloadResult(result);
+    if (!runtimeReload) return null;
+
+    if (
+      runtimeReload.reloaded === true ||
+      runtimeReload.result?.success === true ||
+      runtimeReload.result?.reloaded === true
+    ) {
+      return t('overrides.runtimeReloaded');
+    }
+
+    const reloadError = runtimeReload.error || runtimeReload.result?.error || runtimeReload.result?.message;
+    if (reloadError || runtimeReload.result?.success === false) {
+      return t('overrides.runtimeReloadFailed', { error: reloadError || t('overrides.unknownError') });
+    }
+
+    if (runtimeReload.reason === 'mihomo-not-running') {
+      return t('overrides.runtimeReloadSkippedStopped');
+    }
+
+    if (runtimeReload.reason === 'no-active-config') {
+      return t('overrides.runtimeReloadSkippedNoConfig');
+    }
+
+    if (runtimeReload.skipped === true || runtimeReload.reloaded === false) {
+      return t('overrides.runtimeReloadSkipped');
+    }
+
+    return null;
+  };
+
+  const formatActionSuccess = (message: string, result: unknown) => {
+    const runtimeMessage = getRuntimeReloadMessage(result);
+    return runtimeMessage
+      ? t('overrides.successWithRuntime', { message, runtime: runtimeMessage })
+      : message;
+  };
 
   const showToast = (title: string, description: string, type: 'success' | 'error') => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+
     setToastTitle(title);
     setToastDescription(description);
     setToastType(type);
-    setToastOpen(true);
+    setToastOpen(false);
+
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastOpen(true);
+      toastTimerRef.current = null;
+    }, 20);
   };
 
   const sensors = useSensors(
@@ -283,47 +425,97 @@ export default function Overrides() {
     })
   );
 
+  useEffect(() => {
+    overridesViewCache.items = items;
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      overridesViewCache.loaded = true;
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    return subscribeAppDataCache(OVERRIDES_CACHE_KEY, () => {
+      const cached = readOverridesSessionCache();
+      if (!cached) return;
+      overridesViewCache.items = cached;
+      overridesViewCache.loaded = true;
+      setItems(cached);
+      setIsLoading(false);
+    });
+  }, []);
+
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
 
     if (over && active.id !== over.id) {
-      setItems((items) => {
-        const oldIndex = items.findIndex((item) => item.id === active.id);
-        const newIndex = items.findIndex((item) => item.id === over.id);
+      const oldIndex = items.findIndex((item) => item.id === active.id);
+      const newIndex = items.findIndex((item) => item.id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return;
 
-        const newItems = [...items];
-        const [removed] = newItems.splice(oldIndex, 1);
-        newItems.splice(newIndex, 0, removed);
+      const previousItems = items;
+      const newItems = [...items];
+      const [removed] = newItems.splice(oldIndex, 1);
+      newItems.splice(newIndex, 0, removed);
+      setItems(newItems);
 
-        // 保存新顺序
-        if (typeof window !== 'undefined' && window.electronAPI?.reorderOverrides) {
-          window.electronAPI.reorderOverrides(newItems.map(item => item.id)).catch(error => {
-            console.error(t('overrides.saveError'), error);
-          });
+      try {
+        if (typeof window === 'undefined' || !window.electronAPI?.reorderOverrides) {
+          throw new Error(t('overrides.apiUnavailable'));
         }
 
-        return newItems;
-      });
+        const result = await window.electronAPI.reorderOverrides(newItems.map(item => item.id));
+        ensureActionSuccess(result, t('overrides.unknownError'));
+        setErrorMessage(null);
+        notifyProfileUpdated();
+        showToast(t('common.success'), formatActionSuccess(t('overrides.orderSaved'), result), 'success');
+      } catch (error) {
+        console.error(t('overrides.saveError'), error);
+        setItems(previousItems);
+        const message = t('overrides.saveErrorWithDetail', { error: errorToMessage(error) });
+        setErrorMessage(message);
+        showToast(t('common.error'), message, 'error');
+
+        try {
+          await fetchItems();
+        } catch {}
+      }
     }
   };
 
   const fetchItems = async () => {
-    setIsLoading(true);
+    const coldLoad =
+      itemsRef.current.length === 0 &&
+      !overridesViewCache.loaded &&
+      !hasAppDataCache(OVERRIDES_CACHE_KEY);
+    if (coldLoad) setIsLoading(true);
     setErrorMessage(null);
 
     try {
       if (typeof window !== 'undefined' && window.electronAPI?.getOverrides) {
-        const items = await window.electronAPI.getOverrides();
-        setItems(items || []);
+        const result = await window.electronAPI.getOverrides();
+        if (result && typeof result === 'object' && (result as { success?: boolean }).success === false) {
+          throw new Error(getCompatError(result, t('overrides.unknownError')));
+        }
+        const nextItems = toOverrideItems(result);
+        writeAppDataCache(OVERRIDES_CACHE_KEY, nextItems);
+        setItems(nextItems);
       } else {
-        setItems([]);
+        if (itemsRef.current.length === 0 && !overridesViewCache.loaded) {
+          writeAppDataCache(OVERRIDES_CACHE_KEY, []);
+          setItems([]);
+        }
       }
     } catch (error: any) {
       console.error('获取覆写列表失败:', error);
-      setErrorMessage(t('overrides.fetchError', { error: error.message || '未知错误' }));
-      setItems([]);
+      setErrorMessage(t('overrides.fetchError', { error: errorToMessage(error) }));
+      if (itemsRef.current.length === 0 && !overridesViewCache.loaded) {
+        setItems([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (coldLoad) setIsLoading(false);
     }
   };
 
@@ -335,20 +527,27 @@ export default function Overrides() {
       const urlObj = new URL(url);
       const name = urlObj.pathname.split('/').pop();
 
-      if (typeof window !== 'undefined' && window.electronAPI?.addOverride) {
-        await window.electronAPI.addOverride({
+      if (typeof window === 'undefined' || !window.electronAPI?.addOverride) {
+        throw new Error(t('overrides.apiUnavailable'));
+      }
+
+      const result = await window.electronAPI.addOverride({
           name: name ? decodeURIComponent(name) : 'Untitled',
           type: 'remote',
           url,
           ext: urlObj.pathname.endsWith('.js') ? 'js' : 'yaml'
-        });
-        await fetchItems();
-      }
+      });
+      ensureActionSuccess(result, t('overrides.unknownError'));
+      await fetchItems();
+      notifyProfileUpdated();
 
       setUrl('');
+      showToast(t('common.success'), formatActionSuccess(t('overrides.importSuccess'), result), 'success');
     } catch (error: any) {
       console.error('导入覆写失败:', error);
-      alert(t('overrides.importError', { error: error.message || '未知错误' }));
+      const message = t('overrides.importError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast(t('common.error'), message, 'error');
     } finally {
       setImporting(false);
     }
@@ -356,28 +555,41 @@ export default function Overrides() {
 
   const handleToggle = async (id: string, enabled: boolean) => {
     try {
-      if (typeof window !== 'undefined' && window.electronAPI?.updateOverride) {
-        await window.electronAPI.updateOverride(id, { enabled });
-        setItems(prev => prev.map(item =>
-          item.id === id ? { ...item, enabled } : item
-        ));
+      if (typeof window === 'undefined' || !window.electronAPI?.updateOverride) {
+        throw new Error(t('overrides.apiUnavailable'));
       }
+
+      const result = await window.electronAPI.updateOverride(id, { enabled });
+      ensureActionSuccess(result, t('overrides.unknownError'));
+      setItems(prev => prev.map(item =>
+        item.id === id ? { ...item, enabled } : item
+      ));
+      notifyProfileUpdated();
+      showToast(t('common.success'), formatActionSuccess(enabled ? t('overrides.enabledSuccess') : t('overrides.disabledSuccess'), result), 'success');
     } catch (error: any) {
       console.error('切换覆写状态失败:', error);
-      alert(t('overrides.toggleError', { error: error.message || '未知错误' }));
+      const message = t('overrides.toggleError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast(t('common.error'), message, 'error');
     }
   };
 
   const handleUpdate = async (id: string) => {
     try {
-      if (typeof window !== 'undefined' && window.electronAPI?.updateRemoteOverride) {
-        await window.electronAPI.updateRemoteOverride(id);
-        await fetchItems();
-        showToast(t('common.success'), t('overrides.updateSuccess'), 'success');
+      if (typeof window === 'undefined' || !window.electronAPI?.updateRemoteOverride) {
+        throw new Error(t('overrides.apiUnavailable'));
       }
+
+      const result = await window.electronAPI.updateRemoteOverride(id);
+      ensureActionSuccess(result, t('overrides.unknownError'));
+      await fetchItems();
+      notifyProfileUpdated();
+      showToast(t('common.success'), formatActionSuccess(t('overrides.updateSuccess'), result), 'success');
     } catch (error: any) {
       console.error('更新覆写失败:', error);
-      showToast(t('common.error'), t('overrides.updateError', { error: error.message || '未知错误' }), 'error');
+      const message = t('overrides.updateError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast(t('common.error'), message, 'error');
     }
   };
 
@@ -385,13 +597,20 @@ export default function Overrides() {
     if (!confirm(t('overrides.confirmDelete'))) return;
 
     try {
-      if (typeof window !== 'undefined' && window.electronAPI?.deleteOverride) {
-        await window.electronAPI.deleteOverride(id);
-        setItems(prev => prev.filter(item => item.id !== id));
+      if (typeof window === 'undefined' || !window.electronAPI?.deleteOverride) {
+        throw new Error(t('overrides.apiUnavailable'));
       }
+
+      const result = await window.electronAPI.deleteOverride(id);
+      ensureActionSuccess(result, t('overrides.unknownError'));
+      setItems(prev => prev.filter(item => item.id !== id));
+      notifyProfileUpdated();
+      showToast(t('common.success'), formatActionSuccess(t('overrides.deleteSuccess'), result), 'success');
     } catch (error: any) {
       console.error('删除覆写失败:', error);
-      alert(t('overrides.deleteError', { error: error.message || '未知错误' }));
+      const message = t('overrides.deleteError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast(t('common.error'), message, 'error');
     }
   };
 
@@ -426,38 +645,71 @@ export default function Overrides() {
 
     const file = files[0];
     if (!file.name.endsWith('.js') && !file.name.endsWith('.yaml')) {
-      alert(t('overrides.onlySupportedFiles'));
+      showToast(t('common.error'), t('overrides.onlySupportedFiles'), 'error');
       return;
     }
 
     try {
       const content = await file.text();
 
-      if (typeof window !== 'undefined' && window.electronAPI?.addOverride) {
-        await window.electronAPI.addOverride({
+      if (typeof window === 'undefined' || !window.electronAPI?.addOverride) {
+        throw new Error(t('overrides.apiUnavailable'));
+      }
+
+      const result = await window.electronAPI.addOverride({
           name: file.name,
           type: 'local',
           file: content,
           ext: file.name.endsWith('.js') ? 'js' : 'yaml'
-        });
-        await fetchItems();
-      }
+      });
+      ensureActionSuccess(result, t('overrides.unknownError'));
+      await fetchItems();
+      notifyProfileUpdated();
+      showToast(t('common.success'), formatActionSuccess(t('overrides.addSuccess'), result), 'success');
     } catch (error: any) {
       console.error('添加文件失败:', error);
-      alert(t('overrides.addError', { error: error.message || '未知错误' }));
+      const message = t('overrides.addError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast(t('common.error'), message, 'error');
     }
   };
 
   useEffect(() => {
     fetchItems();
+
+    const refreshAfterProfileChange = () => {
+      fetchItems();
+    };
+    window.addEventListener('profile-updated', refreshAfterProfileChange);
+    window.addEventListener('backup-restored', refreshAfterProfileChange);
+    window.addEventListener('subscription-auto-updated', refreshAfterProfileChange);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshAfterProfileChange();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshAfterProfileChange();
+    });
+
+    return () => {
+      window.removeEventListener('profile-updated', refreshAfterProfileChange);
+      window.removeEventListener('backup-restored', refreshAfterProfileChange);
+      window.removeEventListener('subscription-auto-updated', refreshAfterProfileChange);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <ReloadIcon className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+  if (
+    isLoading &&
+    items.length === 0 &&
+    !overridesViewCache.loaded &&
+    !hasAppDataCache(OVERRIDES_CACHE_KEY)
+  ) {
+    return <div className="min-h-[220px]" aria-busy="true" />;
   }
 
   return (
@@ -541,18 +793,25 @@ export default function Overrides() {
                       if (file) {
                         try {
                           const content = await file.text();
-                          if (typeof window !== 'undefined' && window.electronAPI?.addOverride) {
-                            await window.electronAPI.addOverride({
+                          if (typeof window === 'undefined' || !window.electronAPI?.addOverride) {
+                            throw new Error(t('overrides.apiUnavailable'));
+                          }
+
+                          const result = await window.electronAPI.addOverride({
                               name: file.name,
                               type: 'local',
                               file: content,
                               ext: file.name.endsWith('.js') ? 'js' : 'yaml'
-                            });
-                            await fetchItems();
-                          }
+                          });
+                          ensureActionSuccess(result, t('overrides.unknownError'));
+                          await fetchItems();
+                          notifyProfileUpdated();
+                          showToast(t('common.success'), formatActionSuccess(t('overrides.addSuccess'), result), 'success');
                         } catch (error: any) {
                           console.error('添加文件失败:', error);
-                          alert(t('overrides.addError', { error: error.message || '未知错误' }));
+                          const message = t('overrides.addError', { error: errorToMessage(error) });
+                          setErrorMessage(message);
+                          showToast(t('common.error'), message, 'error');
                         }
                       }
                     };
@@ -567,18 +826,25 @@ export default function Overrides() {
                 <button
                   onClick={async () => {
                     try {
-                      if (typeof window !== 'undefined' && window.electronAPI?.addOverride) {
-                        await window.electronAPI.addOverride({
+                      if (typeof window === 'undefined' || !window.electronAPI?.addOverride) {
+                        throw new Error(t('overrides.apiUnavailable'));
+                      }
+
+                      const result = await window.electronAPI.addOverride({
                           name: '新建配置.yaml',
                           type: 'local',
                           file: '# YAML 配置文件\n',
                           ext: 'yaml'
-                        });
-                        await fetchItems();
-                      }
+                      });
+                      ensureActionSuccess(result, t('overrides.unknownError'));
+                      await fetchItems();
+                      notifyProfileUpdated();
+                      showToast(t('common.success'), formatActionSuccess(t('overrides.createSuccess'), result), 'success');
                     } catch (error: any) {
                       console.error('创建文件失败:', error);
-                      alert(t('overrides.createError', { error: error.message || '未知错误' }));
+                      const message = t('overrides.createError', { error: errorToMessage(error) });
+                      setErrorMessage(message);
+                      showToast(t('common.error'), message, 'error');
                     }
                     setShowAddMenu(false);
                   }}
@@ -590,18 +856,25 @@ export default function Overrides() {
                 <button
                   onClick={async () => {
                     try {
-                      if (typeof window !== 'undefined' && window.electronAPI?.addOverride) {
-                        await window.electronAPI.addOverride({
+                      if (typeof window === 'undefined' || !window.electronAPI?.addOverride) {
+                        throw new Error(t('overrides.apiUnavailable'));
+                      }
+
+                      const result = await window.electronAPI.addOverride({
                           name: '新建脚本.js',
                           type: 'local',
                           file: '// JavaScript 脚本\nfunction main(config) {\n  return config;\n}\n',
                           ext: 'js'
-                        });
-                        await fetchItems();
-                      }
+                      });
+                      ensureActionSuccess(result, t('overrides.unknownError'));
+                      await fetchItems();
+                      notifyProfileUpdated();
+                      showToast(t('common.success'), formatActionSuccess(t('overrides.createSuccess'), result), 'success');
                     } catch (error: any) {
                       console.error('创建文件失败:', error);
-                      alert(t('overrides.createError', { error: error.message || '未知错误' }));
+                      const message = t('overrides.createError', { error: errorToMessage(error) });
+                      setErrorMessage(message);
+                      showToast(t('common.error'), message, 'error');
                     }
                     setShowAddMenu(false);
                   }}
@@ -657,20 +930,27 @@ export default function Overrides() {
           onClose={() => setEditingItem(null)}
           onSave={async (updatedItem) => {
             try {
-              if (typeof window !== 'undefined' && window.electronAPI?.updateOverride) {
-                await window.electronAPI.updateOverride(updatedItem.id, {
+              if (typeof window === 'undefined' || !window.electronAPI?.updateOverride) {
+                throw new Error(t('overrides.apiUnavailable'));
+              }
+
+              const result = await window.electronAPI.updateOverride(updatedItem.id, {
                   name: updatedItem.name,
                   url: updatedItem.url,
                   global: updatedItem.global
-                });
-                setItems(prev => prev.map(item =>
-                  item.id === updatedItem.id ? updatedItem : item
-                ));
-                setEditingItem(null);
-              }
+              });
+              ensureActionSuccess(result, t('overrides.unknownError'));
+              setItems(prev => prev.map(item =>
+                item.id === updatedItem.id ? updatedItem : item
+              ));
+              setEditingItem(null);
+              notifyProfileUpdated();
+              showToast(t('common.success'), formatActionSuccess(t('overrides.saveSuccess'), result), 'success');
             } catch (error: any) {
               console.error('更新覆写信息失败:', error);
-              alert(t('overrides.updateError', { error: error.message || '未知错误' }));
+              const message = t('overrides.updateError', { error: errorToMessage(error) });
+              setErrorMessage(message);
+              showToast(t('common.error'), message, 'error');
             }
           }}
         />
@@ -683,15 +963,26 @@ export default function Overrides() {
           onClose={() => setEditingFile(null)}
           onSave={async (content) => {
             try {
-              if (typeof window !== 'undefined' && window.electronAPI?.updateOverrideFileContent) {
-                await window.electronAPI.updateOverrideFileContent(editingFile.id, content);
-                setEditingFile(null);
-                await fetchItems();
+              if (typeof window === 'undefined' || !window.electronAPI?.updateOverrideFileContent) {
+                throw new Error(t('overrides.apiUnavailable'));
               }
+
+              const result = await window.electronAPI.updateOverrideFileContent(editingFile.id, content);
+              ensureActionSuccess(result, t('overrides.unknownError'));
+              setEditingFile(null);
+              await fetchItems();
+              notifyProfileUpdated();
+              showToast(t('common.success'), formatActionSuccess(t('overrides.saveSuccess'), result), 'success');
             } catch (error: any) {
               console.error('更新覆写文件失败:', error);
-              alert(t('overrides.updateError', { error: error.message || '未知错误' }));
+              const message = t('overrides.updateError', { error: errorToMessage(error) });
+              setErrorMessage(message);
+              showToast(t('common.error'), message, 'error');
             }
+          }}
+          onLoadError={(message) => {
+            setErrorMessage(message);
+            showToast(t('common.error'), message, 'error');
           }}
         />
       )}
@@ -835,10 +1126,12 @@ function EditFileDialog({
   item,
   onClose,
   onSave,
+  onLoadError,
 }: {
   item: OverrideItem;
   onClose: () => void;
   onSave: (content: string) => void;
+  onLoadError?: (message: string) => void;
 }) {
   const { t } = useTranslation();
   const [content, setContent] = useState('');
@@ -864,7 +1157,7 @@ function EditFileDialog({
         }
       } catch (error: any) {
         console.error('加载文件内容失败:', error);
-        alert(t('overrides.loadError', { error: error.message || '未知错误' }));
+        onLoadError?.(t('overrides.loadError', { error: error instanceof Error ? error.message : String(error || t('overrides.unknownError')) }));
       } finally {
         setLoading(false);
       }

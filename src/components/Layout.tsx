@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import classNames from 'classnames';
 import {
   HomeIcon,
@@ -34,14 +34,41 @@ import {
   UPDATE_AVAILABLE_EVENT,
   UpdateEventDetail,
 } from '@/utils/update-check';
+import { preloadRouteData } from '@/services/app-data-preload';
+
+type CompatWarningDetail = {
+  method?: string;
+  reason?: string;
+  error?: string;
+  fallbackUsed?: boolean;
+};
 
 declare global {
   interface Window {
     __flyclashPendingUpdate?: UpdateEventDetail;
+    __flyclashCompatWarnings?: CompatWarningDetail[];
   }
 }
 
 let hasRunAutoUpdateCheck = false;
+const FALLBACK_APP_VERSION = '0.2.9';
+
+const normalizeVersionLabel = (value: unknown): string => {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const nestedVersion = record.version ?? record.appVersion ?? record.value;
+
+    if (typeof nestedVersion === 'string' && nestedVersion.trim().length > 0) {
+      return nestedVersion.trim();
+    }
+  }
+
+  return FALLBACK_APP_VERSION;
+};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -50,6 +77,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
@@ -60,10 +88,12 @@ export default function Layout({ children }: LayoutProps) {
     return storedState === 'true';
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('0.1.7');
+  const [appVersion, setAppVersion] = useState(FALLBACK_APP_VERSION);
   const [pendingUpdate, setPendingUpdate] = useState<(ReleaseInfo & { currentVersion: string }) | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const hasCheckedUpdatesRef = useRef(false);
+  const compatWarningToastRef = useRef<Map<string, number>>(new Map());
+  const navigationSeqRef = useRef(0);
   const { hasProviders } = useProviderAvailability();
   const showUpdateDialog = useCallback((release: ReleaseInfo, currentVersion: string) => {
     setPendingUpdate({ ...release, currentVersion });
@@ -72,7 +102,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const renderMarkdownLinks = useCallback((text: string) => {
     const regex = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g;
-    const result: (string | JSX.Element)[] = [];
+    const result: React.ReactNode[] = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
@@ -130,26 +160,6 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const ua = navigator.userAgent.toLowerCase();
-    const body = document.body;
-    const classes: string[] = [];
-
-    if (ua.includes('windows')) {
-      classes.push('platform-windows');
-    } else if (ua.includes('macintosh') || ua.includes('mac os')) {
-      classes.push('platform-macos');
-    }
-
-    classes.forEach((cls) => body.classList.add(cls));
-
-    return () => {
-      classes.forEach((cls) => body.classList.remove(cls));
-    };
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
     const triggerResize = () => {
       window.dispatchEvent(new Event('resize'));
     };
@@ -179,6 +189,45 @@ export default function Layout({ children }: LayoutProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const validModes = new Set(['acrylic', 'dynamic', 'solid', 'custom']);
+    const appearanceClasses = ['appearance-acrylic', 'appearance-dynamic', 'appearance-solid', 'appearance-custom'];
+    const applyModeClass = (mode?: string) => {
+      const normalizedMode = mode && validModes.has(mode) ? mode : 'dynamic';
+      document.body.classList.remove(...appearanceClasses);
+      document.body.classList.add(`appearance-${normalizedMode}`);
+      document.body.dataset.appearanceMode = normalizedMode;
+    };
+
+    applyModeClass('dynamic');
+
+    let disposed = false;
+    const loadMode = async () => {
+      try {
+        const result = await window.electronAPI?.getAppearanceMode?.();
+        if (!disposed && result?.success) {
+          applyModeClass(result.mode);
+        }
+      } catch {
+        if (!disposed) applyModeClass('dynamic');
+      }
+    };
+
+    loadMode();
+    const cleanup = window.electronAPI?.onAppearanceModeChanged?.((mode: string) => {
+      applyModeClass(mode);
+    });
+
+    return () => {
+      disposed = true;
+      if (cleanup) cleanup();
+      document.body.classList.remove(...appearanceClasses);
+      delete document.body.dataset.appearanceMode;
+    };
+  }, []);
+
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => {
       const next = !prev;
@@ -188,6 +237,42 @@ export default function Layout({ children }: LayoutProps) {
       return next;
     });
   }, []);
+
+  const warmRouteData = useCallback((href: string) => {
+    try {
+      router.prefetch(href);
+    } catch {}
+    void preloadRouteData(href, { force: true, timeoutMs: 1200 });
+  }, [router]);
+
+  const handleNavigationClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    if (pathname === href) {
+      setMobileMenuOpen(false);
+      return;
+    }
+
+    event.preventDefault();
+    setMobileMenuOpen(false);
+
+    const seq = navigationSeqRef.current + 1;
+    navigationSeqRef.current = seq;
+    void preloadRouteData(href, { force: true, timeoutMs: 900 }).finally(() => {
+      if (navigationSeqRef.current === seq) {
+        router.push(href);
+      }
+    });
+  }, [pathname, router]);
   
   const menuItems = useMemo(() => {
     const items = [
@@ -220,7 +305,7 @@ export default function Layout({ children }: LayoutProps) {
       try {
         if (typeof window !== 'undefined' && window.electronAPI) {
           const version = await window.electronAPI.getAppVersion();
-          setAppVersion(version);
+          setAppVersion(normalizeVersionLabel(version));
         }
       } catch (error) {
         console.error('获取应用版本号失败:', error);
@@ -265,6 +350,12 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (hasCheckedUpdatesRef.current || hasRunAutoUpdateCheck) return;
+
+    const isDesktopRuntime =
+      (((window as any).__TAURI__ && (window as any).__TAURI__.core) ||
+        /Electron/i.test(window.navigator.userAgent || ''));
+    if (!isDesktopRuntime) return;
+
     hasCheckedUpdatesRef.current = true;
     hasRunAutoUpdateCheck = true;
 
@@ -346,9 +437,216 @@ export default function Layout({ children }: LayoutProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.onMihomoAutostart) return;
+
+    const cleanup = window.electronAPI.onMihomoAutostart((data: any) => {
+      if (data?.success !== false) return;
+      const error = typeof data.error === 'string' && data.error.trim()
+        ? data.error.trim()
+        : t('layout.tray.unknownError');
+      showToast({
+        message: t('layout.coreAutostartFailed', { error }),
+        type: 'error',
+        duration: 6000,
+      });
+    });
+
+    return () => {
+      cleanup?.();
+    };
+  }, [t]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const notifyCompatWarning = (detail?: CompatWarningDetail) => {
+      if (!detail?.method) return;
+
+      const error = detail.error || t('layout.tray.unknownError');
+      const key = `${detail.method}:${detail.reason || ''}:${error}`;
+      const now = Date.now();
+      const last = compatWarningToastRef.current.get(key) || 0;
+      if (now - last < 15000) return;
+      compatWarningToastRef.current.set(key, now);
+
+      showToast({
+        message: detail.fallbackUsed
+          ? t('layout.compatFallbackUsed', { method: detail.method, error })
+          : t('layout.compatApiFailed', { method: detail.method, error }),
+        type: detail.fallbackUsed ? 'warning' : 'error',
+        duration: 6500,
+      });
+    };
+
+    const handler = (event: Event) => {
+      notifyCompatWarning((event as CustomEvent<CompatWarningDetail>).detail);
+    };
+
+    window.addEventListener('tauri-compat-warning', handler as EventListener);
+
+    if (Array.isArray(window.__flyclashCompatWarnings) && window.__flyclashCompatWarnings.length > 0) {
+      window.__flyclashCompatWarnings.splice(0).forEach(notifyCompatWarning);
+    }
+
+    return () => {
+      window.removeEventListener('tauri-compat-warning', handler as EventListener);
+    };
+  }, [t]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.onSubscriptionAutoUpdateFailed) return;
+
+    const cleanup = window.electronAPI.onSubscriptionAutoUpdateFailed((data) => {
+      const name = data?.name || t('subscriptions.unknownSubscription');
+      const error = data?.error || t('common.unknown');
+      showToast({
+        message: t('subscriptions.autoUpdateFailed', { name, error }),
+        type: 'error',
+        duration: 6000
+      });
+    });
+
+    return () => {
+      cleanup?.();
+    };
+  }, [t]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.onTrayAction) return;
+
+    const isRecord = (value: unknown): value is Record<string, unknown> => {
+      return !!value && typeof value === 'object' && !Array.isArray(value);
+    };
+
+    const readString = (record: Record<string, unknown> | null, key: string) => {
+      const value = record?.[key];
+      if (typeof value === 'string') return value;
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+      return undefined;
+    };
+
+    const readBoolean = (record: Record<string, unknown> | null, key: string) => {
+      const value = record?.[key];
+      return typeof value === 'boolean' ? value : undefined;
+    };
+
+    const readNumber = (record: Record<string, unknown> | null, key: string) => {
+      const value = record?.[key];
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string' && value.trim() !== '') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      }
+      return undefined;
+    };
+
+    const labels: Record<string, string> = {
+      'restart-core': t('layout.tray.restartCore'),
+      'stop-core': t('layout.tray.stopCore'),
+      'toggle-system-proxy': t('layout.tray.systemProxy'),
+      'toggle-tun': t('layout.tray.tunMode'),
+      'switch-config': t('layout.tray.switchConfig'),
+      'close-all-connections': t('layout.tray.closeConnections'),
+    };
+
+    const didSucceed = (result: unknown, record: Record<string, unknown> | null) => {
+      if (typeof result === 'boolean') return result;
+      if (!record) return true;
+      if (typeof record.success === 'boolean') return record.success;
+      if (typeof record.ok === 'boolean') return record.ok;
+      const status = readNumber(record, 'status');
+      if (status !== undefined) return status >= 200 && status < 300;
+      return !record.error;
+    };
+
+    const successMessage = (action: string, record: Record<string, unknown> | null) => {
+      const message = readString(record, 'message');
+      if (message) return message;
+
+      if (action === 'toggle-system-proxy') {
+        const enabled = readBoolean(record, 'enabled');
+        return enabled === false ? t('layout.tray.systemProxyDisabled') : t('layout.tray.systemProxyEnabled');
+      }
+
+      if (action === 'toggle-tun') {
+        const enabled = readBoolean(record, 'enabled');
+        return enabled === false ? t('layout.tray.tunDisabled') : t('layout.tray.tunEnabled');
+      }
+
+      if (action === 'restart-core') return t('layout.tray.restartCoreSuccess');
+      if (action === 'stop-core') return t('layout.tray.stopCoreSuccess');
+      if (action === 'close-all-connections') return t('layout.tray.connectionsClosed');
+      return t('layout.tray.actionCompleted');
+    };
+
+    const notifyProfileChanged = (action: string, record: Record<string, unknown> | null) => {
+      const refreshActions = new Set([
+        'restart-core',
+        'stop-core',
+        'toggle-system-proxy',
+        'toggle-tun',
+        'switch-config',
+        'close-all-connections',
+      ]);
+      if (!refreshActions.has(action)) return;
+
+      const detail: { source: string; action: string; activeConfig?: string } = {
+        source: 'tray',
+        action,
+      };
+      if (action === 'switch-config') {
+        const activeConfig =
+          readString(record, 'activeConfig') ||
+          readString(record, 'filePath') ||
+          readString(record, 'configPath') ||
+          readString(record, 'path');
+        if (activeConfig) detail.activeConfig = activeConfig;
+      }
+
+      window.dispatchEvent(new CustomEvent('profile-updated', {
+        detail,
+      }));
+    };
+
+    const cleanup = window.electronAPI.onTrayAction((payload) => {
+      const action = typeof payload?.action === 'string' ? payload.action : 'unknown';
+      const result = payload?.result;
+      const record = isRecord(result) ? result : null;
+
+      if (didSucceed(result, record)) {
+        showToast({
+          message: successMessage(action, record),
+          type: 'success',
+          duration: 3200,
+        });
+        notifyProfileChanged(action, record);
+        return;
+      }
+
+      const actionLabel = labels[action] || t('layout.tray.unknownAction');
+      const error =
+        readString(record, 'error') ||
+        readString(record, 'message') ||
+        readString(record, 'statusText') ||
+        t('layout.tray.unknownError');
+
+      showToast({
+        message: t('layout.tray.actionFailed', { action: actionLabel, error }),
+        type: 'error',
+        duration: 5200,
+      });
+    });
+
+    return () => {
+      cleanup?.();
+    };
+  }, [t]);
+
   // 监听并应用自定义背景
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI) return;
+    const electron = window.electronAPI;
 
     const applyCustomBackground = (config: { imageData?: string; imagePath?: string; opacity: number; blur: number }) => {
       console.log('[Layout] 应用自定义背景配置:', { ...config, imageData: config.imageData ? '(base64 data)' : undefined });
@@ -489,11 +787,11 @@ export default function Layout({ children }: LayoutProps) {
       }
 
       try {
-        const appearanceResult = await window.electronAPI.getAppearanceMode();
+        const appearanceResult = await electron.getAppearanceMode();
         if (appearanceResult.success && appearanceResult.mode === 'custom') {
           console.log('[Layout] 检测到自定义背景模式，触发应用');
           // 触发主进程重新发送背景数据
-          await window.electronAPI.setAppearanceMode('custom');
+          await electron.setAppearanceMode('custom');
         }
       } catch (error) {
         console.error('[Layout] 加载自定义背景失败:', error);
@@ -512,8 +810,8 @@ export default function Layout({ children }: LayoutProps) {
     };
 
     // 监听背景配置变化
-    const cleanup = window.electronAPI.onCustomBackgroundApply?.(applyCustomBackground);
-    const clearCleanup = window.electronAPI.onClearCustomBackground?.(clearBackground);
+    const cleanup = electron.onCustomBackgroundApply?.(applyCustomBackground);
+    const clearCleanup = electron.onClearCustomBackground?.(clearBackground);
 
     return () => {
       if (cleanup) cleanup();
@@ -527,6 +825,7 @@ export default function Layout({ children }: LayoutProps) {
   // 监听并应用主题色
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI) return;
+    const electron = window.electronAPI;
 
     const applyThemeColor = (color: string) => {
       console.log('[Layout] 应用主题色:', color);
@@ -740,7 +1039,7 @@ export default function Layout({ children }: LayoutProps) {
     // 页面加载时应用已保存的主题色
     const loadSavedThemeColor = async () => {
       try {
-        const colorResult = await window.electronAPI.getThemeColor();
+        const colorResult = await electron.getThemeColor();
         if (colorResult.success && colorResult.color) {
           console.log('[Layout] 加载保存的主题色:', colorResult.color);
           applyThemeColor(colorResult.color);
@@ -753,10 +1052,18 @@ export default function Layout({ children }: LayoutProps) {
     loadSavedThemeColor();
 
     // 监听主题色变化
-    const cleanup = window.electronAPI.onThemeColorChanged?.(applyThemeColor);
+    const cleanup = electron.onThemeColorChanged?.(applyThemeColor);
+    const handleLocalThemeColorChanged = (event: Event) => {
+      const color = (event as CustomEvent<{ color?: string }>).detail?.color;
+      if (typeof color === 'string') {
+        applyThemeColor(color);
+      }
+    };
+    window.addEventListener('theme-color-updated', handleLocalThemeColorChanged);
 
     return () => {
       if (cleanup) cleanup();
+      window.removeEventListener('theme-color-updated', handleLocalThemeColorChanged);
     };
   }, []);
 
@@ -807,7 +1114,7 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <>
-      <div className="relative h-screen overflow-hidden bg-transparent">
+      <div className="app-window-surface relative h-screen overflow-hidden bg-transparent">
         <TitleBar />
 
         <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
@@ -841,6 +1148,10 @@ export default function Layout({ children }: LayoutProps) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch
+                  onMouseEnter={() => warmRouteData(item.href)}
+                  onFocus={() => warmRouteData(item.href)}
+                  onClick={(event) => handleNavigationClick(event, item.href)}
                   className={getNavLinkClass(item.href, sidebarCollapsed)}
                 >
                   <span className={getIconWrapperClass(item.href, sidebarCollapsed)}>
@@ -895,7 +1206,10 @@ export default function Layout({ children }: LayoutProps) {
                   <Link
                     key={item.href}
                     href={item.href}
-                    onClick={() => setMobileMenuOpen(false)}
+                    prefetch
+                    onMouseEnter={() => warmRouteData(item.href)}
+                    onFocus={() => warmRouteData(item.href)}
+                    onClick={(event) => handleNavigationClick(event, item.href)}
                     className={getNavLinkClass(item.href, false)}
                   >
                     <span className={getIconWrapperClass(item.href, false)}>
@@ -911,10 +1225,8 @@ export default function Layout({ children }: LayoutProps) {
           <div
             className={classNames(
               'flex flex-1 flex-col min-w-0',
-              isFullHeight ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar',
-              { 'glass-panel card-surface rounded-2xl': !isPlainView }
+              isFullHeight ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar'
             )}
-            data-hoverable={!isPlainView ? 'false' : undefined}
           >
             <main className={classNames('relative flex-1 min-w-0', isFullHeight && 'h-full overflow-hidden')}>
               <div

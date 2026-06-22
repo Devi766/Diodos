@@ -1,6 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { CloudDownload, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 
 interface SubscriptionData {
   name: string;
@@ -28,22 +35,73 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
+function toSubscriptionArray(value: unknown): any[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+
+  const record = value as Record<string, unknown>;
+  const nested = record.data ?? record.subscriptions ?? record.items;
+  if (Array.isArray(nested)) return nested;
+
+  if (nested && typeof nested === 'object') {
+    const nestedRecord = nested as Record<string, unknown>;
+    if (Array.isArray(nestedRecord.subscriptions)) return nestedRecord.subscriptions;
+    if (Array.isArray(nestedRecord.items)) return nestedRecord.items;
+  }
+
+  return [];
+}
+
+const readCachedActiveConfig = () => {
+  const cached = readAppDataCache<string | null>(APP_DATA_CACHE_KEYS.activeConfig);
+  return typeof cached === 'string' && cached.trim() ? cached : null;
+};
+
+const readCachedSubscriptions = () => {
+  return toSubscriptionArray(readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.subscriptions));
+};
+
+const findSubscriptionData = (activeConfig: string | null, subs: any[]): SubscriptionData | null => {
+  if (!activeConfig || subs.length === 0) return null;
+  const activeSub = subs.find((s: any) => s.path === activeConfig);
+  if (!activeSub) return null;
+  return {
+    name: activeSub.name,
+    usedTraffic: activeSub.usedTraffic || null,
+    remainingTraffic: activeSub.remainingTraffic || null,
+    totalTraffic: activeSub.totalTraffic || null,
+    expiryDate: activeSub.expiryDate || null,
+  };
+};
+
 export function SubscriptionInfoCard() {
   const { t } = useTranslation();
-  const [subData, setSubData] = useState<SubscriptionData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [subData, setSubData] = useState<SubscriptionData | null>(() => {
+    return findSubscriptionData(readCachedActiveConfig(), readCachedSubscriptions());
+  });
+  const [loading, setLoading] = useState(() => {
+    const hasActiveConfig = hasAppDataCache(APP_DATA_CACHE_KEYS.activeConfig);
+    const activeConfig = readCachedActiveConfig();
+    return !hasActiveConfig ||
+      (activeConfig !== null && !hasAppDataCache(APP_DATA_CACHE_KEYS.subscriptions));
+  });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       if (typeof window === 'undefined' || !window.electronAPI) return;
-      const configPath = await window.electronAPI.getActiveConfig();
+      const activeConfigResult = await window.electronAPI.getActiveConfig();
+      const configPath = typeof activeConfigResult === 'string' && activeConfigResult.trim()
+        ? activeConfigResult
+        : null;
+      writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, configPath);
       if (!configPath) {
         setSubData(null);
         setLoading(false);
         return;
       }
-      const subs = await window.electronAPI.getSubscriptions();
-      if (!Array.isArray(subs) || subs.length === 0) {
+      const subs = toSubscriptionArray(await window.electronAPI.getSubscriptions());
+      writeAppDataCache(APP_DATA_CACHE_KEYS.subscriptions, subs);
+      if (subs.length === 0) {
         setSubData(null);
         setLoading(false);
         return;
@@ -68,13 +126,64 @@ export function SubscriptionInfoCard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const applyCachedSnapshot = () => {
+      const hasActiveConfig = hasAppDataCache(APP_DATA_CACHE_KEYS.activeConfig);
+      const activeConfig = readCachedActiveConfig();
+      if (!hasActiveConfig) {
+        return;
+      }
+      if (activeConfig !== null && !hasAppDataCache(APP_DATA_CACHE_KEYS.subscriptions)) {
+        return;
+      }
+      setSubData(findSubscriptionData(activeConfig, readCachedSubscriptions()));
+      setLoading(false);
+    };
+
+    const unsubscribeActive = subscribeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, applyCachedSnapshot);
+    const unsubscribeSubscriptions = subscribeAppDataCache(APP_DATA_CACHE_KEYS.subscriptions, applyCachedSnapshot);
+    applyCachedSnapshot();
+
+    return () => {
+      unsubscribeActive();
+      unsubscribeSubscriptions();
+    };
+  }, []);
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 60000);
-    return () => clearInterval(interval);
-  }, []);
+
+    if (typeof window === 'undefined') {
+      return () => clearInterval(interval);
+    }
+
+    const refresh = () => {
+      void fetchData();
+    };
+
+    window.addEventListener('profile-updated', refresh);
+    window.addEventListener('backup-restored', refresh);
+    window.addEventListener('subscription-auto-updated', refresh);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refresh();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refresh();
+    });
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('profile-updated', refresh);
+      window.removeEventListener('backup-restored', refresh);
+      window.removeEventListener('subscription-auto-updated', refresh);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+    };
+  }, [fetchData]);
 
   const trafficInfo = useMemo(() => {
     if (!subData) return null;
@@ -115,7 +224,7 @@ export function SubscriptionInfoCard() {
   if (loading) {
     return (
       <div className="flex h-[260px] flex-col items-center justify-center rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-        <p className="text-sm text-muted-foreground">{t('dashboard.loading')}</p>
+        <span className="sr-only">{t('dashboard.subscriptionInfo')}</span>
       </div>
     );
   }

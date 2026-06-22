@@ -6,10 +6,15 @@ type Listener = (status: ProviderStatus) => void;
 
 let cachedStatus: ProviderStatus = 'unknown';
 const listeners = new Set<Listener>();
+let refreshInFlight: Promise<ProviderStatus> | null = null;
 
 const notifyListeners = (status: ProviderStatus) => {
   cachedStatus = status;
   listeners.forEach((listener) => listener(status));
+};
+
+const providerMap = (result: any) => {
+  return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
 };
 
 const evaluateAvailability = async (): Promise<ProviderStatus> => {
@@ -23,30 +28,59 @@ const evaluateAvailability = async (): Promise<ProviderStatus> => {
       window.electronAPI.getRuleProviders?.(),
     ]);
 
+    const proxyFailed = proxyResult.status === 'rejected' || proxyResult.value?.success === false;
+    const ruleFailed = ruleResult.status === 'rejected' || ruleResult.value?.success === false;
+    if (proxyFailed || ruleFailed) {
+      return 'unknown';
+    }
+
+    const proxyProviders = proxyResult.status === 'fulfilled' ? providerMap(proxyResult.value) : undefined;
+    const ruleProviders = ruleResult.status === 'fulfilled' ? providerMap(ruleResult.value) : undefined;
+
     const hasProxyProviders =
       proxyResult.status === 'fulfilled' &&
       proxyResult.value?.success &&
-      proxyResult.value?.data?.providers &&
-      Object.values(proxyResult.value.data.providers).some((provider: any) =>
+      proxyProviders &&
+      Object.values(proxyProviders).some((provider: any) =>
         provider && Object.prototype.hasOwnProperty.call(provider, 'subscriptionInfo')
       );
 
     const hasRuleProviders =
       ruleResult.status === 'fulfilled' &&
       ruleResult.value?.success &&
-      ruleResult.value?.data?.providers &&
-      Object.keys(ruleResult.value.data.providers).length > 0;
+      ruleProviders &&
+      Object.keys(ruleProviders).length > 0;
 
     return hasProxyProviders || hasRuleProviders ? 'present' : 'absent';
   } catch (error) {
     console.error('检测 Provider 可用性失败:', error);
-    return 'absent';
+    return 'unknown';
   }
 };
 
-const refreshAvailability = async () => {
-  const status = await evaluateAvailability();
-  notifyListeners(status);
+const refreshAvailability = async (options: { preserveKnownOnUnknown?: boolean } = {}) => {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+
+  refreshInFlight = evaluateAvailability()
+    .then((status) => {
+      const nextStatus =
+        status === 'unknown' && options.preserveKnownOnUnknown && cachedStatus !== 'unknown'
+          ? cachedStatus
+          : status;
+
+      if (nextStatus !== cachedStatus) {
+        notifyListeners(nextStatus);
+      }
+
+      return nextStatus;
+    })
+    .finally(() => {
+      refreshInFlight = null;
+    });
+
+  return refreshInFlight;
 };
 
 /**
@@ -67,6 +101,46 @@ export const useProviderAvailability = () => {
     if (cachedStatus === 'unknown') {
       refreshAvailability();
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const timers = new Set<number>();
+    const refreshAfterConfigChange = () => {
+      void refreshAvailability({ preserveKnownOnUnknown: true });
+
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        void refreshAvailability({ preserveKnownOnUnknown: true });
+      }, 300);
+      timers.add(timer);
+    };
+    const refreshWhenVisible = () => {
+      if (!document.hidden) refreshAfterConfigChange();
+    };
+
+    window.addEventListener('profile-updated', refreshAfterConfigChange);
+    window.addEventListener('backup-restored', refreshAfterConfigChange);
+    window.addEventListener('subscription-auto-updated', refreshAfterConfigChange);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshAfterConfigChange();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshAfterConfigChange();
+    });
+
+    return () => {
+      window.removeEventListener('profile-updated', refreshAfterConfigChange);
+      window.removeEventListener('backup-restored', refreshAfterConfigChange);
+      window.removeEventListener('subscription-auto-updated', refreshAfterConfigChange);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+    };
   }, []);
 
   const refresh = useCallback(async () => {

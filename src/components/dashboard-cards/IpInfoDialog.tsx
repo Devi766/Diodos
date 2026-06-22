@@ -2,27 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw, Copy, Check } from 'lucide-react';
 import { showToast } from '@/components/ui/toast';
-
-interface IpInfo {
-  ip: string;
-  country?: string;
-  countryCode?: string;
-  region?: string;
-  city?: string;
-  isp?: string;
-  org?: string;
-  asn?: string;
-  timezone?: string;
-  latitude?: number;
-  longitude?: number;
-  isLocal?: boolean;
-}
+import { fetchIpInfo, type IpInfo } from '@/utils/ip-info';
 
 interface IpInfoDialogProps {
   open: boolean;
@@ -36,139 +23,55 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const fetchIpInfo = useCallback(async () => {
+  const loadIpInfo = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    type ServiceConfig = {
-      url: string;
-      parser: (data: any) => Partial<IpInfo> | null;
-    };
-
-    const services: ServiceConfig[] = [
-      {
-        url: 'http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query',
-        parser: (data: any): Partial<IpInfo> | null => {
-          if (data.status !== 'success') return null;
-          return {
-            ip: data.query,
-            country: data.country,
-            countryCode: data.countryCode,
-            region: data.regionName || data.region,
-            city: data.city,
-            isp: data.isp,
-            org: data.org,
-            asn: data.as,
-            timezone: data.timezone,
-            latitude: data.lat,
-            longitude: data.lon,
-          };
-        },
-      },
-      {
-        url: 'https://ipwho.is/',
-        parser: (data: any): Partial<IpInfo> | null => {
-          if (!data.success) return null;
-          return {
-            ip: data.ip,
-            country: data.country,
-            countryCode: data.country_code,
-            region: data.region,
-            city: data.city,
-            isp: data.connection?.isp,
-            org: data.connection?.org,
-            asn: data.connection?.asn ? `AS${data.connection.asn}` : undefined,
-            timezone: data.timezone?.id,
-            latitude: data.latitude,
-            longitude: data.longitude,
-          };
-        },
-      },
-      {
-        url: 'https://api.ip.sb/geoip',
-        parser: (data: any): Partial<IpInfo> | null => {
-          return {
-            ip: data.ip,
-            country: data.country,
-            countryCode: data.country_code,
-            region: data.region,
-            city: data.city,
-            isp: data.isp,
-            org: data.organization || data.org,
-            asn: data.asn ? `AS${data.asn}` : undefined,
-            timezone: data.timezone,
-            latitude: data.latitude,
-            longitude: data.longitude,
-          };
-        },
-      },
-      {
-        url: 'https://ipapi.co/json/',
-        parser: (data: any): Partial<IpInfo> | null => {
-          if (data.error) return null;
-          return {
-            ip: data.ip,
-            country: data.country_name,
-            countryCode: data.country_code,
-            region: data.region,
-            city: data.city,
-            isp: data.org,
-            org: data.org,
-            asn: data.asn,
-            timezone: data.timezone,
-            latitude: data.latitude,
-            longitude: data.longitude,
-          };
-        },
-      },
-    ];
-
-    let aggregatedInfo: Partial<IpInfo> = {};
-
-    for (const service of services) {
-      try {
-        const response = await fetch(service.url, {
-          headers: { 'User-Agent': 'FlyClash/1.0' },
-        });
-
-        if (!response.ok) continue;
-
-        const data = await response.json();
-        const parsedInfo = service.parser(data);
-        if (!parsedInfo) continue;
-
-        // Merge info, preferring non-empty values
-        for (const [key, value] of Object.entries(parsedInfo)) {
-          if (value && !aggregatedInfo[key as keyof IpInfo]) {
-            (aggregatedInfo as any)[key] = value;
-          }
-        }
-
-        // If we have enough info, stop
-        if (aggregatedInfo.ip && aggregatedInfo.country && aggregatedInfo.isp) {
-          break;
-        }
-      } catch (err) {
-        console.warn(`Failed to fetch from ${service.url}:`, err);
-        continue;
-      }
-    }
-
-    if (!aggregatedInfo.ip) {
+    try {
+      setIpInfo(await fetchIpInfo());
+      setLoading(false);
+    } catch {
       setError(t('ipInfoDialog.fetchError'));
       setLoading(false);
-      return;
     }
-
-    setIpInfo(aggregatedInfo as IpInfo);
-    setLoading(false);
   }, [t]);
 
   useEffect(() => {
     if (open) {
-      fetchIpInfo();
+      loadIpInfo();
     }
-  }, [open, fetchIpInfo]);
+  }, [open, loadIpInfo]);
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') return;
+
+    const refreshIpInfo = () => {
+      void loadIpInfo();
+    };
+
+    window.addEventListener('profile-updated', refreshIpInfo);
+    window.addEventListener('backup-restored', refreshIpInfo);
+    window.addEventListener('subscription-auto-updated', refreshIpInfo);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshIpInfo();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshIpInfo();
+    });
+    const unsubscribeNodeChanged = window.electronAPI?.onNodeChanged?.(() => {
+      refreshIpInfo();
+    });
+
+    return () => {
+      window.removeEventListener('profile-updated', refreshIpInfo);
+      window.removeEventListener('backup-restored', refreshIpInfo);
+      window.removeEventListener('subscription-auto-updated', refreshIpInfo);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+      unsubscribeNodeChanged?.();
+    };
+  }, [loadIpInfo, open]);
 
   const copyToClipboard = useCallback(async (text: string, fieldName: string) => {
     if (!text || text === '--') return;
@@ -218,7 +121,7 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
           <DialogTitle className="flex items-center justify-between">
             <span>{t('ipInfoDialog.title')}</span>
             <button
-              onClick={fetchIpInfo}
+              onClick={loadIpInfo}
               disabled={loading}
               className="rounded-lg p-1.5 transition-colors hover:bg-muted disabled:opacity-50"
               title={t('common.refresh')}
@@ -226,6 +129,9 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
               <RefreshCw className={`h-4 w-4 text-muted-foreground ${loading ? 'animate-spin' : ''}`} />
             </button>
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            {t('ipInfoDialog.description')}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="mt-2">
@@ -238,7 +144,7 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
             <div className="flex flex-col items-center justify-center py-8 gap-3">
               <span className="text-sm text-destructive">{error}</span>
               <button
-                onClick={fetchIpInfo}
+                onClick={loadIpInfo}
                 className="text-sm text-primary hover:underline"
               >
                 {t('ipInfoDialog.retry')}
@@ -256,6 +162,17 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
                     label={t('ipInfoDialog.ipAddress')}
                     value={ipInfo.ip}
                     fieldName="ip"
+                  />
+                  <InfoRow
+                    label={t('ipInfoDialog.source')}
+                    value={
+                      ipInfo.source === 'proxy'
+                        ? t('dashboard.proxyExit')
+                        : ipInfo.source === 'direct'
+                          ? t('dashboard.directExit')
+                          : t('dashboard.browserExit')
+                    }
+                    fieldName="source"
                   />
                   <InfoRow
                     label={t('ipInfoDialog.country')}

@@ -40,6 +40,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "audit:tauri-compat": "node scripts/audit-tauri-compat.mjs",
     "clean": "node -e \"const fs=require('fs');['.next','out','dist','release'].forEach(d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}})\""
   },
   "dependencies": {

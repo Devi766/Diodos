@@ -39,6 +39,7 @@ jobs:
             bundles: nsis
             artifact_paths: |
               src-tauri/target/release/bundle/nsis/*.exe
+              src-tauri/target/release/bundle/portable/*.zip
           - name: linux-x64
             runner: ubuntu-22.04
             prepare_arch: x64
@@ -119,6 +120,27 @@ jobs:
 
       - name: Build Tauri bundle
         run: npm run tauri -- build --bundles ${{ matrix.bundles }}
+
+      - name: Package Windows portable zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $arch = "${{ matrix.prepare_arch }}"
+          $releaseDir = "src-tauri/target/release"
+          $bundleDir = "$releaseDir/bundle/portable"
+          $portableDir = "$releaseDir/portable/FlyClash_${version}_${arch}-portable"
+          $archivePath = "$bundleDir/FlyClash_${version}_${arch}-portable.zip"
+
+          Remove-Item -LiteralPath $portableDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $portableDir, $bundleDir | Out-Null
+
+          Copy-Item -LiteralPath "$releaseDir/flyclash.exe" -Destination "$portableDir/flyclash.exe" -Force
+          Copy-Item -LiteralPath "$releaseDir/_up_" -Destination "$portableDir/_up_" -Recurse -Force
+
+          Compress-Archive -Path "$portableDir/*" -DestinationPath $archivePath -Force
+          Get-Item -LiteralPath $archivePath
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

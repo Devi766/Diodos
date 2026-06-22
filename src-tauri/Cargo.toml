@@ -12,18 +12,23 @@ build = "build.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+boa_engine = "0.21.1"
+flate2 = "1"
 open = "5"
 aes-gcm = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 regex = "1"
+rfd = "0.15"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 sha2 = "0.10"
-tauri = { version = "2", features = [] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-deep-link = "2.4.9"
+tauri-plugin-single-instance = "2.4.2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 urlencoding = "2"
 zip = "2"

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { showToast } from '@/components/ui/toast';
 
 type ViewMode = 'day' | 'month';
 
@@ -36,10 +37,26 @@ export function TrafficStatisticsCard() {
   const monthChartRef = React.useRef<HTMLDivElement>(null);
   const [hoveredDay, setHoveredDay] = useState<{ date: string; upload: number; download: number; x: number; y: number } | null>(null);
 
+  const persistViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('trafficStatisticsViewMode', mode);
+    } catch (error) {
+      console.error('保存视图模式失败:', error);
+      showToast({
+        message: t('dashboard.viewModeSaveFailed', { error: error instanceof Error ? error.message : String(error || t('common.error')) }),
+        type: 'error',
+      });
+    }
+  };
+
   useEffect(() => {
+    const electron = typeof window !== 'undefined' ? window.electronAPI : undefined;
+    if (!electron?.getTrafficToday) return;
+
     const loadTodayData = async () => {
       try {
-        const result = await window.electronAPI.getTrafficToday();
+        const result = await electron.getTrafficToday();
         if (result.success && result.data) {
           setTodayData({
             upload: result.data.upload || 0,
@@ -57,9 +74,12 @@ export function TrafficStatisticsCard() {
 
   useEffect(() => {
     if (viewMode !== 'month') return;
+    const electron = typeof window !== 'undefined' ? window.electronAPI : undefined;
+    if (!electron?.getTrafficMonth) return;
+
     const loadMonthData = async () => {
       try {
-        const result = await window.electronAPI.getTrafficMonth();
+        const result = await electron.getTrafficMonth();
         if (result.success && result.data) {
           setMonthData(result.data);
         }
@@ -115,12 +135,7 @@ export function TrafficStatisticsCard() {
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-[#1f1f1f]">
           <button
             onClick={() => {
-              setViewMode('day');
-              try {
-                localStorage.setItem('trafficStatisticsViewMode', 'day');
-              } catch (error) {
-                console.error('保存视图模式失败:', error);
-              }
+              persistViewMode('day');
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'day'
@@ -133,12 +148,7 @@ export function TrafficStatisticsCard() {
           </button>
           <button
             onClick={() => {
-              setViewMode('month');
-              try {
-                localStorage.setItem('trafficStatisticsViewMode', 'month');
-              } catch (error) {
-                console.error('保存视图模式失败:', error);
-              }
+              persistViewMode('month');
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'month'

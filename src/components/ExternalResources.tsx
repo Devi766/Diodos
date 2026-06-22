@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { ReloadIcon } from '@radix-ui/react-icons';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Card } from './ui/card';
@@ -8,6 +8,9 @@ import { Button } from './ui/button';
 import { Switch } from './ui/switch';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { useTranslation } from 'react-i18next';
+import { showToast } from '@/components/ui/toast';
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
 type GeoDataConfig = {
   geoip: string;
@@ -16,21 +19,37 @@ type GeoDataConfig = {
   asn: string;
 };
 
+const DEFAULT_GEOX_URL: GeoDataConfig = {
+  geoip: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat',
+  geosite: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat',
+  mmdb: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb',
+  asn: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb'
+};
+
+const toMihomoGeoxUrl = (config: GeoDataConfig) => ({
+  'geo-ip': config.geoip,
+  'geo-site': config.geosite,
+  mmdb: config.mmdb,
+  asn: config.asn,
+});
+
+const notifyProfileUpdated = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'external-resources' } }));
+  }
+};
+
 export default function ExternalResources() {
   const { t } = useTranslation();
   const mihomoAPI = useMihomoAPI();
+  const mihomoAPIRef = useRef(mihomoAPI);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [hasLoadedConfig, setHasLoadedConfig] = useState(false);
 
   // GeoData配置
-  const [geoxUrl, setGeoxUrl] = useState<GeoDataConfig>({
-    geoip: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat',
-    geosite: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat',
-    mmdb: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb',
-    asn: 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb'
-  });
+  const [geoxUrl, setGeoxUrl] = useState<GeoDataConfig>(DEFAULT_GEOX_URL);
 
   const [geoipInput, setGeoipInput] = useState(geoxUrl.geoip);
   const [geositeInput, setGeositeInput] = useState(geoxUrl.geosite);
@@ -41,20 +60,39 @@ export default function ExternalResources() {
   const [geoAutoUpdate, setGeoAutoUpdate] = useState(false);
   const [geoUpdateInterval, setGeoUpdateInterval] = useState(24);
 
-  const fetchConfig = async () => {
+  useEffect(() => {
+    mihomoAPIRef.current = mihomoAPI;
+  }, [mihomoAPI]);
+
+  const errorToMessage = useCallback((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error || t('externalResources.unknownError'));
+    if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
+      return t('externalResources.apiUnavailable');
+    }
+    if (
+      message.includes('Mihomo service unavailable') ||
+      message.includes('Mihomo服务未运行') ||
+      message.includes('Mihomo服务未运行或无法访问')
+    ) {
+      return t('externalResources.serviceUnavailable');
+    }
+    return message;
+  }, [t]);
+
+  const fetchConfig = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      const config = await mihomoAPI.configs();
+      const config = await mihomoAPIRef.current.configs();
       const geoxUrlConfig = (config as any)['geox-url'] || {};
 
       // 确保每个字段都有默认值
       const mergedGeoxUrl = {
-        geoip: geoxUrlConfig.geoip || geoxUrl.geoip,
-        geosite: geoxUrlConfig.geosite || geoxUrl.geosite,
-        mmdb: geoxUrlConfig.mmdb || geoxUrl.mmdb,
-        asn: geoxUrlConfig.asn || geoxUrl.asn
+        geoip: geoxUrlConfig['geo-ip'] || geoxUrlConfig.geoip || DEFAULT_GEOX_URL.geoip,
+        geosite: geoxUrlConfig['geo-site'] || geoxUrlConfig.geosite || DEFAULT_GEOX_URL.geosite,
+        mmdb: geoxUrlConfig.mmdb || DEFAULT_GEOX_URL.mmdb,
+        asn: geoxUrlConfig.asn || DEFAULT_GEOX_URL.asn
       };
 
       setGeoxUrl(mergedGeoxUrl);
@@ -66,90 +104,179 @@ export default function ExternalResources() {
       setGeoMode((config as any)['geodata-mode'] ? 'dat' : 'db');
       setGeoAutoUpdate((config as any)['geo-auto-update'] || false);
       setGeoUpdateInterval((config as any)['geo-update-interval'] || 24);
+      setHasLoadedConfig(true);
     } catch (error: any) {
+      const message = errorToMessage(error);
       console.error('获取配置失败:', error);
-      setErrorMessage(t('externalResources.fetchError', { error: error.message || '未知错误' }));
+      setErrorMessage(t('externalResources.fetchError', { error: message }));
+      setHasLoadedConfig(false);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [errorToMessage, t]);
 
   const handleUpdateGeoData = async () => {
     setIsUpdating(true);
     setErrorMessage(null);
-    setSuccessMessage(null);
     try {
-      await mihomoAPI.upgradeGeo();
-      setSuccessMessage(t('externalResources.updateSuccess'));
-      // 3秒后自动清除成功消息
-      setTimeout(() => setSuccessMessage(null), 3000);
+      await mihomoAPIRef.current.upgradeGeo();
+      notifyProfileUpdated();
+      showToast({ message: t('externalResources.updateSuccess'), type: 'success' });
     } catch (error: any) {
       console.error('更新GeoData失败:', error);
-      setErrorMessage(t('externalResources.updateError', { error: error.message || '未知错误' }));
+      const message = t('externalResources.updateError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
     } finally {
       setIsUpdating(false);
     }
   };
 
   const handleSaveGeoUrl = async (field: keyof GeoDataConfig, value: string) => {
+    setErrorMessage(null);
     try {
-      await mihomoAPI.patchConfigs({
-        'geox-url': {
-          ...geoxUrl,
-          [field]: value
-        }
+      const nextGeoxUrl = { ...geoxUrl, [field]: value };
+      await mihomoAPIRef.current.patchConfigs({
+        'geox-url': toMihomoGeoxUrl(nextGeoxUrl)
       });
-      setGeoxUrl(prev => ({ ...prev, [field]: value }));
+      setGeoxUrl(nextGeoxUrl);
+      notifyProfileUpdated();
+      showToast({
+        message: t('externalResources.saveGeoUrlSuccess', { name: field.toUpperCase() }),
+        type: 'success',
+      });
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
+      const message = t('externalResources.saveError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
     }
   };
 
   const handleSaveGeoMode = async (mode: 'dat' | 'db') => {
+    setErrorMessage(null);
+    const previousMode = geoMode;
+    setGeoMode(mode);
     try {
-      await mihomoAPI.patchConfigs({
+      await mihomoAPIRef.current.patchConfigs({
         'geodata-mode': mode === 'dat'
       });
-      setGeoMode(mode);
+      notifyProfileUpdated();
+      showToast({
+        message: t('externalResources.modeSaved', { mode: mode.toUpperCase() }),
+        type: 'success',
+      });
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
+      setGeoMode(previousMode);
+      const message = t('externalResources.saveError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
     }
   };
 
   const handleSaveAutoUpdate = async (enabled: boolean) => {
+    setErrorMessage(null);
+    const previousValue = geoAutoUpdate;
+    setGeoAutoUpdate(enabled);
     try {
-      await mihomoAPI.patchConfigs({
+      await mihomoAPIRef.current.patchConfigs({
         'geo-auto-update': enabled
       });
-      setGeoAutoUpdate(enabled);
+      notifyProfileUpdated();
+      showToast({
+        message: enabled
+          ? t('externalResources.autoUpdateEnabled')
+          : t('externalResources.autoUpdateDisabled'),
+        type: 'success',
+      });
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
+      setGeoAutoUpdate(previousValue);
+      const message = t('externalResources.saveError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
     }
   };
 
   const handleSaveUpdateInterval = async (interval: number) => {
+    setErrorMessage(null);
+    const previousInterval = geoUpdateInterval;
+    setGeoUpdateInterval(interval);
     try {
-      await mihomoAPI.patchConfigs({
+      await mihomoAPIRef.current.patchConfigs({
         'geo-update-interval': interval
       });
-      setGeoUpdateInterval(interval);
+      notifyProfileUpdated();
+      showToast({
+        message: t('externalResources.intervalSaved', { interval }),
+        type: 'success',
+      });
     } catch (error: any) {
       console.error('保存配置失败:', error);
-      alert(t('externalResources.saveError', { error: error.message || '未知错误' }));
+      setGeoUpdateInterval(previousInterval);
+      const message = t('externalResources.saveError', { error: errorToMessage(error) });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
     }
   };
 
   useEffect(() => {
     fetchConfig();
-  }, []);
+  }, [fetchConfig]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const refreshAfterProfileChange = () => {
+      void fetchConfig();
+    };
+
+    window.addEventListener('profile-updated', refreshAfterProfileChange);
+    window.addEventListener('backup-restored', refreshAfterProfileChange);
+    window.addEventListener('subscription-auto-updated', refreshAfterProfileChange);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshAfterProfileChange();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshAfterProfileChange();
+    });
+
+    return () => {
+      window.removeEventListener('profile-updated', refreshAfterProfileChange);
+      window.removeEventListener('backup-restored', refreshAfterProfileChange);
+      window.removeEventListener('subscription-auto-updated', refreshAfterProfileChange);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+    };
+  }, [fetchConfig]);
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <ReloadIcon className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!hasLoadedConfig) {
+    return (
+      <div className="space-y-6">
+        <Card className="p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <h3 className="text-base font-semibold text-foreground">{t('externalResources.configUnavailableTitle')}</h3>
+              <p className="text-sm text-muted-foreground">
+                {errorMessage || t('externalResources.serviceUnavailable')}
+              </p>
+            </div>
+            <Button size="sm" variant="solid" onClick={fetchConfig}>
+              <ReloadIcon className="w-4 h-4 mr-2" />
+              {t('externalResources.retry')}
+            </Button>
+          </div>
+        </Card>
       </div>
     );
   }
@@ -160,13 +287,6 @@ export default function ExternalResources() {
       {errorMessage && (
         <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg text-sm">
           {errorMessage}
-        </div>
-      )}
-
-      {/* 成功提示 */}
-      {successMessage && (
-        <div className="p-3 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-lg text-sm">
-          {successMessage}
         </div>
       )}
 

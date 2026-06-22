@@ -1,5 +1,10 @@
+const { PHASE_DEVELOPMENT_SERVER } = require('next/constants');
+
 /** @type {import('next').NextConfig} */
-const nextConfig = {
+const createNextConfig = (phase) => {
+  const isDev = phase === PHASE_DEVELOPMENT_SERVER;
+
+  return {
   reactStrictMode: true,
   images: {
     domains: ['localhost'],
@@ -18,7 +23,7 @@ const nextConfig = {
     });
     return config;
   },
-  output: 'export',
+  ...(isDev ? {} : { output: 'export' }),
   // 允许在开发和生产环境访问过程变量
   env: {
     BASE_PATH: process.env.NEXT_PUBLIC_BASE_PATH || '',
@@ -30,16 +35,13 @@ const nextConfig = {
   // 修改资源路径配置
   assetPrefix: '', // 移除相对路径前缀
   basePath: '',
-  trailingSlash: true,
-  // 添加静态资源配置
-  distDir: 'out',
+  trailingSlash: !isDev,
   experimental: {
-    // 启用静态页面导出
-    isrMemoryCacheSize: 0,
     // 确保所有页面都被静态生成
     workerThreads: false,
     cpus: 1
   }
+  }
 }
 
-module.exports = nextConfig 
+module.exports = createNextConfig

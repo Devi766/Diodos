@@ -1,7 +1,14 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { CheckCircle, XCircle, Scale } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useMihomoAPI } from '@/services/mihomo-api';
+import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 
 type ViewMode = 'hit' | 'miss';
 
@@ -18,11 +25,24 @@ interface RuleTypeGroup {
   rules: number;
 }
 
+const readCachedRules = () => {
+  const cached = readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.matchRules);
+  return Array.isArray(cached) ? cached : [];
+};
+
+const hasRuleExtra = (items: any[]) => {
+  return items.some((r: any) => r?.extra);
+};
+
 export function RulesOverviewCard() {
   const { t } = useTranslation();
   const mihomoAPI = useMihomoAPI();
   const apiRef = useRef(mihomoAPI);
-  apiRef.current = mihomoAPI;
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    apiRef.current = mihomoAPI;
+  }, [mihomoAPI]);
 
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try {
@@ -32,32 +52,83 @@ export function RulesOverviewCard() {
       return 'hit';
     }
   });
-  const [rules, setRules] = useState<any[]>([]);
-  const [hasExtra, setHasExtra] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const [rules, setRules] = useState<any[]>(() => readCachedRules());
+  const [hasExtra, setHasExtra] = useState(() => {
+    const cached = readCachedRules();
+    return cached.length === 0 ? true : hasRuleExtra(cached);
+  });
+  const [loading, setLoading] = useState(() => !hasAppDataCache(APP_DATA_CACHE_KEYS.matchRules));
+
+  const fetchRules = useCallback(async (options: { showLoading?: boolean } = {}) => {
+    if (options.showLoading) {
+      setLoading(true);
+    }
+
+    try {
+      const data = await apiRef.current.matchRules();
+      if (!mountedRef.current) return;
+
+      const nextRules = Array.isArray(data?.rules) ? data.rules : [];
+      writeAppDataCache(APP_DATA_CACHE_KEYS.matchRules, nextRules.map((rule: any, index: number) => ({ ...rule, index })));
+      setRules(nextRules);
+      setHasExtra(hasRuleExtra(nextRules));
+    } catch (error) {
+      if (!mountedRef.current) return;
+      console.error('获取规则数据失败:', error);
+      if (!hasAppDataCache(APP_DATA_CACHE_KEYS.matchRules)) {
+        setRules([]);
+        setHasExtra(false);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    mountedRef.current = true;
+    fetchRules({ showLoading: false });
 
-    const fetchRules = async () => {
-      try {
-        const data = await apiRef.current.matchRules();
-        if (cancelled) return;
-        if (data?.rules) {
-          setRules(data.rules);
-          const firstWithExtra = data.rules.find((r: any) => r.extra);
-          setHasExtra(!!firstWithExtra);
-        }
-      } catch (error) {
-        if (!cancelled) console.error('获取规则数据失败:', error);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    const refreshRules = () => {
+      void fetchRules();
     };
 
-    fetchRules();
-    const interval = setInterval(fetchRules, 30000);
-    return () => { cancelled = true; clearInterval(interval); };
+    const interval = setInterval(refreshRules, 30000);
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('profile-updated', refreshRules);
+      window.addEventListener('backup-restored', refreshRules);
+      window.addEventListener('subscription-auto-updated', refreshRules);
+    }
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshRules();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshRules();
+    });
+
+    return () => {
+      mountedRef.current = false;
+      clearInterval(interval);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('profile-updated', refreshRules);
+        window.removeEventListener('backup-restored', refreshRules);
+        window.removeEventListener('subscription-auto-updated', refreshRules);
+      }
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+    };
+  }, [fetchRules]);
+
+  useEffect(() => {
+    return subscribeAppDataCache(APP_DATA_CACHE_KEYS.matchRules, () => {
+      const cached = readCachedRules();
+      setRules(cached);
+      setHasExtra(cached.length === 0 ? false : hasRuleExtra(cached));
+      setLoading(false);
+    });
   }, []);
 
   // 有 extra 字段时：按命中/未命中排序
@@ -107,7 +178,7 @@ export function RulesOverviewCard() {
   if (loading) {
     return (
       <div className="flex h-[260px] flex-col items-center justify-center rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-        <p className="text-sm text-muted-foreground">{t('dashboard.loading')}</p>
+        <span className="sr-only">{t('dashboard.rulesOverview')}</span>
       </div>
     );
   }

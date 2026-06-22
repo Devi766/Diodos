@@ -3,12 +3,11 @@
 import React, { useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { showToast } from './ui/toast';
 import { Badge } from './ui/badge';
 import { useTranslation } from 'react-i18next';
 
 export interface OverrideSettingsRef {
-  saveConfig: () => Promise<void>;
+  saveConfig: () => Promise<{ needsManualRestart: boolean }>;
 }
 
 interface KernelConfig {
@@ -83,6 +82,28 @@ interface SnifferConfig {
   };
 }
 
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+const readErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (!error || typeof error !== 'object') return fallback;
+
+  const record = error as { error?: unknown; message?: unknown; statusText?: unknown; data?: { error?: unknown; message?: unknown } };
+  const raw = record.error ?? record.message ?? record.statusText ?? record.data?.error ?? record.data?.message;
+  if (typeof raw === 'string') return raw || fallback;
+  if (raw != null) return String(raw);
+  return fallback;
+};
+
 const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   const { t } = useTranslation();
   const [config, setConfig] = useState<KernelConfig>({});
@@ -91,119 +112,206 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   const [snifferConfig, setSnifferConfig] = useState<SnifferConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadErrors, setLoadErrors] = useState<Record<'kernel' | 'dns' | 'sniffer', string | null>>({
+    kernel: null,
+    dns: null,
+    sniffer: null,
+  });
   const [activeTab, setActiveTab] = useState<'basic' | 'port' | 'controller' | 'dns' | 'sniffer' | 'advanced'>('basic');
+
+  const formatOverrideError = (error: unknown, fallback = t('common.error')) => {
+    const message = readErrorMessage(error, fallback);
+    if (message.includes(TAURI_RUNTIME_UNAVAILABLE) || message.includes('not implemented in the Tauri runtime')) {
+      return t('overrideSettings.apiUnavailable');
+    }
+    return message;
+  };
+
+  const ensureResultSuccess = (result: any, fallback: string) => {
+    if (!result?.success) {
+      throw new Error(`${fallback}: ${formatOverrideError(result?.error, t('common.error'))}`);
+    }
+    return result;
+  };
+
+  const setSectionLoadError = (section: 'kernel' | 'dns' | 'sniffer', message: string | null) => {
+    setLoadErrors(prev => ({ ...prev, [section]: message }));
+  };
 
   // 加载配置
   useEffect(() => {
-    loadConfig();
-    loadDnsConfig();
-    loadSnifferConfig();
+    reloadAllConfigs();
   }, []);
 
   const loadConfig = async () => {
     try {
-      setLoading(true);
-      if (window.electronAPI?.getKernelConfig) {
-        const result = await window.electronAPI.getKernelConfig();
-        if (result.success) {
-          setConfig(result.config || {});
-        }
+      const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+      if (!hasElectronMethod(api, 'getKernelConfig')) {
+        setSectionLoadError('kernel', t('overrideSettings.apiUnavailable'));
+        return;
+      }
+
+      const result = await api.getKernelConfig();
+      if (result.success) {
+        setConfig(result.config || {});
+        setSectionLoadError('kernel', null);
+      } else {
+        setSectionLoadError(
+          'kernel',
+          `${t('overrideSettings.loadKernelConfigFailed')}: ${formatOverrideError(result.error, t('common.error'))}`
+        );
       }
     } catch (error) {
       console.error(t('overrideSettings.loadKernelConfigFailed'), error);
-    } finally {
-      setLoading(false);
+      setSectionLoadError(
+        'kernel',
+        `${t('overrideSettings.loadKernelConfigFailed')}: ${formatOverrideError(error)}`
+      );
     }
   };
 
   const loadDnsConfig = async () => {
     try {
-      if (window.electronAPI?.getDnsConfig) {
-        const result = await window.electronAPI.getDnsConfig();
-        if (result.success) {
-          setDnsConfig(result.config || {});
+      const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+      if (!hasElectronMethod(api, 'getDnsConfig')) {
+        setSectionLoadError('dns', t('overrideSettings.dnsApiUnavailable'));
+        return;
+      }
 
-          if (result.hosts) {
-            const hostsArray = Object.entries(result.hosts).map(([domain, value]) => ({
-              domain,
-              value
-            }));
-            setHostsConfig({ hosts: hostsArray });
-          }
+      const result = await api.getDnsConfig();
+      if (result.success) {
+        setDnsConfig(result.config || {});
+
+        if (result.hosts) {
+          const hostsArray = Object.entries(result.hosts).map(([domain, value]) => ({
+            domain,
+            value
+          }));
+          setHostsConfig({ hosts: hostsArray });
         }
+        setSectionLoadError('dns', null);
+      } else {
+        setSectionLoadError(
+          'dns',
+          `${t('overrideSettings.loadDnsConfigFailed')}: ${formatOverrideError(result.error, t('common.error'))}`
+        );
       }
     } catch (error) {
       console.error(t('overrideSettings.loadDnsConfigFailed'), error);
+      setSectionLoadError(
+        'dns',
+        `${t('overrideSettings.loadDnsConfigFailed')}: ${formatOverrideError(error)}`
+      );
     }
   };
 
   const loadSnifferConfig = async () => {
     try {
-      if (window.electronAPI?.getSnifferConfig) {
-        const result = await window.electronAPI.getSnifferConfig();
-        if (result.success) {
-          setSnifferConfig(result.config || {});
-        }
+      const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+      if (!hasElectronMethod(api, 'getSnifferConfig')) {
+        setSectionLoadError('sniffer', t('overrideSettings.apiUnavailable'));
+        return;
+      }
+
+      const result = await api.getSnifferConfig();
+      if (result.success) {
+        setSnifferConfig(result.config || {});
+        setSectionLoadError('sniffer', null);
+      } else {
+        setSectionLoadError(
+          'sniffer',
+          `${t('overrideSettings.loadSnifferConfigFailed')}: ${formatOverrideError(result.error, t('common.error'))}`
+        );
       }
     } catch (error) {
       console.error(t('overrideSettings.loadSnifferConfigFailed'), error);
+      setSectionLoadError(
+        'sniffer',
+        `${t('overrideSettings.loadSnifferConfigFailed')}: ${formatOverrideError(error)}`
+      );
+    }
+  };
+
+  const reloadAllConfigs = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([loadConfig(), loadDnsConfig(), loadSnifferConfig()]);
+    } finally {
+      setLoading(false);
     }
   };
 
   const saveConfig = async () => {
     try {
       setSaving(true);
+      const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+      const restartStates: boolean[] = [];
+      const loadErrorMessages = Object.values(loadErrors).filter((message): message is string => Boolean(message));
 
-      // 保存内核配置
-      if (window.electronAPI?.saveKernelConfig) {
-        const kernelResult = await window.electronAPI.saveKernelConfig(config);
-        if (!kernelResult.success) {
-          const errorMsg = t('overrideSettings.kernelConfigSaveFailed') + ': ' + kernelResult.error;
-          showToast({ message: errorMsg, type: 'error' });
-          throw new Error(errorMsg);
-        }
+      if (loadErrorMessages.length > 0) {
+        throw new Error(`${t('overrideSettings.saveBlockedByLoadError')}\n${loadErrorMessages.join('\n')}`);
       }
 
+      // 保存内核配置
+      if (!hasElectronMethod(api, 'saveKernelConfig')) {
+        throw new Error(t('overrideSettings.apiUnavailable'));
+      }
+      const kernelResult = ensureResultSuccess(
+        await api.saveKernelConfig(config),
+        t('overrideSettings.kernelConfigSaveFailed')
+      );
+      if (typeof kernelResult.restarted === 'boolean') restartStates.push(kernelResult.restarted);
+
       // 保存DNS配置（过滤掉空行）
-      if (window.electronAPI?.saveDnsConfig) {
-        // 创建一个副本，过滤掉数组字段中的空行
-        const cleanedDnsConfig = { ...dnsConfig };
-        const arrayFields: (keyof DnsConfig)[] = ['default-nameserver', 'nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter'];
+      if (!hasElectronMethod(api, 'saveDnsConfig')) {
+        throw new Error(t('overrideSettings.apiUnavailable'));
+      }
 
-        arrayFields.forEach(field => {
-          if (Array.isArray(cleanedDnsConfig[field])) {
-            cleanedDnsConfig[field] = (cleanedDnsConfig[field] as string[]).filter(item => item.trim());
-          }
-        });
+      // 创建一个副本，过滤掉数组字段中的空行
+      const cleanedDnsConfig = { ...dnsConfig };
+      const arrayFields: (keyof DnsConfig)[] = ['default-nameserver', 'nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter'];
 
-        const dnsResult = await window.electronAPI.saveDnsConfig(cleanedDnsConfig);
-        if (!dnsResult.success) {
-          const errorMsg = t('overrideSettings.dnsConfigSaveFailed') + ': ' + dnsResult.error;
-          showToast({ message: errorMsg, type: 'error' });
-          throw new Error(errorMsg);
+      arrayFields.forEach(field => {
+        const value = cleanedDnsConfig[field];
+        if (Array.isArray(value)) {
+          (cleanedDnsConfig as Record<string, unknown>)[field] = value.filter(item => item.trim());
+        }
+      });
+
+      const dnsResult = ensureResultSuccess(
+        await api.saveDnsConfig(cleanedDnsConfig),
+        t('overrideSettings.dnsConfigSaveFailed')
+      );
+      if (typeof dnsResult.restarted === 'boolean') restartStates.push(dnsResult.restarted);
+
+      // 保存Hosts配置
+      if (dnsConfig['use-hosts']) {
+        if (!hasElectronMethod(api, 'saveHostsConfig')) {
+          throw new Error(t('overrideSettings.apiUnavailable'));
         }
 
-        // 保存Hosts配置
-        if (dnsConfig['use-hosts'] && window.electronAPI?.saveHostsConfig) {
-          await window.electronAPI.saveHostsConfig(hostsConfig.hosts || []);
-        }
+        const hostsResult = ensureResultSuccess(
+          await api.saveHostsConfig(hostsConfig.hosts || []),
+          t('overrideSettings.hostsConfigSaveFailed')
+        );
+        if (typeof hostsResult.restarted === 'boolean') restartStates.push(hostsResult.restarted);
       }
 
       // 保存Sniffer配置
-      if (window.electronAPI?.saveSnifferConfig) {
-        const snifferResult = await window.electronAPI.saveSnifferConfig(snifferConfig);
-        if (!snifferResult.success) {
-          const errorMsg = t('overrideSettings.snifferConfigSaveFailed') + ': ' + snifferResult.error;
-          showToast({ message: errorMsg, type: 'error' });
-          throw new Error(errorMsg);
-        }
+      if (!hasElectronMethod(api, 'saveSnifferConfig')) {
+        throw new Error(t('overrideSettings.apiUnavailable'));
       }
+      const snifferResult = ensureResultSuccess(
+        await api.saveSnifferConfig(snifferConfig),
+        t('overrideSettings.snifferConfigSaveFailed')
+      );
+      if (typeof snifferResult.restarted === 'boolean') restartStates.push(snifferResult.restarted);
 
-      showToast({ message: t('overrideSettings.allConfigSaved'), type: 'success' });
+      return {
+        needsManualRestart: restartStates.some(restarted => restarted === false)
+      };
     } catch (error) {
       console.error(t('overrideSettings.saveConfigFailed'), error);
-      const errorMsg = t('overrideSettings.saveConfigFailed') + ': ' + error;
-      showToast({ message: errorMsg, type: 'error' });
       throw error;
     } finally {
       setSaving(false);
@@ -265,6 +373,28 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="text-gray-500 dark:text-gray-400">{t('overrideSettings.loading')}</div>
+      </div>
+    );
+  }
+
+  const loadErrorMessages = Object.values(loadErrors).filter((message): message is string => Boolean(message));
+  if (loadErrorMessages.length > 0) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold">{t('overrideSettings.loadConfigFailedTitle')}</h3>
+            <p className="mt-1 text-sm">{t('overrideSettings.saveBlockedByLoadError')}</p>
+            <ul className="mt-3 space-y-1 text-sm">
+              {loadErrorMessages.map((message) => (
+                <li key={message}>- {message}</li>
+              ))}
+            </ul>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={reloadAllConfigs}>
+            {t('overrideSettings.reloadConfig')}
+          </Button>
+        </div>
       </div>
     );
   }

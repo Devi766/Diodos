@@ -220,6 +220,7 @@ export async function* streamChat(
   // ---- Obtain a reader (IPC proxy or direct fetch) ----
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   let ipcCleanup: (() => void) | undefined;
+  let ipcAbortCleanup: (() => void) | undefined;
 
   if (hasProxy()) {
     // Route through Electron main process – no CORS restrictions
@@ -232,15 +233,31 @@ export async function* streamChat(
 
     // Wire abort signal
     if (signal) {
-      signal.addEventListener('abort', () => {
+      const abortIpcStream = () => {
         (window as any).electronAPI?.aiProxyStreamAbort(requestId);
+        try {
+          void reader.cancel('AbortError');
+        } catch { /* reader may already be closed */ }
         ipcCleanup?.();
-      }, { once: true });
+      };
+
+      if (signal.aborted) {
+        abortIpcStream();
+        return;
+      }
+
+      signal.addEventListener('abort', abortIpcStream, { once: true });
+      ipcAbortCleanup = () => signal.removeEventListener('abort', abortIpcStream);
     }
 
     const res = await (window as any).electronAPI!.aiProxyStreamStart({
       url, method: 'POST', headers, body: bodyStr, requestId, timeout: 60000,
     });
+
+    if (signal?.aborted) {
+      ipcCleanup();
+      return;
+    }
 
     if (!res.ok) {
       ipcCleanup();
@@ -284,6 +301,7 @@ export async function* streamChat(
       yield delta;
     }
   } finally {
+    ipcAbortCleanup?.();
     ipcCleanup?.();
   }
 

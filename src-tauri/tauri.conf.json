@@ -20,7 +20,9 @@
         "minHeight": 640,
         "resizable": true,
         "fullscreen": false,
-        "decorations": false
+        "decorations": false,
+        "transparent": true,
+        "backgroundColor": [0, 0, 0, 0]
       }
     ],
     "security": {
@@ -28,6 +30,16 @@
       "capabilities": [
         "main-capability"
       ]
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "clash",
+          "flyclash"
+        ]
+      }
     }
   },
   "bundle": {

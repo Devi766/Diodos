@@ -3,8 +3,19 @@
 import "./globals.css";
 import { useEffect, useState } from "react";
 import Script from "next/script";
+import { Toaster } from "sonner";
 import { ToastContainer } from "@/components/ui/toast";
+import Layout from "@/components/Layout";
+import AppDataWarmup from "@/components/AppDataWarmup";
+import {
+  PLATFORM_BODY_CLASSES,
+  applyPlatformBodyClass,
+  getBrowserPlatform,
+  getRuntimePlatform,
+} from "@/utils/platform";
 import '@/i18n';
+
+const TAURI_COMPAT_VERSION = "20260619-5";
 
 export default function RootLayout({
   children,
@@ -14,17 +25,15 @@ export default function RootLayout({
   const [theme, setTheme] = useState<string>('light');
 
   useEffect(() => {
-    // 检测平台并添加平台类
-    if (typeof window !== 'undefined') {
-      const platform = navigator.platform.toLowerCase();
-      if (platform.includes('mac')) {
-        document.body.classList.add('platform-darwin');
-      } else if (platform.includes('win')) {
-        document.body.classList.add('platform-windows');
-      } else if (platform.includes('linux')) {
-        document.body.classList.add('platform-linux');
+    let removeThemeListener: (() => void) | undefined;
+    let disposed = false;
+
+    applyPlatformBodyClass(getBrowserPlatform());
+    void getRuntimePlatform().then((runtimePlatform) => {
+      if (!disposed) {
+        applyPlatformBodyClass(runtimePlatform);
       }
-    }
+    });
 
     // 将hex颜色转换为HSL格式
     const hexToHSL = (hex: string) => {
@@ -70,6 +79,7 @@ export default function RootLayout({
         // 如果window.electronAPI可用（在Electron环境中）
         if (typeof window !== 'undefined' && window.electronAPI) {
           const result = await window.electronAPI.getTheme();
+          if (disposed) return;
           if (result.success) {
             const themeName = result.theme;
 
@@ -95,7 +105,7 @@ export default function RootLayout({
             }
 
             // 监听主题变化事件
-            window.electronAPI.onThemeChanged((_, newTheme) => {
+            const unsubscribeThemeListener = window.electronAPI.onThemeChanged((_, newTheme) => {
               if (newTheme === 'system') {
                 // 跟随系统设置
                 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -129,9 +139,17 @@ export default function RootLayout({
               // 强制触发重新渲染
               window.dispatchEvent(new Event('storage'));
             });
+            if (typeof unsubscribeThemeListener === 'function') {
+              if (disposed) {
+                unsubscribeThemeListener();
+              } else {
+                removeThemeListener = unsubscribeThemeListener;
+              }
+            }
 
             // 获取主题色配置
             const colorResult = await window.electronAPI.getThemeColor();
+            if (disposed) return;
             if (colorResult.success && colorResult.color) {
               applyThemeColor(colorResult.color);
             }
@@ -156,6 +174,7 @@ export default function RootLayout({
         }
       } catch (error) {
         console.error('初始化主题失败:', error);
+        if (disposed) return;
         // 出错时默认使用浅色主题
         setTheme('light');
         document.documentElement.classList.add('light');
@@ -169,9 +188,12 @@ export default function RootLayout({
     
     // 清理函数
     return () => {
-      if (typeof window !== 'undefined' && window.electronAPI && window.electronAPI.removeThemeListener) {
-        window.electronAPI.removeThemeListener();
+      disposed = true;
+      if (typeof removeThemeListener === 'function') {
+        removeThemeListener();
       }
+      document.body.classList.remove(...PLATFORM_BODY_CLASSES);
+      delete document.body.dataset.platform;
     };
   }, []);
 
@@ -181,10 +203,14 @@ export default function RootLayout({
         <title>FlyClash</title>
         <meta name="description" content="现代、美观的Clash客户端，基于Mihomo内核" />
         <link rel="icon" href="/favicon.ico" />
-        <Script src="/tauri-compat.js" strategy="beforeInteractive" />
+        <Script src={`/tauri-compat.js?v=${TAURI_COMPAT_VERSION}`} strategy="beforeInteractive" />
       </head>
       <body className="antialiased min-h-screen text-foreground">
+        <AppDataWarmup />
+        <Layout>
           {children}
+        </Layout>
+        <Toaster richColors closeButton position="top-right" />
         <ToastContainer />
       </body>
     </html>

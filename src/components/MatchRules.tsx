@@ -1,11 +1,19 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { MagnifyingGlassIcon, ReloadIcon } from '@radix-ui/react-icons';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { useTranslation } from 'react-i18next';
+import { showToast } from '@/components/ui/toast';
+import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 
 type MatchRule = {
   type: string;
@@ -22,50 +30,136 @@ type MatchRule = {
   };
 };
 
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const matchRulesViewCache: {
+  rules: MatchRule[];
+  loaded: boolean;
+} = {
+  rules: [],
+  loaded: false,
+};
+
+const MATCH_RULES_CACHE_KEY = APP_DATA_CACHE_KEYS.matchRules;
+
+const readMatchRulesSessionCache = (): MatchRule[] | null => {
+  const cached = readAppDataCache<unknown>(MATCH_RULES_CACHE_KEY);
+  return Array.isArray(cached) ? cached as MatchRule[] : null;
+};
+
+const hydrateMatchRulesFromSession = () => {
+  if (matchRulesViewCache.loaded) return;
+  const cached = readMatchRulesSessionCache();
+  if (!cached) return;
+  matchRulesViewCache.rules = cached;
+  matchRulesViewCache.loaded = true;
+};
+
 export default function MatchRules() {
   const { t } = useTranslation();
-  const [matchRulesList, setMatchRulesList] = useState<MatchRule[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [matchRulesList, setMatchRulesList] = useState<MatchRule[]>(() => {
+    hydrateMatchRulesFromSession();
+    return matchRulesViewCache.rules;
+  });
+  const [isLoading, setIsLoading] = useState(() => !matchRulesViewCache.loaded);
   const [searchTerm, setSearchTerm] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [togglingIndices, setTogglingIndices] = useState<Set<number>>(new Set());
   const mihomoAPI = useMihomoAPI();
+  const mihomoAPIRef = useRef(mihomoAPI);
+  const matchRulesRef = useRef(matchRulesList);
 
-  const fetchMatchRules = async () => {
-    setIsLoading(true);
+  useEffect(() => {
+    mihomoAPIRef.current = mihomoAPI;
+  }, [mihomoAPI]);
+
+  useEffect(() => {
+    matchRulesViewCache.rules = matchRulesList;
+    matchRulesRef.current = matchRulesList;
+  }, [matchRulesList]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      matchRulesViewCache.loaded = true;
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    return subscribeAppDataCache(MATCH_RULES_CACHE_KEY, () => {
+      const cached = readMatchRulesSessionCache();
+      if (!cached) return;
+      matchRulesViewCache.rules = cached;
+      matchRulesViewCache.loaded = true;
+      setMatchRulesList(cached);
+      setIsLoading(false);
+    });
+  }, []);
+
+  const formatMatchRulesError = useCallback((error: unknown, fallback = t('matchRules.unknownError')) => {
+    const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
+    if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
+      return t('matchRules.apiUnavailable');
+    }
+    if (message.includes('Mihomo service unavailable') || message.includes('Mihomo服务未运行')) {
+      return t('matchRules.serviceUnavailable');
+    }
+    return message || fallback;
+  }, [t]);
+
+  const fetchMatchRules = useCallback(async () => {
+    const coldLoad =
+      matchRulesRef.current.length === 0 &&
+      !matchRulesViewCache.loaded &&
+      !hasAppDataCache(MATCH_RULES_CACHE_KEY);
+    if (coldLoad) setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      const response = await mihomoAPI.matchRules();
+      const response = await mihomoAPIRef.current.matchRules();
       const rules = (response.rules || []).map((rule, idx) => ({
         ...rule,
         index: idx,
       }));
+      writeAppDataCache(MATCH_RULES_CACHE_KEY, rules);
       setMatchRulesList(rules);
     } catch (error: any) {
       console.error('获取规则列表失败:', error);
-      setErrorMessage(t('matchRules.fetchError', { error: error.message || '未知错误' }));
-      setMatchRulesList([]);
+      setErrorMessage(t('matchRules.fetchError', { error: formatMatchRulesError(error) }));
+      if (matchRulesRef.current.length === 0 && !matchRulesViewCache.loaded) {
+        setMatchRulesList([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (coldLoad) setIsLoading(false);
     }
-  };
+  }, [formatMatchRulesError, t]);
 
   const toggleRule = useCallback(async (rule: MatchRule) => {
     if (togglingIndices.has(rule.index)) return;
 
     setTogglingIndices(prev => new Set(prev).add(rule.index));
+    setErrorMessage(null);
     try {
       const willBeDisabled = !rule.extra?.disabled;
-      await mihomoAPI.toggleRuleDisabled({ [rule.index]: willBeDisabled });
+      await mihomoAPIRef.current.toggleRuleDisabled({ [rule.index]: willBeDisabled });
       // 乐观更新
       setMatchRulesList(prev => prev.map(r =>
         r.index === rule.index
           ? { ...r, extra: { ...r.extra, disabled: willBeDisabled } }
           : r
       ));
+      showToast({
+        message: willBeDisabled
+          ? t('matchRules.ruleDisabled', { rule: rule.payload })
+          : t('matchRules.ruleEnabled', { rule: rule.payload }),
+        type: 'success',
+      });
     } catch (error: any) {
       console.error('切换规则状态失败:', error);
+      const message = t('matchRules.toggleError', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
       // 失败时刷新列表
       await fetchMatchRules();
     } finally {
@@ -75,11 +169,38 @@ export default function MatchRules() {
         return next;
       });
     }
-  }, [togglingIndices, mihomoAPI]);
+  }, [fetchMatchRules, togglingIndices, t]);
 
   useEffect(() => {
     fetchMatchRules();
-  }, []);
+  }, [fetchMatchRules]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const refreshAfterProfileChange = () => {
+      void fetchMatchRules();
+    };
+
+    window.addEventListener('profile-updated', refreshAfterProfileChange);
+    window.addEventListener('backup-restored', refreshAfterProfileChange);
+    window.addEventListener('subscription-auto-updated', refreshAfterProfileChange);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshAfterProfileChange();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshAfterProfileChange();
+    });
+
+    return () => {
+      window.removeEventListener('profile-updated', refreshAfterProfileChange);
+      window.removeEventListener('backup-restored', refreshAfterProfileChange);
+      window.removeEventListener('subscription-auto-updated', refreshAfterProfileChange);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+    };
+  }, [fetchMatchRules]);
 
   const filteredRules = useMemo(() => {
     if (!searchTerm) return matchRulesList;
@@ -91,6 +212,12 @@ export default function MatchRules() {
       rule.proxy.toLowerCase().includes(lowerSearch)
     );
   }, [matchRulesList, searchTerm]);
+
+  const suppressColdEmptyState =
+    isLoading &&
+    filteredRules.length === 0 &&
+    !matchRulesViewCache.loaded &&
+    !hasAppDataCache(MATCH_RULES_CACHE_KEY);
 
   const RuleRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
     const rule = filteredRules[index];
@@ -166,30 +293,31 @@ export default function MatchRules() {
         {/* 刷新按钮 */}
         <button
           onClick={fetchMatchRules}
-          disabled={isLoading}
-          className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
+          className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg flex items-center gap-2 transition-colors"
           title={t('matchRules.refreshTitle')}
         >
-          <ReloadIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          <ReloadIcon className="w-4 h-4" />
           <span className="text-sm">{t('matchRules.refresh')}</span>
         </button>
       </div>
 
-      {/* 错误提示 */}
-      {errorMessage && (
-        <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg text-sm">
-          {errorMessage}
-        </div>
-      )}
-
       {/* 规则列表 */}
       <div className="bg-white dark:bg-[#2a2a2a] rounded-xl shadow-sm overflow-hidden">
         <div className="h-[calc(100vh-280px)] custom-scrollbar">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <div className="text-center">
-                <ReloadIcon className="w-8 h-8 animate-spin mx-auto mb-2 text-primary" />
-                <p className="text-sm">{t('matchRules.loading')}</p>
+          {suppressColdEmptyState ? (
+            <div className="h-full" aria-busy="true" />
+          ) : errorMessage ? (
+            <div className="flex h-full items-center justify-center p-6">
+              <div className="max-w-md rounded-xl border border-red-200 bg-red-50 p-5 text-center text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                <p className="text-sm">{errorMessage}</p>
+                <button
+                  type="button"
+                  onClick={fetchMatchRules}
+                  className="mt-4 inline-flex items-center justify-center rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+                >
+                  <ReloadIcon className="mr-2 h-4 w-4" />
+                  {t('matchRules.retry')}
+                </button>
               </div>
             </div>
           ) : filteredRules.length === 0 ? (

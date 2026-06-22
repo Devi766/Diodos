@@ -1,50 +1,82 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { showToast } from '@/components/ui/toast';
 import {
   DashboardCard,
   DEFAULT_DASHBOARD_CARDS,
   DASHBOARD_CONFIG_KEY,
 } from '@/types/dashboard';
 
-// 检查是否在 Electron 环境中
-const isElectron = typeof window !== 'undefined' && window.electronAPI;
+const getElectron = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI;
+};
+
+const isTauriRuntimeUnavailable = (result: unknown) =>
+  result &&
+  typeof result === 'object' &&
+  (result as { success?: boolean; error?: string }).success === false &&
+  (result as { error?: string }).error === 'Tauri runtime is not available';
+
+const loadCardsFromLocalStorage = () => {
+  const savedConfig = localStorage.getItem(DASHBOARD_CONFIG_KEY);
+  return savedConfig ? JSON.parse(savedConfig) as DashboardCard[] : null;
+};
 
 export function useDashboardCards() {
+  const { t } = useTranslation();
   const [cards, setCards] = useState<DashboardCard[]>(DEFAULT_DASHBOARD_CARDS);
   const [isEditMode, setIsEditMode] = useState(false);
+  const saveSequenceRef = useRef(0);
 
   // 从存储加载配置
   useEffect(() => {
     const loadCards = async () => {
       try {
-        if (isElectron) {
+        const electron = getElectron();
+        if (electron?.getSetting) {
           // Electron 环境：使用 IPC 从数据库读取
-          const result = await window.electronAPI.getSetting(DASHBOARD_CONFIG_KEY, null);
-          if (result.success && result.value) {
+          const result = await electron.getSetting(DASHBOARD_CONFIG_KEY, null);
+          if (isTauriRuntimeUnavailable(result)) {
+            const localCards = loadCardsFromLocalStorage();
+            if (localCards) setCards(localCards);
+            return;
+          }
+          if (result?.success === false) {
+            throw new Error(result.error || t('dashboard.layoutLoadFailed'));
+          }
+          if (result?.success && Array.isArray(result.value)) {
             setCards(result.value as DashboardCard[]);
           }
         } else {
           // 浏览器环境：使用 localStorage
-          const savedConfig = localStorage.getItem(DASHBOARD_CONFIG_KEY);
-          if (savedConfig) {
-            const parsedConfig = JSON.parse(savedConfig) as DashboardCard[];
-            setCards(parsedConfig);
-          }
+          const localCards = loadCardsFromLocalStorage();
+          if (localCards) setCards(localCards);
         }
       } catch (error) {
         console.error('Failed to load dashboard config:', error);
+        showToast({
+          message: t('dashboard.layoutLoadFailed'),
+          type: 'error',
+        });
       }
     };
 
     loadCards();
-  }, []);
+  }, [t]);
 
   // 保存配置到存储(仅保存,不更新状态)
   const saveCardsToStorage = useCallback(async (newCards: DashboardCard[]) => {
     try {
-      if (isElectron) {
+      const electron = getElectron();
+      if (electron?.setSetting) {
         // Electron 环境：使用 IPC 保存到数据库
-        const result = await window.electronAPI.setSetting(DASHBOARD_CONFIG_KEY, newCards);
-        if (!result.success) {
+        const result = await electron.setSetting(DASHBOARD_CONFIG_KEY, newCards);
+        if (isTauriRuntimeUnavailable(result)) {
+          localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(newCards));
+          return true;
+        }
+        if (result?.success === false) {
           console.error('Failed to save dashboard config:', result.error);
           return false;
         }
@@ -59,11 +91,33 @@ export function useDashboardCards() {
     }
   }, []);
 
+  const applyCardsUpdate = useCallback((updater: (currentCards: DashboardCard[]) => DashboardCard[]) => {
+    const saveSequence = saveSequenceRef.current + 1;
+    saveSequenceRef.current = saveSequence;
+
+    setCards((currentCards) => {
+      const previousCards = currentCards;
+      const updatedCards = updater(currentCards);
+
+      void saveCardsToStorage(updatedCards).then((saved) => {
+        if (saved) return;
+        if (saveSequenceRef.current !== saveSequence) return;
+
+        setCards(previousCards);
+        showToast({
+          message: t('dashboard.layoutSaveFailed'),
+          type: 'error',
+        });
+      });
+
+      return updatedCards;
+    });
+  }, [saveCardsToStorage, t]);
+
   // 更新卡片顺序
   const reorderCards = useCallback(
     async (startIndex: number, endIndex: number) => {
-      // 使用函数式更新,避免闭包问题
-      setCards((currentCards) => {
+      applyCardsUpdate((currentCards) => {
         // 只对已启用的卡片进行排序
         const enabledCardsList = currentCards
           .filter((card) => card.enabled)
@@ -81,64 +135,52 @@ export function useDashboardCards() {
 
         // 合并未启用的卡片
         const disabledCards = currentCards.filter((card) => !card.enabled);
-        const newCards = [...reorderedEnabledCards, ...disabledCards];
-
-        // 异步保存到数据库(不阻塞UI更新)
-        saveCardsToStorage(newCards);
-
-        return newCards;
+        return [...reorderedEnabledCards, ...disabledCards];
       });
     },
-    [saveCardsToStorage],
+    [applyCardsUpdate],
   );
 
   // 切换卡片启用状态
   const toggleCard = useCallback(
     async (cardId: string) => {
-      setCards((currentCards) => {
-        const updatedCards = currentCards.map((card) =>
+      applyCardsUpdate((currentCards) =>
+        currentCards.map((card) =>
           card.id === cardId ? { ...card, enabled: !card.enabled } : card,
-        );
-        saveCardsToStorage(updatedCards);
-        return updatedCards;
-      });
+        ),
+      );
     },
-    [saveCardsToStorage],
+    [applyCardsUpdate],
   );
 
   // 添加卡片
   const addCard = useCallback(
     async (card: DashboardCard) => {
-      setCards((currentCards) => {
+      applyCardsUpdate((currentCards) => {
         const maxOrder = Math.max(...currentCards.map((c) => c.order), -1);
         const newCard = { ...card, enabled: true, order: maxOrder + 1 };
-        const updatedCards = [...currentCards, newCard];
-        saveCardsToStorage(updatedCards);
-        return updatedCards;
+        return [...currentCards, newCard];
       });
     },
-    [saveCardsToStorage],
+    [applyCardsUpdate],
   );
 
   // 删除卡片
   const removeCard = useCallback(
     async (cardId: string) => {
-      setCards((currentCards) => {
-        const updatedCards = currentCards
+      applyCardsUpdate((currentCards) =>
+        currentCards
           .filter((card) => card.id !== cardId)
-          .map((card, index) => ({ ...card, order: index }));
-        saveCardsToStorage(updatedCards);
-        return updatedCards;
-      });
+          .map((card, index) => ({ ...card, order: index })),
+      );
     },
-    [saveCardsToStorage],
+    [applyCardsUpdate],
   );
 
   // 重置为默认配置
   const resetToDefault = useCallback(async () => {
-    setCards(DEFAULT_DASHBOARD_CARDS);
-    await saveCardsToStorage(DEFAULT_DASHBOARD_CARDS);
-  }, [saveCardsToStorage]);
+    applyCardsUpdate(() => DEFAULT_DASHBOARD_CARDS);
+  }, [applyCardsUpdate]);
 
   // 获取已启用的卡片(按order排序)
   const enabledCards = cards

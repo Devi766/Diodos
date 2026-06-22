@@ -3,7 +3,8 @@
 import React, { useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { showToast } from './ui/toast';
+import { showToast } from '@/components/ui/toast';
+import { useTranslation } from 'react-i18next';
 
 export interface DnsSettingsRef {
   saveConfig: () => Promise<void>;
@@ -29,11 +30,44 @@ interface HostsConfig {
   hosts?: Array<{ domain: string; value: string | string[] }>;
 }
 
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const getDnsApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI;
+};
+
+const hasMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => any> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+const notifyProfileUpdated = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'dns-settings' } }));
+  }
+};
+
 const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<DnsConfig>({});
   const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const errorToMessage = (error: unknown, fallback = t('common.error')) => {
+    if (!error) return fallback;
+    return error instanceof Error ? error.message : String(error);
+  };
+
+  const displayError = (message?: string) => {
+    if (!message) return t('common.error');
+    return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? t('overrideSettings.dnsApiUnavailable') : message;
+  };
 
   useEffect(() => {
     loadConfig();
@@ -42,61 +76,96 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
   const loadConfig = async () => {
     try {
       setLoading(true);
-      if (window.electronAPI?.getDnsConfig) {
-        const result = await window.electronAPI.getDnsConfig();
-        if (result.success) {
-          setConfig(result.config || {});
+      setLoadError(null);
+      const api = getDnsApi();
+      if (!hasMethod(api, 'getDnsConfig')) {
+        const message = t('overrideSettings.dnsApiUnavailable');
+        setLoadError(message);
+        showToast({ message, type: 'error' });
+        return;
+      }
 
-          if (result.hosts) {
-            const hostsArray = Object.entries(result.hosts).map(([domain, value]) => ({
-              domain,
-              value
-            }));
-            setHostsConfig({ hosts: hostsArray });
-          }
+      const result = await api.getDnsConfig();
+      if (result.success) {
+        setConfig(result.config || {});
+
+        if (result.hosts) {
+          const hostsArray = Object.entries(result.hosts).map(([domain, value]) => ({
+            domain,
+            value
+          }));
+          setHostsConfig({ hosts: hostsArray });
         }
+      } else {
+        const message = `${t('overrideSettings.loadDnsConfigFailed')}: ${displayError(result.error)}`;
+        setLoadError(message);
+        showToast({ message, type: 'error' });
       }
     } catch (error) {
       console.error('Failed to load DNS config:', error);
+      const message = `${t('overrideSettings.loadDnsConfigFailed')}: ${displayError(errorToMessage(error))}`;
+      setLoadError(message);
+      showToast({ message, type: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
   const saveConfig = async () => {
+    let errorNotified = false;
+    const fail = (message: string): never => {
+      errorNotified = true;
+      showToast({ message, type: 'error' });
+      throw new Error(message);
+    };
+
     try {
       setSaving(true);
-      if (window.electronAPI?.saveDnsConfig) {
-        // 创建一个副本，过滤掉数组字段中的空行
-        const cleanedConfig = { ...config };
-        const arrayFields: (keyof DnsConfig)[] = ['default-nameserver', 'nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter'];
+      const api = getDnsApi();
+      if (!hasMethod(api, 'saveDnsConfig')) {
+        return fail(t('overrideSettings.dnsApiUnavailable'));
+      }
 
-        arrayFields.forEach(field => {
-          if (Array.isArray(cleanedConfig[field])) {
-            cleanedConfig[field] = (cleanedConfig[field] as string[]).filter(item => item.trim());
-          }
-        });
+      // 创建一个副本，过滤掉数组字段中的空行
+      const cleanedConfig = { ...config };
+      const arrayFields: (keyof DnsConfig)[] = ['default-nameserver', 'nameserver', 'proxy-server-nameserver', 'direct-nameserver', 'fake-ip-filter'];
 
-        const result = await window.electronAPI.saveDnsConfig(cleanedConfig);
-        if (result.success) {
-          if (config['use-hosts'] && window.electronAPI?.saveHostsConfig) {
-            await window.electronAPI.saveHostsConfig(hostsConfig.hosts || []);
-          }
-          if (result.restarted) {
-            showToast({ message: 'DNS配置保存成功，内核已自动重启', type: 'success' });
-          } else {
-            showToast({ message: result.message || 'DNS配置保存成功，但需要手动重启内核', type: 'warning' });
-          }
-        } else {
-          const errorMsg = 'DNS配置保存失败: ' + result.error;
-          showToast({ message: errorMsg, type: 'error' });
-          throw new Error(errorMsg);
+      arrayFields.forEach(field => {
+        const value = cleanedConfig[field];
+        if (Array.isArray(value)) {
+          (cleanedConfig as Record<string, unknown>)[field] = value.filter(item => item.trim());
         }
+      });
+
+      const result = await api.saveDnsConfig(cleanedConfig);
+      if (result.success) {
+        if (config['use-hosts']) {
+          if (!hasMethod(api, 'saveHostsConfig')) {
+            return fail(t('overrideSettings.hostsApiUnavailable'));
+          }
+
+          const hostsResult = await api.saveHostsConfig(hostsConfig.hosts || []);
+          if (!hostsResult || hostsResult.success !== true) {
+            return fail(`${t('overrideSettings.hostsConfigSaveFailed')}: ${displayError(hostsResult?.error)}`);
+          }
+        }
+
+        if (result.restarted) {
+          notifyProfileUpdated();
+          showToast({ message: t('overrideSettings.dnsConfigSavedReloaded'), type: 'success' });
+        } else {
+          notifyProfileUpdated();
+          showToast({ message: result.message || t('overrideSettings.dnsConfigSavedManualRestart'), type: 'warning' });
+        }
+      } else {
+        return fail(`${t('overrideSettings.dnsConfigSaveFailed')}: ${displayError(result.error)}`);
       }
     } catch (error) {
       console.error('保存 DNS 配置失败:', error);
-      const errorMsg = 'DNS配置保存失败: ' + error;
-      showToast({ message: errorMsg, type: 'error' });
+      if (!errorNotified) {
+        const errorMsg = `${t('overrideSettings.dnsConfigSaveFailed')}: ${displayError(errorToMessage(error))}`;
+        showToast({ message: errorMsg, type: 'error' });
+      }
       throw error;
     } finally {
       setSaving(false);
@@ -120,7 +189,23 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="text-gray-500 dark:text-gray-400">加载中...</div>
+        <div className="text-gray-500 dark:text-gray-400">{t('overrideSettings.loading')}</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold">{t('overrideSettings.dns')}</h3>
+            <p className="mt-1 text-sm">{loadError}</p>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={loadConfig}>
+            {t('common.refresh')}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -130,8 +215,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">启用 DNS</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400">启用内置 DNS 服务器</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enableDns')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enableDnsDesc')}</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input
@@ -146,8 +231,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
 
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">IPv6</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400">解析 IPv6 地址</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.dnsIpv6')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.dnsIpv6Desc')}</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input
@@ -162,23 +247,23 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
 
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">增强模式</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400">DNS 增强模式</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enhancedMode')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enhancedModeDesc')}</p>
           </div>
           <select
             className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
             value={config['enhanced-mode'] || 'fake-ip'}
             onChange={(e) => updateConfig('enhanced-mode', e.target.value)}
           >
-            <option value="normal">普通</option>
-            <option value="fake-ip">Fake-IP</option>
-            <option value="redir-host">Redir-Host</option>
+            <option value="normal">{t('overrideSettings.normal')}</option>
+            <option value="fake-ip">{t('overrideSettings.fakeIp')}</option>
+            <option value="redir-host">{t('overrideSettings.redirHost')}</option>
           </select>
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Fake-IP 范围</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Fake-IP 模式的 IP 范围</p>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.fakeIpRange')}</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.fakeIpRangeDesc')}</p>
           <Input
             type="text"
             className="text-gray-900 dark:text-gray-100"
@@ -189,8 +274,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Fake-IP 过滤</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">排除在 Fake-IP 之外的域名（每行一个）</p>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.fakeIpFilter')}</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.fakeIpFilterDesc')}</p>
           <textarea
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
             rows={4}
@@ -202,8 +287,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
 
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">遵守规则</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400">使用基于规则的 DNS 解析</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.respectRules')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.respectRulesDesc')}</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input
@@ -218,8 +303,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
 
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">使用系统 Hosts</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400">使用系统 hosts 文件</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.useSystemHosts')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.useSystemHostsDesc')}</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input
@@ -233,8 +318,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">默认域名服务器</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">引导 DNS 服务器（每行一个）</p>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.defaultNameserver')}</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.defaultNameserverDesc')}</p>
           <textarea
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
             rows={3}
@@ -245,8 +330,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">域名服务器</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">主 DNS 服务器（每行一个）</p>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.nameserver')}</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.nameserverDesc')}</p>
           <textarea
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
             rows={4}
@@ -257,8 +342,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">代理服务器域名服务器</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">代理服务器的 DNS（每行一个）</p>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.proxyServerNameserver')}</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.proxyServerNameserverDesc')}</p>
           <textarea
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
             rows={3}
@@ -269,8 +354,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
         </div>
 
         <div>
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">直连域名服务器</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">直连连接的 DNS（每行一个）</p>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.directNameserver')}</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.directNameserverDesc')}</p>
           <textarea
             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
             rows={3}
@@ -282,8 +367,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
 
         <div className="flex items-center justify-between">
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">自定义 Hosts</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400">启用自定义 hosts 映射</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.useHosts')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.useHostsDesc')}</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input
@@ -298,8 +383,8 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
 
         {config['use-hosts'] && (
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">Hosts 映射</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">格式：域名=IP（每行一个）</p>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.hostsMapping')}</label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('overrideSettings.hostsMappingDesc')}</p>
             <textarea
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 font-mono text-sm"
               rows={6}

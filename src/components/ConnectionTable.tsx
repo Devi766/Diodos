@@ -21,6 +21,14 @@ import { Progress } from './ui/progress';
 import { formatBytes, formatDuration } from '../utils/formatters';
 import { Network } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { showToast } from '@/components/ui/toast';
+import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 
 interface Connection {
   id: string;
@@ -52,6 +60,82 @@ type Stats = {
   totalDownload: number;
 };
 
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const emptyStats: Stats = {
+  totalConnections: 0,
+  activeConnections: 0,
+  totalUpload: 0,
+  totalDownload: 0
+};
+
+const calculateStats = (items: Connection[]): Stats => {
+  return items.reduce<Stats>((acc, conn) => ({
+    totalConnections: acc.totalConnections + 1,
+    activeConnections: acc.activeConnections + 1,
+    totalUpload: acc.totalUpload + (conn.upload || 0),
+    totalDownload: acc.totalDownload + (conn.download || 0)
+  }), { ...emptyStats });
+};
+
+const connectionViewCache: {
+  connections: Connection[];
+  stats: Stats;
+  loaded: boolean;
+} = {
+  connections: [],
+  stats: emptyStats,
+  loaded: false,
+};
+
+const CONNECTIONS_CACHE_KEY = APP_DATA_CACHE_KEYS.connections;
+
+const readConnectionsSessionCache = (): Connection[] | null => {
+  const cached = readAppDataCache<unknown>(CONNECTIONS_CACHE_KEY);
+  return Array.isArray(cached) ? cached as Connection[] : null;
+};
+
+const hydrateConnectionsFromSession = () => {
+  if (connectionViewCache.loaded) return;
+  const cached = readConnectionsSessionCache();
+  if (!cached) return;
+  connectionViewCache.connections = cached;
+  connectionViewCache.stats = calculateStats(cached);
+  connectionViewCache.loaded = true;
+};
+
+const readErrorMessage = (value: unknown, fallback: string): string => {
+  if (value instanceof Error) return value.message || fallback;
+  if (typeof value === 'string') return value || fallback;
+  if (!value || typeof value !== 'object') return fallback;
+
+  const record = value as {
+    error?: unknown;
+    statusText?: unknown;
+    message?: unknown;
+    text?: unknown;
+    data?: { message?: unknown; error?: unknown };
+  };
+  const raw = record.error ?? record.statusText ?? record.message ?? record.data?.error ?? record.data?.message ?? record.text;
+
+  if (typeof raw === 'string') return raw || fallback;
+  if (raw != null) return String(raw);
+  return fallback;
+};
+
+const isFailureResult = (value: unknown): value is { success: false; error?: unknown } => {
+  return !!value && typeof value === 'object' && 'success' in value && (value as { success?: boolean }).success === false;
+};
+
+const isExplicitSuccess = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  return !!value && typeof value === 'object' && 'success' in value && (value as { success?: boolean }).success === true;
+};
+
+const isRuntimeUnavailableMessage = (message: string) => {
+  return message.includes(TAURI_RUNTIME_UNAVAILABLE) || message.includes('not implemented in the Tauri runtime');
+};
+
 export default function ConnectionTable() {
   const { t } = useTranslation();
 
@@ -63,17 +147,17 @@ export default function ConnectionTable() {
     { value: 'udp', label: 'UDP' }
   ];
 
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [connections, setConnections] = useState<Connection[]>(() => {
+    hydrateConnectionsFromSession();
+    return connectionViewCache.connections;
+  });
+  const [isLoading, setIsLoading] = useState(() => !connectionViewCache.loaded);
   const [error, setError] = useState<string | null>(null);
+  const [closingAll, setClosingAll] = useState(false);
+  const [closingConnectionIds, setClosingConnectionIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'http' | 'https' | 'tcp' | 'udp'>('all');
-  const [stats, setStats] = useState<Stats>({
-    totalConnections: 0,
-    activeConnections: 0,
-    totalUpload: 0,
-    totalDownload: 0
-  });
+  const [stats, setStats] = useState<Stats>(() => connectionViewCache.stats);
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({
     key: 'start',
     direction: 'desc'
@@ -83,6 +167,59 @@ export default function ConnectionTable() {
   const [iconMap, setIconMap] = useState<Record<string, string>>({});
   const iconRequestQueueRef = React.useRef<Set<string>>(new Set());
   const processingIconsRef = React.useRef<Set<string>>(new Set());
+  const connectionsRef = React.useRef<Connection[]>(connections);
+  const isLoadingRef = React.useRef(isLoading);
+
+  useEffect(() => {
+    connectionsRef.current = connections;
+    connectionViewCache.connections = connections;
+  }, [connections]);
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+    if (!isLoading) {
+      connectionViewCache.loaded = true;
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    connectionViewCache.stats = stats;
+  }, [stats]);
+
+  useEffect(() => {
+    return subscribeAppDataCache(CONNECTIONS_CACHE_KEY, () => {
+      const cached = readConnectionsSessionCache();
+      if (!cached) return;
+      const nextStats = calculateStats(cached);
+      connectionViewCache.connections = cached;
+      connectionViewCache.stats = nextStats;
+      connectionViewCache.loaded = true;
+      setConnections(cached);
+      setStats(nextStats);
+      setIsLoading(false);
+    });
+  }, []);
+
+  const formatConnectionError = useCallback((error: unknown, fallback?: string) => {
+    const message = readErrorMessage(error, fallback || t('connections.disconnectError', { error: '' })).trim();
+    const lower = message.toLowerCase();
+
+    if (isRuntimeUnavailableMessage(message)) {
+      return t('connections.apiUnavailable');
+    }
+
+    if (
+      lower.includes('mihomo service unavailable') ||
+      lower.includes('mihomo service not running') ||
+      lower.includes('core service is not running') ||
+      message.includes('Mihomo 未运行') ||
+      message.includes('内核服务未运行')
+    ) {
+      return t('connections.mihomoNotRunning');
+    }
+
+    return message || fallback || t('connections.disconnectError', { error: '' });
+  }, [t]);
 
   const formatConnectionDuration = (startTimeISO: string) => {
     const startTime = new Date(startTimeISO).getTime();
@@ -197,108 +334,221 @@ export default function ConnectionTable() {
     }
   }, []);
 
-  const fetchConnections = async () => {
+  const fetchConnections = useCallback(async () => {
+    let showedLoading = false;
     // 只在初始加载时（connections为空）显示loading
-    if (connections.length === 0) {
+    if (
+      connectionsRef.current.length === 0 &&
+      !connectionViewCache.loaded &&
+      !hasAppDataCache(CONNECTIONS_CACHE_KEY)
+    ) {
       setIsLoading(true);
+      showedLoading = true;
     }
     setError(null);
 
     try {
-      let apiHost = '127.0.0.1';
-      let apiPort = '9090';
-      let apiSecret = '';
-
-      if (window.electronAPI) {
-        try {
-          const apiConfigResult = await window.electronAPI.getApiConfig();
-          if (apiConfigResult?.success) {
-            apiHost = apiConfigResult.controllerHost || apiHost;
-            apiPort = apiConfigResult.controllerPort || apiPort;
-            apiSecret = apiConfigResult.secret || apiSecret;
-          }
-        } catch (apiError) {
-          console.error('获取 API 配置失败:', apiError);
-        }
+      const requestMihomoAPI = window.electronAPI?.requestMihomoAPI;
+      if (typeof requestMihomoAPI !== 'function') {
+        throw new Error(t('connections.apiUnavailable'));
       }
 
-      const versionResponse = await window.electronAPI?.requestMihomoAPI?.('/version');
+      const versionResponse = await requestMihomoAPI('/version');
       if (versionResponse && !versionResponse.ok) {
-        throw new Error(t('connections.mihomoNotRunning'));
+        throw new Error(readErrorMessage(versionResponse, t('connections.mihomoNotRunning')));
       }
 
-      const connectionsResponse = await window.electronAPI?.requestMihomoAPI?.('/connections');
+      const connectionsResponse = await requestMihomoAPI('/connections');
+      if (isFailureResult(connectionsResponse)) {
+        throw new Error(readErrorMessage(connectionsResponse, t('connections.fetchError', { error: '' })));
+      }
       const data = connectionsResponse?.data ?? connectionsResponse;
 
       if (!data?.connections || !Array.isArray(data.connections)) {
         // 只在初始加载或从有数据变为无数据时才更新为空
-        if (connections.length === 0 || connections.length > 0) {
-          setConnections([]);
-          setStats({ totalConnections: 0, activeConnections: 0, totalUpload: 0, totalDownload: 0 });
-        }
+        setConnections([]);
+        setStats(emptyStats);
+        writeAppDataCache(CONNECTIONS_CACHE_KEY, []);
         return;
       }
 
-      let totalUpload = 0;
-      let totalDownload = 0;
-      data.connections.forEach((conn: Connection) => {
-        totalUpload += conn.upload;
-        totalDownload += conn.download;
-      });
-
-      setStats({
-        totalConnections: data.connections.length,
-        activeConnections: data.connections.length,
-        totalUpload,
-        totalDownload
-      });
+      writeAppDataCache(CONNECTIONS_CACHE_KEY, data.connections);
       setConnections(data.connections);
+      setStats(calculateStats(data.connections));
     } catch (err) {
+      const message = formatConnectionError(err, t('connections.fetchError', { error: '' }));
+      if (message === t('connections.mihomoNotRunning')) {
+        setConnections([]);
+        setStats(emptyStats);
+        writeAppDataCache(CONNECTIONS_CACHE_KEY, []);
+        return;
+      }
+
       console.error('获取连接数据失败:', err);
-      setError(t('connections.fetchError', { error: String(err) }));
+      setError(t('connections.fetchError', { error: message }));
     } finally {
       // 只在初始加载时才设置loading为false，避免后续刷新时的闪烁
-      if (isLoading) {
+      if (showedLoading || isLoadingRef.current) {
         setIsLoading(false);
       }
     }
-  };
+  }, [formatConnectionError, t]);
+
+  const deleteConnectionViaRequest = useCallback(async (endpoint: string, fallback: string) => {
+    const requestMihomoAPI = window.electronAPI?.requestMihomoAPI;
+    if (typeof requestMihomoAPI !== 'function') {
+      throw new Error(t('connections.apiUnavailable'));
+    }
+
+    const response = await requestMihomoAPI(endpoint, { method: 'DELETE' });
+    if (isFailureResult(response)) {
+      throw new Error(readErrorMessage(response, fallback));
+    }
+    if (response && typeof response === 'object' && 'ok' in response && !response.ok) {
+      throw new Error(readErrorMessage(response, fallback));
+    }
+  }, [t]);
+
+  const closeAllConnectionsViaBridge = useCallback(async () => {
+    const nativeCloseAll = window.electronAPI?.closeAllConnections;
+    if (typeof nativeCloseAll === 'function') {
+      const result = await nativeCloseAll();
+      if (isFailureResult(result)) {
+        const message = readErrorMessage(result, t('connections.disconnectAllError', { error: '' }));
+        if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
+          throw new Error(message);
+        }
+        console.warn('closeAllConnections failed, falling back to requestMihomoAPI:', message);
+      } else if (isExplicitSuccess(result)) {
+        return;
+      } else {
+        console.warn('closeAllConnections returned an unrecognized result, falling back to requestMihomoAPI:', result);
+      }
+    }
+
+    await deleteConnectionViaRequest('/connections', t('connections.disconnectAllError', { error: '' }));
+  }, [deleteConnectionViaRequest, t]);
+
+  const closeConnectionViaBridge = useCallback(async (id: string) => {
+    const nativeClose = window.electronAPI?.closeConnection;
+    if (typeof nativeClose === 'function') {
+      const result = await nativeClose(id);
+      if (isFailureResult(result)) {
+        const message = readErrorMessage(result, t('connections.disconnectError', { error: '' }));
+        if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
+          throw new Error(message);
+        }
+        console.warn('closeConnection failed, falling back to requestMihomoAPI:', message);
+      } else if (isExplicitSuccess(result)) {
+        return;
+      } else {
+        console.warn('closeConnection returned an unrecognized result, falling back to requestMihomoAPI:', result);
+      }
+    }
+
+    await deleteConnectionViaRequest(`/connections/${id}`, t('connections.disconnectError', { error: '' }));
+  }, [deleteConnectionViaRequest, t]);
 
   const closeAllConnections = async () => {
+    if (closingAll || connections.length === 0) return;
+
+    const previousConnections = connections;
+    const previousStats = stats;
+    const closingCount = connections.length;
+    setClosingAll(true);
+    setError(null);
     try {
-      const response = await window.electronAPI?.requestMihomoAPI?.('/connections', { method: 'DELETE' });
-      if (response && !response.ok) {
-        throw new Error(response.statusText || t('connections.disconnectError', { error: '' }));
-      }
+      await closeAllConnectionsViaBridge();
+      setConnections([]);
+      setStats(emptyStats);
+      showToast({
+        message: t('connections.disconnectAllSuccess', { count: closingCount }),
+        type: 'success',
+      });
       fetchConnections();
     } catch (err) {
       console.error('断开所有连接失败:', err);
-      setError(t('connections.disconnectAllError', { error: String(err) }));
+      setConnections(previousConnections);
+      setStats(previousStats);
+      const message = t('connections.disconnectAllError', {
+        error: formatConnectionError(err, t('connections.disconnectAllError', { error: '' })),
+      });
+      setError(message);
+      showToast({ message, type: 'error' });
+    } finally {
+      setClosingAll(false);
     }
   };
 
   const closeConnection = async (id: string) => {
+    if (closingConnectionIds.has(id)) return;
+
+    const target = connections.find((connection) => connection.id === id);
+    const label = target?.metadata?.host || target?.metadata?.destinationIP || id;
+    setClosingConnectionIds(prev => new Set(prev).add(id));
+    setError(null);
     try {
-      const response = await window.electronAPI?.requestMihomoAPI?.(`/connections/${id}`, { method: 'DELETE' });
-      if (response && !response.ok) {
-        throw new Error(response.statusText || t('connections.disconnectError', { error: '' }));
-      }
-      setConnections((prev) => prev.filter((conn) => conn.id !== id));
-      setStats((prev) => ({
-        ...prev,
-        activeConnections: Math.max(prev.activeConnections - 1, 0)
-      }));
+      await closeConnectionViaBridge(id);
+      setConnections((prev) => {
+        const next = prev.filter((conn) => conn.id !== id);
+        setStats(calculateStats(next));
+        return next;
+      });
+      showToast({
+        message: t('connections.disconnectSuccess', { target: label }),
+        type: 'success',
+      });
     } catch (err) {
       console.error(`断开连接 ${id} 失败:`, err);
-      setError(t('connections.disconnectError', { error: String(err) }));
+      const message = t('connections.disconnectError', {
+        error: formatConnectionError(err, t('connections.disconnectError', { error: '' })),
+      });
+      setError(message);
+      showToast({ message, type: 'error' });
+    } finally {
+      setClosingConnectionIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
   useEffect(() => {
     fetchConnections();
     const intervalId = setInterval(fetchConnections, 5000);
-    return () => clearInterval(intervalId);
-  }, []);
+    const refreshAfterProfileChange = () => {
+      fetchConnections();
+    };
+    const unsubscribeClosed = window.electronAPI?.onConnectionsClosed?.(() => {
+      setConnections([]);
+      setStats(emptyStats);
+    });
+    const unsubscribeUpdate = window.electronAPI?.onConnectionsUpdate?.(() => {
+      fetchConnections();
+    });
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshAfterProfileChange();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshAfterProfileChange();
+    });
+
+    window.addEventListener('profile-updated', refreshAfterProfileChange);
+    window.addEventListener('backup-restored', refreshAfterProfileChange);
+    window.addEventListener('subscription-auto-updated', refreshAfterProfileChange);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('profile-updated', refreshAfterProfileChange);
+      window.removeEventListener('backup-restored', refreshAfterProfileChange);
+      window.removeEventListener('subscription-auto-updated', refreshAfterProfileChange);
+      if (typeof unsubscribeClosed === 'function') unsubscribeClosed();
+      if (typeof unsubscribeUpdate === 'function') unsubscribeUpdate();
+      if (typeof unsubscribeActiveConfig === 'function') unsubscribeActiveConfig();
+      if (typeof unsubscribeAutoUpdated === 'function') unsubscribeAutoUpdated();
+    };
+  }, [fetchConnections]);
 
   // 图标加载 useEffect
   useEffect(() => {
@@ -374,6 +624,11 @@ export default function ConnectionTable() {
       icon: <ClockIcon className="h-4 w-4 text-violet-500" />
     }
   ];
+  const suppressColdEmptyState =
+    isLoading &&
+    filteredConnections.length === 0 &&
+    !connectionViewCache.loaded &&
+    !hasAppDataCache(CONNECTIONS_CACHE_KEY);
 
   return (
     <div className="space-y-6 min-w-0 w-full">
@@ -430,6 +685,8 @@ export default function ConnectionTable() {
             <div>
               {filteredConnections.length > 0 ? (
                 <span dangerouslySetInnerHTML={{ __html: t('connections.showingConnections', { count: filteredConnections.length }) }} />
+              ) : suppressColdEmptyState ? (
+                <span aria-busy="true">&nbsp;</span>
               ) : (
                 <span>{t('connections.noConnections')}</span>
               )}
@@ -440,25 +697,24 @@ export default function ConnectionTable() {
                 variant="outline"
                 onClick={fetchConnections}
                 className="h-8 rounded-full bg-white/70 px-3 text-xs dark:bg-[#222222]"
-                disabled={isLoading}
                 size="sm"
               >
-                {isLoading ? (
-                  <ReloadIcon className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <ReloadIcon className="mr-1.5 h-3.5 w-3.5" />
-                )}
+                <ReloadIcon className="mr-1.5 h-3.5 w-3.5" />
                 {t('connections.refresh')}
               </Button>
 
               <Button
                 variant="destructive"
                 onClick={closeAllConnections}
-                disabled={connections.length === 0 || isLoading}
+                disabled={connections.length === 0 || closingAll}
                 size="sm"
                 className="h-8 rounded-full px-3 text-xs"
               >
-                <Cross1Icon className="mr-1.5 h-3.5 w-3.5" />
+                {closingAll ? (
+                  <ReloadIcon className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Cross1Icon className="mr-1.5 h-3.5 w-3.5" />
+                )}
                 {t('connections.disconnectAll')}
               </Button>
             </div>
@@ -639,9 +895,14 @@ export default function ConnectionTable() {
                           variant="outline"
                           size="sm"
                           onClick={() => closeConnection(connection.id)}
+                          disabled={closingConnectionIds.has(connection.id)}
                           className="h-7 w-7 rounded-full border-transparent bg-white/70 p-0 text-red-500 transition hover:bg-red-50 hover:text-red-600 dark:bg-[#222222] dark:text-red-400 dark:hover:bg-red-900/20"
                         >
-                          <Cross1Icon className="h-3.5 w-3.5" />
+                          {closingConnectionIds.has(connection.id) ? (
+                            <ReloadIcon className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Cross1Icon className="h-3.5 w-3.5" />
+                          )}
                         </Button>
                       </td>
                     </tr>
@@ -649,11 +910,8 @@ export default function ConnectionTable() {
                 ) : (
                   <tr>
                     <td colSpan={7} className="px-4 py-8 text-center text-slate-400 dark:text-slate-400">
-                      {isLoading ? (
-                        <div className="flex items-center justify-center">
-                          <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
-                          {t('connections.loading')}
-                        </div>
+                      {suppressColdEmptyState ? (
+                        <div className="min-h-[48px]" aria-busy="true" />
                       ) : error ? (
                         <span>{t('connections.errorRefresh')}</span>
                       ) : (

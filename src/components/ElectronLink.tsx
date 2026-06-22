@@ -1,19 +1,12 @@
 import React from 'react';
 import Link from 'next/link';
 
-// 为Electron API添加类型声明
-declare global {
-  interface Window {
-    electronAPI?: {
-      navigateTo: (url: string) => void;
-      // 其他API...
-    };
-  }
-}
-
-// 检查是否在Electron环境
-const isElectron = () => {
-  return typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined';
+const isNativeElectron = () => {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.electronAPI !== 'undefined' &&
+    !(window as any).__TAURI__
+  );
 };
 
 // 电子环境下的链接组件
@@ -25,7 +18,7 @@ export default function ElectronLink({
 }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
   
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (isElectron() && window.electronAPI) {
+    if (isNativeElectron() && window.electronAPI?.navigateTo) {
       e.preventDefault();
       // 使用Electron API导航
       window.electronAPI.navigateTo(href);
@@ -36,11 +29,11 @@ export default function ElectronLink({
   return (
     <Link 
       href={href} 
-      className={className} 
+      className={className}
       onClick={handleClick}
       {...props}
     >
       {children}
     </Link>
   );
-} 
+}

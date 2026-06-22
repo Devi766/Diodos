@@ -15,7 +15,7 @@ import {
   Download
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useToast } from './Toast';
+import { showToast as showGlobalToast } from '@/components/ui/toast';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface WebDAVConfig {
@@ -30,12 +30,41 @@ interface BackupFile {
   name: string;
   size: number;
   lastModified: string;
-  path: string;
+  path?: string;
 }
+
+type RestoreResultLike = {
+  stats?: unknown;
+  activeConfig?: string | null;
+  runtimeReload?: {
+    reloaded?: boolean;
+    skipped?: boolean;
+    reason?: string;
+    error?: string;
+  };
+};
+
+const getBackupApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI;
+};
+
+const hasMethod = (api: unknown, method: string): api is Record<string, (...args: any[]) => any> =>
+  !!api
+  && method in Object(api)
+  && typeof (api as Record<string, unknown>)[method] === 'function';
+
+const errorToMessage = (error: unknown) => {
+  return error instanceof Error ? error.message : String(error || 'Unknown error');
+};
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
 export default function BackupSettings() {
   const { t } = useTranslation();
-  const { showToast, ToastContainer } = useToast();
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    showGlobalToast({ message, type });
+  };
   const [isLoading, setIsLoading] = useState(false);
   const [showWebDAVSettings, setShowWebDAVSettings] = useState(false);
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig>({
@@ -51,6 +80,7 @@ export default function BackupSettings() {
   const [backupList, setBackupList] = useState<BackupFile[]>([]);
   const [showBackupList, setShowBackupList] = useState(false);
   const [isLoadingBackupList, setIsLoadingBackupList] = useState(false);
+  const [backupListError, setBackupListError] = useState<string | null>(null);
 
   // 确认对话框状态
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -65,14 +95,58 @@ export default function BackupSettings() {
     onConfirm: () => {}
   });
 
+  const isUserCanceled = (result: any) => result?.canceled || result?.error === '用户取消';
+  const unknownError = () => t('backup.unknownError');
+  const displayError = (message?: string) =>
+    message === TAURI_RUNTIME_UNAVAILABLE ? t('backup.apiUnavailable') : (message || unknownError());
+  const resultError = (result: { error?: string } | undefined) => displayError(result?.error);
+  const caughtError = (error: unknown) => displayError(errorToMessage(error));
+
+  const notifyApiUnavailable = () => {
+    showToast(t('backup.apiUnavailable'), 'error');
+  };
+
+  const notifyBackupRestored = (result?: RestoreResultLike) => {
+    if (typeof window === 'undefined') return;
+    const detail = {
+      source: 'backup-restore',
+      activeConfig: result?.activeConfig ?? null,
+      runtimeReload: result?.runtimeReload,
+    };
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail }));
+    window.dispatchEvent(new CustomEvent('backup-restored', { detail: result || {} }));
+  };
+
+  const restoreSuccessMessage = (result: RestoreResultLike) => {
+    if (result.runtimeReload?.reloaded) {
+      return t('backup.restoreSuccessReloaded');
+    }
+
+    if (result.activeConfig && result.runtimeReload?.skipped) {
+      return t('backup.restoreSuccessPending');
+    }
+
+    return t('backup.restoreSuccess');
+  };
+
   // 加载WebDAV配置
   useEffect(() => {
     const loadWebDAVConfig = async () => {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        const result = await window.electronAPI.backupWebDAVGetConfig();
+      try {
+        const api = getBackupApi();
+        if (!hasMethod(api, 'backupWebDAVGetConfig')) {
+          notifyApiUnavailable();
+          return;
+        }
+
+        const result = await api.backupWebDAVGetConfig();
         if (result.success && result.config) {
           setWebdavConfig(result.config);
+        } else if (!result.success) {
+          showToast(t('backup.loadConfigFailed') + ': ' + resultError(result), 'error');
         }
+      } catch (error) {
+        showToast(t('backup.loadConfigFailed') + ': ' + caughtError(error), 'error');
       }
     };
 
@@ -84,21 +158,28 @@ export default function BackupSettings() {
     setTestConnectionStatus('testing');
 
     try {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        const result = await window.electronAPI.backupWebDAVTest(webdavConfig);
+      const api = getBackupApi();
+      if (!hasMethod(api, 'backupWebDAVTest')) {
+        notifyApiUnavailable();
+        setTestConnectionStatus('error');
+        setTimeout(() => setTestConnectionStatus('idle'), 3000);
+        return;
+      }
 
-        if (result.success) {
-          setTestConnectionStatus('success');
-          setTimeout(() => setTestConnectionStatus('idle'), 3000);
-        } else {
-          setTestConnectionStatus('error');
-          showToast(t('backup.connectionFailed') + ': ' + (result.error || '未知错误'), 'error');
-          setTimeout(() => setTestConnectionStatus('idle'), 3000);
-        }
+      const result = await api.backupWebDAVTest(webdavConfig);
+
+      if (result.success) {
+        setTestConnectionStatus('success');
+        showToast(t('backup.connectionSuccess'), 'success');
+        setTimeout(() => setTestConnectionStatus('idle'), 3000);
+      } else {
+        setTestConnectionStatus('error');
+        showToast(t('backup.connectionFailed') + ': ' + resultError(result), 'error');
+        setTimeout(() => setTestConnectionStatus('idle'), 3000);
       }
     } catch (error) {
       setTestConnectionStatus('error');
-      showToast(t('backup.connectionFailed') + ': ' + error, 'error');
+      showToast(t('backup.connectionFailed') + ': ' + caughtError(error), 'error');
       setTimeout(() => setTestConnectionStatus('idle'), 3000);
     }
   };
@@ -106,17 +187,21 @@ export default function BackupSettings() {
   // 保存WebDAV配置
   const handleSaveWebDAVConfig = async () => {
     try {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        const result = await window.electronAPI.backupWebDAVSaveConfig(webdavConfig);
+      const api = getBackupApi();
+      if (!hasMethod(api, 'backupWebDAVSaveConfig')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-        if (result.success) {
-          showToast(t('backup.configSaved'), 'success');
-        } else {
-          showToast(t('backup.configSaveFailed') + ': ' + (result.error || '未知错误'), 'error');
-        }
+      const result = await api.backupWebDAVSaveConfig(webdavConfig);
+
+      if (result.success) {
+        showToast(t('backup.configSaved'), 'success');
+      } else {
+        showToast(t('backup.configSaveFailed') + ': ' + resultError(result), 'error');
       }
     } catch (error) {
-      showToast(t('backup.configSaveFailed') + ': ' + error, 'error');
+      showToast(t('backup.configSaveFailed') + ': ' + caughtError(error), 'error');
     }
   };
 
@@ -125,18 +210,24 @@ export default function BackupSettings() {
     setIsLoading(true);
 
     try {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        const backupType = isBackupTypeFullBackup ? 'FULL_BACKUP' : 'CONFIG_ONLY';
-        const result = await window.electronAPI.backupCreateLocal(backupType);
+      const api = getBackupApi();
+      if (!hasMethod(api, 'backupCreateLocal')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-        if (result.success) {
-          showToast(t('backup.localBackupSuccess') + '\n' + result.filePath, 'success');
-        } else {
-          showToast(t('backup.localBackupFailed') + ': ' + (result.error || '未知错误'), 'error');
-        }
+      const backupType = isBackupTypeFullBackup ? 'FULL_BACKUP' : 'CONFIG_ONLY';
+      const result = await api.backupCreateLocal(backupType);
+
+      if (result.success) {
+        showToast(t('backup.localBackupSuccess') + (result.filePath ? '\n' + result.filePath : ''), 'success');
+      } else if (isUserCanceled(result)) {
+        return;
+      } else {
+        showToast(t('backup.localBackupFailed') + ': ' + resultError(result), 'error');
       }
     } catch (error) {
-      showToast(t('backup.localBackupFailed') + ': ' + error, 'error');
+      showToast(t('backup.localBackupFailed') + ': ' + caughtError(error), 'error');
     } finally {
       setIsLoading(false);
     }
@@ -153,17 +244,24 @@ export default function BackupSettings() {
         setIsLoading(true);
 
         try {
-          if (typeof window !== 'undefined' && window.electronAPI) {
-            const result = await window.electronAPI.backupRestoreLocal();
+          const api = getBackupApi();
+          if (!hasMethod(api, 'backupRestoreLocal')) {
+            notifyApiUnavailable();
+            return;
+          }
 
-            if (result.success) {
-              showToast(t('backup.restoreSuccess'), 'success');
-            } else {
-              showToast(t('backup.restoreFailed') + ': ' + (result.error || '未知错误'), 'error');
-            }
+          const result = await api.backupRestoreLocal();
+
+          if (result.success) {
+            showToast(restoreSuccessMessage(result), 'success');
+            notifyBackupRestored(result);
+          } else if (isUserCanceled(result)) {
+            return;
+          } else {
+            showToast(t('backup.restoreFailed') + ': ' + resultError(result), 'error');
           }
         } catch (error) {
-          showToast(t('backup.restoreFailed') + ': ' + error, 'error');
+          showToast(t('backup.restoreFailed') + ': ' + caughtError(error), 'error');
         } finally {
           setIsLoading(false);
         }
@@ -176,31 +274,36 @@ export default function BackupSettings() {
     setIsLoading(true);
     setBackupProgress(0);
 
+    let removeListener: (() => void) | undefined;
     try {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        // 监听上传进度
-        const removeListener = window.electronAPI.onBackupUploadProgress((progress: any) => {
+      const api = getBackupApi();
+      if (!hasMethod(api, 'backupWebDAVUpload')) {
+        notifyApiUnavailable();
+        return;
+      }
+
+      if (hasMethod(api, 'onBackupUploadProgress')) {
+        removeListener = api.onBackupUploadProgress((progress: any) => {
           setBackupProgress(progress.percentage);
         });
+      }
 
-        const backupType = isBackupTypeFullBackup ? 'FULL_BACKUP' : 'CONFIG_ONLY';
-        const result = await window.electronAPI.backupWebDAVUpload(backupType);
+      const backupType = isBackupTypeFullBackup ? 'FULL_BACKUP' : 'CONFIG_ONLY';
+      const result = await api.backupWebDAVUpload(backupType);
 
-        removeListener();
-
-        if (result.success) {
-          showToast(t('backup.webdavUploadSuccess'), 'success');
-          // 如果备份列表正在显示，刷新列表
-          if (showBackupList) {
-            await loadBackupList();
-          }
-        } else {
-          showToast(t('backup.webdavUploadFailed') + ': ' + (result.error || '未知错误'), 'error');
+      if (result.success) {
+        showToast(t('backup.webdavUploadSuccess'), 'success');
+        // 如果备份列表正在显示，刷新列表
+        if (showBackupList) {
+          await loadBackupList();
         }
+      } else {
+        showToast(t('backup.webdavUploadFailed') + ': ' + resultError(result), 'error');
       }
     } catch (error) {
-      showToast(t('backup.webdavUploadFailed') + ': ' + error, 'error');
+      showToast(t('backup.webdavUploadFailed') + ': ' + caughtError(error), 'error');
     } finally {
+      removeListener?.();
       setIsLoading(false);
       setBackupProgress(0);
     }
@@ -217,26 +320,33 @@ export default function BackupSettings() {
         setIsLoading(true);
         setBackupProgress(0);
 
+        let removeListener: (() => void) | undefined;
         try {
-          if (typeof window !== 'undefined' && window.electronAPI) {
-            // 监听下载进度
-            const removeListener = window.electronAPI.onBackupDownloadProgress((progress: any) => {
+          const api = getBackupApi();
+          if (!hasMethod(api, 'backupWebDAVDownload')) {
+            notifyApiUnavailable();
+            return;
+          }
+
+          // 监听下载进度
+          if (hasMethod(api, 'onBackupDownloadProgress')) {
+            removeListener = api.onBackupDownloadProgress((progress: any) => {
               setBackupProgress(progress.percentage);
             });
+          }
 
-            const result = await window.electronAPI.backupWebDAVDownload();
+          const result = await api.backupWebDAVDownload();
 
-            removeListener();
-
-            if (result.success) {
-              showToast(t('backup.restoreSuccess'), 'success');
-            } else {
-              showToast(t('backup.restoreFailed') + ': ' + (result.error || '未知错误'), 'error');
-            }
+          if (result.success) {
+            showToast(restoreSuccessMessage(result), 'success');
+            notifyBackupRestored(result);
+          } else {
+            showToast(t('backup.restoreFailed') + ': ' + resultError(result), 'error');
           }
         } catch (error) {
-          showToast(t('backup.restoreFailed') + ': ' + error, 'error');
+          showToast(t('backup.restoreFailed') + ': ' + caughtError(error), 'error');
         } finally {
+          removeListener?.();
           setIsLoading(false);
           setBackupProgress(0);
         }
@@ -247,19 +357,40 @@ export default function BackupSettings() {
   // 加载备份列表
   const loadBackupList = async () => {
     if (!webdavConfig.uri || !webdavConfig.username || !webdavConfig.password) {
+      const message = t('backup.missingWebDAVConfig');
+      setBackupList([]);
+      setBackupListError(message);
+      showToast(message, 'error');
       return;
     }
 
     setIsLoadingBackupList(true);
+    setBackupListError(null);
     try {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        const result = await window.electronAPI.backupWebDAVList();
-        if (result.success && result.backups) {
-          setBackupList(result.backups);
-        }
+      const api = getBackupApi();
+      if (!hasMethod(api, 'backupWebDAVList')) {
+        setBackupList([]);
+        setBackupListError(t('backup.apiUnavailable'));
+        notifyApiUnavailable();
+        return;
+      }
+
+      const result = await api.backupWebDAVList();
+      if (result.success && result.backups) {
+        setBackupList(result.backups);
+        setBackupListError(null);
+      } else {
+        const message = t('backup.loadListFailed') + ': ' + resultError(result);
+        setBackupList([]);
+        setBackupListError(message);
+        showToast(message, 'error');
       }
     } catch (error) {
       console.error('Failed to load backup list:', error);
+      const message = t('backup.loadListFailed') + ': ' + caughtError(error);
+      setBackupList([]);
+      setBackupListError(message);
+      showToast(message, 'error');
     } finally {
       setIsLoadingBackupList(false);
     }
@@ -275,19 +406,23 @@ export default function BackupSettings() {
         setConfirmDialog({ ...confirmDialog, open: false });
 
         try {
-          if (typeof window !== 'undefined' && window.electronAPI) {
-            const result = await window.electronAPI.backupWebDAVDelete(fileName);
+          const api = getBackupApi();
+          if (!hasMethod(api, 'backupWebDAVDelete')) {
+            notifyApiUnavailable();
+            return;
+          }
 
-            if (result.success) {
-              showToast(t('backup.deleteSuccess'), 'success');
-              // 重新加载列表
-              await loadBackupList();
-            } else {
-              showToast(t('backup.deleteFailed') + ': ' + (result.error || '未知错误'), 'error');
-            }
+          const result = await api.backupWebDAVDelete(fileName);
+
+          if (result.success) {
+            showToast(t('backup.deleteSuccess'), 'success');
+            // 重新加载列表
+            await loadBackupList();
+          } else {
+            showToast(t('backup.deleteFailed') + ': ' + resultError(result), 'error');
           }
         } catch (error) {
-          showToast(t('backup.deleteFailed') + ': ' + error, 'error');
+          showToast(t('backup.deleteFailed') + ': ' + caughtError(error), 'error');
         }
       }
     });
@@ -304,27 +439,34 @@ export default function BackupSettings() {
         setIsLoading(true);
         setBackupProgress(0);
 
+        let removeListener: (() => void) | undefined;
         try {
-          if (typeof window !== 'undefined' && window.electronAPI) {
-            // 监听下载进度
-            const removeListener = window.electronAPI.onBackupDownloadProgress((progress: any) => {
+          const api = getBackupApi();
+          if (!hasMethod(api, 'backupWebDAVDownload')) {
+            notifyApiUnavailable();
+            return;
+          }
+
+          // 监听下载进度
+          if (hasMethod(api, 'onBackupDownloadProgress')) {
+            removeListener = api.onBackupDownloadProgress((progress: any) => {
               setBackupProgress(progress.percentage);
             });
+          }
 
-            // 下载并还原指定的备份文件
-            const result = await window.electronAPI.backupWebDAVDownload(fileName);
+          // 下载并还原指定的备份文件
+          const result = await api.backupWebDAVDownload(fileName);
 
-            removeListener();
-
-            if (result.success) {
-              showToast(t('backup.restoreSuccess'), 'success');
-            } else {
-              showToast(t('backup.restoreFailed') + ': ' + (result.error || '未知错误'), 'error');
-            }
+          if (result.success) {
+            showToast(restoreSuccessMessage(result), 'success');
+            notifyBackupRestored(result);
+          } else {
+            showToast(t('backup.restoreFailed') + ': ' + resultError(result), 'error');
           }
         } catch (error) {
-          showToast(t('backup.restoreFailed') + ': ' + error, 'error');
+          showToast(t('backup.restoreFailed') + ': ' + caughtError(error), 'error');
         } finally {
+          removeListener?.();
           setIsLoading(false);
           setBackupProgress(0);
         }
@@ -337,11 +479,10 @@ export default function BackupSettings() {
     if (showBackupList) {
       loadBackupList();
     }
-  }, [showBackupList, webdavConfig.uri]);
+  }, [showBackupList]);
 
   return (
     <>
-      <ToastContainer />
       <ConfirmDialog
         open={confirmDialog.open}
         title={confirmDialog.title}
@@ -607,6 +748,21 @@ export default function BackupSettings() {
             {isLoadingBackupList ? (
               <div className="flex items-center justify-center py-4">
                 <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              </div>
+            ) : backupListError ? (
+              <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{backupListError}</span>
+                  <Button
+                    onClick={loadBackupList}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    {t('common.refresh')}
+                  </Button>
+                </div>
               </div>
             ) : backupList.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">

@@ -1,42 +1,59 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { MinusIcon, Cross2Icon } from '@radix-ui/react-icons';
 import { Square } from 'lucide-react';
+import { getBrowserPlatform, getRuntimePlatform } from '@/utils/platform';
 
 const resolveElectron = () => {
   if (typeof window === 'undefined') return undefined;
   return window.electronAPI;
 };
 
+const resolveMaximizedState = (state: any) => {
+  if (!state || typeof state !== 'object') return false;
+  return Boolean(state.maximized ?? state.isMaximized ?? state.fullScreen ?? state.isFullscreen);
+};
+
 export default function TitleBar() {
-  const electron = useMemo(resolveElectron, []);
+  const [electron, setElectron] = useState(resolveElectron);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isMacOS, setIsMacOS] = useState(false);
 
   useEffect(() => {
-    // 检测是否是 macOS
-    setIsMacOS(navigator.platform.toLowerCase().includes('mac'));
+    let disposed = false;
+
+    setIsMacOS(getBrowserPlatform() === 'darwin');
+    setElectron(resolveElectron());
+
+    void getRuntimePlatform().then((platform) => {
+      if (!disposed) {
+        setIsMacOS(platform === 'darwin');
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let disposed = false;
 
     const syncWindowState = async () => {
       try {
         const result = await electron?.getWindowState?.();
-        if (result && result.success) {
-          const nextMaximized = Boolean(result.maximized || result.fullScreen);
-          setIsMaximized(nextMaximized);
+        if (!disposed && result && result.success) {
+          setIsMaximized(resolveMaximizedState(result));
         }
       } catch {}
 
       try {
-        if (electron?.onWindowStateChanged) {
+        if (!disposed && electron?.onWindowStateChanged) {
           unsubscribe = electron.onWindowStateChanged((state: any) => {
             if (!state) return;
-            const nextMaximized = Boolean(state.maximized || state.fullScreen);
-            setIsMaximized(nextMaximized);
+            setIsMaximized(resolveMaximizedState(state));
           });
         }
       } catch {}
@@ -45,6 +62,7 @@ export default function TitleBar() {
     syncWindowState();
 
     return () => {
+      disposed = true;
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
@@ -60,8 +78,13 @@ export default function TitleBar() {
   const runToggleMaximize = useCallback(async () => {
     try {
       const result = await electron?.maximizeWindow?.();
-      if (result && typeof result === 'object' && 'maximized' in result) {
-        setIsMaximized(Boolean(result.maximized));
+      if (result && typeof result === 'object' && (
+        'maximized' in result ||
+        'isMaximized' in result ||
+        'fullScreen' in result ||
+        'isFullscreen' in result
+      )) {
+        setIsMaximized(resolveMaximizedState(result));
       } else {
         setIsMaximized((prev) => !prev);
       }

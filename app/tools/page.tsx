@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Layout from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { NetworkIcon, Gauge, Upload, Download, Radio, Globe, Clock, Activity, AlertCircle, Terminal, Share, Play, RefreshCw } from 'lucide-react';
@@ -21,6 +20,9 @@ import SpeedtestShare from '../components/SpeedtestShare';
 import MediaStreamingTest from '../components/MediaStreamingTest';
 import LoopbackManager from '@/components/LoopbackManager';
 import { useTranslation } from 'react-i18next';
+import { getRuntimePlatform } from '@/utils/platform';
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
 export default function ToolsPage() {
   const { t } = useTranslation();
@@ -29,7 +31,7 @@ export default function ToolsPage() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [mediaTestDialogOpen, setMediaTestDialogOpen] = useState(false);
   const [loopbackDialogOpen, setLoopbackDialogOpen] = useState(false);
-  const [isMacOS, setIsMacOS] = useState(false);
+  const [platform, setPlatform] = useState<string>('unknown');
 
   const [speedtestRunning, setSpeedtestRunning] = useState(false);
   const [speedtestResult, setSpeedtestResult] = useState<null | {
@@ -55,8 +57,11 @@ export default function ToolsPage() {
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   // 获取当前节点信息的增强版函数
-  const fetchCurrentNode = async () => {
-    if (!window.electronAPI) return;
+  const fetchCurrentNode = useCallback(async () => {
+    if (!window.electronAPI) {
+      setCurrentNode(t('tools.unknownNode'));
+      return;
+    }
     
     try {
       // 尝试直接使用electronAPI获取当前节点信息
@@ -171,22 +176,58 @@ export default function ToolsPage() {
       } catch (error) {
         console.error('通过getProxies获取节点信息失败:', error);
       }
-      
     } catch (error) {
       console.error("获取节点信息失败:", error);
     }
-  };
+    setCurrentNode(t('tools.unknownNode'));
+  }, [t]);
+
+  const detectPlatform = useCallback(async () => {
+    try {
+      setPlatform(await getRuntimePlatform());
+    } catch (error) {
+      console.error('检测平台失败:', error);
+      setPlatform('unknown');
+    }
+  }, []);
 
   // 在组件加载时获取当前节点信息和检测平台
   useEffect(() => {
     fetchCurrentNode();
+    void detectPlatform();
+  }, [detectPlatform, fetchCurrentNode]);
 
-    // 检测平台
-    if (typeof navigator !== 'undefined') {
-      const platform = navigator.platform.toLowerCase();
-      setIsMacOS(platform.includes('mac'));
-    }
-  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const refreshCurrentNode = () => {
+      setCurrentNode(t('tools.unknownNode'));
+      void fetchCurrentNode();
+    };
+
+    window.addEventListener('profile-updated', refreshCurrentNode);
+    window.addEventListener('backup-restored', refreshCurrentNode);
+    window.addEventListener('subscription-auto-updated', refreshCurrentNode);
+
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshCurrentNode();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshCurrentNode();
+    });
+    const unsubscribeNodeChanged = window.electronAPI?.onNodeChanged?.(() => {
+      refreshCurrentNode();
+    });
+
+    return () => {
+      window.removeEventListener('profile-updated', refreshCurrentNode);
+      window.removeEventListener('backup-restored', refreshCurrentNode);
+      window.removeEventListener('subscription-auto-updated', refreshCurrentNode);
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
+      unsubscribeNodeChanged?.();
+    };
+  }, [fetchCurrentNode, t]);
 
   // 在组件卸载时移除事件监听
   useEffect(() => {
@@ -250,13 +291,44 @@ export default function ToolsPage() {
     setMediaTestDialogOpen(true);
   };
 
+  const formatSpeedtestError = (error: unknown, fallback = t('tools.speedtest.unknownError')) => {
+    const message = error instanceof Error ? error.message : String(error || fallback);
+    if (
+      message.includes(TAURI_RUNTIME_UNAVAILABLE) ||
+      message.includes('not implemented in the Tauri runtime')
+    ) {
+      return t('tools.speedtest.unavailable');
+    }
+    return message || fallback;
+  };
+
+  const speedtestNumber = (primary: unknown, fallback: unknown = 0) => {
+    const value = Number(primary);
+    if (Number.isFinite(value)) return value;
+    const fallbackValue = Number(fallback);
+    return Number.isFinite(fallbackValue) ? fallbackValue : 0;
+  };
+
+  const stopSpeedtestAnimations = () => {
+    setSpeedtestRunning(false);
+    setAnimateDownload(false);
+    setAnimateUpload(false);
+    setCurrentTestPhase('idle');
+  };
+
   const runSpeedtest = async () => {
-    if (!window.electronAPI) {
-      toast.error(t('tools.enableLoopback.noAccess'));
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+    if (!api?.runSpeedtestDirect) {
+      const message = t('tools.speedtest.unavailable');
+      setSpeedtestResult(null);
+      setSpeedtestError(message);
+      toast.error(message);
       return;
     }
 
     try {
+      let eventErrorMessage: string | null = null;
+
       // 清除之前的错误和结果
       setSpeedtestError(null);
       setSpeedtestRunning(true);
@@ -280,139 +352,148 @@ export default function ToolsPage() {
       // 取消之前的订阅
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
 
-      // 订阅speedtest输出事件
-      const unsubscribe = window.electronAPI.onSpeedtestOutput((data) => {
-        console.log('收到speedtest输出:', data);
+      if (typeof api.onSpeedtestOutput === 'function') {
+        // 订阅speedtest输出事件
+        const unsubscribe = api.onSpeedtestOutput((data) => {
+          console.log('收到speedtest输出:', data);
 
-        // 添加到日志
-        if (data.message) {
-          setSpeedtestLogs(prev => [...prev, data.message as string]);
-        }
+          // 添加到日志
+          if (data.message) {
+            setSpeedtestLogs(prev => [...prev, data.message as string]);
+          }
 
-        // 根据输出类型处理数据
-        if (data.type === 'status') {
-          if (data.phase === 'start') {
-            setCurrentTestPhase('preparing');
-          } else if (data.phase === 'complete') {
-            // 测速完成 - 停止所有动画
-            toast.success(t('tools.speedtest.completed'));
-            setSpeedtestRunning(false);
-            setAnimateDownload(false);
-            setAnimateUpload(false);
-            // 确保进度条显示100%
-            setSpeedtestResult(prev => {
-              if (!prev) return null;
-              return { ...prev, progress: 100 };
-            });
-          } else if (data.phase === 'error') {
-            // 发生错误 - 停止所有动画
-            setSpeedtestError(data.message || t('tools.speedtest.error'));
-            toast.error(t('tools.speedtest.testError', { error: data.message || t('tools.speedtest.unknownError') }));
-            setSpeedtestRunning(false);
-            setAnimateDownload(false);
-            setAnimateUpload(false);
+          // 根据输出类型处理数据
+          if (data.type === 'status') {
+            if (data.phase === 'start') {
+              setCurrentTestPhase('preparing');
+            } else if (data.phase === 'complete') {
+              // 测速完成 - 停止所有动画
+              toast.success(t('tools.speedtest.completed'));
+              setSpeedtestRunning(false);
+              setAnimateDownload(false);
+              setAnimateUpload(false);
+              // 确保进度条显示100%
+              setSpeedtestResult(prev => {
+                if (!prev) return null;
+                return { ...prev, progress: 100 };
+              });
+            } else if (data.phase === 'error') {
+              // 发生错误 - 停止所有动画
+              eventErrorMessage = formatSpeedtestError(data.message, t('tools.speedtest.error'));
+              setSpeedtestResult(null);
+              setSpeedtestError(eventErrorMessage);
+              toast.error(t('tools.speedtest.testError', { error: eventErrorMessage }));
+              setSpeedtestRunning(false);
+              setAnimateDownload(false);
+              setAnimateUpload(false);
+            }
+          } else if (data.type === 'progress') {
+            // 更新进度信息
+            if (data.phase === 'ping') {
+              setCurrentTestPhase('ping');
+              setAnimateDownload(false);
+              setAnimateUpload(false);
+              
+              // 更新结果对象
+              setSpeedtestResult(prev => {
+                if (!prev) return null;
+                
+                const updatedResult = { ...prev };
+                
+                // 更新ping值
+                if (data.ping !== undefined) {
+                  updatedResult.ping = data.ping || 0;
+                }
+                
+                // 更新jitter值
+                if (data.jitter !== undefined) {
+                  updatedResult.jitter = data.jitter || 0;
+                }
+                
+                // 更新进度
+                if (data.progress !== undefined) {
+                  updatedResult.progress = data.progress || prev.progress;
+                }
+                
+                return updatedResult;
+              });
+            } else if (data.phase === 'download') {
+              setCurrentTestPhase('download');
+              setAnimateDownload(true);
+              setAnimateUpload(false);
+              
+              // 更新结果对象
+              setSpeedtestResult(prev => {
+                if (!prev) return null;
+                
+                const updatedResult = { ...prev };
+                
+                // 更新下载速度
+                if (data.downloadSpeed !== undefined) {
+                  updatedResult.downloadSpeed = data.downloadSpeed || 0;
+                }
+                
+                // 更新进度
+                if (data.progress !== undefined) {
+                  updatedResult.progress = data.progress || prev.progress;
+                }
+                
+                return updatedResult;
+              });
+            } else if (data.phase === 'upload') {
+              setCurrentTestPhase('upload');
+              setAnimateDownload(false);
+              setAnimateUpload(true);
+              
+              // 更新结果对象
+              setSpeedtestResult(prev => {
+                if (!prev) return null;
+                
+                const updatedResult = { ...prev };
+                
+                // 更新上传速度
+                if (data.uploadSpeed !== undefined) {
+                  updatedResult.uploadSpeed = data.uploadSpeed || 0;
+                }
+                
+                // 更新进度
+                if (data.progress !== undefined) {
+                  updatedResult.progress = data.progress || prev.progress;
+                }
+                
+                return updatedResult;
+              });
+            }
+          } else if (data.type === 'stderr' && data.message) {
+            // 记录错误输出
+            console.error('Speedtest错误输出:', data.message);
           }
-        } else if (data.type === 'progress') {
-          // 更新进度信息
-          if (data.phase === 'ping') {
-            setCurrentTestPhase('ping');
-            setAnimateDownload(false);
-            setAnimateUpload(false);
-            
-            // 更新结果对象
-            setSpeedtestResult(prev => {
-              if (!prev) return null;
-              
-              const updatedResult = { ...prev };
-              
-              // 更新ping值
-              if (data.ping !== undefined) {
-                updatedResult.ping = data.ping || 0;
-              }
-              
-              // 更新jitter值
-              if (data.jitter !== undefined) {
-                updatedResult.jitter = data.jitter || 0;
-              }
-              
-              // 更新进度
-              if (data.progress !== undefined) {
-                updatedResult.progress = data.progress || prev.progress;
-              }
-              
-              return updatedResult;
-            });
-          } else if (data.phase === 'download') {
-            setCurrentTestPhase('download');
-            setAnimateDownload(true);
-            setAnimateUpload(false);
-            
-            // 更新结果对象
-            setSpeedtestResult(prev => {
-              if (!prev) return null;
-              
-              const updatedResult = { ...prev };
-              
-              // 更新下载速度
-              if (data.downloadSpeed !== undefined) {
-                updatedResult.downloadSpeed = data.downloadSpeed || 0;
-              }
-              
-              // 更新进度
-              if (data.progress !== undefined) {
-                updatedResult.progress = data.progress || prev.progress;
-              }
-              
-              return updatedResult;
-            });
-          } else if (data.phase === 'upload') {
-            setCurrentTestPhase('upload');
-            setAnimateDownload(false);
-            setAnimateUpload(true);
-            
-            // 更新结果对象
-            setSpeedtestResult(prev => {
-              if (!prev) return null;
-              
-              const updatedResult = { ...prev };
-              
-              // 更新上传速度
-              if (data.uploadSpeed !== undefined) {
-                updatedResult.uploadSpeed = data.uploadSpeed || 0;
-              }
-              
-              // 更新进度
-              if (data.progress !== undefined) {
-                updatedResult.progress = data.progress || prev.progress;
-              }
-              
-              return updatedResult;
-            });
-          }
-        } else if (data.type === 'stderr' && data.message) {
-          // 记录错误输出
-          console.error('Speedtest错误输出:', data.message);
-        }
-      });
-      
-      // 保存解除订阅函数
-      unsubscribeRef.current = unsubscribe;
+        });
+        
+        // 保存解除订阅函数
+        unsubscribeRef.current = unsubscribe;
+      }
       
       // 执行直接测速命令
       console.log('调用直接测速...');
-      const result = await window.electronAPI.runSpeedtestDirect();
+      const result = await api.runSpeedtestDirect();
       console.log('测速最终结果:', result);
       
       if (result.success && result.data) {
+        const downloadSpeed = speedtestNumber(result.data?.downloadSpeed, result.data?.download);
+        const uploadSpeed = speedtestNumber(result.data?.uploadSpeed, result.data?.upload);
+        const ping = speedtestNumber(result.data?.ping);
+        const jitter = speedtestNumber(result.data?.jitter);
         // 更新最终结果(主要是服务器信息)
         setSpeedtestResult(prev => {
           if (!prev) return {
-            downloadSpeed: result.data?.download || 0,
-            uploadSpeed: result.data?.upload || 0,
-            ping: result.data?.ping || 0,
-            jitter: result.data?.jitter || 0,
+            downloadSpeed,
+            uploadSpeed,
+            ping,
+            jitter,
             server: result.data?.server?.host || '',
             location: `${result.data?.server?.name || ''}, ${result.data?.server?.country || ''}`,
             progress: 100
@@ -420,10 +501,10 @@ export default function ToolsPage() {
           
           return {
             ...prev,
-            downloadSpeed: result.data?.download || prev.downloadSpeed,
-            uploadSpeed: result.data?.upload || prev.uploadSpeed,
-            ping: result.data?.ping || prev.ping,
-            jitter: result.data?.jitter || prev.jitter,
+            downloadSpeed: downloadSpeed || prev.downloadSpeed,
+            uploadSpeed: uploadSpeed || prev.uploadSpeed,
+            ping: ping || prev.ping,
+            jitter: jitter || prev.jitter,
             server: result.data?.server?.host || '',
             location: `${result.data?.server?.name || ''}, ${result.data?.server?.country || ''}`,
             progress: 100
@@ -431,36 +512,37 @@ export default function ToolsPage() {
         });
         
         // 确保测速完成后停止所有动画
-        setSpeedtestRunning(false);
-        setAnimateDownload(false);
-        setAnimateUpload(false);
-        // 测速完成后将测试阶段重置为idle
-        setCurrentTestPhase('idle');
-      } else if (!result.success) {
+        stopSpeedtestAnimations();
+      } else {
         // 如果没有在事件中捕获到错误，则显示错误信息
-        const errorMsg = result.error || t('tools.speedtest.unknownError');
-        if (!speedtestError) {
+        const errorMsg = result?.success
+          ? t('tools.speedtest.noResult')
+          : formatSpeedtestError(result?.error, t('tools.speedtest.unknownError'));
+        if (!eventErrorMessage) {
+          setSpeedtestResult(null);
           setSpeedtestError(errorMsg);
           toast.error(t('tools.speedtest.testError', { error: errorMsg }));
         }
 
         // 确保测速失败后停止所有动画
-        setSpeedtestRunning(false);
-        setAnimateDownload(false);
-        setAnimateUpload(false);
-        setCurrentTestPhase('idle');
+        stopSpeedtestAnimations();
       }
     } catch (error) {
       console.error('测速出错:', error);
-      toast.error(t('tools.speedtest.executeError'));
-      setSpeedtestError(t('tools.speedtest.checkConsole'));
+      const message = formatSpeedtestError(error, t('tools.speedtest.executeError'));
+      setSpeedtestResult(null);
+      toast.error(t('tools.speedtest.testError', { error: message }));
+      setSpeedtestError(message);
+      stopSpeedtestAnimations();
     } finally {
       setSpeedtestRunning(false);
     }
   };
 
+  const isWindows = platform === 'win32';
+
   return (
-    <Layout>
+    <>
       <div className="space-y-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -471,7 +553,7 @@ export default function ToolsPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
           {/* UWP 回环豁免管理 - 仅在 Windows 上显示 */}
-          {!isMacOS && (
+          {isWindows && (
             <Card className="overflow-hidden hover:shadow-sm transition-shadow">
               <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
@@ -498,7 +580,7 @@ export default function ToolsPage() {
           )}
 
           {/* 网络测速工具 - 仅在 Windows 上显示 */}
-          {!isMacOS && (
+          {isWindows && (
             <Card className="overflow-hidden hover:shadow-sm transition-shadow">
               <CardHeader className="pb-6">
                 <div className="flex items-center space-x-3 mb-2">
@@ -852,6 +934,6 @@ export default function ToolsPage() {
         </DialogContent>
       </Dialog>
 
-    </Layout>
+    </>
   );
 }

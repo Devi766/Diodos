@@ -21,6 +21,89 @@ import {
   Loader2
 } from 'lucide-react';
 
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const getConverterApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI?.converter;
+};
+
+const hasConverterMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+type AddToConfigResultLike =
+  | boolean
+  | string
+  | null
+  | undefined
+  | {
+      success?: boolean;
+      filePath?: string | null;
+      path?: string | null;
+      error?: string;
+      errorMessage?: string;
+      message?: string;
+      data?: {
+        filePath?: string | null;
+        path?: string | null;
+        error?: string;
+        errorMessage?: string;
+        message?: string;
+      } | null;
+    };
+
+const normalizeAddToConfigResult = (result: AddToConfigResultLike): { success: boolean; filePath?: string; error?: string } => {
+  if (typeof result === 'boolean') {
+    return result ? { success: false, error: '未返回配置文件路径' } : { success: false };
+  }
+
+  if (typeof result === 'string') {
+    const filePath = result.trim();
+    return filePath ? { success: true, filePath } : { success: false };
+  }
+
+  if (!result || typeof result !== 'object') {
+    return { success: false };
+  }
+
+  const nested = result.data && typeof result.data === 'object' ? result.data : null;
+  const filePath = result.filePath?.trim() || result.path?.trim() || nested?.filePath?.trim() || nested?.path?.trim();
+  const error = result.errorMessage || result.error || result.message || nested?.errorMessage || nested?.error || nested?.message;
+
+  if (result.success === false) {
+    return { success: false, error };
+  }
+
+  if (filePath) {
+    return { success: true, filePath };
+  }
+
+  if (result.success === true) {
+    return { success: false, error: error || '未返回配置文件路径' };
+  }
+
+  return { success: false, error };
+};
+
+const compatSuccess = (result: unknown) => (
+  result && typeof result === 'object'
+    ? (result as { success?: boolean }).success === true
+    : Boolean(result)
+);
+
 export default function SubscriptionConverter() {
   const { t } = useTranslation();
 
@@ -89,10 +172,90 @@ export default function SubscriptionConverter() {
 
   // 添加成功对话框
   const [showAddSuccess, setShowAddSuccess] = useState(false);
+  const [addSuccessActivated, setAddSuccessActivated] = useState(false);
 
   // 错误对话框
   const [showError, setShowError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const formatConverterError = (error: unknown, fallback = t('converter.errors.unknownError')) => {
+    const raw = error instanceof Error ? error.message : (error ? String(error) : fallback);
+    if (
+      raw.includes(TAURI_RUNTIME_UNAVAILABLE) ||
+      raw.includes('not implemented in the Tauri runtime')
+    ) {
+      return t('converter.errors.apiUnavailable');
+    }
+    return raw;
+  };
+
+  const resultError = (result: any, fallback?: string) => {
+    return formatConverterError(result?.errorMessage || result?.error || result?.message, fallback);
+  };
+
+  const showActionError = (message: string) => {
+    setStatusMessage(message);
+    toast.error(message);
+  };
+
+  const notifyConfigAdded = (filePath?: string, activated = false) => {
+    if (typeof window === 'undefined') return;
+
+    const detail = { filePath, activated, source: 'converter' };
+    window.dispatchEvent(new CustomEvent('profile-updated', { detail }));
+    window.dispatchEvent(new CustomEvent('subscription-added', { detail }));
+  };
+
+  const getLatestActiveConfig = async (): Promise<{ known: boolean; path: string | null }> => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+    if (!hasElectronMethod(api, 'getActiveConfig')) {
+      return { known: false, path: null };
+    }
+
+    try {
+      const latest = await api.getActiveConfig();
+      return {
+        known: true,
+        path: typeof latest === 'string' && latest.trim().length > 0 ? latest : null
+      };
+    } catch {
+      return { known: false, path: null };
+    }
+  };
+
+  const activateSavedConfigIfEmpty = async (filePath?: string): Promise<{ activated: boolean; failed: boolean }> => {
+    if (!filePath) {
+      return { activated: false, failed: false };
+    }
+
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+    if (!hasElectronMethod(api, 'setPreferredConfig')) {
+      return { activated: false, failed: false };
+    }
+
+    const active = await getLatestActiveConfig();
+    if (!active.known || active.path) {
+      return { activated: false, failed: false };
+    }
+
+    try {
+      const result = await api.setPreferredConfig(filePath);
+      if (compatSuccess(result)) {
+        return { activated: true, failed: false };
+      }
+
+      showActionError(t('converter.errors.addedButActivateFailed', {
+        error: resultError(result, t('converter.errors.setPreferredFailed'))
+      }));
+    } catch (error) {
+      showActionError(t('converter.errors.addedButActivateFailed', {
+        error: formatConverterError(error, t('converter.errors.setPreferredFailed'))
+      }));
+    }
+
+    return { activated: false, failed: true };
+  };
 
   // 检查服务器状态和加载设置
   useEffect(() => {
@@ -103,78 +266,114 @@ export default function SubscriptionConverter() {
 
   // 加载设置
   const loadSettings = async () => {
-    if (!window.electronAPI?.converter) return;
+    const converter = getConverterApi();
+    if (!hasConverterMethod(converter, 'getSettings')) {
+      setStatusMessage(t('converter.errors.apiUnavailable'));
+      return;
+    }
 
     try {
-      const result = await window.electronAPI.converter.getSettings();
+      const result = await converter.getSettings();
       if (result.success) {
         setServerPort(result.settings.port || 59999);
         setAutoStart(result.settings.autoStart || false);
         setFetchUserAgent(result.settings.userAgent || 'FlyClash-Converter/1.0');
+      } else {
+        setStatusMessage(resultError(result));
       }
     } catch (error) {
       console.error('加载设置失败:', error);
+      setStatusMessage(formatConverterError(error));
     }
   };
 
   // 保存设置
   const saveSettings = async () => {
-    if (!window.electronAPI?.converter) return;
+    const converter = getConverterApi();
+    if (!hasConverterMethod(converter, 'saveSettings')) {
+      showActionError(t('converter.errors.apiUnavailable'));
+      return;
+    }
 
     try {
-      const result = await window.electronAPI.converter.saveSettings({
+      const result = await converter.saveSettings({
         port: serverPort,
         autoStart: autoStart,
         userAgent: fetchUserAgent
       });
 
-      if (result.success) {
-        toast.success(t('converter.success.settingsSaved'));
-        setShowSettings(false);
+      if (compatSuccess(result)) {
+        setStatusMessage(null);
 
         // 如果端口改变且服务器正在运行,需要重启服务器
         if (serverRunning) {
-          await window.electronAPI.converter.stopServer();
-          await window.electronAPI.converter.startServer();
+          if (!hasConverterMethod(converter, 'stopServer') || !hasConverterMethod(converter, 'startServer')) {
+            throw new Error(t('converter.errors.apiUnavailable'));
+          }
+          const stopResult = await converter.stopServer();
+          if (!compatSuccess(stopResult)) {
+            throw new Error(resultError(stopResult));
+          }
+          const startResult = await converter.startServer();
+          if (!compatSuccess(startResult)) {
+            throw new Error(resultError(startResult));
+          }
           await checkServerStatus();
         }
+
+        toast.success(t('converter.success.settingsSaved'));
+        setShowSettings(false);
       } else {
-        toast.error(t('converter.errors.saveSettingsFailed', { error: result.error }));
+        showActionError(t('converter.errors.saveSettingsFailed', { error: resultError(result) }));
       }
     } catch (error: any) {
       console.error('保存设置失败:', error);
-      toast.error(t('converter.errors.saveSettingsError'));
+      showActionError(t('converter.errors.saveSettingsFailed', { error: formatConverterError(error) }));
     }
   };
 
   const checkServerStatus = async () => {
-    if (!window.electronAPI?.converter) return;
+    const converter = getConverterApi();
+    if (!hasConverterMethod(converter, 'serverStatus')) {
+      setStatusMessage(t('converter.errors.apiUnavailable'));
+      return;
+    }
 
     try {
-      const result = await window.electronAPI.converter.serverStatus();
+      const result = await converter.serverStatus();
       if (result.success) {
         setServerRunning(result.isRunning);
+      } else {
+        setStatusMessage(resultError(result));
       }
     } catch (error) {
       console.error('检查服务器状态失败:', error);
+      setStatusMessage(formatConverterError(error));
     }
   };
 
   // 加载模板列表
   const loadTemplates = async () => {
-    if (!window.electronAPI?.converter) return;
+    const converter = getConverterApi();
+    if (!hasConverterMethod(converter, 'getTemplates')) {
+      setStatusMessage(t('converter.errors.apiUnavailable'));
+      return;
+    }
 
     try {
-      const result = await window.electronAPI.converter.getTemplates();
+      const result = await converter.getTemplates();
       if (result.success) {
         setTemplates(result.templates);
         // 默认选择第一个模板
         if (result.templates.length > 0) {
           setSelectedTemplate(result.templates[0].id);
         }
+      } else {
+        setStatusMessage(resultError(result));
       }
     } catch (error) {
       console.error('加载模板失败:', error);
+      setStatusMessage(formatConverterError(error));
     }
   };
 
@@ -195,21 +394,33 @@ export default function SubscriptionConverter() {
 
   // 解析代理列表
   const parseProxies = async (input: string) => {
-    if (!window.electronAPI?.converter) return;
+    const converter = getConverterApi();
+    if (!hasConverterMethod(converter, 'parseProxies')) {
+      return;
+    }
     
     try {
-      const result = await window.electronAPI.converter.parseProxies(input);
+      const result = await converter.parseProxies(input);
       
       if (result.success) {
         setProxiesList(result.proxies);
+      } else {
+        setProxiesList([]);
       }
     } catch (error) {
       console.error('解析代理失败:', error);
+      setProxiesList([]);
     }
   };
 
   // 执行转换
   const handleConvert = async () => {
+    const converter = getConverterApi();
+    if (!converter) {
+      showActionError(t('converter.errors.apiUnavailable'));
+      return;
+    }
+
     let sourceContent = '';
 
     // 处理输入
@@ -258,10 +469,13 @@ export default function SubscriptionConverter() {
         setSubscriptionUrl('');
 
         try {
+          if (!hasConverterMethod(converter, 'fetchUrl')) {
+            throw new Error(t('converter.errors.apiUnavailable'));
+          }
           if (urls.length === 1) {
-            const result = await window.electronAPI.converter.fetchUrl(urls[0]);
+            const result = await converter.fetchUrl(urls[0]);
             if (!result.success) {
-              throw new Error(result.error);
+              throw new Error(resultError(result));
             }
             sourceContent = result.content;
             console.log('[Converter] 下载内容长度:', sourceContent.length);
@@ -269,18 +483,23 @@ export default function SubscriptionConverter() {
           } else {
             const contents: string[] = [];
             for (let i = 0; i < urls.length; i++) {
-              const result = await window.electronAPI.converter.fetchUrl(urls[i]);
+              const result = await converter.fetchUrl(urls[i]);
               if (result.success) {
                 contents.push(result.content);
                 console.log(`[Converter] URL ${i + 1} 下载内容长度:`, result.content.length);
+              } else {
+                console.error(`[Converter] URL ${i + 1} 下载失败:`, resultError(result));
               }
+            }
+            if (contents.length === 0) {
+              throw new Error(t('converter.errors.fetchError'));
             }
             sourceContent = contents.join('\n');
             console.log('[Converter] 合并后内容长度:', sourceContent.length);
           }
           setContentInput(sourceContent);
         } catch (error: any) {
-          toast.error(t('converter.errors.fetchFailed', { error: error.message }));
+          showActionError(t('converter.errors.fetchFailed', { error: formatConverterError(error) }));
           setConverting(false);
           return;
         }
@@ -310,8 +529,11 @@ export default function SubscriptionConverter() {
       // 执行转换
       let result;
       if (useTemplate && selectedTemplate) {
+        if (!hasConverterMethod(converter, 'convertWithTemplate')) {
+          throw new Error(t('converter.errors.apiUnavailable'));
+        }
         // 使用模板转换
-        result = await window.electronAPI.converter.convertWithTemplate({
+        result = await converter.convertWithTemplate({
           input: sourceContent,
           targetFormat,
           templateId: selectedTemplate,
@@ -324,8 +546,11 @@ export default function SubscriptionConverter() {
           }
         });
       } else {
+        if (!hasConverterMethod(converter, 'convert')) {
+          throw new Error(t('converter.errors.apiUnavailable'));
+        }
         // 不使用模板,仅转换节点
-        result = await window.electronAPI.converter.convert({
+        result = await converter.convert({
           input: sourceContent,
           targetFormat,
           filterRegex: filterRegex.trim() || null,
@@ -353,13 +578,17 @@ export default function SubscriptionConverter() {
         // 自动生成配置链接
         await createSubscriptionAuto(sourceContent, result.outputProxyCount);
       } else {
-        console.error('[Converter] 转换失败:', result.errorMessage);
-        setErrorMessage(result.errorMessage || t('converter.errors.convertError'));
+        const message = resultError(result, t('converter.errors.convertError'));
+        console.error('[Converter] 转换失败:', message);
+        setErrorMessage(message);
+        setStatusMessage(message);
         setShowError(true);
       }
     } catch (error: any) {
       console.error('转换失败:', error);
-      setErrorMessage(error.message || t('converter.errors.convertError'));
+      const message = formatConverterError(error, t('converter.errors.convertError'));
+      setErrorMessage(message);
+      setStatusMessage(message);
       setShowError(true);
     } finally {
       setConverting(false);
@@ -369,14 +598,26 @@ export default function SubscriptionConverter() {
   // 自动生成配置链接
   const createSubscriptionAuto = async (sourceContent: string, proxyCount: number) => {
     try {
+      const converter = getConverterApi();
+      if (!converter) {
+        showActionError(t('converter.errors.apiUnavailable'));
+        return;
+      }
+      if (!hasConverterMethod(converter, 'startServer') || !hasConverterMethod(converter, 'createSubscription')) {
+        throw new Error(t('converter.errors.apiUnavailable'));
+      }
+
       // 启动服务器
-      await window.electronAPI.converter.startServer();
+      const startResult = await converter.startServer();
+      if (!compatSuccess(startResult)) {
+        throw new Error(resultError(startResult));
+      }
 
       // 创建配置
-      const result = await window.electronAPI.converter.createSubscription({
+      const result = await converter.createSubscription({
         name: `FlyClash_${targetFormat}_${Math.floor(Date.now() / 1000)}`,
         sourceUrl: inputType === 'url' ? urlInput : null,
-        sourceContent: inputType === 'content' ? sourceContent : null,
+        sourceContent,
         targetFormat,
         filterRegex: filterRegex.trim() || null,
         templateId: useTemplate && selectedTemplate ? selectedTemplate : null,
@@ -392,20 +633,34 @@ export default function SubscriptionConverter() {
         setSubscriptionId(result.id);
         setSubscriptionUrl(result.url);
         setServerRunning(true);
+        toast.success(t('converter.success.subscriptionCreated'));
+      } else {
+        throw new Error(resultError(result));
       }
     } catch (error: any) {
       console.error('自动生成配置链接失败:', error);
+      const message = t('converter.errors.subscriptionFailed', { error: formatConverterError(error) });
+      setStatusMessage(message);
+      toast.error(message);
     }
   };
 
 
 
   // 复制订阅URL
-  const handleCopyUrl = () => {
+  const handleCopyUrl = async () => {
     if (!subscriptionUrl) return;
-    
-    navigator.clipboard.writeText(subscriptionUrl);
-    toast.success(t('converter.success.urlCopied'));
+
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error(t('toast.copyFailed'));
+      }
+      await navigator.clipboard.writeText(subscriptionUrl);
+      toast.success(t('converter.success.urlCopied'));
+    } catch (error) {
+      console.error('复制配置链接失败:', error);
+      toast.error(`${t('toast.copyFailed')}: ${formatConverterError(error)}`);
+    }
   };
 
   // 导出配置
@@ -452,30 +707,77 @@ export default function SubscriptionConverter() {
       const localUrl = subscriptionUrl.replace(/http:\/\/[^:]+:/, 'http://127.0.0.1:');
 
       // 调用后端API添加配置(只传递URL)
-      const result = await window.electronAPI.converter.addToConfig({
+      const converter = getConverterApi();
+      if (!hasConverterMethod(converter, 'addToConfig')) {
+        showActionError(t('converter.errors.apiUnavailable'));
+        return;
+      }
+      const result = await converter.addToConfig({
         name: configName,
         url: localUrl
       });
 
-      if (result.success) {
-        // 显示成功对话框
-        setShowAddSuccess(true);
-        // 广播配置更新事件(让配置管理页面刷新列表)
-        window.dispatchEvent(new Event('profile-updated'));
+      const saveResult = normalizeAddToConfigResult(result);
+      if (saveResult.success) {
+        const activation = await activateSavedConfigIfEmpty(saveResult.filePath);
 
-        // 提示用户需要先更新配置
-        toast.success(t('converter.success.addedToConfig'));
+        // 显示成功对话框
+        setAddSuccessActivated(activation.activated);
+        setShowAddSuccess(true);
+        notifyConfigAdded(saveResult.filePath, activation.activated);
+
+        if (!activation.failed) {
+          setStatusMessage(null);
+        }
+
+        toast.success(activation.activated
+          ? t('converter.success.addedToConfigActivated')
+          : t('converter.success.addedToConfig'));
       } else {
-        toast.error(t('converter.errors.addToConfigFailed', { error: result.error }));
+        const error = saveResult.error
+          ? formatConverterError(saveResult.error, t('converter.errors.addToConfigError'))
+          : resultError(result, t('converter.errors.addToConfigError'));
+        showActionError(t('converter.errors.addToConfigFailed', { error }));
       }
     } catch (error: any) {
       console.error('添加到配置失败:', error);
-      toast.error(t('converter.errors.addToConfigError'));
+      showActionError(t('converter.errors.addToConfigFailed', { error: formatConverterError(error) }));
+    }
+  };
+
+  const handleToggleServer = async () => {
+    const converter = getConverterApi();
+    const method = serverRunning ? 'stopServer' : 'startServer';
+    if (!hasConverterMethod(converter, method)) {
+      showActionError(t('converter.errors.apiUnavailable'));
+      return;
+    }
+
+    try {
+      const result = await converter[method]();
+      if (!compatSuccess(result)) {
+        throw new Error(resultError(result));
+      }
+      setStatusMessage(null);
+      toast.success(serverRunning ? t('converter.success.serverStopped') : t('converter.success.serverStarted'));
+      await checkServerStatus();
+    } catch (error) {
+      console.error(serverRunning ? '停止订阅转换服务器失败:' : '启动订阅转换服务器失败:', error);
+      const message = serverRunning
+        ? t('converter.errors.stopServerFailed', { error: formatConverterError(error) })
+        : t('converter.errors.startServerFailed', { error: formatConverterError(error) });
+      showActionError(message);
     }
   };
 
   return (
     <div className="space-y-5">
+      {statusMessage && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          {statusMessage}
+        </div>
+      )}
+
       {/* 设置按钮和状态 */}
       <div className="rounded-2xl bg-white px-4 py-3 shadow-sm dark:bg-[#2a2a2a]">
         <div className="flex items-center justify-between">
@@ -503,14 +805,7 @@ export default function SubscriptionConverter() {
 
             {/* 启动/停止按钮 */}
             <button
-              onClick={async () => {
-                if (serverRunning) {
-                  await window.electronAPI.converter.stopServer();
-                } else {
-                  await window.electronAPI.converter.startServer();
-                }
-                await checkServerStatus();
-              }}
+              onClick={handleToggleServer}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                 serverRunning
                   ? 'bg-red-100 text-red-600 hover:bg-red-200 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20'
@@ -963,11 +1258,15 @@ export default function SubscriptionConverter() {
               </div>
 
               <Dialog.Title className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                {t('converter.success.addedToConfig')}
+                {addSuccessActivated
+                  ? t('converter.success.addedToConfigActivated')
+                  : t('converter.success.addedToConfig')}
               </Dialog.Title>
 
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                {t('converter.success.addedToConfigHint')}
+                {addSuccessActivated
+                  ? t('converter.success.addedToConfigActivatedHint')
+                  : t('converter.success.addedToConfigHint')}
               </p>
 
               <Dialog.Close asChild>

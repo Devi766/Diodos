@@ -108,7 +108,7 @@ export function ProxyModeCard({ mode, updating, onModeSwitch }: ProxyModeCardPro
         </p>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary dark:bg-primary/20">
-            {mode ? MODE_LABELS[mode] : t('dashboard.loading')}
+            {mode ? MODE_LABELS[mode] : '--'}
           </span>
         </div>
       </div>

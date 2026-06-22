@@ -31,9 +31,15 @@ import {
   DialogTitle,
   DialogTrigger
 } from '@/components/ui/dialog';
+import { toast } from 'sonner';
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+const MEDIA_API_UNAVAILABLE_MESSAGE = '媒体检测 API 不可用，请在 FlyClash 桌面端中使用此功能';
 
 // 定义媒体流测试API返回的结果类型
 interface MediaStreamingTestResult {
+  success?: boolean;
+  error?: string;
   available: boolean;
   fullSupport?: boolean;
   message?: string;
@@ -267,6 +273,31 @@ const SERVICES_BY_REGION: Record<RegionKey, string[]> = {
   'AI服务': ['ChatGPT', 'Meta AI', 'Bing区域']
 };
 
+const getErrorMessage = (error: unknown, fallback = '未知错误') => {
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (error && typeof error === 'object') {
+    const record = error as { error?: unknown; message?: unknown };
+    return String(record.error || record.message || fallback);
+  }
+  return fallback;
+};
+
+const isMediaApiUnavailable = (error: unknown) => {
+  const message = getErrorMessage(error);
+  return (
+    message.includes(TAURI_RUNTIME_UNAVAILABLE) ||
+    message.includes('not implemented in the Tauri runtime') ||
+    message.includes('not available') ||
+    message.includes('API不可用')
+  );
+};
+
+const formatMediaError = (error: unknown, fallback = '未知错误') => {
+  if (isMediaApiUnavailable(error)) return MEDIA_API_UNAVAILABLE_MESSAGE;
+  return getErrorMessage(error, fallback);
+};
+
 const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, onTestComplete }) => {
   const [services, setServices] = useState<StreamingService[]>(DEFAULT_SERVICES);
   const [isTestRunning, setIsTestRunning] = useState(false);
@@ -285,6 +316,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
 
   // 开始测试流媒体服务
   const startTest = async () => {
+    const mediaApi = typeof window !== 'undefined' ? window.electronAPI?.testMediaStreaming : undefined;
     setIsTestRunning(true);
     setTestProgress(0);
     setTestStartTime(new Date());
@@ -294,9 +326,45 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
 
     // 获取当前要测试的服务列表
     const servicesToTest = getFilteredServices();
+    let latestServices = services;
+
+    const updateServicesSnapshot = (updater: (previous: StreamingService[]) => StreamingService[]) => {
+      setServices(prev => {
+        const next = updater(prev);
+        latestServices = next;
+        return next;
+      });
+    };
+
+    if (typeof mediaApi !== 'function') {
+      updateServicesSnapshot(prev => {
+        const newServices = [...prev];
+        servicesToTest.forEach(service => {
+          const index = newServices.findIndex(s => s.name === service.name);
+          if (index !== -1) {
+            newServices[index] = {
+              ...newServices[index],
+              status: 'error',
+              message: MEDIA_API_UNAVAILABLE_MESSAGE,
+              region: undefined,
+              checkTime: undefined,
+              dnsStatus: undefined,
+              ipInfo: undefined
+            };
+          }
+        });
+        return newServices;
+      });
+      setTestProgress(100);
+      setIsTestRunning(false);
+      setTestEndTime(new Date());
+      toast.error(MEDIA_API_UNAVAILABLE_MESSAGE);
+      onTestComplete?.(latestServices);
+      return;
+    }
     
     // 重置要测试的服务状态
-    setServices(prev => {
+    updateServicesSnapshot(prev => {
       const newServices = [...prev];
       // 只重置当前要测试的服务
       servicesToTest.forEach(service => {
@@ -319,9 +387,12 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
     // 只测试当前标签页中的服务
     const testQueue = [...servicesToTest];
     let completed = 0;
+    let supportedCount = 0;
+    let failedCount = 0;
+    let abortedByUnavailableApi = false;
     
     console.log(`开始检测${activeTab === '全部' ? '所有' : activeTab}服务(共${testQueue.length}个)，当前节点:`, currentNode);
-    console.log('是否存在API:', window.electronAPI && typeof window.electronAPI.testMediaStreaming === 'function' ? '是' : '否');
+    console.log('是否存在API:', typeof mediaApi === 'function' ? '是' : '否');
 
     // 依次测试每个服务
     for (let index = 0; index < testQueue.length; index++) {
@@ -330,68 +401,61 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       try {
         let result: MediaStreamingTestResult;
         
-        // 尝试使用Electron API
-        if (window.electronAPI && typeof window.electronAPI.testMediaStreaming === 'function') {
-          try {
-            console.log(`尝试检测 ${service.name}，URL: ${service.checkUrl || '未指定'}`);
-            
-            // 特别记录特定服务的调用
-            if (service.name === 'AbemaTV' || service.name === 'myTVSuper' || 
-                service.name === 'Bilibili港澳台' || service.name === 'Bilibili台湾') {
-              console.log(`特殊服务检测: ${service.name}，确保名称匹配后端case语句`);
-            }
-            
-            result = await window.electronAPI.testMediaStreaming(service.name, service.checkUrl);
-            console.log(`${service.name} 检测结果:`, result);
-            
-            if (!result) {
-              throw new Error('API返回空结果');
-            }
-          } catch (apiError: any) {
-            console.error(`API调用失败(${service.name}):`, apiError);
-            
-            // 显示错误状态而不是使用模拟数据
-            setServices(prev => {
-              const newServices = [...prev];
-              const serviceIndex = newServices.findIndex(s => s.name === service.name);
+        try {
+          console.log(`尝试检测 ${service.name}，URL: ${service.checkUrl || '未指定'}`);
+          
+          // 特别记录特定服务的调用
+          if (service.name === 'AbemaTV' || service.name === 'myTVSuper' || 
+              service.name === 'Bilibili港澳台' || service.name === 'Bilibili台湾') {
+            console.log(`特殊服务检测: ${service.name}，确保名称匹配后端case语句`);
+          }
+          
+          result = await mediaApi(service.name, service.checkUrl);
+          console.log(`${service.name} 检测结果:`, result);
+          
+          if (!result) {
+            throw new Error('API返回空结果');
+          }
+          if (result.success === false) {
+            throw new Error(result.error || result.message || 'API返回失败');
+          }
+          if (typeof result.available !== 'boolean') {
+            throw new Error('API返回格式异常');
+          }
+        } catch (apiError: any) {
+          console.error(`API调用失败(${service.name}):`, apiError);
+          const message = formatMediaError(apiError);
+          const apiUnavailable = isMediaApiUnavailable(apiError);
+          const servicesToMark = apiUnavailable ? testQueue.slice(index) : [service];
+          
+          updateServicesSnapshot(prev => {
+            const newServices = [...prev];
+            servicesToMark.forEach(item => {
+              const serviceIndex = newServices.findIndex(s => s.name === item.name);
               if (serviceIndex !== -1) {
                 newServices[serviceIndex] = {
                   ...newServices[serviceIndex],
                   status: 'error',
-                  message: `API调用失败: ${apiError.message || '未知错误'}`
+                  message: apiUnavailable ? message : `API调用失败: ${message}`
                 };
               }
-              return newServices;
             });
-            
-            // 更新进度并继续下一个服务
-            completed++;
-            setTestProgress(Math.floor((completed / testQueue.length) * 100));
-            continue; // 跳过后续处理，继续下一个服务
-          }
-        } else {
-          console.error(`无法调用媒体检测API(${service.name})`);
-          setServices(prev => {
-            const newServices = [...prev];
-            const serviceIndex = newServices.findIndex(s => s.name === service.name);
-            if (serviceIndex !== -1) {
-              newServices[serviceIndex] = {
-                ...newServices[serviceIndex],
-                status: 'error',
-                message: 'API不可用，请重新启动应用'
-              };
-            }
             return newServices;
           });
           
-          // 更新进度并继续下一个服务
-          completed++;
+          failedCount += servicesToMark.length;
+          completed += servicesToMark.length;
           setTestProgress(Math.floor((completed / testQueue.length) * 100));
+          if (apiUnavailable) {
+            abortedByUnavailableApi = true;
+            toast.error(message);
+            break;
+          }
           continue; // 跳过后续处理，继续下一个服务
         }
         
         // 更新服务状态
-        setServices(prev => {
+        updateServicesSnapshot(prev => {
           const newServices = [...prev];
           
           // 找到当前测试的服务并更新结果
@@ -408,6 +472,11 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
               logContent: '',  // 初始化日志内容为空字符串
               fullSupport: result.fullSupport
             };
+            if (result.available) {
+              supportedCount++;
+            } else {
+              failedCount++;
+            }
             
             // 如果有日志路径，尝试读取日志内容
             if (result.logPath) {
@@ -420,15 +489,16 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         });
       } catch (error: any) {
         console.error(`测试过程中出错(${service.name}):`, error);
+        failedCount++;
         // 处理测试过程中的错误
-        setServices(prev => {
+        updateServicesSnapshot(prev => {
           const newServices = [...prev];
           const serviceIndex = newServices.findIndex(s => s.name === service.name);
           if (serviceIndex !== -1) {
             newServices[serviceIndex] = {
               ...newServices[serviceIndex],
               status: 'timeout',
-              message: '检测超时或出错: ' + (error.message || '未知错误')
+              message: '检测超时或出错: ' + formatMediaError(error)
             };
           }
           return newServices;
@@ -448,12 +518,20 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
     setTestEndTime(new Date());
     
     // 如果是在"全部"标签下完成了测试，显示分享按钮
-    if (activeTab === '全部') {
+    if (activeTab === '全部' && !abortedByUnavailableApi) {
       setShowShareButton(true);
     }
     
+    if (!abortedByUnavailableApi) {
+      if (failedCount > 0) {
+        toast.warning(`媒体检测完成：支持或部分支持 ${supportedCount} 个，失败 ${failedCount} 个`);
+      } else {
+        toast.success(`媒体检测完成：支持或部分支持 ${supportedCount} 个`);
+      }
+    }
+    
     if (onTestComplete) {
-      onTestComplete(services);
+      onTestComplete(latestServices);
     }
   };
 
@@ -741,7 +819,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       }
     } catch (error) {
       console.error('生成报告图片失败:', error);
-      alert('生成报告图片失败: ' + (error instanceof Error ? error.message : String(error)));
+      toast.error(`生成报告图片失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsGeneratingImage(false);
     }
@@ -757,6 +835,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    toast.success('测试报告图片已下载');
   };
   
   // 复制报告图片到剪贴板
@@ -778,6 +857,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         // 设置复制成功状态
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
+        toast.success('测试报告图片已复制');
       } catch (clipboardError) {
         console.error('现代剪贴板API失败:', clipboardError);
         
@@ -801,6 +881,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             // 设置复制成功状态
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
+            toast.success('测试报告图片已复制');
           } else {
             throw new Error('execCommand失败');
           }
@@ -808,6 +889,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           console.error('execCommand复制失败:', execCommandError);
           setCopyError(true);
           setTimeout(() => setCopyError(false), 2000);
+          toast.error('复制图片失败，请尝试下载图片');
         } finally {
           // 移除临时元素
           document.body.removeChild(img);
@@ -818,6 +900,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       console.error('复制到剪贴板失败:', error);
       setCopyError(true);
       setTimeout(() => setCopyError(false), 2000);
+      toast.error('复制图片失败，请尝试下载图片');
     }
   };
 
@@ -1110,4 +1193,4 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
   );
 };
 
-export default MediaStreamingTest; 
+export default MediaStreamingTest;

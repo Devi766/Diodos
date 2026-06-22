@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ConfirmDialog } from './ConfirmDialog';
+import { showToast as showGlobalToast } from '@/components/ui/toast';
 
 type CoreType = 'mihomo' | 'mihomo-alpha' | 'mihomo-smart' | 'mihomo-specific';
 
@@ -16,6 +17,8 @@ interface InstalledCore {
   path: string;
   size: number;
   modifiedAt: Date;
+  managed?: boolean;
+  source?: 'managed' | 'bundled' | string;
 }
 
 type ProgressPhase =
@@ -56,6 +59,128 @@ interface UpdateInfo {
   latestVersion?: string;
 }
 
+interface CoreResourceStatusItem {
+  available?: boolean;
+  required?: boolean;
+  path?: string | null;
+  error?: string | null;
+}
+
+interface CoreDataResourceStatus {
+  available?: boolean;
+  synced?: boolean;
+  sourceDir?: string | null;
+  targetDir?: string | null;
+  syncedFiles?: string[];
+  missingFiles?: string[];
+}
+
+interface CoreRuntimeState {
+  success?: boolean;
+  runningMode?: 'service' | 'sidecar' | 'notRunning';
+  activeConfig?: string | null;
+  pid?: number | null;
+  socketPath?: string | null;
+  socketArg?: string | null;
+  controllerAvailable?: boolean;
+  controllerError?: string | null;
+  coreVersion?: string | null;
+  coreMeta?: boolean | null;
+  corePremium?: boolean | null;
+  coreRunning?: boolean;
+  corePid?: number | null;
+  resources?: {
+    core?: CoreResourceStatusItem;
+    helper?: CoreResourceStatusItem;
+    data?: CoreDataResourceStatus;
+  };
+}
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const getCoreApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI;
+};
+
+const hasMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => any> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+const errorToMessage = (error: unknown) => {
+  if (!error) return undefined;
+  return error instanceof Error ? error.message : String(error);
+};
+
+const renderCoreToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  if (typeof document === 'undefined' || !message) return;
+
+  let root = document.getElementById('flyclash-toast-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'flyclash-toast-root';
+    root.setAttribute('aria-live', 'polite');
+    Object.assign(root.style, {
+      position: 'fixed',
+      top: '16px',
+      right: '16px',
+      zIndex: '2147483647',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px',
+      pointerEvents: 'none',
+      maxWidth: 'min(420px, calc(100vw - 32px))'
+    });
+    document.body.appendChild(root);
+  }
+
+  const toast = document.createElement('div');
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  toast.textContent = message;
+  Object.assign(toast.style, {
+    boxSizing: 'border-box',
+    width: '100%',
+    padding: '12px 16px',
+    borderRadius: '12px',
+    background: {
+      success: '#16a34a',
+      error: '#dc2626',
+      info: '#2563eb'
+    }[type],
+    color: '#fff',
+    boxShadow: '0 18px 45px rgba(15, 23, 42, 0.22)',
+    fontSize: '14px',
+    fontWeight: '600',
+    lineHeight: '1.45',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    opacity: '1',
+    transform: 'translateY(0)',
+    transition: 'opacity 160ms ease, transform 160ms ease',
+    pointerEvents: 'auto'
+  });
+  root.appendChild(toast);
+
+  window.setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-6px)';
+    window.setTimeout(() => {
+      toast.remove();
+      if (!root.hasChildNodes()) root.remove();
+    }, 180);
+  }, 8000);
+};
+
+const notifyCoreConfigChanged = (detail: Record<string, unknown> = {}) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('core-config-changed', { detail }));
+  window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'core-manager', ...detail } }));
+};
+
 // 阶段标签：先尝试 i18n，若 key 未配置则回退到中文兜底文案
 function getPhaseLabel(phase: ProgressPhase, t: (k: string) => string): string {
   const map: Record<ProgressPhase, { key: string; fallback: string }> = {
@@ -85,6 +210,7 @@ export default function CoreManager() {
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<CoreDownloadProgress | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [runtimeState, setRuntimeState] = useState<CoreRuntimeState | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>('downloading');
   const [slowWarning, setSlowWarning] = useState(false);
@@ -102,11 +228,50 @@ export default function CoreManager() {
     return value.replace(/^v/i, '').trim();
   };
 
+  const unknownError = () => t('core.unknownError');
+  const displayError = (message?: string) => {
+    const normalized = message?.trim();
+    if (!normalized) return unknownError();
+    return normalized.includes(TAURI_RUNTIME_UNAVAILABLE) ? t('core.apiUnavailable') : normalized;
+  };
+  const resultError = (result: { error?: string } | undefined) => displayError(result?.error);
+  const caughtError = (error: unknown) => displayError(errorToMessage(error));
+  const withErrorDetail = (label: string, detail: string) => `${label}: ${detail}`;
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ type, message });
+    renderCoreToast(message, type);
+    showGlobalToast({ type, message });
+  };
+
+  const notifyApiUnavailable = () => {
+    showToast(t('core.apiUnavailable'), 'error');
+  };
+
+  const loadRuntimeState = async () => {
+    try {
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreGetRuntimeState')) {
+        return;
+      }
+
+      const result = await api.coreGetRuntimeState();
+      if (result?.success !== false) {
+        setRuntimeState(result);
+      }
+    } catch (error) {
+      console.debug('[CoreManager] 加载运行态失败:', error);
+    }
+  };
+
   const loadCurrentConfig = async () => {
     try {
-      if (!window.electronAPI?.coreGetCurrentConfig) return;
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreGetCurrentConfig')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-      const result = await window.electronAPI.coreGetCurrentConfig();
+      const result = await api.coreGetCurrentConfig();
       if (result.success) {
         setCurrentConfig(result.config || null);
         setCurrentVersion(result.version || t('core.unknown'));
@@ -121,66 +286,102 @@ export default function CoreManager() {
             setSelectedCoreType(result.config.coreType);
           }
         }
+      } else {
+        showToast(withErrorDetail(t('core.loadCurrentConfigFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 加载内核配置失败:', error);
+      showToast(withErrorDetail(t('core.loadCurrentConfigFailed'), caughtError(error)), 'error');
     }
   };
 
   const loadInstalledCores = async () => {
     try {
-      if (!window.electronAPI?.coreGetInstalledCores) return;
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreGetInstalledCores')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-      const result = await window.electronAPI.coreGetInstalledCores();
+      const result = await api.coreGetInstalledCores();
       if (result.success && result.cores) {
         setInstalledCores(result.cores);
+      } else if (!result.success) {
+        setInstalledCores([]);
+        showToast(withErrorDetail(t('core.loadInstalledCoresFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 加载内核列表失败:', error);
+      setInstalledCores([]);
+      showToast(withErrorDetail(t('core.loadInstalledCoresFailed'), caughtError(error)), 'error');
     }
   };
 
   const loadAvailableVersions = async (coreType: CoreType, forceRefresh = false) => {
     setLoadingVersions(true);
     try {
-      if (!window.electronAPI?.coreGetAvailableVersions) return;
-
-      if (forceRefresh && window.electronAPI?.coreClearVersionCache) {
-        await window.electronAPI.coreClearVersionCache(coreType);
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreGetAvailableVersions')) {
+        setAvailableVersions([]);
+        notifyApiUnavailable();
+        return;
       }
 
-      const result = await window.electronAPI.coreGetAvailableVersions(coreType, 100, forceRefresh);
+      if (forceRefresh && hasMethod(api, 'coreClearVersionCache')) {
+        const clearResult = await api.coreClearVersionCache(coreType);
+        if (clearResult?.success === false) {
+          showToast(withErrorDetail(t('core.loadVersionsFailed'), resultError(clearResult)), 'error');
+        }
+      }
+
+      const result = await api.coreGetAvailableVersions(coreType, 100, forceRefresh);
       if (result.success && result.versions) {
         setAvailableVersions(result.versions);
       } else {
         setAvailableVersions([]);
+        showToast(withErrorDetail(t('core.loadVersionsFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 加载版本列表失败:', error);
-      setToast({ type: 'error', message: t('core.loadVersionsFailed') });
+      setAvailableVersions([]);
+      showToast(withErrorDetail(t('core.loadVersionsFailed'), caughtError(error)), 'error');
     } finally {
       setLoadingVersions(false);
     }
   };
 
   const handleCheckUpdate = async () => {
-    if (!currentConfig) return;
+    if (!currentConfig) {
+      showToast(t('core.noCurrentCore'), 'info');
+      return;
+    }
 
     setChecking(true);
     setUpdateInfo(null);
     try {
-      if (!window.electronAPI?.coreCheckUpdate) return;
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreCheckUpdate')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-      const result = await window.electronAPI.coreCheckUpdate(currentConfig.coreType);
+      const result = await api.coreCheckUpdate(currentConfig.coreType);
       if (result.success) {
-        setUpdateInfo(result);
+        setUpdateInfo({
+          success: true,
+          hasUpdate: Boolean(result.hasUpdate),
+          currentVersion: result.currentVersion,
+          latestVersion: result.latestVersion,
+        });
         if (!result.hasUpdate) {
-          setToast({ type: 'success', message: t('core.upToDate') });
+          showToast(t('core.upToDate'), 'success');
         }
+      } else {
+        showToast(withErrorDetail(t('core.checkUpdateFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 检查更新失败:', error);
-      setToast({ type: 'error', message: t('core.checkUpdateFailed') });
+      showToast(withErrorDetail(t('core.checkUpdateFailed'), caughtError(error)), 'error');
     } finally {
       setChecking(false);
     }
@@ -193,15 +394,19 @@ export default function CoreManager() {
     setProgressPhase('downloading');
     setSlowWarning(false);
     try {
-      if (!window.electronAPI?.coreDownloadCore || !window.electronAPI?.coreDownloadSpecificVersion) return;
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreDownloadCore') || !hasMethod(api, 'coreDownloadSpecificVersion')) {
+        notifyApiUnavailable();
+        return;
+      }
 
       // 稳定版选了具体版本时，内部使用 mihomo-specific
       const isSpecific = selectedCoreType === 'mihomo' && selectedVersion !== 'latest';
       const effectiveType = isSpecific ? 'mihomo-specific' as CoreType : selectedCoreType;
 
       const result = selectedVersion === 'latest'
-        ? await window.electronAPI.coreDownloadCore(effectiveType)
-        : await window.electronAPI.coreDownloadSpecificVersion(effectiveType, selectedVersion);
+        ? await api.coreDownloadCore(effectiveType)
+        : await api.coreDownloadSpecificVersion(effectiveType, selectedVersion);
 
       if (result.success) {
         const downloadedVersion = normalizeVersion(result.version || selectedVersion);
@@ -209,15 +414,16 @@ export default function CoreManager() {
           setSelectedVersion(downloadedVersion);
         }
 
-        setToast({ type: 'success', message: t('core.downloadSuccess') });
+        showToast(t('core.downloadSuccess'), 'success');
         await loadInstalledCores();
         await loadCurrentConfig();
+        notifyCoreConfigChanged({ action: 'download', coreType: effectiveType, version: downloadedVersion || undefined });
       } else {
-        setToast({ type: 'error', message: result.error || t('core.downloadFailed') });
+        showToast(withErrorDetail(t('core.downloadFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 下载内核失败:', error);
-      setToast({ type: 'error', message: String(error) });
+      showToast(withErrorDetail(t('core.downloadFailed'), caughtError(error)), 'error');
     } finally {
       setDownloading(false);
       setDownloadProgress(null);
@@ -233,7 +439,7 @@ export default function CoreManager() {
     const effectiveType = (coreType === 'mihomo' && normalizedSpecificVersion) ? 'mihomo-specific' as CoreType : coreType;
 
     if (effectiveType === 'mihomo-specific' && !normalizedSpecificVersion) {
-      setToast({ type: 'info', message: t('core.selectSpecificVersionFirst') });
+      showToast(t('core.selectSpecificVersionFirst'), 'info');
       return;
     }
 
@@ -243,18 +449,23 @@ export default function CoreManager() {
     setProgressPhase('switching');
     setSlowWarning(false);
     try {
-      if (!window.electronAPI?.coreSwitchCore) return;
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreSwitchCore')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-      const result = await window.electronAPI.coreSwitchCore(effectiveType, normalizedSpecificVersion || undefined);
+      const result = await api.coreSwitchCore(effectiveType, normalizedSpecificVersion || undefined);
       if (result.success) {
-        setToast({ type: 'success', message: t('core.switchSuccess') });
+        showToast(t('core.switchSuccess'), 'success');
         await loadCurrentConfig();
+        notifyCoreConfigChanged({ action: 'switch', coreType: effectiveType, version: normalizedSpecificVersion || undefined });
       } else {
-        setToast({ type: 'error', message: result.error || t('core.switchFailed') });
+        showToast(withErrorDetail(t('core.switchFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 切换内核失败:', error);
-      setToast({ type: 'error', message: String(error) });
+      showToast(withErrorDetail(t('core.switchFailed'), caughtError(error)), 'error');
     } finally {
       setLoading(false);
       setDownloadProgress(null);
@@ -274,18 +485,23 @@ export default function CoreManager() {
     if (!pendingDeletePath) return;
 
     try {
-      if (!window.electronAPI?.coreDeleteCore) return;
+      const api = getCoreApi();
+      if (!hasMethod(api, 'coreDeleteCore')) {
+        notifyApiUnavailable();
+        return;
+      }
 
-      const result = await window.electronAPI.coreDeleteCore(pendingDeletePath);
+      const result = await api.coreDeleteCore(pendingDeletePath);
       if (result.success) {
-        setToast({ type: 'success', message: t('core.deleteSuccess') });
+        showToast(t('core.deleteSuccess'), 'success');
         await loadInstalledCores();
+        notifyCoreConfigChanged({ action: 'delete', path: pendingDeletePath });
       } else {
-        setToast({ type: 'error', message: result.error || t('toast.operationFailed') });
+        showToast(withErrorDetail(t('core.deleteFailed'), resultError(result)), 'error');
       }
     } catch (error) {
       console.error('[CoreManager] 删除内核失败:', error);
-      setToast({ type: 'error', message: String(error) });
+      showToast(withErrorDetail(t('core.deleteFailed'), caughtError(error)), 'error');
     } finally {
       setPendingDeletePath(null);
     }
@@ -302,9 +518,26 @@ export default function CoreManager() {
   }, [selectedCoreType]);
 
   useEffect(() => {
-    if (!window.electronAPI?.onCoreDownloadProgress) return;
+    if (typeof window === 'undefined') return;
 
-    const unsubscribe = window.electronAPI.onCoreDownloadProgress((data: CoreDownloadProgress) => {
+    const refreshAfterCoreChange = () => {
+      void loadInstalledCores();
+      void loadCurrentConfig();
+      void loadRuntimeState();
+    };
+
+    window.addEventListener('core-config-changed', refreshAfterCoreChange);
+
+    return () => {
+      window.removeEventListener('core-config-changed', refreshAfterCoreChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const api = getCoreApi();
+    if (!hasMethod(api, 'onCoreDownloadProgress')) return;
+
+    const unsubscribe = api.onCoreDownloadProgress((data: CoreDownloadProgress) => {
       setDownloadProgress(data);
       const phase: ProgressPhase = (data.phase as ProgressPhase) || (data.progress >= 100 ? 'extracting' : 'downloading');
       setProgressPhase(phase);
@@ -340,6 +573,9 @@ export default function CoreManager() {
   useEffect(() => {
     loadCurrentConfig();
     loadInstalledCores();
+    loadRuntimeState();
+    const timer = window.setInterval(loadRuntimeState, 5000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const getCoreTypeName = (type: CoreType) => {
@@ -368,6 +604,51 @@ export default function CoreManager() {
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString();
+  };
+
+  const getRunningModeName = (mode?: CoreRuntimeState['runningMode']) => {
+    switch (mode) {
+      case 'service':
+        return t('core.modeService');
+      case 'sidecar':
+        return t('core.modeSidecar');
+      case 'notRunning':
+        return t('core.modeNotRunning');
+      default:
+        return t('core.unknown');
+    }
+  };
+
+  const runtimeMode = runtimeState?.runningMode || 'notRunning';
+  const runtimeReady = runtimeMode !== 'notRunning' && runtimeState?.controllerAvailable === true;
+  const runtimeStatusLabel = runtimeReady
+    ? t('core.controllerReady')
+    : runtimeMode === 'notRunning'
+      ? t('core.modeNotRunning')
+      : t('core.controllerUnavailable');
+  const runtimePid = runtimeState?.pid ?? runtimeState?.corePid ?? null;
+  const resources = runtimeState?.resources;
+  const resourceReady = Boolean(
+    resources?.core?.available &&
+    (resources?.helper?.available || resources?.helper?.required === false) &&
+    resources?.data?.available
+  );
+  const dataMissingFiles = resources?.data?.missingFiles || [];
+
+  const resourceBadgeClass = (available?: boolean, warning = false) => {
+    if (available && !warning) {
+      return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
+    }
+    if (available && warning) {
+      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300';
+    }
+    return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300';
+  };
+
+  const resourceBadgeLabel = (available?: boolean, warning = false) => {
+    if (available && !warning) return t('core.resourceReady');
+    if (available && warning) return t('core.resourcePendingSync');
+    return t('core.resourceMissing');
   };
 
   const currentSpecificVersion = useMemo(() => {
@@ -414,6 +695,41 @@ export default function CoreManager() {
     if (!coreVersion) return false;
     return coreVersion === currentSpecificVersion;
   };
+
+  const isCoreManaged = (core: InstalledCore) => {
+    if (typeof core.managed === 'boolean') return core.managed;
+    if (core.source) return core.source !== 'bundled';
+    return true;
+  };
+
+  const canDeleteCore = (core: InstalledCore) => isCoreManaged(core) && !isCoreActive(core);
+
+  const coreDeleteTitle = (core: InstalledCore) => {
+    if (!isCoreManaged(core)) return t('core.bundledCoreCannotDelete');
+    if (isCoreActive(core)) return t('core.activeCoreCannotDelete');
+    return t('core.delete');
+  };
+
+  const renderResourceRow = (
+    label: string,
+    available?: boolean,
+    path?: string | null,
+    options: { warning?: boolean; error?: string | null; detail?: string | null } = {},
+  ) => (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-gray-600 dark:text-gray-400">{label}</span>
+        <span className={`text-xs px-2 py-1 rounded ${resourceBadgeClass(available, options.warning)}`}>
+          {resourceBadgeLabel(available, options.warning)}
+        </span>
+      </div>
+      {(path || options.detail || options.error) && (
+        <div className="text-xs text-gray-500 dark:text-gray-400 break-all">
+          {path || options.detail || options.error}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -473,6 +789,92 @@ export default function CoreManager() {
           </div>
         </div>
       </div>
+
+      <div className="bg-white dark:bg-[#1e1e1e] rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">
+            {t('core.runtimeStatus')}
+          </h3>
+          <span className={`text-xs px-2 py-1 rounded ${
+            runtimeReady
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+              : runtimeMode === 'notRunning'
+              ? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+              : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+          }`}>
+            {runtimeStatusLabel}
+          </span>
+        </div>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600 dark:text-gray-400">{t('core.runningMode')}:</span>
+            <span className="text-gray-900 dark:text-gray-100">{getRunningModeName(runtimeMode)}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600 dark:text-gray-400">{t('core.processId')}:</span>
+            <span className="text-gray-900 dark:text-gray-100">{runtimePid || '-'}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600 dark:text-gray-400">{t('core.runtimeVersion')}:</span>
+            <span className="text-gray-900 dark:text-gray-100">{runtimeState?.coreVersion || '-'}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600 dark:text-gray-400">{t('core.activeConfig')}:</span>
+            <span className="max-w-[65%] break-all text-right text-gray-900 dark:text-gray-100">
+              {runtimeState?.activeConfig || '-'}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600 dark:text-gray-400">{t('core.controllerSocket')}:</span>
+            <span className="max-w-[65%] break-all text-right text-gray-900 dark:text-gray-100">
+              {runtimeState?.socketPath || '-'}
+            </span>
+          </div>
+          {runtimeState?.controllerError && runtimeMode !== 'notRunning' && (
+            <div className="text-xs text-yellow-700 dark:text-yellow-300 break-words">
+              {runtimeState.controllerError}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {resources && (
+        <div className="bg-white dark:bg-[#1e1e1e] rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">
+              {t('core.resourceStatus')}
+            </h3>
+            <span className={`text-xs px-2 py-1 rounded ${resourceBadgeClass(resourceReady)}`}>
+              {resourceReady ? t('core.resourceReady') : t('core.resourceMissing')}
+            </span>
+          </div>
+          <div className="space-y-3">
+            {renderResourceRow(
+              t('core.resourceCore'),
+              resources.core?.available,
+              resources.core?.path,
+              { error: resources.core?.error }
+            )}
+            {resources.helper?.required !== false && renderResourceRow(
+              t('core.resourceHelper'),
+              resources.helper?.available,
+              resources.helper?.path,
+              { error: resources.helper?.error }
+            )}
+            {renderResourceRow(
+              t('core.resourceGeodata'),
+              resources.data?.available,
+              resources.data?.targetDir || resources.data?.sourceDir,
+              {
+                warning: Boolean(resources.data?.available && !resources.data?.synced),
+                detail: dataMissingFiles.length
+                  ? t('core.resourceMissingFiles', { files: dataMissingFiles.join(', ') })
+                  : undefined,
+              }
+            )}
+          </div>
+        </div>
+      )}
 
       {updateInfo && updateInfo.hasUpdate && (
         <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4 border border-yellow-200 dark:border-yellow-800">
@@ -629,6 +1031,13 @@ export default function CoreManager() {
                         {t('core.active')}
                       </span>
                     )}
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      isCoreManaged(core)
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+                    }`}>
+                      {isCoreManaged(core) ? t('core.managedCore') : t('core.bundledCore')}
+                    </span>
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     {t('core.version')}: {core.version || t('core.unknown')} • {formatBytes(core.size)}
@@ -645,7 +1054,8 @@ export default function CoreManager() {
                   <button
                     className="py-1 px-3 text-xs rounded bg-red-500 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
                     onClick={() => handleDeleteCore(core.path)}
-                    disabled={isCoreActive(core)}
+                    disabled={!canDeleteCore(core)}
+                    title={coreDeleteTitle(core)}
                   >
                     {t('core.delete')}
                   </button>

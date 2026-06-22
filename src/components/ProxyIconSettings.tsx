@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { PlusIcon, TrashIcon, Pencil1Icon, CheckIcon } from '@radix-ui/react-icons';
+import { PlusIcon, TrashIcon, Pencil1Icon, CheckIcon, ReloadIcon } from '@radix-ui/react-icons';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Button } from './ui/button';
 import { useThemeColor } from '../hooks/useThemeColor';
+import { showToast } from '@/components/ui/toast';
 
 interface ProxyIconRule {
   id: string;
@@ -20,11 +21,34 @@ interface ProxyIconConfig {
   rules: ProxyIconRule[];
 }
 
+const getProxyIconApi = () => {
+  if (typeof window === 'undefined') return undefined;
+  return window.electronAPI?.proxyIcon;
+};
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const errorToMessage = (error: unknown) => {
+  return error instanceof Error ? error.message : String(error || 'Unknown error');
+};
+
+const normalizeProxyIconConfig = (config: Partial<ProxyIconConfig> | undefined): ProxyIconConfig => ({
+  enabled: config?.enabled ?? true,
+  rules: Array.isArray(config?.rules) ? config.rules : [],
+});
+
+const notifyProxyIconChanged = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('proxy-icon-changed', { detail: { source: 'proxy-icon-settings' } }));
+  }
+};
+
 const ProxyIconSettings: React.FC = () => {
   const { t } = useTranslation();
   const themeColor = useThemeColor();
   const [config, setConfig] = useState<ProxyIconConfig>({ enabled: true, rules: [] });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<ProxyIconRule | null>(null);
   const [showRuleDialog, setShowRuleDialog] = useState(false);
 
@@ -63,33 +87,101 @@ const ProxyIconSettings: React.FC = () => {
     [config.rules],
   );
 
+  const formatProxyIconError = (error: unknown, fallback = t('proxyIcon.unknownError')) => {
+    const message = errorToMessage(error || fallback);
+    return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? t('proxyIcon.apiUnavailable') : message;
+  };
+
+  const resultError = (result: { error?: string } | undefined) =>
+    result?.error ? formatProxyIconError(result.error) : t('proxyIcon.unknownError');
+
+  const notifyApiUnavailable = () => {
+    showToast({ message: t('proxyIcon.apiUnavailable'), type: 'error' });
+  };
+
   // 加载配置
   useEffect(() => {
     loadConfig();
+
+    const refreshConfig = (event?: Event) => {
+      const source = event instanceof CustomEvent ? event.detail?.source : undefined;
+      if (source === 'proxy-icon-settings') {
+        return;
+      }
+      loadConfig();
+    };
+    window.addEventListener('backup-restored', refreshConfig);
+    window.addEventListener('proxy-icon-changed', refreshConfig);
+
+    return () => {
+      window.removeEventListener('backup-restored', refreshConfig);
+      window.removeEventListener('proxy-icon-changed', refreshConfig);
+    };
   }, []);
 
   const loadConfig = async () => {
     try {
-      const result = await window.electronAPI.proxyIcon.getConfig();
-      if (result.success) {
-        setConfig(result.config);
+      setLoading(true);
+      setLoadError(null);
+      const proxyIcon = getProxyIconApi();
+      if (!proxyIcon) {
+        setLoadError(t('proxyIcon.apiUnavailable'));
+        notifyApiUnavailable();
+        return;
+      }
+      const result = await proxyIcon.getConfig();
+      if (result.success && result.config) {
+        setConfig(normalizeProxyIconConfig(result.config));
+      } else {
+        const message = t('proxyIcon.loadFailed', { error: resultError(result) });
+        setLoadError(message);
+        showToast({
+          message,
+          type: 'error',
+        });
       }
     } catch (error) {
       console.error('加载代理图标配置失败:', error);
+      const message = t('proxyIcon.loadFailed', { error: formatProxyIconError(error) });
+      setLoadError(message);
+      showToast({
+        message,
+        type: 'error',
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const saveConfig = async (newConfig: ProxyIconConfig) => {
+  const saveConfig = async (newConfig: ProxyIconConfig, showSuccess = true) => {
     try {
-      const result = await window.electronAPI.proxyIcon.saveConfig(newConfig);
+      const proxyIcon = getProxyIconApi();
+      if (!proxyIcon) {
+        notifyApiUnavailable();
+        return false;
+      }
+      const result = await proxyIcon.saveConfig(newConfig);
       if (result.success) {
         setConfig(newConfig);
+        setLoadError(null);
+        notifyProxyIconChanged();
+        if (showSuccess) {
+          showToast({ message: t('proxyIcon.configSaved'), type: 'success' });
+        }
+        return true;
       }
+      showToast({
+        message: t('proxyIcon.configSaveFailed', { error: resultError(result) }),
+        type: 'error',
+      });
     } catch (error) {
       console.error('保存代理图标配置失败:', error);
+      showToast({
+        message: t('proxyIcon.configSaveFailed', { error: errorToMessage(error) }),
+        type: 'error',
+      });
     }
+    return false;
   };
 
   const handleToggleEnabled = () => {
@@ -117,23 +209,55 @@ const ProxyIconSettings: React.FC = () => {
 
   const handleDeleteRule = async (ruleId: string) => {
     try {
-      const result = await window.electronAPI.proxyIcon.deleteRule(ruleId);
+      const proxyIcon = getProxyIconApi();
+      if (!proxyIcon) {
+        notifyApiUnavailable();
+        return;
+      }
+      const result = await proxyIcon.deleteRule(ruleId);
       if (result.success) {
-        loadConfig();
+        await loadConfig();
+        notifyProxyIconChanged();
+        showToast({ message: t('proxyIcon.ruleDeletedSuccess'), type: 'success' });
+      } else {
+        showToast({
+          message: t('proxyIcon.ruleDeleteFailed', { error: resultError(result) }),
+          type: 'error',
+        });
       }
     } catch (error) {
       console.error('删除规则失败:', error);
+      showToast({
+        message: t('proxyIcon.ruleDeleteFailed', { error: errorToMessage(error) }),
+        type: 'error',
+      });
     }
   };
 
   const handleToggleRule = async (ruleId: string, enabled: boolean) => {
     try {
-      const result = await window.electronAPI.proxyIcon.toggleRule(ruleId, enabled);
+      const proxyIcon = getProxyIconApi();
+      if (!proxyIcon) {
+        notifyApiUnavailable();
+        return;
+      }
+      const result = await proxyIcon.toggleRule(ruleId, enabled);
       if (result.success) {
-        loadConfig();
+        await loadConfig();
+        notifyProxyIconChanged();
+        showToast({ message: t('proxyIcon.ruleToggleSuccess'), type: 'success' });
+      } else {
+        showToast({
+          message: t('proxyIcon.ruleToggleFailed', { error: resultError(result) }),
+          type: 'error',
+        });
       }
     } catch (error) {
       console.error('切换规则状态失败:', error);
+      showToast({
+        message: t('proxyIcon.ruleToggleFailed', { error: errorToMessage(error) }),
+        type: 'error',
+      });
     }
   };
 
@@ -152,34 +276,73 @@ const ProxyIconSettings: React.FC = () => {
     if (!editingRule) return;
 
     try {
+      const proxyIcon = getProxyIconApi();
+      if (!proxyIcon) {
+        notifyApiUnavailable();
+        return;
+      }
+
       if (editingRule.id) {
         // 更新现有规则
-        const result = await window.electronAPI.proxyIcon.updateRule(editingRule.id, editingRule);
+        const result = await proxyIcon.updateRule(editingRule.id, editingRule);
         if (result.success) {
-          loadConfig();
+          await loadConfig();
           setShowRuleDialog(false);
+          notifyProxyIconChanged();
+          showToast({ message: t('proxyIcon.ruleUpdatedSuccess'), type: 'success' });
+        } else {
+          showToast({
+            message: t('proxyIcon.ruleSaveFailed', { error: resultError(result) }),
+            type: 'error',
+          });
         }
       } else {
         // 添加新规则
-        const result = await window.electronAPI.proxyIcon.addRule(editingRule);
+        const result = await proxyIcon.addRule(editingRule);
         if (result.success) {
-          loadConfig();
+          await loadConfig();
           setShowRuleDialog(false);
+          notifyProxyIconChanged();
+          showToast({ message: t('proxyIcon.ruleAddedSuccess'), type: 'success' });
+        } else {
+          showToast({
+            message: t('proxyIcon.ruleSaveFailed', { error: resultError(result) }),
+            type: 'error',
+          });
         }
       }
     } catch (error) {
       console.error('保存规则失败:', error);
+      showToast({
+        message: t('proxyIcon.ruleSaveFailed', { error: errorToMessage(error) }),
+        type: 'error',
+      });
     }
   };
 
   const handleClearCache = async () => {
     try {
-      const result = await window.electronAPI.proxyIcon.clearCache();
+      const proxyIcon = getProxyIconApi();
+      if (!proxyIcon) {
+        notifyApiUnavailable();
+        return;
+      }
+      const result = await proxyIcon.clearCache();
       if (result.success) {
-        alert(t('proxyIcon.cacheClearedSuccess'));
+        notifyProxyIconChanged();
+        showToast({ message: t('proxyIcon.cacheClearedSuccess'), type: 'success' });
+      } else {
+        showToast({
+          message: t('proxyIcon.cacheClearFailed', { error: result.error || t('proxyIcon.unknownError') }),
+          type: 'error',
+        });
       }
     } catch (error) {
       console.error('清除缓存失败:', error);
+      showToast({
+        message: t('proxyIcon.cacheClearFailed', { error: errorToMessage(error) }),
+        type: 'error',
+      });
     }
   };
 
@@ -187,6 +350,27 @@ const ProxyIconSettings: React.FC = () => {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="text-muted-foreground">{t('common.loading')}</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold">{t('proxyIcon.title')}</h3>
+            <p className="mt-1 text-sm">{loadError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={loadConfig}
+            className="inline-flex items-center justify-center rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+          >
+            <ReloadIcon className="mr-2 h-4 w-4" />
+            {t('proxyIcon.retry')}
+          </button>
+        </div>
       </div>
     );
   }

@@ -8,6 +8,13 @@ import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import { useTranslation } from 'react-i18next';
 import ConfigEditor from '@/components/ConfigEditor';
+import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 
 type Subscription = {
   name: string;
@@ -24,6 +31,194 @@ type Subscription = {
   iconUrl?: string | null;
   // 新增：缓存的图标路径 (data URL)
   cachedIconPath?: string | null;
+};
+
+const toArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const nested = record.data ?? record.items ?? record.subscriptions ?? record.overrides;
+    if (Array.isArray(nested)) return nested as T[];
+  }
+  return [];
+};
+
+type SaveSubscriptionResultLike =
+  | string
+  | null
+  | undefined
+  | {
+      success?: boolean;
+      filePath?: string | null;
+      path?: string | null;
+      error?: string;
+      message?: string;
+      data?: {
+        filePath?: string | null;
+        path?: string | null;
+        error?: string;
+        message?: string;
+      } | null;
+    };
+
+const normalizeSaveSubscriptionResult = (result: SaveSubscriptionResultLike): { success: boolean; filePath?: string; error?: string } => {
+  if (typeof result === 'string') {
+    const filePath = result.trim();
+    return filePath ? { success: true, filePath } : { success: false, error: '保存订阅失败' };
+  }
+
+  if (!result || typeof result !== 'object') {
+    return { success: false, error: '保存订阅失败' };
+  }
+
+  const nested = result.data && typeof result.data === 'object' ? result.data : null;
+  const filePath = result.filePath?.trim() || result.path?.trim() || nested?.filePath?.trim() || nested?.path?.trim();
+  const error = result.error || result.message || nested?.error || nested?.message || '保存订阅失败';
+
+  if (result.success === false) {
+    return { success: false, error };
+  }
+
+  return filePath ? { success: true, filePath } : { success: false, error };
+};
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+const SUBSCRIPTIONS_CACHE_KEY = APP_DATA_CACHE_KEYS.subscriptions;
+
+const formatSubscriptionError = (error: unknown, fallback = '操作失败') => {
+  const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
+  return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? '订阅 API 不可用' : message;
+};
+
+const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+type CompatResultLike = boolean | {
+  success?: boolean;
+  error?: string;
+  message?: string;
+  statusText?: string;
+  runtimeReload?: RuntimeReloadResult | null;
+  data?: { message?: string; error?: string } | string | null;
+} | null | undefined;
+
+type RuntimeReloadResult = {
+  reloaded?: boolean;
+  skipped?: boolean;
+  error?: string;
+  result?: CompatResultLike;
+} | null | undefined;
+
+type SwitchConfigOptions = {
+  startIfStopped?: boolean;
+  suppressSuccessToast?: boolean;
+};
+
+type SubscriptionProfileUpdateDetail = {
+  source?: string;
+  action?: string;
+  filePath?: string | null;
+  activeConfig?: string | null;
+  runtimeReload?: RuntimeReloadResult;
+  reason?: HighlightReason;
+};
+
+const compatSuccess = (result: CompatResultLike) => (
+  result && typeof result === 'object'
+    ? result.success === true
+    : Boolean(result)
+);
+
+const compatError = (result: CompatResultLike, fallback: string) => (
+  result && typeof result === 'object'
+    ? formatSubscriptionError(
+      result.error ||
+      result.message ||
+      result.statusText ||
+      (typeof result.data === 'string' ? result.data : result.data?.message || result.data?.error),
+      fallback
+    )
+    : fallback
+);
+
+const activeConfigPath = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const path = value.trim();
+  return path ? path : null;
+};
+
+const activeConfigEventPath = (value: unknown): string | null => {
+  if (value && typeof value === 'object' && 'activeConfig' in value) {
+    return activeConfigPath((value as { activeConfig?: unknown }).activeConfig);
+  }
+
+  return activeConfigPath(value);
+};
+
+const runtimeReloadState = (result: { runtimeReload?: RuntimeReloadResult } | null | undefined): boolean | undefined => {
+  const runtimeReload = result?.runtimeReload;
+  if (!runtimeReload || typeof runtimeReload !== 'object') return undefined;
+  if (runtimeReload.reloaded === true) return true;
+  if (runtimeReload.skipped === true) return false;
+  return undefined;
+};
+
+const runtimeReloadFromResult = (result: unknown): RuntimeReloadResult => {
+  if (!result || typeof result !== 'object' || !('runtimeReload' in result)) {
+    return undefined;
+  }
+  return (result as { runtimeReload?: RuntimeReloadResult }).runtimeReload;
+};
+
+const isRemoteSubscriptionUrl = (url?: string | null): boolean => {
+  const value = url?.trim();
+  return !!value && !value.toLowerCase().startsWith('local:');
+};
+
+const normalizeSubscriptionPath = (value?: string | null): string => {
+  return (value || '').trim().replace(/\\/g, '/').toLowerCase();
+};
+
+const findSubscriptionByPath = (items: Subscription[] | null | undefined, filePath?: string | null): Subscription | undefined => {
+  const normalized = normalizeSubscriptionPath(filePath);
+  if (!normalized) return undefined;
+  return (items || []).find((item) => normalizeSubscriptionPath(item.path) === normalized);
+};
+
+type HighlightReason = 'added' | 'imported' | 'updated' | 'edited' | 'failed';
+
+const highlightLabelKey = (reason: HighlightReason | null) => {
+  switch (reason) {
+    case 'added':
+      return 'subscriptions.justAdded';
+    case 'imported':
+      return 'subscriptions.justImported';
+    case 'edited':
+      return 'subscriptions.justEdited';
+    case 'failed':
+      return 'subscriptions.justFailed';
+    case 'updated':
+    default:
+      return 'subscriptions.justUpdated';
+  }
+};
+
+const highlightCardClass = (highlighted: boolean, reason: HighlightReason | null) => {
+  if (!highlighted) return '';
+  return reason === 'failed'
+    ? 'ring-2 ring-red-500/45 bg-red-50/70 dark:bg-red-950/20'
+    : 'ring-2 ring-primary/45 bg-primary/5 dark:bg-primary/10';
+};
+
+const highlightBadgeClass = (reason: HighlightReason | null) => {
+  return reason === 'failed'
+    ? 'bg-red-600 text-white'
+    : 'bg-primary text-primary-foreground';
 };
 
 // 计算流量进度百分比
@@ -176,21 +371,20 @@ export default function SubscriptionManager() {
   const { t } = useTranslation();
   // 初始化时直接从sessionStorage加载缓存数据，避免闪烁
   const [subscriptions, setSubscriptions] = useState<Subscription[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const saved = sessionStorage.getItem('subscriptionsCache');
-      if (saved) {
-        const cached = JSON.parse(saved);
-        console.log('从sessionStorage加载了缓存的订阅数据:', cached.length);
-        return cached;
-      }
-    } catch (error) {
-      console.error('Failed to load cached subscriptions:', error);
+    const cached = toArray<Subscription>(readAppDataCache<unknown>(SUBSCRIPTIONS_CACHE_KEY));
+    if (cached.length > 0) {
+      console.log('从共享缓存加载了订阅数据:', cached.length);
+      return cached;
     }
     return [];
   });
+  const [isSubscriptionsLoading, setIsSubscriptionsLoading] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return !hasAppDataCache(SUBSCRIPTIONS_CACHE_KEY);
+  });
   const [subUrl, setSubUrl] = useState('');
   const [subName, setSubName] = useState('');
+  const [addSubmitMode, setAddSubmitMode] = useState<'save' | 'activate' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedSub, setSelectedSub] = useState<Subscription | null>(null);
@@ -198,7 +392,11 @@ export default function SubscriptionManager() {
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  const toastTimerRef = useRef<number | null>(null);
   const [updatingSubPath, setUpdatingSubPath] = useState<string | null>(null);
+  const [highlightedSubPath, setHighlightedSubPath] = useState<string | null>(null);
+  const [highlightedSubPaths, setHighlightedSubPaths] = useState<string[]>([]);
+  const [highlightedSubReason, setHighlightedSubReason] = useState<HighlightReason | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 新增: 当前活跃的配置文件路径
@@ -240,15 +438,74 @@ export default function SubscriptionManager() {
   const { hasProviders, refreshProvidersAvailability } = useProviderAvailability();
 
   useEffect(() => {
+    return subscribeAppDataCache(SUBSCRIPTIONS_CACHE_KEY, () => {
+      const cached = toArray<Subscription>(readAppDataCache<unknown>(SUBSCRIPTIONS_CACHE_KEY));
+      setSubscriptions(cached);
+      setIsSubscriptionsLoading(false);
+    });
+  }, []);
+
+  const highlightSubscriptions = useCallback((paths: Array<string | null | undefined>, reason: HighlightReason) => {
+    const uniquePaths = Array.from(
+      new Map(
+        paths
+          .map((path) => path?.trim())
+          .filter((path): path is string => !!path)
+          .map((path) => [normalizeSubscriptionPath(path), path])
+      ).values()
+    );
+
+    setHighlightedSubPaths(uniquePaths);
+    setHighlightedSubPath(uniquePaths[0] || null);
+    setHighlightedSubReason(uniquePaths.length > 0 ? reason : null);
+  }, []);
+
+  const isHighlightedSubscription = useCallback((path: string) => {
+    const normalized = normalizeSubscriptionPath(path);
+    return highlightedSubPaths.some((highlighted) => normalizeSubscriptionPath(highlighted) === normalized);
+  }, [highlightedSubPaths]);
+
+  useEffect(() => {
     loadSubscriptions();
     loadActiveConfig();
     loadAvailableOverrides();
 
     // 设置定期刷新活跃配置的计时器
     const intervalId = setInterval(loadActiveConfig, 5000);
+    let externalRefreshTimer: number | null = null;
+    const refreshAfterExternalProfileChange = () => {
+      if (externalRefreshTimer !== null) {
+        window.clearTimeout(externalRefreshTimer);
+      }
+
+      externalRefreshTimer = window.setTimeout(() => {
+        externalRefreshTimer = null;
+        loadSubscriptions();
+        loadActiveConfig();
+        loadAvailableOverrides();
+      }, 120);
+    };
     
     // 监听配置导入事件
     let unsubscribeImport: (() => void) | undefined;
+    let unsubscribeAutoUpdated: (() => void) | undefined;
+    let unsubscribeAutoUpdateFailed: (() => void) | undefined;
+    let unsubscribeActiveConfig: (() => void) | undefined;
+    const handleSubscriptionAdded = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail : undefined;
+      const filePath = detail?.filePath;
+
+      loadSubscriptions().then((items) => {
+        const added = findSubscriptionByPath(items, filePath);
+        if (added) {
+          highlightSubscriptions([added.path], 'added');
+          setSelectedSub(added);
+        }
+      });
+      loadActiveConfig();
+      loadAvailableOverrides();
+      refreshProvidersAvailability();
+    };
 
     if (window.electronAPI?.onImportSubscription) {
       console.log('设置配置导入事件监听器');
@@ -267,11 +524,92 @@ export default function SubscriptionManager() {
       console.log('onImportSubscription API不可用');
     }
 
+    if (window.electronAPI?.onSubscriptionAutoUpdated) {
+      unsubscribeAutoUpdated = window.electronAPI.onSubscriptionAutoUpdated((data) => {
+        const filePath = data?.filePath;
+        loadSubscriptions().then((items) => {
+          const updated = findSubscriptionByPath(items, filePath);
+          if (updated) {
+            highlightSubscriptions([updated.path], 'updated');
+            setSelectedSub(updated);
+          }
+        });
+        loadActiveConfig();
+        notifyProfileUpdated({
+          action: 'subscription-auto-updated',
+          filePath,
+          runtimeReload: data?.result?.runtimeReload,
+        });
+      });
+    }
+
+    if (window.electronAPI?.onSubscriptionAutoUpdateFailed) {
+      unsubscribeAutoUpdateFailed = window.electronAPI.onSubscriptionAutoUpdateFailed((data) => {
+        const filePath = data?.filePath;
+        loadSubscriptions().then((items) => {
+          const failed = findSubscriptionByPath(items, filePath);
+          if (failed) {
+            highlightSubscriptions([failed.path], 'failed');
+            setSelectedSub(failed);
+          }
+        });
+        loadActiveConfig();
+      });
+    }
+
+    if (window.electronAPI?.onActiveConfigChanged) {
+      unsubscribeActiveConfig = window.electronAPI.onActiveConfigChanged((configPath) => {
+        const nextActiveConfig = activeConfigEventPath(configPath);
+        setActiveConfig(nextActiveConfig);
+        refreshProvidersAvailability();
+        notifyProfileUpdated({
+          action: 'active-config-changed',
+          activeConfig: nextActiveConfig,
+        });
+      });
+    }
+
+    window.addEventListener('profile-updated', refreshAfterExternalProfileChange);
+    window.addEventListener('backup-restored', refreshAfterExternalProfileChange);
+    window.addEventListener('subscription-auto-updated', refreshAfterExternalProfileChange);
+    window.addEventListener('subscription-added', handleSubscriptionAdded);
+
     return () => {
       clearInterval(intervalId);
+      if (externalRefreshTimer !== null) window.clearTimeout(externalRefreshTimer);
+      window.removeEventListener('profile-updated', refreshAfterExternalProfileChange);
+      window.removeEventListener('backup-restored', refreshAfterExternalProfileChange);
+      window.removeEventListener('subscription-auto-updated', refreshAfterExternalProfileChange);
+      window.removeEventListener('subscription-added', handleSubscriptionAdded);
       if (unsubscribeImport) unsubscribeImport();
+      if (unsubscribeAutoUpdated) unsubscribeAutoUpdated();
+      if (unsubscribeAutoUpdateFailed) unsubscribeAutoUpdateFailed();
+      if (unsubscribeActiveConfig) unsubscribeActiveConfig();
+    };
+  }, [highlightSubscriptions]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!highlightedSubPath) return;
+
+    const element = document.querySelector(`[data-subscription-path="${CSS.escape(highlightedSubPath)}"]`);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const timer = window.setTimeout(() => {
+      setHighlightedSubPath(null);
+      setHighlightedSubPaths([]);
+      setHighlightedSubReason(null);
+    }, 3200);
+
+    return () => window.clearTimeout(timer);
+  }, [highlightedSubPath]);
 
   // 监听点击外部关闭右键菜单
   useEffect(() => {
@@ -289,16 +627,24 @@ export default function SubscriptionManager() {
 
   // 新增: 加载当前活跃的配置
   const loadActiveConfig = async () => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'getActiveConfig')) {
+      setActiveConfig(null);
+      setIsServiceRunning(false);
+      return;
+    }
 
     try {
       // 获取用户选择的配置（独立于服务运行状态）
-      const config = await window.electronAPI.getActiveConfig();
-      setActiveConfig(config);
+      const config = await api.getActiveConfig();
+      setActiveConfig(activeConfigPath(config));
 
       // 检查服务实际运行状态
       try {
-        const running = await window.electronAPI.isMihomoRunning();
+        const runningResult = hasElectronMethod(api, 'isMihomoRunning')
+          ? await api.isMihomoRunning()
+          : false;
+        const running = typeof runningResult === 'boolean' ? runningResult : false;
         setIsServiceRunning(!!running);
       } catch {
         setIsServiceRunning(false);
@@ -307,49 +653,67 @@ export default function SubscriptionManager() {
       refreshProvidersAvailability();
     } catch (error) {
       console.error('获取当前配置失败:', error);
+      showToast('错误', `获取当前配置失败: ${formatSubscriptionError(error)}`, 'error');
     }
   };
   
   // 新增: 切换使用的配置文件
-  const switchConfig = async (configPath: string) => {
-    if (!window.electronAPI) return;
+  const switchConfig = async (configPath: string, options: SwitchConfigOptions = {}): Promise<boolean> => {
+    const api = window.electronAPI;
+    if (!api) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return false;
+    }
 
     // 如果当前配置已经是这个，不需要切换
     if (activeConfig === configPath) {
-      showToast('提示', '该配置文件已经处于激活状态', 'success');
-      return;
+      if (!options.suppressSuccessToast) {
+        showToast('提示', '该配置文件已经处于激活状态', 'success');
+      }
+      return true;
     }
 
     setSwitchingConfig(configPath);
 
     try{
       let result;
+      let failureNotified = false;
 
       // 检查服务是否正在运行
       if (isServiceRunning) {
+        if (!hasElectronMethod(api, 'reloadMihomoConfig')) {
+          showToast('错误', '配置热重载 API 不可用', 'error');
+          return false;
+        }
+
         // 如果服务正在运行，使用热重载
         console.log('使用热重载切换配置...');
-        result = await window.electronAPI.reloadMihomoConfig(configPath);
+        result = await api.reloadMihomoConfig(configPath);
 
-        const reloadSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+        const reloadSuccess = compatSuccess(result);
 
         if (reloadSuccess) {
           setActiveConfig(configPath);
         } else {
           // 热重载失败，回退到重启方式
           console.warn('热重载失败，尝试重启服务...');
-          const stopResult = await window.electronAPI.stopMihomo();
-          const stopSuccess = typeof stopResult === 'object' ? (stopResult as any).success !== false : Boolean(stopResult);
+          if (!hasElectronMethod(api, 'stopMihomo') || !hasElectronMethod(api, 'startMihomo')) {
+            showToast('错误', `配置热重载失败: ${compatError(result, '切换配置文件失败')}`, 'error');
+            return false;
+          }
+
+          const stopResult = await api.stopMihomo();
+          const stopSuccess = compatSuccess(stopResult);
 
           if (!stopSuccess) {
-            showToast('错误', '停止当前服务失败，无法切换配置', 'error');
+            showToast('错误', `停止当前服务失败，无法切换配置: ${compatError(stopResult, '停止当前服务失败')}`, 'error');
             setSwitchingConfig(null);
-            return;
+            return false;
           }
 
           await new Promise(resolve => setTimeout(resolve, 500));
-          const startResult = await window.electronAPI.startMihomo(configPath);
-          const startSuccess = typeof startResult === 'object' ? (startResult as any).success !== false : Boolean(startResult);
+          const startResult = await api.startMihomo(configPath);
+          const startSuccess = compatSuccess(startResult);
 
           result = startResult;
 
@@ -358,74 +722,142 @@ export default function SubscriptionManager() {
           }
         }
       } else {
+        if (!hasElectronMethod(api, 'setPreferredConfig')) {
+          showToast('错误', '设置首选配置 API 不可用', 'error');
+          return false;
+        }
+
         // 服务未运行，只设置为首选配置，不自动启动服务
         console.log('服务未运行，设置为首选配置...');
-        result = await window.electronAPI.setPreferredConfig(configPath);
-        const preferredSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+        result = await api.setPreferredConfig(configPath);
+        const preferredSuccess = compatSuccess(result);
 
         if (preferredSuccess) {
           setActiveConfig(configPath);
-          showToast('成功', '已设置为首选配置，下次启动服务时将使用此配置', 'success');
+          if (options.startIfStopped) {
+            if (!hasElectronMethod(api, 'startMihomo')) {
+              result = { success: false, error: '启动内核 API 不可用' };
+              showToast('错误', '已设置为首选配置，但启动内核 API 不可用', 'error');
+              failureNotified = true;
+            } else {
+              const startResult = await api.startMihomo(configPath);
+              const startSuccess = compatSuccess(startResult);
+              result = startResult;
+              if (startSuccess) {
+                setIsServiceRunning(true);
+                if (!options.suppressSuccessToast) {
+                  showToast(t('common.success'), t('subscriptions.activateAndStartSuccess'), 'success');
+                }
+              } else {
+                showToast(
+                  t('common.error'),
+                  t('subscriptions.activateStartFailed', {
+                    error: compatError(startResult, t('subscriptions.startMihomoFailed'))
+                  }),
+                  'error'
+                );
+                failureNotified = true;
+              }
+            }
+          } else if (!options.suppressSuccessToast) {
+            showToast('成功', '已设置为首选配置，下次启动服务时将使用此配置', 'success');
+          }
         } else {
-          showToast('错误', '设置首选配置失败', 'error');
+          showToast('错误', `设置首选配置失败: ${compatError(result, '设置首选配置失败')}`, 'error');
+          failureNotified = true;
         }
       }
 
-      const finalSuccess = typeof result === 'object' ? (result as any).success !== false : Boolean(result);
+      const finalSuccess = compatSuccess(result);
 
       if (finalSuccess) {
-        // 清除代理组缓存，确保下次获取最新数据
-        try { sessionStorage.removeItem('proxyGroupsCache'); } catch (_) {}
-
         // 通知代理页面刷新
-        window.dispatchEvent(new Event('profile-updated'));
+        notifyProfileUpdated({
+          action: 'switch-config',
+          filePath: configPath,
+          activeConfig: configPath,
+          runtimeReload: runtimeReloadFromResult(result),
+        });
 
         // 只在服务运行时才需要等待节点信息
-        if (isServiceRunning) {
+        if (isServiceRunning || options.startIfStopped) {
           // 关键修改：等待服务完全启动后获取节点信息
           setTimeout(async () => {
             try {
               // 获取最新节点状态
-              if (window.electronAPI) {
+              if (hasElectronMethod(api, 'getProxies')) {
                 // 使用getProxies方法获取节点状态而不是getCurrentNode
-                const proxies = await window.electronAPI.getProxies();
+                const proxies = await api.getProxies();
                 if (proxies && proxies.groups) {
                   // 找到当前选中的节点
-                  const selectedNode = Object.values(proxies.proxies || {})
-                    .find((proxy: any) => proxy.selected) as any;
+                  const selectedNodeName =
+                    typeof proxies.selected === 'string' && proxies.selected
+                      ? proxies.selected
+                      : (proxies.groups as any[])
+                          .map((group: any) => group?.now)
+                          .find((name: unknown) => typeof name === 'string' && name.length > 0);
 
-                  if (selectedNode?.name) {
-                    console.log('当前节点已更新为:', selectedNode.name);
+                  if (selectedNodeName) {
+                    console.log('当前节点已更新为:', selectedNodeName);
 
                     // 通知其他组件配置已切换 - 使用已有的notifyNodeChanged方法
-                    await window.electronAPI.notifyNodeChanged(selectedNode.name);
+                    if (hasElectronMethod(api, 'notifyNodeChanged')) {
+                      await api.notifyNodeChanged(selectedNodeName);
+                    }
                   }
                 }
                 // 服务就绪后再次通知代理页面刷新
-                window.dispatchEvent(new Event('profile-updated'));
+                notifyProfileUpdated({
+                  action: 'switch-config-ready',
+                  filePath: configPath,
+                  activeConfig: configPath,
+                });
               }
             } catch (error) {
               console.error('获取节点信息失败:', error);
             }
           }, 2000); // 等待2秒让服务完全启动
         }
-      } else {
-        showToast('错误', '切换配置文件失败', 'error');
+      } else if (!failureNotified) {
+        showToast('错误', `切换配置文件失败: ${compatError(result, '切换配置文件失败')}`, 'error');
       }
+
+      return finalSuccess;
     } catch (error) {
       console.error('切换配置文件失败:', error);
-      showToast('错误', `切换配置文件失败: ${error}`, 'error');
+      showToast('错误', `切换配置文件失败: ${formatSubscriptionError(error)}`, 'error');
+      return false;
     } finally {
       setSwitchingConfig(null);
       loadActiveConfig(); // 重新加载当前活跃配置
     }
   };
 
-  const loadSubscriptions = async () => {
-    if (!window.electronAPI) return;
+  const loadSubscriptions = async (): Promise<Subscription[] | null> => {
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'getSubscriptions')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      setIsSubscriptionsLoading(false);
+      return null;
+    }
 
+    if (!hasAppDataCache(SUBSCRIPTIONS_CACHE_KEY)) {
+      setIsSubscriptionsLoading(true);
+    }
     try {
-      const subs = await window.electronAPI.getSubscriptions();
+      const subscriptionsResult = await api.getSubscriptions();
+      if (
+        subscriptionsResult &&
+        typeof subscriptionsResult === 'object' &&
+        (subscriptionsResult as { success?: boolean }).success === false
+      ) {
+        throw new Error(compatError(
+          subscriptionsResult as CompatResultLike,
+          '加载配置失败'
+        ));
+      }
+
+      const subs = toArray<Subscription>(subscriptionsResult);
       console.log('[前端] 加载的配置数据:', subs);
 
       // 下载并缓存图标
@@ -452,18 +884,229 @@ export default function SubscriptionManager() {
 
       // 保存到sessionStorage缓存
       try {
-        sessionStorage.setItem('subscriptionsCache', JSON.stringify(subsWithIcons));
+        writeAppDataCache(SUBSCRIPTIONS_CACHE_KEY, subsWithIcons);
       } catch (error) {
         console.error('Failed to cache subscriptions:', error);
       }
+      return subsWithIcons;
     } catch (error) {
       console.error('加载配置失败:', error);
-      showToast('错误', '加载配置失败', 'error');
+      showToast('错误', `加载配置失败: ${formatSubscriptionError(error)}`, 'error');
+      return null;
+    } finally {
+      setIsSubscriptionsLoading(false);
     }
   };
 
+  const notifyProfileUpdated = (detail: SubscriptionProfileUpdateDetail = {}) => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('profile-updated', {
+        detail: {
+          source: 'subscriptions',
+          ...detail,
+        },
+      }));
+    }
+  };
+
+  const getLatestActiveConfig = async (): Promise<string | null> => {
+    const api = window.electronAPI;
+    let currentConfig = activeConfig;
+
+    if (hasElectronMethod(api, 'getActiveConfig')) {
+      try {
+        const latest = await api.getActiveConfig();
+        currentConfig = activeConfigPath(latest);
+      } catch {}
+    }
+
+    return activeConfigPath(currentConfig);
+  };
+
+  const syncActiveConfigAfterPathChange = async (oldPath: string, newPath: string): Promise<boolean> => {
+    const api = window.electronAPI;
+    const currentConfig = await getLatestActiveConfig();
+
+    if (currentConfig === newPath) {
+      setActiveConfig(newPath);
+      notifyProfileUpdated({
+        action: 'subscription-path-changed',
+        filePath: newPath,
+        activeConfig: newPath,
+      });
+      return false;
+    }
+
+    if (currentConfig !== oldPath) {
+      return false;
+    }
+
+    if (!hasElectronMethod(api, 'setPreferredConfig')) {
+      showToast(
+        t('common.error'),
+        t('subscriptions.savedButActivateFailed', {
+          error: t('subscriptions.setPreferredFailed')
+        }),
+        'error'
+      );
+      return false;
+    }
+
+    try {
+      const result = await api.setPreferredConfig(newPath);
+      if (compatSuccess(result)) {
+        setActiveConfig(newPath);
+        refreshProvidersAvailability();
+        notifyProfileUpdated({
+          action: 'subscription-path-changed',
+          filePath: newPath,
+          activeConfig: newPath,
+        });
+        return oldPath !== newPath;
+      }
+
+      showToast(
+        t('common.error'),
+        t('subscriptions.savedButActivateFailed', {
+          error: compatError(result, t('subscriptions.setPreferredFailed'))
+        }),
+        'error'
+      );
+    } catch (error) {
+      showToast(
+        t('common.error'),
+        t('subscriptions.savedButActivateFailed', {
+          error: formatSubscriptionError(error, t('subscriptions.setPreferredFailed'))
+        }),
+        'error'
+      );
+    }
+
+    return false;
+  };
+
+  const reloadRuntimeConfigIfNeeded = async (filePath: string): Promise<boolean> => {
+    const api = window.electronAPI;
+    const currentConfig = await getLatestActiveConfig();
+
+    if (currentConfig !== filePath) {
+      return false;
+    }
+
+    let running = isServiceRunning;
+    if (hasElectronMethod(api, 'isMihomoRunning')) {
+      try {
+        const runningResult = await api.isMihomoRunning();
+        running = typeof runningResult === 'boolean' ? runningResult : false;
+        setIsServiceRunning(running);
+      } catch {}
+    }
+
+    if (!running) {
+      return false;
+    }
+
+    if (!hasElectronMethod(api, 'reloadMihomoConfig')) {
+      showToast(
+        t('common.error'),
+        t('subscriptions.reloadActiveConfigFailed', {
+          error: t('subscriptions.reloadApiUnavailable')
+        }),
+        'error'
+      );
+      return false;
+    }
+
+    try {
+      const result = await api.reloadMihomoConfig(filePath);
+      if (compatSuccess(result)) {
+        notifyProfileUpdated({
+          action: 'reload-active-config',
+          filePath,
+          activeConfig: filePath,
+          runtimeReload: runtimeReloadFromResult(result),
+        });
+        return true;
+      }
+
+      showToast(
+        t('common.error'),
+        t('subscriptions.reloadActiveConfigFailed', {
+          error: compatError(result, t('subscriptions.reloadActiveConfigFailedFallback'))
+        }),
+        'error'
+      );
+    } catch (error) {
+      showToast(
+        t('common.error'),
+        t('subscriptions.reloadActiveConfigFailed', {
+          error: formatSubscriptionError(error, t('subscriptions.reloadActiveConfigFailedFallback'))
+        }),
+        'error'
+      );
+    }
+
+    return false;
+  };
+
+  const revealSavedSubscription = async (
+    filePath: string,
+    reason: HighlightReason = 'added',
+    highlightPaths: Array<string | null | undefined> = [filePath]
+  ): Promise<boolean> => {
+    highlightSubscriptions(highlightPaths.length > 0 ? highlightPaths : [filePath], reason);
+    notifyProfileUpdated({
+      action: 'subscription-visible',
+      filePath,
+      reason,
+    });
+
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'setPreferredConfig')) {
+      return false;
+    }
+
+    const currentConfig = await getLatestActiveConfig();
+
+    if (currentConfig) {
+      return false;
+    }
+
+    try {
+      const result = await api.setPreferredConfig(filePath);
+      if (compatSuccess(result)) {
+        setActiveConfig(filePath);
+        refreshProvidersAvailability();
+        notifyProfileUpdated({
+          action: 'set-preferred-config',
+          filePath,
+          activeConfig: filePath,
+        });
+        return true;
+      }
+
+      showToast(
+        t('common.error'),
+        t('subscriptions.savedButActivateFailed', {
+          error: compatError(result, t('subscriptions.setPreferredFailed'))
+        }),
+        'error'
+      );
+    } catch (error) {
+      showToast(
+        t('common.error'),
+        t('subscriptions.savedButActivateFailed', {
+          error: formatSubscriptionError(error, t('subscriptions.setPreferredFailed'))
+        }),
+        'error'
+      );
+    }
+
+    return false;
+  };
+
   // 保存排序到数据库
-  const saveOrder = useCallback(async (subs: Subscription[]) => {
+  const saveOrder = useCallback(async (subs: Subscription[]): Promise<boolean> => {
     try {
       const orderList: Array<{ path: string; order: number }> = [];
 
@@ -472,18 +1115,27 @@ export default function SubscriptionManager() {
       });
 
       // 保存到数据库
-      if (window.electronAPI) {
-        const result = await window.electronAPI.saveSubscriptionOrder(orderList);
-        if (result.success) {
-          console.log('排序已保存到数据库');
-        } else {
-          console.error('保存排序到数据库失败:', result.error);
-        }
+      const api = window.electronAPI;
+      if (!hasElectronMethod(api, 'saveSubscriptionOrder')) {
+        throw new Error('订阅 API 不可用');
       }
+
+      const result = await api.saveSubscriptionOrder(orderList);
+      if (compatSuccess(result)) {
+        showToast(t('common.success'), t('subscriptions.orderSaved'), 'success');
+        return true;
+      }
+
+      const message = compatError(result, t('subscriptions.orderSaveFailed'));
+      console.error('保存排序到数据库失败:', message);
+      showToast(t('common.error'), message, 'error');
+      return false;
     } catch (error) {
       console.error('保存排序信息失败:', error);
+      showToast(t('common.error'), formatSubscriptionError(error, t('subscriptions.orderSaveFailed')), 'error');
+      return false;
     }
-  }, []);
+  }, [t]);
   
   // 长按开始拖拽
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>, item: Subscription) => {
@@ -522,7 +1174,7 @@ export default function SubscriptionManager() {
       };
 
       // 创建鼠标释放处理函数
-      const handleUp = () => {
+      const handleUp = async () => {
         // 移除全局监听
         document.removeEventListener('mousemove', handleMove);
         document.removeEventListener('mouseup', handleUp);
@@ -532,23 +1184,26 @@ export default function SubscriptionManager() {
         const currentOver = dragStateRef.current.target;
 
         if (currentDragged && currentOver && currentDragged.path !== currentOver.path) {
-          setSubscriptions(currentSubs => {
-            const newSubscriptions = [...currentSubs];
-            const draggedIndex = newSubscriptions.findIndex(sub => sub.path === currentDragged.path);
-            const targetIndex = newSubscriptions.findIndex(sub => sub.path === currentOver.path);
+          const previousSubscriptions = subscriptions;
+          const newSubscriptions = [...previousSubscriptions];
+          const draggedIndex = newSubscriptions.findIndex(sub => sub.path === currentDragged.path);
+          const targetIndex = newSubscriptions.findIndex(sub => sub.path === currentOver.path);
 
-            if (draggedIndex !== -1 && targetIndex !== -1) {
-              // 移除拖拽的项并在目标位置插入
-              const [draggedSub] = newSubscriptions.splice(draggedIndex, 1);
-              newSubscriptions.splice(targetIndex, 0, draggedSub);
+          if (draggedIndex !== -1 && targetIndex !== -1) {
+            // 移除拖拽的项并在目标位置插入
+            const [draggedSub] = newSubscriptions.splice(draggedIndex, 1);
+            newSubscriptions.splice(targetIndex, 0, draggedSub);
+            setSubscriptions(newSubscriptions);
 
-              // 保存新顺序
-              saveOrder(newSubscriptions);
-
-              return newSubscriptions;
+            // 保存失败时恢复数据库中的真实顺序，避免 UI 显示假成功
+            const saved = await saveOrder(newSubscriptions);
+            if (!saved) {
+              const reloaded = await loadSubscriptions();
+              if (!reloaded) {
+                setSubscriptions(previousSubscriptions);
+              }
             }
-            return currentSubs;
-          });
+          }
         }
 
         // 清除拖拽状态
@@ -577,29 +1232,32 @@ export default function SubscriptionManager() {
       document.removeEventListener('mouseup', handleMouseUp);
     };
     document.addEventListener('mouseup', handleMouseUp);
-  }, [subscriptions, saveOrder]);
+  }, [loadSubscriptions, subscriptions, saveOrder]);
 
-  const addSubscription = async (e: React.FormEvent) => {
+  const addSubscription = async (e: React.SyntheticEvent, activateAfterSave = false) => {
     e.preventDefault();
     
     console.log('开始添加订阅，URL:', subUrl);
     
-    if (!window.electronAPI) {
-      console.error('electronAPI不可用，无法添加订阅');
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'fetchSubscription') || !hasElectronMethod(api, 'saveSubscription')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      console.error('订阅API不可用，无法添加订阅');
       return;
     }
     
     if (!subUrl.trim()) {
-      console.error('订阅URL为空，取消添加');
       showToast('错误', '请输入有效的订阅链接', 'error');
+      console.error('订阅URL为空，取消添加');
       return;
     }
 
     setIsLoading(true);
+    setAddSubmitMode(activateAfterSave ? 'activate' : 'save');
     console.log('正在从服务器获取订阅内容...');
     
     try {
-      const configData = await window.electronAPI.fetchSubscription(subUrl);
+      const configData = await api.fetchSubscription(subUrl);
       console.log('获取订阅内容结果:', configData);
 
       // 检查是否成功获取订阅内容
@@ -610,76 +1268,133 @@ export default function SubscriptionManager() {
         console.log('准备保存订阅 - 流量信息:', configData.subscriptionInfo);
 
         // 确保传递订阅信息
-        const filePath = await window.electronAPI.saveSubscription(
+        const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
           subUrl,
           configData.content,
           customName,
           configData.subscriptionInfo
-        );
+        ));
 
         // 检查保存是否成功
-        if (filePath) {
-          console.log('订阅保存成功，文件路径:', filePath);
-          showToast('成功', '订阅添加成功', 'success');
+        if (saveResult.success && saveResult.filePath) {
+          console.log('订阅保存成功，文件路径:', saveResult.filePath);
+
+          // 重新加载订阅列表以显示最新信息（包括流量信息）
+          const reloadedSubscriptions = await loadSubscriptions();
           setSubUrl('');
           setSubName('');
+          setIsDialogOpen(false);
 
-          // 在后台重新加载订阅列表以显示最新信息（包括流量信息）
-          loadSubscriptions();
+          if (reloadedSubscriptions) {
+            const savedSubscription = findSubscriptionByPath(reloadedSubscriptions, saveResult.filePath);
+            const savedPath = savedSubscription?.path || saveResult.filePath;
+            if (savedSubscription) {
+              setSelectedSub(savedSubscription);
+            }
+            if (activateAfterSave) {
+              highlightSubscriptions([savedPath], 'added');
+              notifyProfileUpdated();
+              const activated = await switchConfig(savedPath, {
+                startIfStopped: true,
+                suppressSuccessToast: true
+              });
+              showToast(
+                activated ? t('common.success') : t('common.error'),
+                activated ? t('subscriptions.addAndActivateSuccess') : t('subscriptions.savedButActivateFailed', {
+                  error: t('subscriptions.setPreferredFailed')
+                }),
+                activated ? 'success' : 'error'
+              );
+            } else {
+              const activated = await revealSavedSubscription(savedPath);
+              showToast(
+                t('common.success'),
+                activated ? t('subscriptions.addSuccessActivated') : t('subscriptions.addSuccess'),
+                'success'
+              );
+            }
+          } else {
+            showToast('错误', '订阅已保存，但刷新列表失败，请稍后刷新页面', 'error');
+          }
         } else {
-          console.error('保存订阅失败，返回值为空');
-          showToast('错误', '保存订阅失败', 'error');
+          showToast('错误', saveResult.error || '保存订阅失败', 'error');
+          console.error('保存订阅失败:', saveResult.error);
         }
       } else {
-        const errorMsg = configData?.error || '获取订阅内容失败';
-        console.error('获取订阅内容失败:', errorMsg);
+        const errorMsg = formatSubscriptionError(configData?.error, '获取订阅内容失败');
         showToast('错误', errorMsg, 'error');
+        console.error('获取订阅内容失败:', errorMsg);
       }
     } catch (error) {
+      showToast('错误', `添加订阅失败: ${formatSubscriptionError(error)}`, 'error');
       console.error('添加订阅失败:', error);
-      showToast('错误', `添加订阅失败: ${error}`, 'error');
     } finally {
-      // 确保在所有情况下都重置加载状态和关闭弹窗，让用户能看到 Toast 提示
       setIsLoading(false);
-      setIsDialogOpen(false);
+      setAddSubmitMode(null);
     }
   };
 
   const deleteSubscription = async (filePath: string) => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'deleteSubscription')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return;
+    }
     
     try {
-      const result = await window.electronAPI.deleteSubscription(filePath);
+      const result = await api.deleteSubscription(filePath);
+      const deleteSuccess = result && typeof result === 'object'
+        ? (result as { success?: boolean }).success === true
+        : Boolean(result);
       
-      if (result) {
+      if (deleteSuccess) {
         showToast('成功', '订阅删除成功', 'success');
         await loadSubscriptions();
+        notifyProfileUpdated();
       } else {
-        showToast('错误', '删除订阅失败', 'error');
+        const error = result && typeof result === 'object' ? (result as { error?: string }).error : undefined;
+        showToast('错误', formatSubscriptionError(error, '删除订阅失败'), 'error');
       }
     } catch (error) {
       console.error('删除订阅失败:', error);
-      showToast('错误', `删除订阅失败: ${error}`, 'error');
+      showToast('错误', `删除订阅失败: ${formatSubscriptionError(error)}`, 'error');
     }
   };
   
   const refreshSubscription = async (filePath: string) => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'refreshSubscription')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return;
+    }
 
     setUpdatingSubPath(filePath);
 
     try {
-      const result = await window.electronAPI.refreshSubscription(filePath);
+        const result = await api.refreshSubscription(filePath);
 
       if (result && result.success) {
-        showToast('成功', '订阅更新成功', 'success');
-        await loadSubscriptions();
+        const effectivePath = result.filePath || filePath;
+        const backendReloaded = runtimeReloadState(result);
+        const runtimeReloaded = backendReloaded ?? (await reloadRuntimeConfigIfNeeded(effectivePath));
+        const reloadedSubscriptions = await loadSubscriptions();
+        const updatedSubscription = findSubscriptionByPath(reloadedSubscriptions, effectivePath);
+        if (updatedSubscription) {
+          setSelectedSub(updatedSubscription);
+        }
+        highlightSubscriptions([updatedSubscription?.path || effectivePath], 'updated');
+        notifyProfileUpdated();
+        showToast(
+          t('common.success'),
+          runtimeReloaded ? t('subscriptions.updateSuccessReloaded') : t('subscriptions.updateSuccess'),
+          'success'
+        );
       } else {
-        showToast('错误', result.error || '更新订阅失败', 'error');
+        showToast('错误', formatSubscriptionError(result?.error, '更新订阅失败'), 'error');
       }
     } catch (error) {
       console.error('更新订阅失败:', error);
-      showToast('错误', `更新订阅失败: ${error}`, 'error');
+      showToast('错误', `更新订阅失败: ${formatSubscriptionError(error)}`, 'error');
     } finally {
       setUpdatingSubPath(null);
     }
@@ -688,25 +1403,39 @@ export default function SubscriptionManager() {
   // 批量更新所有订阅
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
   const updateAllSubscriptions = async () => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'refreshSubscription')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return;
+    }
 
+    const activeBeforeUpdate = await getLatestActiveConfig();
     // 过滤出有URL的订阅(远程订阅)
-    const remoteSubscriptions = subscriptions.filter(sub => sub.url);
+    const remoteSubscriptions = subscriptions.filter(sub => isRemoteSubscriptionUrl(sub.url));
 
     if (remoteSubscriptions.length === 0) {
-      showToast('提示', '没有可更新的远程订阅', 'error');
+      showToast(t('common.info'), t('subscriptions.noRemoteSubscriptions'), 'success');
       return;
     }
 
     setIsUpdatingAll(true);
     let successCount = 0;
     let failCount = 0;
+    let refreshedActive = false;
+    let activeReloadState: boolean | undefined;
+    const updatedPaths: string[] = [];
 
     for (const sub of remoteSubscriptions) {
       try {
-        const result = await window.electronAPI.refreshSubscription(sub.path);
+        const result = await api.refreshSubscription(sub.path);
         if (result && result.success) {
           successCount++;
+          const effectivePath = result.filePath || sub.path;
+          updatedPaths.push(effectivePath);
+          if (activeBeforeUpdate === effectivePath) {
+            refreshedActive = true;
+            activeReloadState = runtimeReloadState(result);
+          }
         } else {
           failCount++;
         }
@@ -717,38 +1446,71 @@ export default function SubscriptionManager() {
     }
 
     setIsUpdatingAll(false);
-    await loadSubscriptions();
+    let runtimeReloaded = false;
+    if (refreshedActive && activeBeforeUpdate) {
+      runtimeReloaded = activeReloadState ?? (await reloadRuntimeConfigIfNeeded(activeBeforeUpdate));
+    }
+    const reloadedSubscriptions = await loadSubscriptions();
+    if (reloadedSubscriptions && updatedPaths.length > 0) {
+      const refreshedPaths = updatedPaths.map((path) => findSubscriptionByPath(reloadedSubscriptions, path)?.path || path);
+      highlightSubscriptions(refreshedPaths, 'updated');
+      const firstUpdated = findSubscriptionByPath(reloadedSubscriptions, refreshedPaths[0]);
+      if (firstUpdated) {
+        setSelectedSub(firstUpdated);
+      }
+    }
+    notifyProfileUpdated();
 
     // 显示更新结果
     if (failCount === 0) {
-      showToast('成功', `所有订阅更新成功 (${successCount}个)`, 'success');
+      showToast(
+        t('common.success'),
+        runtimeReloaded
+          ? t('subscriptions.updateAllSuccessReloaded', { count: successCount })
+          : t('subscriptions.updateAllSuccess', { count: successCount }),
+        'success'
+      );
     } else if (successCount === 0) {
-      showToast('错误', `所有订阅更新失败 (${failCount}个)`, 'error');
+      showToast(t('common.error'), t('subscriptions.updateAllFailed', { count: failCount }), 'error');
     } else {
-      showToast('完成', `更新完成: 成功${successCount}个, 失败${failCount}个`, 'success');
+      showToast(t('common.success'), t('subscriptions.updateAllPartial', { success: successCount, failed: failCount }), 'success');
     }
   };
 
   const openConfigFile = async (filePath: string) => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'openFile')) {
+      showToast('错误', '文件 API 不可用', 'error');
+      return;
+    }
 
     try {
       console.log('[前端] 打开文件，路径:', filePath);
-      await window.electronAPI.openFile(filePath);
+      const result = await api.openFile(filePath);
+      if (result?.success === false) {
+        showToast('错误', formatSubscriptionError(result.error, '打开文件失败'), 'error');
+      }
     } catch (error) {
       console.error('打开文件失败:', error);
-      showToast('错误', `打开文件失败: ${error}`, 'error');
+      showToast('错误', `打开文件失败: ${formatSubscriptionError(error)}`, 'error');
     }
   };
 
   const openConfigFolder = async (filePath: string) => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'openFileLocation')) {
+      showToast('错误', '文件 API 不可用', 'error');
+      return;
+    }
 
     try {
-      await window.electronAPI.openFileLocation(filePath);
+      const result = await api.openFileLocation(filePath);
+      if (result?.success === false) {
+        showToast('错误', formatSubscriptionError(result.error, '打开目录失败'), 'error');
+      }
     } catch (error) {
       console.error('打开目录失败:', error);
-      showToast('错误', `打开目录失败: ${error}`, 'error');
+      showToast('错误', `打开目录失败: ${formatSubscriptionError(error)}`, 'error');
     }
   };
 
@@ -771,8 +1533,12 @@ export default function SubscriptionManager() {
     if (!window.electronAPI?.getOverrides) return;
 
     try {
-      const overrides = await window.electronAPI.getOverrides();
-      setAvailableOverrides(overrides || []);
+      const result = await window.electronAPI.getOverrides();
+      if (result && typeof result === 'object' && !Array.isArray(result) && (result as { success?: boolean }).success === false) {
+        throw new Error(formatSubscriptionError((result as { error?: string; message?: string }).error || (result as { message?: string }).message, '加载覆写列表失败'));
+      }
+      const overrides = toArray<any>(result);
+      setAvailableOverrides(overrides);
     } catch (error) {
       console.error('加载覆写列表失败:', error);
       setAvailableOverrides([]);
@@ -786,7 +1552,7 @@ export default function SubscriptionManager() {
     setEditingIconUrl(sub.iconUrl || '');
 
     // 如果配置有URL,加载URL
-    if (sub.url && sub.url.trim() !== '') {
+    if (isRemoteSubscriptionUrl(sub.url)) {
       try {
         const url = await window.electronAPI?.getSubscriptionUrl?.(sub.path);
         setEditingUrl(url || '');
@@ -800,20 +1566,31 @@ export default function SubscriptionManager() {
 
     // 加载订阅的覆写设置
     try {
-      const overrides = await window.electronAPI?.getSubscriptionOverrides?.(sub.path);
-      setEditingOverrides(overrides || []);
+      const overridesResult: unknown = await window.electronAPI?.getSubscriptionOverrides?.(sub.path);
+      const overridesRecord = overridesResult && typeof overridesResult === 'object'
+        ? overridesResult as { success?: boolean; error?: unknown }
+        : null;
+      if (overridesRecord?.success === false) {
+        throw new Error(formatSubscriptionError(overridesRecord.error, '加载订阅覆写失败'));
+      }
+      setEditingOverrides(toArray<any>(overridesResult));
     } catch (error) {
       console.error('加载订阅覆写失败:', error);
       setEditingOverrides([]);
+      showToast('错误', formatSubscriptionError(error, '加载订阅覆写失败'), 'error');
     }
 
     // 加载订阅的自动更新间隔
     try {
       const result = await window.electronAPI?.getSubscriptionUpdateInterval?.(sub.path);
+      if (result?.success === false) {
+        throw new Error(formatSubscriptionError(result.error, '加载订阅更新间隔失败'));
+      }
       setEditingUpdateInterval(result?.interval || 0);
     } catch (error) {
       console.error('加载订阅更新间隔失败:', error);
       setEditingUpdateInterval(0);
+      showToast('错误', formatSubscriptionError(error, '加载订阅更新间隔失败'), 'error');
     }
 
     setIsEditDialogOpen(true);
@@ -822,50 +1599,152 @@ export default function SubscriptionManager() {
 
   // 保存编辑
   const saveEdit = async () => {
-    if (!editingSub || !window.electronAPI) return;
+    if (!editingSub) return;
+
+    const api = window.electronAPI;
+    if (
+      !hasElectronMethod(api, 'editSubscription') ||
+      !hasElectronMethod(api, 'setSubscriptionOverrides') ||
+      !hasElectronMethod(api, 'setSubscriptionUpdateInterval')
+    ) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return;
+    }
 
     try {
       setIsLoading(true);
 
       // 调用后端API保存编辑，获取返回的新路径
-      const result = await window.electronAPI.editSubscription({
+      const result = await api.editSubscription({
         oldPath: editingSub.path,
         newName: editingName,
         newUrl: editingUrl,
         iconUrl: editingIconUrl
       });
 
+      if (result?.success === false) {
+        throw new Error(formatSubscriptionError((result as { error?: string }).error, '编辑配置失败'));
+      }
+
       // 使用后端返回的正确路径（而不是自己计算）
       const finalPath = result?.newPath || editingSub.path;
 
       // 保存覆写设置 - 使用后端返回的正确路径
-      await window.electronAPI.setSubscriptionOverrides(
+      const overridesResult = await api.setSubscriptionOverrides(
         finalPath,
         editingOverrides
       );
+      if (overridesResult?.success === false) {
+        throw new Error(formatSubscriptionError((overridesResult as { error?: string }).error, '保存覆写设置失败'));
+      }
 
       // 保存自动更新间隔 - 使用后端返回的正确路径
-      await window.electronAPI.setSubscriptionUpdateInterval(
+      const intervalResult = await api.setSubscriptionUpdateInterval(
         finalPath,
         editingUpdateInterval
       );
+      if (intervalResult?.success === false) {
+        throw new Error(formatSubscriptionError(intervalResult.error, '保存自动更新间隔失败'));
+      }
 
-      showToast('成功', '配置已更新', 'success');
+      const activePathSynced = await syncActiveConfigAfterPathChange(editingSub.path, finalPath);
+      const runtimeReloaded = await reloadRuntimeConfigIfNeeded(finalPath);
+      const reloadedSubscriptions = await loadSubscriptions();
+      if (reloadedSubscriptions) {
+        const editedSubscription = findSubscriptionByPath(reloadedSubscriptions, finalPath);
+        if (editedSubscription) {
+          setSelectedSub(editedSubscription);
+        }
+        highlightSubscriptions([editedSubscription?.path || finalPath], 'edited');
+      }
+      notifyProfileUpdated();
+
+      showToast(
+        t('common.success'),
+        runtimeReloaded
+          ? t('subscriptions.editSuccessReloaded')
+          : activePathSynced
+          ? t('subscriptions.editSuccessActivated')
+          : t('subscriptions.editSuccess'),
+        'success'
+      );
       setIsEditDialogOpen(false);
-      loadSubscriptions();
     } catch (error) {
       console.error('编辑配置失败:', error);
-      showToast('错误', `编辑配置失败: ${error}`, 'error');
+      showToast('错误', `编辑配置失败: ${formatSubscriptionError(error)}`, 'error');
     } finally {
       setIsLoading(false);
     }
   };
 
   const showToast = (title: string, description: string, type: 'success' | 'error') => {
+    if (typeof document !== 'undefined' && !document.getElementById('subscription-toast-viewport')) {
+      const message = description ? `${title}: ${description}` : title;
+      let root = document.getElementById('flyclash-toast-root');
+      if (!root) {
+        root = document.createElement('div');
+        root.id = 'flyclash-toast-root';
+        root.setAttribute('aria-live', 'polite');
+        Object.assign(root.style, {
+          position: 'fixed',
+          top: '16px',
+          right: '16px',
+          zIndex: '2147483647',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          pointerEvents: 'none',
+          maxWidth: 'min(420px, calc(100vw - 32px))'
+        });
+        document.body.appendChild(root);
+      }
+
+      const toast = document.createElement('div');
+      toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+      toast.textContent = message;
+      Object.assign(toast.style, {
+        boxSizing: 'border-box',
+        width: '100%',
+        padding: '12px 16px',
+        borderRadius: '12px',
+        background: type === 'error' ? '#dc2626' : '#16a34a',
+        color: '#fff',
+        boxShadow: '0 18px 45px rgba(15, 23, 42, 0.22)',
+        fontSize: '14px',
+        fontWeight: '600',
+        lineHeight: '1.45',
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+        opacity: '1',
+        transform: 'translateY(0)',
+        transition: 'opacity 160ms ease, transform 160ms ease',
+        pointerEvents: 'auto'
+      });
+      root.appendChild(toast);
+
+      window.setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-6px)';
+        window.setTimeout(() => {
+          toast.remove();
+          if (!root?.hasChildNodes()) root?.remove();
+        }, 180);
+      }, 4000);
+    }
+
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+
     setToastTitle(title);
     setToastDescription(description);
     setToastType(type);
-    setToastOpen(true);
+    setToastOpen(false);
+
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastOpen(true);
+      toastTimerRef.current = null;
+    }, 20);
   };
 
   // 拖放文件相关处理函数
@@ -915,7 +1794,11 @@ export default function SubscriptionManager() {
     e.stopPropagation();
     setIsDragging(false);
 
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'saveSubscription')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return;
+    }
     
     // 如果是卡片拖拽，不处理文件
     if (isDraggingCard) return;
@@ -938,69 +1821,150 @@ export default function SubscriptionManager() {
       return;
     }
 
-    // 处理每个有效文件
-    for (const file of validFiles) {
-      try {
-        // 读取文件内容
-        const content = await readFileAsText(file);
-        
-        // 保存为订阅
-        const filePath = await window.electronAPI.saveSubscription(
-          `local:${file.name}`, // 使用本地标识符
-          content,
-          file.name.replace(/\.(ya?ml)$/, ''), // 使用文件名作为默认名称
-          {
-            lastUpdated: new Date().toISOString()
-          }
-        );
-        
-        showToast('成功', `配置文件 ${file.name} 导入成功`, 'success');
-      } catch (error) {
-        console.error('导入配置文件失败:', error);
-        showToast('错误', `导入配置文件 ${file.name} 失败: ${error}`, 'error');
-      }
-    }
+    const importedPaths: string[] = [];
+    let importedCount = 0;
 
-    // 重新加载订阅列表
-    await loadSubscriptions();
+    setIsLoading(true);
+    try {
+      // 处理每个有效文件
+      for (const file of validFiles) {
+        try {
+          // 读取文件内容
+          const content = await readFileAsText(file);
+          if (!content.trim()) {
+            showToast('错误', `导入配置文件 ${file.name} 失败: 文件内容为空`, 'error');
+            continue;
+          }
+
+          // 保存为订阅
+          const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
+            `local:${file.name}`, // 使用本地标识符
+            content,
+            file.name.replace(/\.(ya?ml)$/, ''), // 使用文件名作为默认名称
+            {
+              lastUpdated: new Date().toISOString()
+            }
+          ));
+
+          if (saveResult.success && saveResult.filePath) {
+            importedPaths.push(saveResult.filePath);
+            importedCount += 1;
+          } else {
+            showToast('错误', `导入配置文件 ${file.name} 失败: ${saveResult.error || '保存订阅失败'}`, 'error');
+          }
+        } catch (error) {
+          console.error('导入配置文件失败:', error);
+          showToast('错误', `导入配置文件 ${file.name} 失败: ${formatSubscriptionError(error)}`, 'error');
+        }
+      }
+
+      const lastImportedPath = importedPaths[importedPaths.length - 1] || null;
+      if (lastImportedPath) {
+        const reloadedSubscriptions = await loadSubscriptions();
+        if (reloadedSubscriptions) {
+          const highlightedPaths = importedPaths.map((path) => findSubscriptionByPath(reloadedSubscriptions, path)?.path || path);
+          const importedSubscription = findSubscriptionByPath(reloadedSubscriptions, lastImportedPath);
+          const importedPath = importedSubscription?.path || lastImportedPath;
+          if (importedSubscription) {
+            setSelectedSub(importedSubscription);
+          }
+          const activated = await revealSavedSubscription(importedPath, 'imported', highlightedPaths);
+          showToast(
+            t('common.success'),
+            activated
+              ? t('subscriptions.importSuccessActivated')
+              : t('subscriptions.importSuccess', { count: importedCount }),
+            'success'
+          );
+        } else {
+          showToast(t('common.error'), t('subscriptions.importSavedRefreshFailed'), 'error');
+        }
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }, [isDraggingCard]);
 
   // 处理文件选择
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!window.electronAPI) return;
+    const api = window.electronAPI;
+    if (!hasElectronMethod(api, 'saveSubscription')) {
+      showToast('错误', '订阅 API 不可用', 'error');
+      return;
+    }
     
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    for (const file of files) {
-      try {
-        // 读取文件内容
-        const content = await readFileAsText(file);
-        
-        // 保存为订阅
-        const filePath = await window.electronAPI.saveSubscription(
-          `local:${file.name}`,
-          content,
-          file.name.replace(/\.(ya?ml)$/, ''),
-          {
-            lastUpdated: new Date().toISOString()
+    const importedPaths: string[] = [];
+    let importedCount = 0;
+
+    setIsLoading(true);
+    try {
+      for (const file of files) {
+        try {
+          // 读取文件内容
+          const content = await readFileAsText(file);
+          if (!content.trim()) {
+            showToast('错误', `导入配置文件 ${file.name} 失败: 文件内容为空`, 'error');
+            continue;
           }
-        );
-        
-        showToast('成功', `配置文件 ${file.name} 导入成功`, 'success');
-      } catch (error) {
-        console.error('导入配置文件失败:', error);
-        showToast('错误', `导入配置文件 ${file.name} 失败: ${error}`, 'error');
+
+          // 保存为订阅
+          const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
+            `local:${file.name}`,
+            content,
+            file.name.replace(/\.(ya?ml)$/, ''),
+            {
+              lastUpdated: new Date().toISOString()
+            }
+          ));
+
+          if (saveResult.success && saveResult.filePath) {
+            importedPaths.push(saveResult.filePath);
+            importedCount += 1;
+          } else {
+            showToast('错误', `导入配置文件 ${file.name} 失败: ${saveResult.error || '保存订阅失败'}`, 'error');
+          }
+        } catch (error) {
+          console.error('导入配置文件失败:', error);
+          showToast('错误', `导入配置文件 ${file.name} 失败: ${formatSubscriptionError(error)}`, 'error');
+        }
+      }
+
+      // 清空文件输入，允许再次选择相同的文件
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      const lastImportedPath = importedPaths[importedPaths.length - 1] || null;
+      if (lastImportedPath) {
+        const reloadedSubscriptions = await loadSubscriptions();
+        if (reloadedSubscriptions) {
+          const highlightedPaths = importedPaths.map((path) => findSubscriptionByPath(reloadedSubscriptions, path)?.path || path);
+          const importedSubscription = findSubscriptionByPath(reloadedSubscriptions, lastImportedPath);
+          const importedPath = importedSubscription?.path || lastImportedPath;
+          if (importedSubscription) {
+            setSelectedSub(importedSubscription);
+          }
+          const activated = await revealSavedSubscription(importedPath, 'imported', highlightedPaths);
+          showToast(
+            t('common.success'),
+            activated
+              ? t('subscriptions.importSuccessActivated')
+              : t('subscriptions.importSuccess', { count: importedCount }),
+            'success'
+          );
+        } else {
+          showToast(t('common.error'), t('subscriptions.importSavedRefreshFailed'), 'error');
+        }
+      }
+    } finally {
+      setIsLoading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     }
-
-    // 清空文件输入，允许再次选择相同的文件
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-
-    // 重新加载订阅列表
-    await loadSubscriptions();
   };
 
   // 将文件读取为文本
@@ -1057,7 +2021,7 @@ export default function SubscriptionManager() {
 
             <div className="flex flex-wrap items-center gap-2">
               {/* 批量更新按钮 */}
-              {subscriptions.some(sub => sub.url) && (
+              {subscriptions.some(sub => isRemoteSubscriptionUrl(sub.url)) && (
                 <button
                   type="button"
                   onClick={updateAllSubscriptions}
@@ -1116,6 +2080,9 @@ export default function SubscriptionManager() {
                       <GlobeIcon className="mr-2 h-5 w-5 text-blue-500" />
                       {t('subscriptions.addSubscription')}
                     </Dialog.Title>
+                    <Dialog.Description className="sr-only">
+                      输入订阅链接和可选名称以保存配置。
+                    </Dialog.Description>
                   
                   <form onSubmit={addSubscription}>
                     <div className="mb-4">
@@ -1173,13 +2140,26 @@ export default function SubscriptionManager() {
                         </button>
                       </Dialog.Close>
 
-                      <button
-                        type="submit"
-                        className="inline-flex items-center rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
-                        disabled={isLoading}
-                      >
-                        {isLoading ? t('subscriptions.processing') : t('subscriptions.add')}
-                      </button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          type="submit"
+                          className="inline-flex items-center rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                          disabled={isLoading}
+                        >
+                          {isLoading && addSubmitMode === 'save' ? t('subscriptions.processing') : t('subscriptions.add')}
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
+                          disabled={isLoading}
+                          onClick={(event) => addSubscription(event, true)}
+                        >
+                          <PlayIcon className="h-4 w-4" />
+                          {isLoading && addSubmitMode === 'activate'
+                            ? t('subscriptions.addAndActivating')
+                            : t('subscriptions.addAndActivate')}
+                        </button>
+                      </div>
                     </div>
                   </form>
                   
@@ -1230,7 +2210,9 @@ export default function SubscriptionManager() {
             </h2>
           </div>
 
-          {subscriptions.length === 0 ? (
+          {isSubscriptionsLoading && subscriptions.length === 0 ? (
+            <div className="min-h-[220px] rounded-2xl bg-white shadow-sm dark:bg-[#2a2a2a]" aria-busy="true" />
+          ) : subscriptions.length === 0 ? (
             <div className="rounded-2xl bg-white py-16 text-center shadow-sm dark:bg-[#2a2a2a]">
               <div className="flex flex-col items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1262,6 +2244,7 @@ export default function SubscriptionManager() {
                     ${draggedItem?.path === sub.path ? 'opacity-70 scale-[1.02] shadow-lg' : 'opacity-100'}
                     ${dragOverItem?.path === sub.path ? 'border-dashed border-blue-500 dark:border-blue-400 translate-y-1 shadow-md' : ''}
                     ${isDraggingCard && draggedItem?.path !== sub.path && dragOverItem?.path !== sub.path ? 'opacity-90' : ''}
+                    ${highlightCardClass(isHighlightedSubscription(sub.path), highlightedSubReason)}
                     ${activeConfig !== sub.path ? 'hover:bg-blue-50/50 dark:hover:bg-blue-900/5' : ''}
                     cursor-grab active:cursor-grabbing`}
                   onMouseDown={(e) => handleMouseDown(e, sub)}
@@ -1275,6 +2258,35 @@ export default function SubscriptionManager() {
                   onContextMenu={(e) => handleContextMenu(e, sub)}
                 >
                   {/* 活跃标志 - 移除,使用文字标签代替 */}
+
+                  {isHighlightedSubscription(sub.path) && (
+                    activeConfig !== sub.path && (highlightedSubReason === 'added' || highlightedSubReason === 'imported') ? (
+                      <button
+                        type="button"
+                        className="absolute bottom-2 right-2 z-20 inline-flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-semibold text-white shadow-md transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!switchingConfig) {
+                            switchConfig(sub.path);
+                          }
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        disabled={!!switchingConfig}
+                        title={t('subscriptions.savedInactiveAction')}
+                        aria-label={t('subscriptions.savedInactiveAction')}
+                      >
+                        <PlayIcon className="h-3 w-3 flex-shrink-0" />
+                        <span className="truncate">{t('subscriptions.savedInactiveAction')}</span>
+                      </button>
+                    ) : (
+                      <div className={`pointer-events-none absolute bottom-2 right-2 z-20 inline-flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium shadow-md ${highlightBadgeClass(highlightedSubReason)}`}>
+                        {highlightedSubReason === 'failed'
+                          ? <Cross2Icon className="h-3 w-3 flex-shrink-0" />
+                          : <CheckIcon className="h-3 w-3 flex-shrink-0" />}
+                        <span className="truncate">{t(highlightLabelKey(highlightedSubReason))}</span>
+                      </div>
+                    )
+                  )}
 
                   {/* 操作按钮 - 正常状态半透明，悬浮时完全显示 */}
                   <div className="absolute top-2 right-2.5 flex gap-0 opacity-70 group-hover:opacity-100 transition-opacity">
@@ -1308,8 +2320,8 @@ export default function SubscriptionManager() {
                       </svg>
                     </button>
 
-                    {/* 刷新按钮 - 只要有URL就显示 */}
-                    {sub.url && (
+                    {/* 刷新按钮 - 仅远程订阅显示 */}
+                    {isRemoteSubscriptionUrl(sub.url) && (
                       <button
                         draggable="false"
                         onClick={(e) => {
@@ -1494,7 +2506,7 @@ export default function SubscriptionManager() {
                     ) : (
                       /* 没有流量信息时显示配置类型 */
                       <div className="flex h-full flex-col items-center justify-center p-2 text-[11px]">
-                        {(sub.url && sub.url.trim() !== '') ? (
+                        {isRemoteSubscriptionUrl(sub.url) ? (
                           /* 远程配置 */
                           <div className="flex flex-col items-center justify-center py-3 space-y-1.5">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-blue-400 dark:text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1568,7 +2580,7 @@ export default function SubscriptionManager() {
           </div>
         </Toast.Root>
 
-        <Toast.Viewport />
+        <Toast.Viewport id="subscription-toast-viewport" />
       </Toast.Provider>
 
       {/* 右键菜单 */}
@@ -1585,8 +2597,8 @@ export default function SubscriptionManager() {
               top: `${contextMenuPosition.y}px`,
             }}
           >
-            {/* 更新 - 仅URL类型配置显示 */}
-            {(contextMenuSub.usedTraffic || contextMenuSub.remainingTraffic || contextMenuSub.expiryDate) && (
+            {/* 更新 - 仅远程订阅显示 */}
+            {isRemoteSubscriptionUrl(contextMenuSub.url) && (
               <button
                 onClick={() => {
                   refreshSubscription(contextMenuSub.path);

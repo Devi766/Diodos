@@ -353,6 +353,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('mihomo-autostart', subscription);
     };
   },
+  onSubscriptionAutoUpdated: (callback) => {
+    const subscription = (event, ...args) => callback(...args);
+    ipcRenderer.on('subscription-auto-updated', subscription);
+    return () => {
+      ipcRenderer.removeListener('subscription-auto-updated', subscription);
+    };
+  },
+  onSubscriptionAutoUpdateFailed: (callback) => {
+    const subscription = (event, ...args) => callback(...args);
+    ipcRenderer.on('subscription-auto-update-failed', subscription);
+    return () => {
+      ipcRenderer.removeListener('subscription-auto-update-failed', subscription);
+    };
+  },
   onNodeChanged: (callback) => {
     const subscription = (event, ...args) => callback(...args);
     ipcRenderer.on('node-changed', subscription);
@@ -523,11 +537,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveDnsConfig: (config, configPath) => ipcRenderer.invoke('save-dns-config', config, configPath),
 
   // Hosts 配置
-  saveHostsConfig: (hosts) => ipcRenderer.invoke('save-hosts-config', hosts),
+  saveHostsConfig: (hosts, configPath) => ipcRenderer.invoke('save-hosts-config', hosts, configPath),
 
   // Sniffer 配置
-  getSnifferConfig: () => ipcRenderer.invoke('get-sniffer-config'),
-  saveSnifferConfig: (config) => ipcRenderer.invoke('save-sniffer-config', config),
+  getSnifferConfig: (configPath) => ipcRenderer.invoke('get-sniffer-config', configPath),
+  saveSnifferConfig: (config, configPath) => ipcRenderer.invoke('save-sniffer-config', config, configPath),
 
   // 代理组/规则/提供者配置（直接读写订阅 YAML）
   getProxyGroupsConfig: (configPath) => ipcRenderer.invoke('get-proxy-groups-config', configPath),
@@ -620,6 +634,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteRule: (ruleId) => ipcRenderer.invoke('proxy-icon:delete-rule', ruleId),
     toggleRule: (ruleId, enabled) => ipcRenderer.invoke('proxy-icon:toggle-rule', ruleId, enabled),
     getGroupIcon: (groupName, configIcon) => ipcRenderer.invoke('proxy-icon:get-group-icon', groupName, configIcon),
+    clearCache: () => ipcRenderer.invoke('proxy-icon:clear-cache'),
   },
 
   // 配置图标

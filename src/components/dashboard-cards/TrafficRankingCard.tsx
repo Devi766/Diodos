@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart3, TrendingUp, TrendingDown, Monitor, Globe, Shield } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { showToast } from '@/components/ui/toast';
 
 interface Connection {
   id: string;
@@ -92,6 +93,19 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
     }
   });
   const [iconMap, setIconMap] = useState<Record<string, string>>({});
+
+  const persistViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('trafficRankingViewMode', mode);
+    } catch (error) {
+      console.error('保存视图模式失败:', error);
+      showToast({
+        message: t('dashboard.viewModeSaveFailed', { error: error instanceof Error ? error.message : String(error || t('common.error')) }),
+        type: 'error',
+      });
+    }
+  };
 
   const rankings = useMemo(() => {
     const map = new Map<string, RankingItem>();
@@ -189,12 +203,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
         <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-[#1f1f1f]">
           <button
             onClick={() => {
-              setViewMode('process');
-              try {
-                localStorage.setItem('trafficRankingViewMode', 'process');
-              } catch (error) {
-                console.error('保存视图模式失败:', error);
-              }
+              persistViewMode('process');
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'process'
@@ -207,12 +216,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
           </button>
           <button
             onClick={() => {
-              setViewMode('domain');
-              try {
-                localStorage.setItem('trafficRankingViewMode', 'domain');
-              } catch (error) {
-                console.error('保存视图模式失败:', error);
-              }
+              persistViewMode('domain');
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'domain'
@@ -225,12 +229,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
           </button>
           <button
             onClick={() => {
-              setViewMode('rule');
-              try {
-                localStorage.setItem('trafficRankingViewMode', 'rule');
-              } catch (error) {
-                console.error('保存视图模式失败:', error);
-              }
+              persistViewMode('rule');
             }}
             className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'rule'

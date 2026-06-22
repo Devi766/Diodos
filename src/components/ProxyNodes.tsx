@@ -20,12 +20,21 @@ import { useMihomoAPI } from '../services/mihomo-api';
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { useTranslation } from 'react-i18next';
 import { useRouter } from 'next/navigation';
+import {
+  APP_DATA_CACHE_KEYS,
+  hasAppDataCache,
+  readAppDataCache,
+  subscribeAppDataCache,
+  writeAppDataCache,
+} from '@/services/app-data-cache';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { EmojiText } from './ui/emoji';
 
 const isDev = process.env.NODE_ENV === 'development';
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+const PROXY_GROUPS_CACHE_KEY = APP_DATA_CACHE_KEYS.proxyGroups;
 
 // 定义类型
 type ProxyNode = {
@@ -52,6 +61,34 @@ type MihomoProxy = {
   history?: {delay: number}[];
   server?: string;
   port?: number;
+};
+
+type LayoutMode = 'single' | 'double';
+type NodesSortMode = 'default' | 'latency';
+
+const proxyNodesViewCache: {
+  groups: ProxyGroup[];
+  mihomoRunning: boolean | null;
+  currentMode: string;
+  selectedNode: string | null;
+  loaded: boolean;
+} = {
+  groups: [],
+  mihomoRunning: null,
+  currentMode: 'rule',
+  selectedNode: null,
+  loaded: false,
+};
+
+const readProxyGroupsSessionCache = (): ProxyGroup[] => {
+  const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
+  return Array.isArray(cached) ? cached as ProxyGroup[] : [];
+};
+
+const readCachedMihomoRunning = (): boolean | null => {
+  const saved = readAppDataCache<boolean | string | undefined>(APP_DATA_CACHE_KEYS.mihomoRunning);
+  if (saved === undefined || saved === null) return null;
+  return saved === true || saved === 'true';
 };
 
 const isGroupType = (type?: string | null) => {
@@ -88,26 +125,40 @@ const renderGroupIcon = (icon?: string | null) => {
 // 节点组件
 export default function ProxyNodes() {
   const { t } = useTranslation();
-  // 不再从 sessionStorage 恢复整棵代理树，首次进入时统一从内核拉取最新数据
-  const [groups, setGroups] = useState<ProxyGroup[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [groups, setGroups] = useState<ProxyGroup[]>(() => {
+    if (proxyNodesViewCache.groups.length > 0) {
+      return proxyNodesViewCache.groups;
+    }
+
+    const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
+    if (Array.isArray(cached)) {
+      const cachedGroups = cached as ProxyGroup[];
+      proxyNodesViewCache.groups = cachedGroups;
+      proxyNodesViewCache.loaded = true;
+      return cachedGroups;
+    }
+
+    return [];
+  });
+  const [isLoading, setIsLoading] = useState(() => !proxyNodesViewCache.loaded);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<string | null>(() => proxyNodesViewCache.selectedNode);
   const [activeTab, setActiveTab] = useState<string>('all');
   const [testingNodes, setTestingNodes] = useState<Set<string>>(new Set());
   const [testingGroups, setTestingGroups] = useState<Set<string>>(new Set());
   const [favoriteNodes, setFavoriteNodes] = useState<Set<string>>(new Set());
   // 初始化时从sessionStorage加载mihomo运行状态
   const [mihomoRunning, setMihomoRunning] = useState(() => {
+    if (proxyNodesViewCache.mihomoRunning !== null) {
+      return proxyNodesViewCache.mihomoRunning;
+    }
+
     if (typeof window === 'undefined') return false;
     try {
-      const saved = sessionStorage.getItem('mihomoRunningState');
-      if (saved !== null) {
-        return saved === 'true';
-      }
+      const cachedRunning = readCachedMihomoRunning();
+      if (cachedRunning !== null) return cachedRunning;
       // 如果有缓存的groups数据，说明之前mihomo是运行的
-      const hasCache = sessionStorage.getItem('proxyGroupsCache');
-      return hasCache !== null;
+      return readProxyGroupsSessionCache().length > 0;
     } catch (error) {
       console.error('Failed to load mihomo running state:', error);
       return false;
@@ -149,9 +200,20 @@ export default function ProxyNodes() {
 
   // 使用函数初始化，确保只运行一次
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(loadSavedCollapsedState);
-  const isInitialLoadRef = useRef(true);
+  const [collapsedPreferenceReady, setCollapsedPreferenceReady] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return localStorage.getItem('collapsedGroups') !== null || !window.electronAPI?.getCollapsedGroups;
+    } catch {
+      return true;
+    }
+  });
+  const isInitialLoadRef = useRef(!proxyNodesViewCache.loaded);
+  const favoriteNodesLoadedRef = useRef(false);
+  const collapsedGroupsRef = useRef(collapsedGroups);
   const isUserScrollingRef = useRef(false);
   const scrollIdleTimeoutRef = useRef<number | null>(null);
+  const messageTimeoutRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef(false);
 
   // 导出调试函数到window对象，可在控制台访问
@@ -199,20 +261,20 @@ export default function ProxyNodes() {
   const LAYOUT_SETTING_KEY = 'proxyGroupsLayoutMode';
   const SORT_MODE_KEY = 'nodesSortMode';
 
-  const [currentMode, setCurrentMode] = useState<string>('rule');
-  const [layoutMode, setLayoutMode] = useState<'single' | 'double'>(() => {
+  const [currentMode, setCurrentMode] = useState<string>(() => proxyNodesViewCache.currentMode);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
     if (typeof window === 'undefined') {
       return 'single';
     }
 
     try {
       const saved = localStorage.getItem(LAYOUT_SETTING_KEY);
-      return (saved === 'double' ? 'double' : 'single') as 'single' | 'double';
+      return saved === 'double' ? 'double' : 'single';
     } catch {
       return 'single';
     }
   });
-  const [sortMode, setSortMode] = useState<'default' | 'latency'>(() => {
+  const [sortMode, setSortMode] = useState<NodesSortMode>(() => {
     if (typeof window === 'undefined') {
       return 'default';
     }
@@ -224,52 +286,261 @@ export default function ProxyNodes() {
       return 'default';
     }
   });
+  const layoutModeRef = useRef<LayoutMode>(layoutMode);
+  const sortModeRef = useRef<NodesSortMode>(sortMode);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const router = useRouter();
   let mihomoAPI = useMihomoAPI();
 
-  const applySortMode = useCallback((value: 'default' | 'latency') => {
-    setSortMode(value);
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(SORT_MODE_KEY, value);
-      } catch (error) {
-        console.error('缓存排序模式失败:', error);
-      }
+  useEffect(() => {
+    proxyNodesViewCache.groups = groups;
+  }, [groups]);
+
+  useEffect(() => {
+    proxyNodesViewCache.mihomoRunning = mihomoRunning;
+  }, [mihomoRunning]);
+
+  useEffect(() => {
+    proxyNodesViewCache.currentMode = currentMode;
+  }, [currentMode]);
+
+  useEffect(() => {
+    proxyNodesViewCache.selectedNode = selectedNode;
+  }, [selectedNode]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      proxyNodesViewCache.loaded = true;
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    return subscribeAppDataCache(PROXY_GROUPS_CACHE_KEY, () => {
+      const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
+      if (!Array.isArray(cached)) return;
+      const cachedGroups = cached as ProxyGroup[];
+      const cachedRunning = readCachedMihomoRunning();
+      proxyNodesViewCache.groups = cachedGroups;
+      proxyNodesViewCache.loaded = true;
+      proxyNodesViewCache.mihomoRunning = cachedRunning ?? cachedGroups.length > 0;
+      setGroups(cachedGroups);
+      setMihomoRunning(cachedRunning ?? cachedGroups.length > 0);
+      setIsLoading(false);
+      isInitialLoadRef.current = false;
+    });
+  }, []);
+
+  const clearMessageTimeout = useCallback(() => {
+    if (messageTimeoutRef.current !== null) {
+      window.clearTimeout(messageTimeoutRef.current);
+      messageTimeoutRef.current = null;
     }
   }, []);
 
-  const persistSortMode = useCallback(async (value: 'default' | 'latency') => {
-    applySortMode(value);
+  const showError = useCallback((message: string) => {
+    clearMessageTimeout();
+    setSuccessMessage(null);
+    setErrorMessage(message);
+    messageTimeoutRef.current = window.setTimeout(() => {
+      setErrorMessage(null);
+      messageTimeoutRef.current = null;
+    }, 5000);
+  }, [clearMessageTimeout]);
+
+  const showSuccess = useCallback((message: string) => {
+    clearMessageTimeout();
+    setErrorMessage(null);
+    setSuccessMessage(message);
+    messageTimeoutRef.current = window.setTimeout(() => {
+      setSuccessMessage(null);
+      messageTimeoutRef.current = null;
+    }, 3000);
+  }, [clearMessageTimeout]);
+
+  const formatNodesError = useCallback((error: unknown, fallback = t('nodes.operationFailed')) => {
+    const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
+    if (
+      message.includes(TAURI_RUNTIME_UNAVAILABLE) ||
+      message.includes('not implemented in the Tauri runtime')
+    ) {
+      return t('nodes.apiUnavailable');
+    }
+    if (
+      message.includes('Mihomo service unavailable') ||
+      message.includes('Mihomo服务未运行') ||
+      message.includes('Mihomo service is not running') ||
+      message.includes('ECONNREFUSED') ||
+      message.includes('Failed to fetch')
+    ) {
+      return t('nodes.serviceUnavailable');
+    }
+    return message;
+  }, [t]);
+
+  const compatSuccess = (result: any) => (
+    result && typeof result === 'object'
+      ? result.success === true
+      : Boolean(result)
+  );
+
+  const compatError = useCallback((result: any, fallback = t('nodes.operationFailed')) => (
+    result && typeof result === 'object'
+      ? formatNodesError(result.error || result.message || result.statusText || result.data?.message, fallback)
+      : fallback
+  ), [formatNodesError, t]);
+
+  const responseError = useCallback((response: any, fallback = t('nodes.operationFailed')) => {
+    if (!response || typeof response !== 'object') {
+      return fallback;
+    }
+
+    const detail = typeof response.data === 'string'
+      ? response.data
+      : response.data?.message || response.error || response.message || response.statusText;
+    return formatNodesError(detail, fallback);
+  }, [formatNodesError, t]);
+
+  const cachePreference = useCallback((key: string, value: string, failureMessage: string) => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
 
     try {
-      if (typeof window !== 'undefined' && window.electronAPI?.setSetting) {
-        const result = await window.electronAPI.setSetting(SORT_MODE_KEY, value);
-        if (result?.success === false && isDev) {
-          console.error('保存排序模式失败:', result.error);
+      localStorage.setItem(key, value);
+      return null;
+    } catch (error) {
+      console.error(failureMessage, error);
+      return error;
+    }
+  }, []);
+
+  const applyLayoutMode = useCallback((value: LayoutMode) => {
+    layoutModeRef.current = value;
+    setLayoutMode(value);
+    return cachePreference(LAYOUT_SETTING_KEY, value, '缓存布局模式失败:');
+  }, [cachePreference]);
+
+  const applySortMode = useCallback((value: NodesSortMode) => {
+    sortModeRef.current = value;
+    setSortMode(value);
+    return cachePreference(SORT_MODE_KEY, value, '缓存排序模式失败:');
+  }, [cachePreference]);
+
+  const persistLayoutMode = useCallback(async (value: LayoutMode) => {
+    const previousMode = layoutModeRef.current;
+    const localCacheError = applyLayoutMode(value);
+
+    const restorePreviousMode = () => {
+      if (layoutModeRef.current === value) {
+        applyLayoutMode(previousMode);
+      }
+    };
+
+    try {
+      const setSetting = typeof window !== 'undefined' ? window.electronAPI?.setSetting : undefined;
+      if (setSetting) {
+        const result = await setSetting(LAYOUT_SETTING_KEY, value);
+        if (result?.success === false) {
+          const detail = (result as { error?: string; message?: string }).error
+            || (result as { error?: string; message?: string }).message;
+          const message = formatNodesError(detail, t('nodes.layoutModeSaveFailed'));
+          restorePreviousMode();
+          console.error('保存代理组布局设置失败:', message);
+          showError(message);
+          return false;
         }
+      } else if (localCacheError) {
+        restorePreviousMode();
+        showError(t('nodes.layoutModeSaveFailedWithError', { error: formatNodesError(localCacheError) }));
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      restorePreviousMode();
+      console.error('保存代理组布局设置失败:', error);
+      showError(t('nodes.layoutModeSaveFailedWithError', { error: formatNodesError(error) }));
+      return false;
+    }
+  }, [applyLayoutMode, formatNodesError, showError, t]);
+
+  const persistSortMode = useCallback(async (value: NodesSortMode) => {
+    const previousMode = sortModeRef.current;
+    const localCacheError = applySortMode(value);
+
+    const restorePreviousMode = () => {
+      if (sortModeRef.current === value) {
+        applySortMode(previousMode);
+      }
+    };
+
+    try {
+      const setSetting = typeof window !== 'undefined' ? window.electronAPI?.setSetting : undefined;
+      if (setSetting) {
+        const result = await setSetting(SORT_MODE_KEY, value);
+        if (result?.success === false) {
+          const message = formatNodesError(result.error, t('nodes.sortModeSaveFailed'));
+          restorePreviousMode();
+          if (isDev) {
+            console.error('保存排序模式失败:', message);
+          }
+          showError(message);
+          return false;
+        }
+      } else if (localCacheError) {
+        restorePreviousMode();
+        showError(t('nodes.sortModeSaveFailedWithError', { error: formatNodesError(localCacheError) }));
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      restorePreviousMode();
+      console.error('保存排序模式失败:', error);
+      showError(t('nodes.sortModeSaveFailedWithError', { error: formatNodesError(error) }));
+      return false;
+    }
+  }, [applySortMode, formatNodesError, showError, t]);
+
+  const persistCollapsedGroups = useCallback(async (groupsToSave: Set<string> | string[]) => {
+    const values = Array.from(groupsToSave).filter((group): group is string => typeof group === 'string' && group.trim().length > 0);
+
+    try {
+      localStorage.setItem('collapsedGroups', JSON.stringify(values));
+      if (isDev) {
+        console.log('已保存折叠状态到localStorage:', values);
       }
     } catch (error) {
-      console.error('保存排序模式失败:', error);
+      console.error('保存折叠状态到localStorage失败:', error);
+      showError(t('nodes.collapsedGroupsSaveFailedWithError', { error: formatNodesError(error) }));
     }
-  }, [applySortMode]);
+
+    try {
+      const result = await window.electronAPI?.saveCollapsedGroups?.(values);
+      if (result?.success === false) {
+        const detail = result.error || t('nodes.collapsedGroupsSaveFailed');
+        throw new Error(formatNodesError(detail, t('nodes.collapsedGroupsSaveFailed')));
+      }
+    } catch (error) {
+      console.error('保存折叠状态到持久化存储失败:', error);
+      showError(t('nodes.collapsedGroupsSaveFailedWithError', { error: formatNodesError(error) }));
+    }
+  }, [formatNodesError, showError, t]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.electronAPI?.getSetting) {
       return;
     }
+    const electron = window.electronAPI;
 
     let cancelled = false;
 
     const loadLayoutPreference = async () => {
       try {
-        const result = await window.electronAPI.getSetting(LAYOUT_SETTING_KEY, 'single');
+        const result = await electron.getSetting(LAYOUT_SETTING_KEY, 'single');
         if (!cancelled && result?.success) {
           const value = result.value === 'double' ? 'double' : 'single';
-          setLayoutMode(value);
-          try {
-            localStorage.setItem(LAYOUT_SETTING_KEY, value);
-          } catch {}
+          applyLayoutMode(value);
         }
       } catch (error) {
         console.error('加载代理组布局设置失败:', error);
@@ -281,7 +552,7 @@ export default function ProxyNodes() {
     // 加载排序模式设置
     const loadSortModePreference = async () => {
       try {
-        const result = await window.electronAPI.getSetting(SORT_MODE_KEY, sortMode);
+        const result = await electron.getSetting(SORT_MODE_KEY, sortModeRef.current);
         if (!cancelled && result?.success) {
           const value = result.value === 'latency' ? 'latency' : 'default';
           applySortMode(value);
@@ -309,7 +580,50 @@ export default function ProxyNodes() {
     return () => {
       cancelled = true;
     };
-  }, [applySortMode, sortMode]);
+  }, [applyLayoutMode, applySortMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.getCollapsedGroups) {
+      setCollapsedPreferenceReady(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCollapsedGroups = async () => {
+      try {
+        const result = await window.electronAPI?.getCollapsedGroups?.();
+        if (cancelled) return;
+
+        if (result?.success && Array.isArray(result.groups)) {
+          const nextGroups = result.groups.filter((group): group is string => typeof group === 'string' && group.trim().length > 0);
+          setCollapsedGroups(new Set(nextGroups));
+          try {
+            localStorage.setItem('collapsedGroups', JSON.stringify(nextGroups));
+          } catch {}
+          if (isDev) {
+            console.log('从持久化存储加载折叠状态:', nextGroups);
+          }
+        } else if (result?.success === false) {
+          const detail = result.error || t('nodes.collapsedGroupsLoadFailed');
+          throw new Error(formatNodesError(detail, t('nodes.collapsedGroupsLoadFailed')));
+        }
+      } catch (error) {
+        console.error('加载折叠状态失败:', error);
+        showError(t('nodes.collapsedGroupsLoadFailedWithError', { error: formatNodesError(error) }));
+      } finally {
+        if (!cancelled) {
+          setCollapsedPreferenceReady(true);
+        }
+      }
+    };
+
+    loadCollapsedGroups();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [formatNodesError, showError, t]);
 
   // 获取节点的动画高度，用于折叠/展开动画
   const getNodeRef = useRef<{[key: string]: HTMLDivElement | null}>({});
@@ -329,7 +643,9 @@ export default function ProxyNodes() {
             mihomoAPI = useMihomoAPI({
               host: apiConfigResult.controllerHost,
               port: apiConfigResult.controllerPort,
-              secret: secret // 如果为空，则使用undefined
+              secret: secret, // 如果为空，则使用undefined
+              controllerMode: apiConfigResult.controllerMode,
+              httpFallback: apiConfigResult.httpFallback
             });
             
             if (isDev) {
@@ -345,18 +661,18 @@ export default function ProxyNodes() {
               setMihomoRunning(true);
             } catch (versionError) {
               if (isDev) {
-                console.error('[调试] Mihomo版本检查失败:', versionError);
+                console.debug('[调试] Mihomo版本检查失败:', versionError);
               }
               setMihomoRunning(false);
             }
           } else {
             if (isDev) {
-              console.error('[调试] 获取API配置失败:', apiConfigResult.error);
+              console.debug('[调试] 获取API配置失败:', apiConfigResult.error);
             }
           }
         } catch (error) {
           if (isDev) {
-            console.error('[调试] 获取API配置出错:', error);
+            console.debug('[调试] 获取API配置出错:', error);
           }
         }
       }
@@ -374,21 +690,18 @@ export default function ProxyNodes() {
     };
   }, []);
 
-  // 显示错误提示
-  const showError = (message: string) => {
-    setSuccessMessage(null); // 清除成功信息
-    setErrorMessage(message);
-    setTimeout(() => setErrorMessage(null), 5000);
-  };
+  useEffect(() => () => {
+    clearMessageTimeout();
+  }, [clearMessageTimeout]);
 
   // 保存mihomo运行状态到sessionStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    try {
-      sessionStorage.setItem('mihomoRunningState', mihomoRunning.toString());
-    } catch (error) {
-      console.error('Failed to cache mihomo running state:', error);
-    }
+      try {
+        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, mihomoRunning);
+      } catch (error) {
+        console.error('Failed to cache mihomo running state:', error);
+      }
   }, [mihomoRunning]);
 
   // 过滤节点组
@@ -416,7 +729,7 @@ export default function ProxyNodes() {
 
   // 获取节点列表
   const fetchProxies = async () => {
-    if (isInitialLoadRef.current) {
+    if (isInitialLoadRef.current && groups.length === 0 && !proxyNodesViewCache.loaded) {
       setIsLoading(true);
     }
 
@@ -428,7 +741,11 @@ export default function ProxyNodes() {
         if (versionInfo) {
           setMihomoRunning(true);
         } else {
-          setMihomoRunning(false);
+          if (groups.length === 0 && !proxyNodesViewCache.loaded) {
+            setMihomoRunning(false);
+          }
+          writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
+          writeAppDataCache(PROXY_GROUPS_CACHE_KEY, []);
           // 只在初始加载时才设置loading为false
           if (groups.length === 0) {
             setIsLoading(false);
@@ -436,8 +753,14 @@ export default function ProxyNodes() {
           return;
         }
       } catch (error) {
-        console.error('Mihomo未运行:', error);
-        setMihomoRunning(false);
+        if (isDev) {
+          console.debug('Mihomo未运行:', error);
+        }
+        if (groups.length === 0 && !proxyNodesViewCache.loaded) {
+          setMihomoRunning(false);
+        }
+        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
+        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, []);
         // 只在初始加载时才设置loading为false
         if (groups.length === 0) {
           setIsLoading(false);
@@ -460,6 +783,8 @@ export default function ProxyNodes() {
         if (isDev) {
           console.log('直连模式，不加载节点列表');
         }
+        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
+        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, []);
         setGroups([]);
         if (isInitialLoadRef.current) {
           setIsLoading(false);
@@ -554,7 +879,7 @@ export default function ProxyNodes() {
             } else {
 
             const nodes = globalData.all
-              .map((nodeName: string) => {
+              .map((nodeName: string): ProxyNode | null => {
                 const node = data.proxies[nodeName];
                 if (!node) {
                   console.warn(`[ProxyNodes] GLOBAL 组引用了不存在的节点: ${nodeName}, 已忽略`);
@@ -571,7 +896,7 @@ export default function ProxyNodes() {
                   isGroup: isGroup,
                 };
               })
-              .filter((n): n is ProxyNode => n !== null);
+              .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
             
             const globalConfigGroup = configOrder?.proxyGroups?.find((g: any) => g.name === 'GLOBAL');
             const globalConfigIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
@@ -774,7 +1099,7 @@ export default function ProxyNodes() {
             }
 
             const nodes = nodesOrder
-              .map((nodeName: string) => {
+              .map((nodeName: string): ProxyNode | null => {
                 const node = data.proxies[nodeName];
                 if (!node) {
                   console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
@@ -791,7 +1116,7 @@ export default function ProxyNodes() {
                   isGroup: isGroup,
                 };
               })
-              .filter((n): n is ProxyNode => n !== null);
+              .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
 
             const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
 
@@ -840,10 +1165,16 @@ export default function ProxyNodes() {
       if (isDev) {
         console.log(`最终构建了${groupsData.length}个代理组`);
       }
+      try {
+        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
+        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, groupsData);
+      } catch (error) {
+        console.error('Failed to cache proxy groups:', error);
+      }
       setGroups(groupsData);
     } catch (error) {
       console.error('获取代理失败:', error);
-      showError(`获取代理失败: ${String(error)}`);
+      showError(t('nodes.fetchFailed', { error: formatNodesError(error) }));
     } finally {
       if (isInitialLoadRef.current) {
         setIsLoading(false);
@@ -864,7 +1195,8 @@ export default function ProxyNodes() {
   useEffect(() => {
     scheduleSoftRefresh();
 
-    const onProfileUpdated = () => {
+    const refreshCurrentProxyTree = () => {
+      setErrorMessage(null);
       scheduleSoftRefresh();
     };
 
@@ -873,15 +1205,28 @@ export default function ProxyNodes() {
     };
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('profile-updated', onProfileUpdated);
+      window.addEventListener('profile-updated', refreshCurrentProxyTree);
+      window.addEventListener('backup-restored', refreshCurrentProxyTree);
+      window.addEventListener('subscription-auto-updated', refreshCurrentProxyTree);
       window.addEventListener('proxy-icon-changed', onProxyIconChanged);
     }
 
+    const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
+      refreshCurrentProxyTree();
+    });
+    const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
+      refreshCurrentProxyTree();
+    });
+
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('profile-updated', onProfileUpdated);
+        window.removeEventListener('profile-updated', refreshCurrentProxyTree);
+        window.removeEventListener('backup-restored', refreshCurrentProxyTree);
+        window.removeEventListener('subscription-auto-updated', refreshCurrentProxyTree);
         window.removeEventListener('proxy-icon-changed', onProxyIconChanged);
       }
+      unsubscribeActiveConfig?.();
+      unsubscribeAutoUpdated?.();
     };
   }, []);
 
@@ -915,7 +1260,7 @@ export default function ProxyNodes() {
 
   // 在groups首次加载完成后，如果没有保存的折叠状态，则默认全部折叠
   useEffect(() => {
-    if (groups.length > 0 && typeof window !== 'undefined') {
+    if (collapsedPreferenceReady && groups.length > 0 && typeof window !== 'undefined') {
       const savedState = localStorage.getItem('collapsedGroups');
       // 只在没有保存状态时(null)设置默认全部折叠
       // 如果savedState是'[]'，表示用户选择了全部展开，应该保持
@@ -923,20 +1268,16 @@ export default function ProxyNodes() {
         const allGroupNames = groups.map(g => g.name);
         const newCollapsedSet = new Set(allGroupNames);
         setCollapsedGroups(newCollapsedSet);
-        try {
-          localStorage.setItem('collapsedGroups', JSON.stringify(allGroupNames));
-          if (isDev) {
-            console.log('首次加载，默认全部折叠:', allGroupNames);
-          }
-        } catch (error) {
-          console.error('保存默认折叠状态失败:', error);
+        void persistCollapsedGroups(newCollapsedSet);
+        if (isDev) {
+          console.log('首次加载，默认全部折叠:', allGroupNames);
         }
       }
     }
-  }, [groups.length]); // 只在groups首次加载时触发
+  }, [collapsedPreferenceReady, groups, persistCollapsedGroups]); // 只在groups首次加载时触发
 
   // 测试节点延迟
-  const handleTestNode = async (nodeName: string) => {
+  const handleTestNode = async (nodeName: string, options?: { silent?: boolean }) => {
     if (!mihomoRunning) {
       showError(t('nodes.testFailed'));
       return;
@@ -952,12 +1293,23 @@ export default function ProxyNodes() {
     });
     
     try {
-      // 使用统一的 Mihomo API 进行延迟测试
-      const result = await mihomoAPI.proxiesDelay(nodeName, {
-        timeout: 5000,
-      });
+      let delayValue = 0;
+      const api = window.electronAPI;
 
-      const delayValue = typeof result?.delay === 'number' ? result.delay : 0;
+      if (typeof api?.testNodeDelay === 'function') {
+        const result = await api.testNodeDelay(nodeName);
+        delayValue = typeof result === 'number' ? result : 0;
+      } else {
+        // 使用统一的 Mihomo API 进行延迟测试
+        const result = await mihomoAPI.proxiesDelay(nodeName, {
+          timeout: 5000,
+        });
+        delayValue = typeof result?.delay === 'number' ? result.delay : 0;
+      }
+
+      if (delayValue <= 0) {
+        throw new Error(t('nodes.timeout'));
+      }
 
       setGroups(prevGroups => {
         return prevGroups.map(group => {
@@ -973,6 +1325,9 @@ export default function ProxyNodes() {
     } catch (error) {
       if (isDev) {
         console.error('[调试] 测试节点延迟失败:', error);
+      }
+      if (!options?.silent) {
+        showError(t('nodes.testNodeFailed', { node: nodeName, error: formatNodesError(error, t('nodes.timeout')) }));
       }
       // 更新节点为超时状态
       setGroups(prevGroups => {
@@ -1044,7 +1399,7 @@ export default function ProxyNodes() {
       showSuccess(t('nodes.testGroupComplete', { groupName, successCount, failCount }));
     } catch (error: any) {
       console.error(`测试代理组 ${groupName} 失败:`, error);
-      showError(`测试代理组失败: ${error?.message || '未知错误'}`);
+      showError(t('nodes.testGroupFailed', { groupName, error: formatNodesError(error) }));
     } finally {
       setTestingGroups(prev => {
         const newSet = new Set(prev);
@@ -1082,7 +1437,7 @@ export default function ProxyNodes() {
       await Promise.all(
         batch.map(async node => {
           try {
-            await handleTestNode(node.name);
+            await handleTestNode(node.name, { silent: true });
             // 添加延迟，避免同时发送太多请求
             await new Promise(r => setTimeout(r, 300));
           } catch (error) {
@@ -1096,14 +1451,8 @@ export default function ProxyNodes() {
   // 单独添加一个effect来处理事件监听
   useEffect(() => {
     // 确保有groups数据且有electronAPI的情况下再设置
-    if (groups.length > 0 && window.electronAPI) {
-      const api = window.electronAPI as any;
-      
-      // 移除旧的监听器，避免重复
-      api.removeAllListeners('test-all-nodes');
-      
-      // 添加新的监听器
-      api.onTestAllNodes(() => {
+    if (groups.length > 0 && window.electronAPI?.onTestAllNodes) {
+      const unsubscribe = window.electronAPI.onTestAllNodes(() => {
         if (isDev) {
           console.log('收到测试所有节点请求 (更新后的处理器)');
         }
@@ -1112,6 +1461,11 @@ export default function ProxyNodes() {
           handleBatchTest(group.name);
         });
       });
+      return () => {
+        if (typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      };
     }
   }, [groups, handleBatchTest]); // 现在可以安全地添加handleBatchTest作为依赖
 
@@ -1140,8 +1494,11 @@ export default function ProxyNodes() {
   // 从Electron持久化存储加载收藏节点
   useEffect(() => {
     const loadFavoriteNodes = async () => {
-      if (!window.electronAPI) return;
-      
+      if (!window.electronAPI) {
+        favoriteNodesLoadedRef.current = true;
+        return;
+      }
+
       try {
         // 从主进程获取收藏节点
         const result = await window.electronAPI.getFavoriteNodes();
@@ -1167,6 +1524,8 @@ export default function ProxyNodes() {
         } catch (localStorageError) {
           console.error('从localStorage加载收藏节点备份失败:', localStorageError);
         }
+      } finally {
+        favoriteNodesLoadedRef.current = true;
       }
     };
     
@@ -1176,7 +1535,7 @@ export default function ProxyNodes() {
   // 保存收藏节点到Electron持久化存储
   useEffect(() => {
     const saveFavoriteNodes = async () => {
-      if (!window.electronAPI || favoriteNodes.size === 0) return;
+      if (!window.electronAPI || !favoriteNodesLoadedRef.current) return;
       
       try {
         // 保存到主进程的持久化存储
@@ -1186,7 +1545,9 @@ export default function ProxyNodes() {
             console.log('收藏节点保存到持久化存储成功');
           }
         } else {
-          throw new Error('保存失败');
+          const detail = (result as { error?: string; message?: string } | undefined)?.error
+            || (result as { error?: string; message?: string } | undefined)?.message;
+          throw new Error(formatNodesError(detail, t('nodes.favoriteSaveFailed')));
         }
       } catch (error) {
         console.error('保存收藏节点到持久化存储失败:', error);
@@ -1199,12 +1560,13 @@ export default function ProxyNodes() {
           }
         } catch (localStorageError) {
           console.error('保存收藏节点到localStorage备份失败:', localStorageError);
+          showError(t('nodes.favoriteSaveFailedWithError', { error: formatNodesError(localStorageError) }));
         }
       }
     };
     
     saveFavoriteNodes();
-  }, [favoriteNodes]);
+  }, [favoriteNodes, formatNodesError, showError, t]);
 
   // 重写折叠切换函数，确保状态更改后立即保存到localStorage
   const toggleGroupCollapse = (groupName: string) => {
@@ -1224,14 +1586,7 @@ export default function ProxyNodes() {
       }
       
       // 立即同步保存到localStorage
-      try {
-        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(newSet)));
-        if (isDev) {
-          console.log('已保存折叠状态到localStorage:', Array.from(newSet));
-        }
-      } catch (error) {
-        console.error('保存折叠状态失败:', error);
-      }
+      void persistCollapsedGroups(newSet);
       
       return newSet;
     });
@@ -1517,18 +1872,32 @@ export default function ProxyNodes() {
       // 更新Mihomo配置
       await mihomoAPI.patchConfigs({ mode });
       
-      // 清除连接（可选，根据用户体验决定）
-      await mihomoAPI.deleteConnections();
+      // 清除连接是后续清理动作，失败不代表模式切换失败
+      try {
+        await mihomoAPI.deleteConnections();
+      } catch (error) {
+        console.warn('切换模式后清除连接失败:', error);
+      }
 
       // 在模式切换后立即刷新节点列表
-      await fetchProxies();
+      try {
+        await fetchProxies();
+      } catch (error) {
+        console.warn('切换模式后刷新节点列表失败:', error);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('profile-updated', {
+          detail: { source: 'proxy-nodes', action: 'mode-changed', mode },
+        }));
+      }
       
       // 显示成功提示
       const modeText = mode === 'rule' ? t('nodes.ruleMode') : mode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
       showSuccess(t('nodes.switchedToMode', { mode: modeText }));
     } catch (error) {
       console.error('切换模式失败:', error);
-      showError(t('nodes.switchModeFailed', { error: String(error) }));
+      showError(t('nodes.switchModeFailed', { error: formatNodesError(error) }));
       
       // 失败时恢复UI状态
       try {
@@ -1538,13 +1907,6 @@ export default function ProxyNodes() {
     }
   };
   
-  // 显示成功提示
-  const showSuccess = (message: string) => {
-    setErrorMessage(null); // 清除错误信息
-    setSuccessMessage(message);
-    setTimeout(() => setSuccessMessage(null), 3000);
-  };
-
   // 渲染直连模式提示
   const DirectModeMessage = () => (
     <div className="rounded-2xl bg-slate-50 p-8 text-center shadow-sm dark:bg-slate-800/40">
@@ -1564,22 +1926,27 @@ export default function ProxyNodes() {
     </div>
   );
 
+  useEffect(() => {
+    collapsedGroupsRef.current = collapsedGroups;
+  }, [collapsedGroups]);
+
   // 组件卸载时保存当前折叠状态
   useEffect(() => {
     // 返回清理函数
     return () => {
+      const latestCollapsedGroups = collapsedGroupsRef.current;
       console.log('组件卸载，保存折叠状态');
       // 立即保存当前折叠状态到localStorage
       try {
-        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(collapsedGroups)));
-        console.log('组件卸载时已保存折叠状态到localStorage:', Array.from(collapsedGroups));
+        localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(latestCollapsedGroups)));
+        console.log('组件卸载时已保存折叠状态到localStorage:', Array.from(latestCollapsedGroups));
       } catch (error) {
         console.error('组件卸载时保存折叠状态失败:', error);
       }
       
       // 如果有electronAPI，也保存到持久化存储
       if (window.electronAPI) {
-        window.electronAPI.saveCollapsedGroups(Array.from(collapsedGroups))
+        window.electronAPI.saveCollapsedGroups(Array.from(latestCollapsedGroups))
           .then(result => {
             if (result && result.success) {
               console.log('组件卸载时已保存折叠状态到持久化存储');
@@ -1587,10 +1954,10 @@ export default function ProxyNodes() {
           })
           .catch(error => {
             console.error('组件卸载时保存到持久化存储失败:', error);
-          });
+        });
       }
     };
-  }, [collapsedGroups]);
+  }, []);
 
   // 选择节点 - 优化后的逻辑
   const handleNodeSelect = async (nodeName: string, groupName: string) => {
@@ -1628,109 +1995,79 @@ export default function ProxyNodes() {
     }
     
     try {
-      // 首先获取API配置，确保使用最新的密钥
-      let apiConfig;
-      try {
-        apiConfig = await window.electronAPI!.getApiConfig();
-        if (isDev) {
-          console.log(`[调试] 获取API配置成功: ${apiConfig.success ? '成功' : '失败'}`);
+      const api = window.electronAPI;
+
+      if (typeof api?.selectNode === 'function') {
+        const result = await api.selectNode(nodeName, groupName);
+        if (!compatSuccess(result)) {
+          throw new Error(compatError(result, t('nodes.switchNodeFailed', { node: nodeName })));
         }
-        if (!apiConfig.success) {
-          throw new Error(`获取API配置失败: ${apiConfig.error || '未知错误'}`);
-        }
-      } catch (configError) {
-        if (isDev) {
-          console.error('[调试] 获取API配置出错:', configError);
-        }
-        throw new Error(`获取API配置出错: ${String(configError)}`);
-      }
-      
-      if (isDev) {
-        console.log(`[调试] 尝试在组 ${groupName} 中切换到节点: ${nodeName}`);
-        console.log(`[调试] 使用密钥: ${apiConfig.secret ? '已设置' : '未设置'}`);
-      }
-      
-      // 发送切换请求，使用electronAPI.requestMihomoAPI
-      const switchUrl = `/proxies/${encodeURIComponent(groupName)}`;
-      if (isDev) {
-        console.log(`[调试] 发送PUT请求到: ${switchUrl}`);
-        console.log(`[调试] 请求体: ${JSON.stringify({ name: nodeName })}`);
-      }
-      
-      const switchResponse = await window.electronAPI!.requestMihomoAPI(switchUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ name: nodeName })
-      });
-      
-      if (!switchResponse.ok) {
-        if (isDev) {
-          console.error(`[调试] 切换失败: 状态码=${switchResponse.status}, 状态文本=${switchResponse.statusText}`);
-        }
-        try {
-          const errorData = switchResponse.data;
-          if (isDev) {
-            console.error(`[调试] 错误响应内容: ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData)}`);
+
+        if (typeof api.requestMihomoAPI === 'function') {
+          const verifyResponse = await api.requestMihomoAPI(`/proxies/${encodeURIComponent(groupName)}`);
+          if (!verifyResponse?.ok) {
+            throw new Error(responseError(verifyResponse, t('nodes.verifySwitchFailed', { node: nodeName })));
           }
-        } catch (e) {
-          if (isDev) {
-            console.error('[调试] 无法读取错误响应内容');
+          const verifyData = verifyResponse.data;
+          if (verifyData?.now !== nodeName) {
+            throw new Error(t('nodes.verifySwitchMismatch', { expected: nodeName, actual: verifyData?.now || t('nodes.unknown') }));
           }
         }
-        throw new Error(`切换失败: ${switchResponse.statusText}`);
-      }
-      
-      if (isDev) {
-        console.log(`[调试] 切换请求成功，状态码: ${switchResponse.status}`);
-      }
-      
-      // 验证切换结果
-      const verifyUrl = `/proxies/${encodeURIComponent(groupName)}`;
-      if (isDev) {
-        console.log(`[调试] 发送验证请求到: ${verifyUrl}`);
-      }
-      
-      const verifyResponse = await window.electronAPI!.requestMihomoAPI(verifyUrl);
-      
-      if (!verifyResponse.ok) {
+      } else if (typeof api?.requestMihomoAPI === 'function') {
+        // Fallback: 发送切换请求，使用 electronAPI.requestMihomoAPI
+        const switchUrl = `/proxies/${encodeURIComponent(groupName)}`;
         if (isDev) {
-          console.error(`[调试] 验证请求失败: 状态码=${verifyResponse.status}, 状态文本=${verifyResponse.statusText}`);
+          console.log(`[调试] 发送PUT请求到: ${switchUrl}`);
+          console.log(`[调试] 请求体: ${JSON.stringify({ name: nodeName })}`);
         }
-        try {
-          const errorData = verifyResponse.data;
-          if (isDev) {
-            console.error(`[调试] 错误响应内容: ${typeof errorData === 'string' ? errorData : JSON.stringify(errorData)}`);
-          }
-        } catch (e) {
-          if (isDev) {
-            console.error('[调试] 无法读取错误响应内容');
-          }
+
+        const switchResponse = await api.requestMihomoAPI(switchUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name: nodeName })
+        });
+
+        if (!switchResponse?.ok) {
+          throw new Error(responseError(switchResponse, t('nodes.switchNodeFailed', { node: nodeName })));
         }
-        throw new Error(`验证请求失败: ${verifyResponse.statusText}`);
-      }
-      
-      const verifyData = verifyResponse.data;
-      if (isDev) {
-        console.log(`[调试] 验证响应数据:`, verifyData);
-      }
-      
-      if (verifyData.now !== nodeName) {
-        if (isDev) {
-          console.warn(`[调试] 切换节点验证失败: 期望 ${nodeName}，实际 ${verifyData.now}`);
+
+        // 验证切换结果
+        const verifyResponse = await api.requestMihomoAPI(switchUrl);
+        if (!verifyResponse?.ok) {
+          throw new Error(responseError(verifyResponse, t('nodes.verifySwitchFailed', { node: nodeName })));
         }
-        throw new Error(`节点切换不一致，可能需要重试`);
+
+        const verifyData = verifyResponse.data;
+        if (verifyData?.now !== nodeName) {
+          throw new Error(t('nodes.verifySwitchMismatch', { expected: nodeName, actual: verifyData?.now || t('nodes.unknown') }));
+        }
       } else {
-        if (isDev) {
-          console.log(`[调试] 组 ${groupName} 节点切换成功: ${nodeName}`);
-        }
+        await mihomoAPI.putProxies({ group: groupName, proxy: nodeName });
       }
+
+      if (isMainGroup) {
+        try {
+          await window.electronAPI?.notifyNodeChanged?.(nodeName);
+        } catch {}
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('profile-updated', {
+          detail: {
+            source: 'proxy-nodes',
+            action: 'node-changed',
+            nodeName,
+            groupName,
+          },
+        }));
+      }
+      showSuccess(t('nodes.switchSuccess', { node: nodeName, group: groupName }));
     } catch (error) {
       if (isDev) {
         console.error('[调试] 切换节点失败:', error);
       }
-      showError(`切换失败: ${String(error)}`);
+      showError(formatNodesError(error, t('nodes.switchNodeFailed', { node: nodeName })));
       
       // 恢复原来的选中状态
       setGroups(prev => prev.map(g => 
@@ -1754,7 +2091,7 @@ export default function ProxyNodes() {
     
     if (!nodeExists) {
       console.warn(`尝试收藏不存在的节点: ${nodeName}`);
-      showError(`节点 ${nodeName} 不存在或已被下线`);
+      showError(t('nodes.favoriteNodeMissing', { node: nodeName }));
       return;
     }
     
@@ -1762,11 +2099,13 @@ export default function ProxyNodes() {
       const newSet = new Set(prev);
       if (newSet.has(nodeName)) {
         newSet.delete(nodeName);
+        showSuccess(t('nodes.favoriteRemoved', { node: nodeName }));
         if (isDev) {
           console.log(`已取消收藏节点: ${nodeName}`);
         }
       } else {
         newSet.add(nodeName);
+        showSuccess(t('nodes.favoriteAdded', { node: nodeName }));
         if (isDev) {
           console.log(`已收藏节点: ${nodeName}`);
         }
@@ -1779,6 +2118,15 @@ export default function ProxyNodes() {
   const totalNodes = groups.reduce((acc, group) => acc + group.nodes.length, 0);
   const visibleNodes = displayGroups.reduce((acc, group) => acc + group.nodes.length, 0);
   const modeDisplay = currentMode === 'rule' ? t('nodes.ruleMode') : currentMode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
+  const suppressColdEmptyState =
+    isLoading &&
+    groups.length === 0 &&
+    !proxyNodesViewCache.loaded &&
+    !hasAppDataCache(PROXY_GROUPS_CACHE_KEY);
+
+  if (suppressColdEmptyState) {
+    return <div className="min-h-[260px]" aria-busy="true" />;
+  }
 
   if (!mihomoRunning) {
     return (
@@ -1898,25 +2246,7 @@ export default function ProxyNodes() {
                   type="button"
                   onClick={() => {
                     const newMode = layoutMode === 'single' ? 'double' : 'single';
-                    setLayoutMode(newMode);
-                    try {
-                      localStorage.setItem(LAYOUT_SETTING_KEY, newMode);
-                    } catch (error) {
-                      console.error('保存布局模式失败:', error);
-                    }
-                    try {
-                      window.electronAPI?.setSetting?.(LAYOUT_SETTING_KEY, newMode)
-                        .then((result) => {
-                          if (result && result.success === false) {
-                            console.error('保存代理组布局设置失败:', result.error);
-                          }
-                        })
-                        .catch((error) => {
-                          console.error('保存代理组布局设置失败:', error);
-                        });
-                    } catch (error) {
-                      console.error('保存代理组布局设置失败:', error);
-                    }
+                    void persistLayoutMode(newMode);
                   }}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-200/70 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:bg-slate-700/70 dark:focus:ring-slate-700/50"
                   title={layoutMode === 'single' ? t('nodes.switchToDoubleLayout') : t('nodes.switchToSingleLayout')}
@@ -1954,27 +2284,19 @@ export default function ProxyNodes() {
                             const hasAnyCollapsed = collapsedGroups.size > 0;
                             if (hasAnyCollapsed) {
                               // 展开所有
-                              setCollapsedGroups(new Set());
-                              try {
-                                // 保存空数组表示全部展开状态
-                                localStorage.setItem('collapsedGroups', JSON.stringify([]));
-                                if (isDev) {
-                                  console.log('已展开所有代理组');
-                                }
-                              } catch (error) {
-                                console.error('展开所有代理组失败:', error);
+                              const nextGroups = new Set<string>();
+                              setCollapsedGroups(nextGroups);
+                              void persistCollapsedGroups(nextGroups);
+                              if (isDev) {
+                                console.log('已展开所有代理组');
                               }
                             } else {
                               // 收起所有
                               const allGroupNames = new Set(displayGroups.map(g => g.name));
                               setCollapsedGroups(allGroupNames);
-                              try {
-                                localStorage.setItem('collapsedGroups', JSON.stringify(Array.from(allGroupNames)));
-                                if (isDev) {
-                                  console.log('已收起所有代理组');
-                                }
-                              } catch (error) {
-                                console.error('收起所有代理组失败:', error);
+                              void persistCollapsedGroups(allGroupNames);
+                              if (isDev) {
+                                console.log('已收起所有代理组');
                               }
                             }
                             setShowOptionsMenu(false);

@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
 import { Input } from './ui/input';
-import { showToast } from './ui/toast';
+import { showToast } from '@/components/ui/toast';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -76,7 +76,50 @@ interface DnsConfig {
   };
 }
 
+interface HostsConfig {
+  hosts?: Array<{ domain: string; value: string | string[] }>;
+}
+
 type TabKey = 'general' | 'dns' | 'proxies' | 'proxy-groups' | 'rules' | 'providers';
+
+const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
+
+const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Record<K, (...args: any[]) => Promise<any>> => {
+  try {
+    return !!api && typeof (api as Record<string, unknown>)[method] === 'function';
+  } catch {
+    return false;
+  }
+};
+
+const readErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error === 'string') return error || fallback;
+  if (!error || typeof error !== 'object') return fallback;
+
+  const record = error as { error?: unknown; message?: unknown; statusText?: unknown; data?: { error?: unknown; message?: unknown } };
+  const raw = record.error ?? record.message ?? record.statusText ?? record.data?.error ?? record.data?.message;
+  if (typeof raw === 'string') return raw || fallback;
+  if (raw != null) return String(raw);
+  return fallback;
+};
+
+const normalizeConfigPath = (value: unknown) => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized || null;
+};
+
+const isSameConfigPath = (left: unknown, right: unknown) => {
+  const leftPath = normalizeConfigPath(left);
+  const rightPath = normalizeConfigPath(right);
+  if (!leftPath || !rightPath) return false;
+
+  const isWindowsPath = /^[a-z]:\//i.test(leftPath) || /^[a-z]:\//i.test(rightPath);
+  return isWindowsPath
+    ? leftPath.toLowerCase() === rightPath.toLowerCase()
+    : leftPath === rightPath;
+};
 
 const TAB_ICONS: Record<TabKey, React.ReactNode> = {
   general: <Settings2 className="w-4 h-4" />,
@@ -198,6 +241,7 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
   const [activeTab, setActiveTab] = useState<TabKey>('general');
   const [config, setConfig] = useState<KernelConfig>({});
   const [dnsConfig, setDnsConfig] = useState<DnsConfig>({});
+  const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
   const [proxyGroups, setProxyGroups] = useState<any[]>([]);
   const [rules, setRules] = useState<string[]>([]);
   const [proxies, setProxies] = useState<any[]>([]);
@@ -217,6 +261,21 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
     ] : []),
   ];
 
+  const formatEditorError = useCallback((error: unknown, fallback = t('configEditor.saveFailed')) => {
+    const message = readErrorMessage(error, fallback);
+    if (message.includes(TAURI_RUNTIME_UNAVAILABLE) || message.includes('not implemented in the Tauri runtime')) {
+      return t('configEditor.apiUnavailable');
+    }
+    return message;
+  }, [t]);
+
+  const ensureSuccess = useCallback((result: any, fallback: string) => {
+    if (!result?.success) {
+      throw new Error(`${fallback}: ${formatEditorError(result?.error, fallback)}`);
+    }
+    return result;
+  }, [formatEditorError]);
+
   // Load all configs on mount or when configPath changes
   useEffect(() => {
     loadAllConfigs();
@@ -226,37 +285,63 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
     setLoading(true);
     try {
       const api = window.electronAPI;
-      if (!api) return;
+      if (!api || !hasElectronMethod(api, 'getKernelConfig') || !hasElectronMethod(api, 'getDnsConfig')) {
+        throw new Error(t('configEditor.apiUnavailable'));
+      }
 
       const promises: Promise<any>[] = [
-        api.getKernelConfig?.(configPath),
-        api.getDnsConfig?.(configPath),
+        api.getKernelConfig(configPath),
+        api.getDnsConfig(configPath),
       ];
 
       if (configPath) {
+        const requiredMethods = [
+          'getProxyGroupsConfig',
+          'getRulesConfig',
+          'getProvidersConfig',
+          'getProxiesConfig',
+        ];
+        if (requiredMethods.some((method) => !hasElectronMethod(api, method))) {
+          throw new Error(t('configEditor.apiUnavailable'));
+        }
+
         promises.push(
-          api.getProxyGroupsConfig?.(configPath),
-          api.getRulesConfig?.(configPath),
-          api.getProvidersConfig?.(configPath),
-          api.getProxiesConfig?.(configPath),
+          api.getProxyGroupsConfig(configPath),
+          api.getRulesConfig(configPath),
+          api.getProvidersConfig(configPath),
+          api.getProxiesConfig(configPath),
         );
       }
 
       const results = await Promise.all(promises);
       const [kernelRes, dnsRes, groupsRes, rulesRes, providersRes, proxiesRes] = results;
 
-      if (kernelRes?.success) setConfig(kernelRes.config || {});
-      if (dnsRes?.success) setDnsConfig(dnsRes.config || {});
-      if (groupsRes?.success) setProxyGroups(groupsRes.groups || []);
-      if (rulesRes?.success) setRules(rulesRes.rules || []);
-      if (providersRes?.success) {
+      setConfig(ensureSuccess(kernelRes, t('configEditor.loadFailed')).config || {});
+      ensureSuccess(dnsRes, t('configEditor.loadFailed'));
+      setDnsConfig(dnsRes.config || {});
+      if (dnsRes.hosts && typeof dnsRes.hosts === 'object') {
+        setHostsConfig({
+          hosts: Object.entries(dnsRes.hosts).map(([domain, value]) => ({
+            domain,
+            value: Array.isArray(value)
+              ? value.map(String)
+              : String(value ?? ''),
+          })).filter((item) => item.domain.trim() && (Array.isArray(item.value) ? item.value.length > 0 : item.value.trim())),
+        });
+      } else {
+        setHostsConfig({});
+      }
+      if (groupsRes) setProxyGroups(ensureSuccess(groupsRes, t('configEditor.loadFailed')).groups || []);
+      if (rulesRes) setRules(ensureSuccess(rulesRes, t('configEditor.loadFailed')).rules || []);
+      if (providersRes) {
+        ensureSuccess(providersRes, t('configEditor.loadFailed'));
         setProxyProviders(providersRes.proxyProviders || {});
         setRuleProviders(providersRes.ruleProviders || {});
       }
-      if (proxiesRes?.success) setProxies(proxiesRes.proxies || []);
+      if (proxiesRes) setProxies(ensureSuccess(proxiesRes, t('configEditor.loadFailed')).proxies || []);
     } catch (err) {
       console.error('Failed to load configs:', err);
-      showToast({ message: t('configEditor.loadFailed'), type: 'error' });
+      showToast({ message: `${t('configEditor.loadFailed')}: ${formatEditorError(err, t('configEditor.loadFailed'))}`, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -266,7 +351,12 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
     setSaving(true);
     try {
       const api = window.electronAPI;
-      if (!api) return;
+      if (!api || !hasElectronMethod(api, 'saveKernelConfig') || !hasElectronMethod(api, 'saveDnsConfig')) {
+        throw new Error(t('configEditor.apiUnavailable'));
+      }
+      const restartStates: boolean[] = [];
+      let savedInactiveConfig = false;
+      let savedStoppedConfig = false;
 
       // Clean DNS arrays
       const cleanDns = { ...dnsConfig };
@@ -276,49 +366,139 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
           (cleanDns as any)[f] = (cleanDns[f] as string[]).filter((s) => s.trim());
         }
       });
+      const cleanHosts = (hostsConfig.hosts || [])
+        .map((host) => ({
+          domain: host.domain.trim(),
+          value: Array.isArray(host.value)
+            ? host.value.map((value) => String(value).trim()).filter(Boolean)
+            : String(host.value || '').trim(),
+        }))
+        .filter((host) => host.domain && (Array.isArray(host.value) ? host.value.length > 0 : host.value));
 
       if (configPath) {
+        const requiredMethods = [
+          'saveProxyGroupsConfig',
+          'saveRulesConfig',
+          'saveProvidersConfig',
+          'saveProxiesConfig',
+          'reloadMihomoConfig',
+        ];
+        if (requiredMethods.some((method) => !hasElectronMethod(api, method))) {
+          throw new Error(t('configEditor.apiUnavailable'));
+        }
+
         // All sections write to the subscription YAML file
         const cleanGroups = proxyGroups.map((g) => ({
           ...g,
           proxies: (g.proxies || []).filter((s: string) => s.trim()),
           use: (g.use || []).filter((s: string) => s.trim()),
         }));
-        const groupsRes = await api.saveProxyGroupsConfig?.(cleanGroups, configPath);
-        if (groupsRes && !groupsRes.success) throw new Error(groupsRes.error);
+        ensureSuccess(
+          await api.saveProxyGroupsConfig(cleanGroups, configPath),
+          t('configEditor.saveFailed')
+        );
 
-        const rulesRes = await api.saveRulesConfig?.(rules, configPath);
-        if (rulesRes && !rulesRes.success) throw new Error(rulesRes.error);
+        ensureSuccess(
+          await api.saveRulesConfig(rules, configPath),
+          t('configEditor.saveFailed')
+        );
 
-        const providersRes = await api.saveProvidersConfig?.(proxyProviders, ruleProviders, configPath);
-        if (providersRes && !providersRes.success) throw new Error(providersRes.error);
+        ensureSuccess(
+          await api.saveProvidersConfig(proxyProviders, ruleProviders, configPath),
+          t('configEditor.saveFailed')
+        );
 
-        const proxiesRes = await api.saveProxiesConfig?.(proxies, configPath);
-        if (proxiesRes && !proxiesRes.success) throw new Error(proxiesRes.error);
+        ensureSuccess(
+          await api.saveProxiesConfig(proxies, configPath),
+          t('configEditor.saveFailed')
+        );
 
-        const kernelRes = await api.saveKernelConfig?.(config, configPath);
-        if (kernelRes && !kernelRes.success) throw new Error(kernelRes.error);
+        ensureSuccess(
+          await api.saveKernelConfig(config, configPath),
+          t('configEditor.saveFailed')
+        );
 
-        const dnsRes = await api.saveDnsConfig?.(cleanDns, configPath);
-        if (dnsRes && !dnsRes.success) throw new Error(dnsRes.error);
+        ensureSuccess(
+          await api.saveDnsConfig(cleanDns, configPath),
+          t('configEditor.saveFailed')
+        );
 
-        // Hot reload to apply changes
-        if (api.reloadMihomoConfig) {
-          await api.reloadMihomoConfig(configPath);
+        if ((cleanDns['use-hosts'] || cleanHosts.length > 0) && !hasElectronMethod(api, 'saveHostsConfig')) {
+          throw new Error(t('configEditor.apiUnavailable'));
+        }
+        if (hasElectronMethod(api, 'saveHostsConfig')) {
+          ensureSuccess(
+            await api.saveHostsConfig(cleanHosts, configPath),
+            t('configEditor.saveFailed')
+          );
+        }
+
+        const activeConfig = hasElectronMethod(api, 'getActiveConfig')
+          ? await api.getActiveConfig()
+          : null;
+        const isActiveConfig = isSameConfigPath(activeConfig, configPath);
+        const runningResult = isActiveConfig && hasElectronMethod(api, 'isMihomoRunning')
+          ? await api.isMihomoRunning()
+          : false;
+        const isRunning = typeof runningResult === 'boolean' ? runningResult : false;
+
+        if (isActiveConfig && isRunning) {
+          const reloadRes: any = await api.reloadMihomoConfig(configPath);
+          const reloadSuccess = typeof reloadRes === 'boolean'
+            ? reloadRes
+            : reloadRes && typeof reloadRes === 'object'
+              ? reloadRes.success === true
+              : false;
+          if (!reloadSuccess) {
+            const reloadError = reloadRes && typeof reloadRes === 'object' ? reloadRes.error : undefined;
+            throw new Error(`${t('configEditor.reloadFailed')}: ${formatEditorError(reloadError, t('configEditor.reloadFailed'))}`);
+          }
+
+          try {
+            window.dispatchEvent(new CustomEvent('profile-updated', { detail: { filePath: configPath, source: 'config-editor' } }));
+          } catch {}
+        } else if (isActiveConfig) {
+          savedStoppedConfig = true;
+        } else {
+          savedInactiveConfig = true;
         }
       } else {
         // No configPath: save kernel & DNS to user settings (triggers restart internally)
-        const kernelRes = await api.saveKernelConfig?.(config);
-        if (kernelRes && !kernelRes.success) throw new Error(kernelRes.error);
+        const kernelRes = ensureSuccess(
+          await api.saveKernelConfig(config),
+          t('configEditor.saveFailed')
+        );
+        if (typeof kernelRes.restarted === 'boolean') restartStates.push(kernelRes.restarted);
 
-        const dnsRes = await api.saveDnsConfig?.(cleanDns);
-        if (dnsRes && !dnsRes.success) throw new Error(dnsRes.error);
+        const dnsRes = ensureSuccess(
+          await api.saveDnsConfig(cleanDns),
+          t('configEditor.saveFailed')
+        );
+        if (typeof dnsRes.restarted === 'boolean') restartStates.push(dnsRes.restarted);
+
+        if ((cleanDns['use-hosts'] || cleanHosts.length > 0) && !hasElectronMethod(api, 'saveHostsConfig')) {
+          throw new Error(t('configEditor.apiUnavailable'));
+        }
+        if (hasElectronMethod(api, 'saveHostsConfig')) {
+          const hostsRes = ensureSuccess(
+            await api.saveHostsConfig(cleanHosts),
+            t('configEditor.saveFailed')
+          );
+          if (typeof hostsRes.restarted === 'boolean') restartStates.push(hostsRes.restarted);
+        }
       }
 
-      showToast({ message: t('configEditor.saveSuccess'), type: 'success' });
+      showToast({
+        message: savedInactiveConfig
+          ? t('configEditor.saveSuccessInactive')
+          : savedStoppedConfig || restartStates.some(restarted => restarted === false)
+          ? t('configEditor.saveSuccessManualRestart')
+          : t('configEditor.saveSuccess'),
+        type: 'success'
+      });
       onSaved?.();
     } catch (err: any) {
-      showToast({ message: `${t('configEditor.saveFailed')}: ${err?.message || err}`, type: 'error' });
+      showToast({ message: `${t('configEditor.saveFailed')}: ${formatEditorError(err, t('configEditor.saveFailed'))}`, type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -338,6 +518,28 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
 
   const updateDnsArray = useCallback((key: keyof DnsConfig, raw: string) => {
     setDnsConfig((prev) => ({ ...prev, [key]: raw.split('\n') }));
+  }, []);
+
+  const updateHostsRaw = useCallback((raw: string) => {
+    const hosts = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const idx = line.indexOf('=');
+        if (idx < 1) return null;
+        const domain = line.slice(0, idx).trim();
+        const value = line.slice(idx + 1).trim();
+        if (!domain || !value) return null;
+        return {
+          domain,
+          value: value.includes(',')
+            ? value.split(',').map((item) => item.trim()).filter(Boolean)
+            : value,
+        };
+      })
+      .filter((item): item is { domain: string; value: string | string[] } => !!item);
+    setHostsConfig({ hosts });
   }, []);
 
   if (loading) {
@@ -371,7 +573,7 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
       {/* Tab content */}
       <div className="space-y-5 pt-5">
         {activeTab === 'general' && <GeneralTab config={config} updateConfig={updateConfig} updateProfileConfig={updateProfileConfig} t={t} />}
-        {activeTab === 'dns' && <DnsTab dnsConfig={dnsConfig} updateDns={updateDns} updateDnsArray={updateDnsArray} t={t} />}
+        {activeTab === 'dns' && <DnsTab dnsConfig={dnsConfig} hostsConfig={hostsConfig} updateDns={updateDns} updateDnsArray={updateDnsArray} updateHostsRaw={updateHostsRaw} t={t} />}
         {activeTab === 'proxies' && <ProxiesTab proxies={proxies} setProxies={setProxies} proxyGroups={proxyGroups} setProxyGroups={setProxyGroups} t={t} />}
         {activeTab === 'proxy-groups' && <ProxyGroupsTab groups={proxyGroups} setGroups={setProxyGroups} t={t} />}
         {activeTab === 'rules' && <RulesTab rules={rules} setRules={setRules} t={t} />}
@@ -564,10 +766,12 @@ function GeneralTab({ config, updateConfig, updateProfileConfig, t }: {
 }
 
 // ==================== DNS Settings Tab ====================
-function DnsTab({ dnsConfig, updateDns, updateDnsArray, t }: {
+function DnsTab({ dnsConfig, hostsConfig, updateDns, updateDnsArray, updateHostsRaw, t }: {
   dnsConfig: DnsConfig;
+  hostsConfig: HostsConfig;
   updateDns: (k: keyof DnsConfig, v: any) => void;
   updateDnsArray: (k: keyof DnsConfig, v: string) => void;
+  updateHostsRaw: (raw: string) => void;
   t: any;
 }) {
   return (
@@ -611,7 +815,21 @@ function DnsTab({ dnsConfig, updateDns, updateDnsArray, t }: {
         <SettingRow label={t('overrideSettings.useSystemHosts')} desc={t('overrideSettings.useSystemHostsDesc')}>
           <Switch checked={dnsConfig['use-system-hosts'] !== false} onCheckedChange={(v) => updateDns('use-system-hosts', v)} />
         </SettingRow>
+        <SettingRow label={t('overrideSettings.useHosts')} desc={t('overrideSettings.useHostsDesc')}>
+          <Switch checked={dnsConfig['use-hosts'] || false} onCheckedChange={(v) => updateDns('use-hosts', v)} />
+        </SettingRow>
       </SectionCard>
+
+      {dnsConfig['use-hosts'] && (
+        <SectionCard icon={<Server className="w-4 h-4" />} title={t('overrideSettings.hostsMapping')} desc={t('overrideSettings.hostsMappingDesc')}>
+          <StyledTextarea
+            rows={6}
+            value={(hostsConfig.hosts || []).map((host) => `${host.domain}=${Array.isArray(host.value) ? host.value.join(',') : host.value}`).join('\n')}
+            onChange={updateHostsRaw}
+            placeholder="example.com=127.0.0.1&#10;*.example.com=192.168.1.1"
+          />
+        </SectionCard>
+      )}
 
       <SectionCard icon={<Cable className="w-4 h-4" />} title={t('overrideSettings.defaultNameserver')} desc={t('overrideSettings.defaultNameserverDesc')}>
         <StyledTextarea

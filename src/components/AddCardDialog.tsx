@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Plus, Activity, Wifi, Shield, BarChart3, Info, Cpu, FileText, Scale } from 'lucide-react';
+import { Plus, Activity, Wifi, Shield, BarChart3, Globe, FileText, Scale } from 'lucide-react';
 import { DashboardCard, DashboardCardType } from '@/types/dashboard';
 import { cn } from '@/lib/utils';
 
@@ -28,6 +28,7 @@ const CARD_ICONS: Record<DashboardCardType, React.ReactNode> = {
   'system-proxy': <Wifi className="h-6 w-6" />,
   'tun-mode': <Shield className="h-6 w-6" />,
   'proxy-mode': <BarChart3 className="h-6 w-6" />,
+  'ip-address': <Globe className="h-6 w-6" />,
   'traffic-chart': <BarChart3 className="h-6 w-6" />,
   'traffic-ranking': <BarChart3 className="h-6 w-6" />,
   'traffic-statistics': <Activity className="h-6 w-6" />,
