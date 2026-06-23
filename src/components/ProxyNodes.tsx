@@ -37,6 +37,7 @@ const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_KEY = APP_DATA_CACHE_KEYS.proxyGroups;
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
+const PROXY_GROUPS_CACHE_VERSION = 2;
 
 // 定义类型
 type ProxyNode = {
@@ -79,6 +80,7 @@ type ConfigOrder = {
 };
 
 type ProxyGroupsCacheValue = ProxyGroup[] | {
+  version?: unknown;
   mode?: unknown;
   groups?: unknown;
   configPath?: unknown;
@@ -154,15 +156,18 @@ const unpackProxyGroupsCache = (cached: unknown): { mode?: ProxyMode; groups: Pr
   }
 
   if (cached && typeof cached === 'object') {
-    const record = cached as { mode?: unknown; groups?: unknown; configPath?: unknown; source?: unknown };
-    if (!trustedProxyGroupsCache(record.source, record.configPath)) {
+    const record = cached as { mode?: unknown; groups?: unknown; configPath?: unknown; source?: unknown; version?: unknown };
+    if (
+      !trustedProxyGroupsCache(record.source, record.configPath) ||
+      record.version !== PROXY_GROUPS_CACHE_VERSION
+    ) {
       return {
         mode: record.mode === undefined || record.mode === null
           ? undefined
           : normalizeProxyMode(record.mode, 'rule'),
         groups: [],
         configPath: normalizeCacheIdentity(record.configPath),
-        source: record.source,
+        source: undefined,
       };
     }
     const mode = record.mode === undefined || record.mode === null
@@ -194,23 +199,25 @@ const proxyGroupsCacheValue = (
   configPath?: string | null,
 ) => ({
   source: PROXY_GROUPS_CACHE_SOURCE,
+  version: PROXY_GROUPS_CACHE_VERSION,
   mode,
   groups,
   configPath: normalizeCacheIdentity(configPath) || readCachedActiveConfig(),
 });
 
-const readProxyGroupsSessionCache = (fallbackMode: ProxyMode = readCachedProxyMode()): ProxyGroup[] => {
+const readProxyGroupsSessionCache = (): ProxyGroup[] => {
   const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
   const unpacked = unpackProxyGroupsCache(cached);
-  const mode = unpacked.mode || fallbackMode;
-  return filterProxyGroupsForMode(unpacked.groups, mode);
+  return unpacked.groups;
 };
 
 const hasTrustedProxyGroupsSessionCache = (): boolean => {
   const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
   const unpacked = unpackProxyGroupsCache(cached);
+  const mode = unpacked.mode || readCachedProxyMode();
+  const visibleGroups = filterProxyGroupsForMode(unpacked.groups, mode);
   return unpacked.source === PROXY_GROUPS_CACHE_SOURCE &&
-    (unpacked.mode === 'direct' || unpacked.groups.length > 0);
+    (mode === 'direct' || visibleGroups.length > 0);
 };
 
 const readCachedMihomoRunning = (): boolean | null => {
@@ -247,14 +254,93 @@ const providerOrdersFromResponse = (value: unknown): Record<string, string[]> =>
   return orders;
 };
 
+const mergeProviderNodeOrders = (
+  ...orders: Array<Record<string, string[]> | null | undefined>
+): Record<string, string[]> | null => {
+  const merged: Record<string, string[]> = {};
+  for (const order of orders) {
+    if (!order) continue;
+    for (const [providerName, nodeNames] of Object.entries(order)) {
+      if (Array.isArray(nodeNames) && nodeNames.length > 0) {
+        merged[providerName] = nodeNames;
+      }
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : null;
+};
+
+const shouldFetchProviderNodeOrders = (
+  configOrder: ConfigOrder | null | undefined,
+  providerNodeOrders: Record<string, string[]> | null,
+  hasRuntimeProviderOrderCache: boolean,
+): boolean => {
+  const groups = configOrder?.proxyGroups || [];
+  if (groups.length === 0) return false;
+
+  const orders = providerNodeOrders || {};
+  for (const group of groups) {
+    if (group.includeAllProviders && !hasRuntimeProviderOrderCache) {
+      return true;
+    }
+
+    for (const providerName of group.use || []) {
+      if (!Array.isArray(orders[providerName]) || orders[providerName].length === 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+const mergeProxyGroupsWithPrevious = (
+  nextGroups: ProxyGroup[],
+  previousGroups: ProxyGroup[],
+  configOrder?: ConfigOrder | null,
+): ProxyGroup[] => {
+  if (previousGroups.length === 0) return nextGroups;
+
+  const byName = new Map<string, ProxyGroup>();
+  for (const group of previousGroups) {
+    byName.set(group.name, group);
+  }
+  for (const group of nextGroups) {
+    byName.set(group.name, group);
+  }
+
+  const hiddenGroups = new Set(
+    (configOrder?.proxyGroups || [])
+      .filter(group => group.hidden === true)
+      .map(group => group.name),
+  );
+  const orderedNames = (configOrder?.proxyGroups || [])
+    .filter(group => group.hidden !== true)
+    .map(group => group.name);
+
+  const merged: ProxyGroup[] = [];
+  const seen = new Set<string>();
+  const append = (name: string) => {
+    if (seen.has(name) || hiddenGroups.has(name)) return;
+    const group = byName.get(name);
+    if (!group) return;
+    seen.add(name);
+    merged.push(group);
+  };
+
+  for (const name of orderedNames) append(name);
+  for (const group of nextGroups) append(group.name);
+  for (const group of previousGroups) append(group.name);
+
+  return merged;
+};
+
 const orderedRuntimeNodes = (
   runtimeNodeNames: string[],
   configGroup?: ConfigProxyGroup,
   providerNodeOrders?: Record<string, string[]> | null,
   configProxyOrder?: string[],
+  previousNodeOrder?: string[],
 ) => {
-  if (!configGroup) return runtimeNodeNames;
-
   const runtimeSet = new Set(runtimeNodeNames);
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -264,23 +350,23 @@ const orderedRuntimeNodes = (
     ordered.push(nodeName);
   };
 
-  for (const nodeName of configGroup.proxies || []) {
+  for (const nodeName of configGroup?.proxies || []) {
     append(nodeName);
   }
 
-  for (const providerName of configGroup.use || []) {
+  for (const providerName of configGroup?.use || []) {
     for (const nodeName of providerNodeOrders?.[providerName] || []) {
       append(nodeName);
     }
   }
 
-  if (configGroup.includeAll) {
+  if (configGroup?.includeAll) {
     for (const nodeName of configProxyOrder || []) {
       append(nodeName);
     }
   }
 
-  if (configGroup.includeAllProviders && providerNodeOrders) {
+  if (configGroup?.includeAllProviders && providerNodeOrders) {
     for (const providerNames of Object.values(providerNodeOrders)) {
       for (const nodeName of providerNames) {
         append(nodeName);
@@ -288,11 +374,15 @@ const orderedRuntimeNodes = (
     }
   }
 
+  for (const nodeName of previousNodeOrder || []) {
+    append(nodeName);
+  }
+
   for (const nodeName of runtimeNodeNames) {
     append(nodeName);
   }
 
-  return applyConfigGroupFilters(ordered, configGroup);
+  return configGroup ? applyConfigGroupFilters(ordered, configGroup) : ordered;
 };
 
 const configProxyNames = (configOrder?: ConfigOrder | null): string[] => {
@@ -590,12 +680,13 @@ export default function ProxyNodes() {
       const unpacked = unpackProxyGroupsCache(cached);
       if (unpacked.source !== PROXY_GROUPS_CACHE_SOURCE) return;
       const cachedMode = unpacked.mode || readCachedProxyMode(currentModeRef.current);
-      const cachedGroups = filterProxyGroupsForMode(unpacked.groups, cachedMode);
+      const cachedGroups = unpacked.groups;
+      const cachedVisibleGroups = filterProxyGroupsForMode(cachedGroups, cachedMode);
       const cachedRunning = readCachedMihomoRunning();
-      if (cachedGroups.length === 0 && cachedMode !== 'direct' && cachedRunning !== false) return;
+      if (cachedVisibleGroups.length === 0 && cachedMode !== 'direct' && cachedRunning !== false) return;
       proxyNodesViewCache.groups = cachedGroups;
       proxyNodesViewCache.loaded = true;
-      proxyNodesViewCache.mihomoRunning = cachedRunning ?? cachedGroups.length > 0;
+      proxyNodesViewCache.mihomoRunning = cachedRunning ?? cachedVisibleGroups.length > 0;
       proxyNodesViewCache.currentMode = cachedMode;
       currentModeRef.current = cachedMode;
       setGroups(cachedGroups);
@@ -981,19 +1072,23 @@ export default function ProxyNodes() {
   }, [mihomoRunning]);
 
   // 过滤节点组
+  const modeGroups = React.useMemo(() => {
+    return filterProxyGroupsForMode(groups, currentMode);
+  }, [groups, currentMode]);
+
   const filteredGroups = React.useMemo(() => {
-    return groups.map(group => {
+    return modeGroups.map(group => {
       const filteredNodes = group.nodes.filter(node =>
         node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         node.server.toLowerCase().includes(searchTerm.toLowerCase())
       );
       return { ...group, nodes: filteredNodes };
     }).filter(group => group.nodes.length > 0);
-  }, [groups, searchTerm]);
+  }, [modeGroups, searchTerm]);
 
   // 收藏的节点过滤
   const favoriteFilteredGroups = React.useMemo(() => {
-    return groups.map(group => {
+    return modeGroups.map(group => {
       const favoriteNodesList = group.nodes.filter(node =>
         (favoriteNodes.has(node.name)) &&
         (node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -1001,7 +1096,7 @@ export default function ProxyNodes() {
       );
       return { ...group, nodes: favoriteNodesList };
     }).filter(group => group.nodes.length > 0);
-  }, [groups, favoriteNodes, searchTerm]);
+  }, [modeGroups, favoriteNodes, searchTerm]);
 
   // 获取节点列表
   const fetchProxies = async () => {
@@ -1070,8 +1165,10 @@ export default function ProxyNodes() {
         }
         writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
         writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
-        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, proxyGroupsCacheValue(currentProxyMode, []));
-        setGroups([]);
+        writeAppDataCache(
+          PROXY_GROUPS_CACHE_KEY,
+          proxyGroupsCacheValue(currentProxyMode, groupsRef.current, proxyNodesViewCache.configOrder?.configPath),
+        );
         setSelectedNode(null);
         if (isInitialLoadRef.current) {
           setIsLoading(false);
@@ -1142,18 +1239,27 @@ export default function ProxyNodes() {
       const data = proxiesData;
 
       const configNodeOrder = configProxyNames(configOrder);
-      let providerNodeOrders = configOrder?.providerProxies || proxyNodesViewCache.providerNodeOrders;
-      const usesProviderNodes = configOrder?.proxyGroups?.some(
-        group => (
-          (Array.isArray(group.use) && group.use.length > 0) ||
-          group.includeAllProviders === true
-        ),
+      const configuredProviderNodeOrders = configOrder?.providerProxies || null;
+      let providerNodeOrders = mergeProviderNodeOrders(
+        proxyNodesViewCache.providerNodeOrders,
+        configuredProviderNodeOrders,
       );
-      if (usesProviderNodes && (!providerNodeOrders || Object.keys(providerNodeOrders).length === 0)) {
+      if (
+        shouldFetchProviderNodeOrders(
+          configOrder,
+          providerNodeOrders,
+          proxyNodesViewCache.providerNodeOrders !== null,
+        )
+      ) {
         try {
           const providersData = await mihomoAPI.proxyProviders();
           if (!isLatestRequest()) return;
-          providerNodeOrders = providerOrdersFromResponse(providersData);
+          const runtimeProviderNodeOrders = providerOrdersFromResponse(providersData);
+          providerNodeOrders = mergeProviderNodeOrders(
+            proxyNodesViewCache.providerNodeOrders,
+            runtimeProviderNodeOrders,
+            configuredProviderNodeOrders,
+          );
           proxyNodesViewCache.providerNodeOrders = providerNodeOrders;
         } catch (error) {
           if (isDev) {
@@ -1203,6 +1309,7 @@ export default function ProxyNodes() {
               configOrder?.proxyGroups?.find((g) => g.name === 'GLOBAL'),
               providerNodeOrders,
               configNodeOrder,
+              groupsRef.current.find((group) => group.name === 'GLOBAL')?.nodes.map((node) => node.name),
             );
             const nodes = nodesOrder
               .map((nodeName: string): ProxyNode | null => {
@@ -1382,7 +1489,13 @@ export default function ProxyNodes() {
           const proxy = selectorGroups[groupName];
           const configGroup = configOrder?.proxyGroups?.find((g) => g.name === groupName);
           if (proxy.all && Array.isArray(proxy.all)) {
-            let nodesOrder = proxy.all;
+            let nodesOrder = orderedRuntimeNodes(
+              proxy.all,
+              undefined,
+              null,
+              undefined,
+              groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
+            );
 
             if (configGroup) {
               if (isDev) {
@@ -1409,7 +1522,13 @@ export default function ProxyNodes() {
                 console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
               }
 
-              nodesOrder = orderedRuntimeNodes(apiNodeNames, configGroup, providerNodeOrders, configNodeOrder);
+              nodesOrder = orderedRuntimeNodes(
+                apiNodeNames,
+                configGroup,
+                providerNodeOrders,
+                configNodeOrder,
+                groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
+              );
 
               if (isDev) {
                 console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
@@ -1488,19 +1607,19 @@ export default function ProxyNodes() {
         console.log(`最终构建了${groupsData.length}个代理组`);
       }
       if (!isLatestRequest()) return;
-      const visibleGroups = filterProxyGroupsForMode(groupsData, currentProxyMode);
+      const nextGroupsData = mergeProxyGroupsWithPrevious(groupsData, groupsRef.current, configOrder);
       try {
         writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
         writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
         writeAppDataCache(
           PROXY_GROUPS_CACHE_KEY,
-          proxyGroupsCacheValue(currentProxyMode, visibleGroups, configOrder?.configPath),
+          proxyGroupsCacheValue(currentProxyMode, nextGroupsData, configOrder?.configPath),
         );
       } catch (error) {
         console.error('Failed to cache proxy groups:', error);
       }
       setSelectedNode(nextSelectedNode);
-      setGroups(visibleGroups);
+      setGroups(nextGroupsData);
     } catch (error) {
       if (!isLatestRequest()) return;
       console.error('获取代理失败:', error);
@@ -2090,26 +2209,27 @@ export default function ProxyNodes() {
       if (sortedNodes.length > 100) {
         // 对于大量节点使用虚拟化渲染
         return (
-          <div style={{ height: 'auto', width: '100%', minHeight: '400px' }}>
-            <AutoSizer>
-              {({ width }: { height: number, width: number }) => {
+          <div className="proxy-node-virtual-grid">
+            <AutoSizer disableHeight>
+              {({ width }: { width: number }) => {
                 // 计算每个单元格的宽度和高度
-                const columnCount = Math.min(optimalColumns, 6);
-
-                const columnWidth = width / columnCount;
+                const availableWidth = Math.max(width, 1);
+                const columnCount = Math.max(1, Math.min(optimalColumns, 6));
+                const columnWidth = availableWidth / columnCount;
                 const rowCount = Math.ceil(sortedNodes.length / columnCount);
                 // 卡片固定高度
                 const rowHeight = 90;
+                const gridHeight = Math.min(rowCount * rowHeight, 600);
                 
                 return (
                   <Grid
                     className="custom-scrollbar"
                     columnCount={columnCount}
                     columnWidth={columnWidth}
-                    height={Math.min(rowCount * rowHeight, 600)} // 设置最大高度，避免过长
+                    height={gridHeight} // 设置最大高度，避免过长
                     rowCount={rowCount}
                     rowHeight={rowHeight}
-                    width={width}
+                    width={availableWidth}
                     overscanRowCount={2} // 增加过扫描行数以提高滚动性能
                     overscanColumnCount={1} // 增加过扫描列数以提高滚动性能
                   >
@@ -2207,7 +2327,6 @@ export default function ProxyNodes() {
     try {
       // 更新UI状态
       setCurrentMode(nextMode);
-      setGroups(prev => filterProxyGroupsForMode(prev, nextMode));
       writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, nextMode, { broadcast: false });
       
       // 更新Mihomo配置
@@ -2245,7 +2364,6 @@ export default function ProxyNodes() {
         const config = await mihomoAPI.configs();
         const restoredMode = normalizeProxyMode(config.mode, currentModeRef.current);
         setCurrentMode(restoredMode);
-        setGroups(prev => filterProxyGroupsForMode(prev, restoredMode));
         writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, restoredMode, { broadcast: false });
       } catch {}
     }
@@ -2418,7 +2536,7 @@ export default function ProxyNodes() {
   };
 
   const displayGroups = activeTab === 'favorites' ? favoriteFilteredGroups : filteredGroups;
-  const totalNodes = groups.reduce((acc, group) => acc + group.nodes.length, 0);
+  const totalNodes = modeGroups.reduce((acc, group) => acc + group.nodes.length, 0);
   const visibleNodes = displayGroups.reduce((acc, group) => acc + group.nodes.length, 0);
   const modeDisplay = currentMode === 'rule' ? t('nodes.ruleMode') : currentMode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
   const suppressColdEmptyState =
@@ -2851,6 +2969,7 @@ export default function ProxyNodes() {
           overflow: hidden;
           transition: grid-template-rows 160ms ease-out, opacity 120ms ease-out;
           contain: layout paint;
+          will-change: grid-template-rows, opacity;
         }
 
         .proxy-group-content.is-collapsed {
@@ -2868,6 +2987,10 @@ export default function ProxyNodes() {
           .proxy-group-content {
             transition: none;
           }
+        }
+
+        .proxy-node-virtual-grid {
+          width: 100%;
         }
 
         .nodes-hidden {
