@@ -852,22 +852,6 @@ pub(crate) fn prepare_runtime_config(
     )
 }
 
-pub(crate) async fn request_http(
-    app: &AppHandle,
-    target: Option<String>,
-    options: Option<Value>,
-) -> CompatResult {
-    crate::mihomo_transport::request(app, target, options).await
-}
-
-pub(crate) async fn request_http_via_proxy(
-    app: &AppHandle,
-    target: Option<String>,
-    options: Option<Value>,
-) -> CompatResult {
-    crate::mihomo_transport::request_via_proxy(app, target, options).await
-}
-
 pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -> Value {
     let Some(path) = config_path else {
         return success(json!({ "data": { "proxyGroups": [] } }));

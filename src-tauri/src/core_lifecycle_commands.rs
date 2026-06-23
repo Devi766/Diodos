@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
-use crate::app::{prepare_runtime_config, request_http, runtime_config_error_response};
+use crate::app::{prepare_runtime_config, runtime_config_error_response};
 use crate::core::{lifecycle as core_lifecycle, manager::RunningMode, service as core_service};
 use crate::core_commands::{
     emit_core_error, emit_core_progress, find_mihomo_executable, service_compatible_core_path,
@@ -33,7 +33,7 @@ fn success(value: Value) -> Value {
 
 async fn wait_for_mihomo(app: &AppHandle) -> bool {
     for _ in 0..30 {
-        if request_http(app, Some("/version".to_string()), None)
+        if crate::mihomo_transport::request(app, Some("/version".to_string()), None)
             .await
             .map(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
             .unwrap_or(false)
@@ -378,7 +378,7 @@ pub(crate) async fn reload_mihomo_config(
         }
     };
     let reload_request = core_lifecycle::reload_config_request(&runtime_config);
-    let response = request_http(
+    let response = crate::mihomo_transport::request(
         app,
         Some(reload_request.endpoint.to_string()),
         Some(reload_request.options),

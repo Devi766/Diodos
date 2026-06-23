@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
-use crate::{app::request_http, fetch::FetchOptions, state::AppState};
+use crate::{fetch::FetchOptions, mihomo_transport, state::AppState};
 
 type CompatResult = Result<Value, String>;
 
@@ -273,7 +273,7 @@ async fn dispatch_compat_call(
         }
         "aiProxyFetch" => {
             let config = args.first().cloned().unwrap_or_else(|| json!({}));
-            let response = request_http(app, None, Some(config)).await?;
+            let response = mihomo_transport::request(app, None, Some(config)).await?;
             Ok(json!({
                 "ok": response.get("ok").and_then(Value::as_bool).unwrap_or(false),
                 "status": response.get("status").and_then(Value::as_u64).unwrap_or(0),
