@@ -1,0 +1,1 @@
+This marker can be changed when a push rerun is needed and empty commits are filtered by workflow path rules.
