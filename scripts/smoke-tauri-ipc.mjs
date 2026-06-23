@@ -12,7 +12,9 @@ const productIdentifier = 'com.flyclash.desktop';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const smokeConfigContent = `mixed-port: 7890
+const yamlPath = (file) => file.replaceAll('\\', '/');
+
+const smokeConfigContent = ({ proxyProviderPath, ruleProviderPath }) => `mixed-port: 7890
 allow-lan: false
 mode: rule
 log-level: info
@@ -26,8 +28,36 @@ proxy-groups:
     proxies:
       - DIRECT
       - REJECT
+    use:
+      - smoke-provider
+proxy-providers:
+  smoke-provider:
+    type: file
+    path: ${yamlPath(proxyProviderPath)}
+    health-check:
+      enable: false
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+rule-providers:
+  smoke-rule-provider:
+    type: file
+    behavior: classical
+    path: ${yamlPath(ruleProviderPath)}
+    interval: 300
 rules:
+  - RULE-SET,smoke-rule-provider,PROXY
   - MATCH,PROXY
+`;
+
+const smokeProxyProviderContent = `proxies:
+  - name: smoke-http
+    type: http
+    server: 127.0.0.1
+    port: 9
+`;
+
+const smokeRuleProviderContent = `payload:
+  - DOMAIN-SUFFIX,example.com,PROXY
 `;
 
 const execText = (file, args) =>
@@ -400,12 +430,17 @@ const writeSmokeConfig = (mihomoHomeDir) => {
   const dir = path.join(mihomoHomeDir, 'smoke');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `mihomo-smoke-${process.pid}.yaml`);
-  fs.writeFileSync(file, smokeConfigContent, 'utf8');
-  return file;
+  const proxyProviderPath = path.join(dir, `smoke-provider-${process.pid}.yaml`);
+  const ruleProviderPath = path.join(dir, `smoke-rule-provider-${process.pid}.yaml`);
+  fs.writeFileSync(proxyProviderPath, smokeProxyProviderContent, 'utf8');
+  fs.writeFileSync(ruleProviderPath, smokeRuleProviderContent, 'utf8');
+  fs.writeFileSync(file, smokeConfigContent({ proxyProviderPath, ruleProviderPath }), 'utf8');
+  return { file, proxyProviderPath, ruleProviderPath };
 };
 
 const verifyControllerApi = async (socketPath, mihomoHomeDir) => {
-  const configFile = writeSmokeConfig(mihomoHomeDir);
+  const smokeFiles = writeSmokeConfig(mihomoHomeDir);
+  const configFile = smokeFiles.file;
   const endpoints = [];
 
   const version = expectStatus(await ipcRequest(socketPath, 'GET', '/version'), 'GET /version');
@@ -470,11 +505,26 @@ const verifyControllerApi = async (socketPath, mihomoHomeDir) => {
   if (!proxyProviders || typeof proxyProviders.providers !== 'object') {
     throw new Error(`GET /providers/proxies returned unexpected payload: ${JSON.stringify(proxyProviders)}`);
   }
+  if (!proxyProviders.providers['smoke-provider']) {
+    throw new Error(`GET /providers/proxies did not include smoke-provider: ${JSON.stringify(proxyProviders)}`);
+  }
+  expectStatus(
+    await ipcRequest(socketPath, 'PUT', '/providers/proxies/smoke-provider'),
+    'PUT /providers/proxies/smoke-provider',
+  );
+
   const ruleProviders = expectStatus(await ipcRequest(socketPath, 'GET', '/providers/rules'), 'GET /providers/rules');
   if (!ruleProviders || typeof ruleProviders.providers !== 'object') {
     throw new Error(`GET /providers/rules returned unexpected payload: ${JSON.stringify(ruleProviders)}`);
   }
-  endpoints.push(`providers=${Object.keys(proxyProviders.providers).length}/${Object.keys(ruleProviders.providers).length}`);
+  if (!ruleProviders.providers['smoke-rule-provider']) {
+    throw new Error(`GET /providers/rules did not include smoke-rule-provider: ${JSON.stringify(ruleProviders)}`);
+  }
+  expectStatus(
+    await ipcRequest(socketPath, 'PUT', '/providers/rules/smoke-rule-provider'),
+    'PUT /providers/rules/smoke-rule-provider',
+  );
+  endpoints.push(`providers=${Object.keys(proxyProviders.providers).length}/${Object.keys(ruleProviders.providers).length}, providerUpdate=ok`);
 
   const trafficFrame = await ipcWebSocket(socketPath, '/traffic');
   const traffic = JSON.parse(trafficFrame.text);
@@ -494,6 +544,8 @@ const verifyControllerApi = async (socketPath, mihomoHomeDir) => {
   endpoints.push('logsStream=upgrade');
 
   fs.rmSync(configFile, { force: true });
+  fs.rmSync(smokeFiles.proxyProviderPath, { force: true });
+  fs.rmSync(smokeFiles.ruleProviderPath, { force: true });
   return { configFile, endpoints, configCleaned: true };
 };
 
