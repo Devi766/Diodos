@@ -878,6 +878,7 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false);
                     let proxies = yaml_string_array(group.get("proxies"));
+                    let use_providers = yaml_string_array(group.get("use"));
                     let icon = group
                         .get("icon")
                         .and_then(|value| value.as_str())
@@ -886,6 +887,7 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
                         "name": name,
                         "type": group_type,
                         "proxies": proxies,
+                        "use": use_providers,
                         "hidden": hidden,
                         "icon": icon
                     }))

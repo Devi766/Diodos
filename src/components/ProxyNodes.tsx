@@ -61,6 +61,7 @@ type ConfigProxyGroup = {
   name: string;
   type: string;
   proxies: string[];
+  use?: string[];
   hidden?: boolean;
   icon?: string | null;
 };
@@ -94,6 +95,7 @@ const proxyNodesViewCache: {
   selectedNode: string | null;
   loaded: boolean;
   configOrder: ConfigOrder | null;
+  providerNodeOrders: Record<string, string[]> | null;
 } = {
   groups: [],
   mihomoRunning: null,
@@ -101,6 +103,7 @@ const proxyNodesViewCache: {
   selectedNode: null,
   loaded: false,
   configOrder: null,
+  providerNodeOrders: null,
 };
 
 const normalizeProxyMode = (value: unknown, fallback: ProxyMode = 'rule'): ProxyMode => {
@@ -160,6 +163,85 @@ const isValidConfigOrder = (value: unknown): value is ConfigOrder => {
   if (!value || typeof value !== 'object') return false;
   const record = value as { proxyGroups?: unknown };
   return Array.isArray(record.proxyGroups);
+};
+
+const providerOrdersFromResponse = (value: unknown): Record<string, string[]> => {
+  const providers = value && typeof value === 'object'
+    ? (value as { providers?: unknown }).providers
+    : null;
+  if (!providers || typeof providers !== 'object') return {};
+
+  const orders: Record<string, string[]> = {};
+  for (const [providerName, provider] of Object.entries(providers as Record<string, any>)) {
+    const proxies = Array.isArray(provider?.proxies) ? provider.proxies : [];
+    orders[providerName] = proxies
+      .map((proxy: any) => proxy?.name)
+      .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
+  }
+  return orders;
+};
+
+const orderedRuntimeNodes = (
+  runtimeNodeNames: string[],
+  configGroup?: ConfigProxyGroup,
+  providerNodeOrders?: Record<string, string[]> | null,
+) => {
+  if (!configGroup) return runtimeNodeNames;
+
+  const runtimeSet = new Set(runtimeNodeNames);
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const append = (nodeName: string) => {
+    if (!runtimeSet.has(nodeName) || seen.has(nodeName)) return;
+    seen.add(nodeName);
+    ordered.push(nodeName);
+  };
+
+  for (const nodeName of configGroup.proxies || []) {
+    append(nodeName);
+  }
+
+  for (const providerName of configGroup.use || []) {
+    for (const nodeName of providerNodeOrders?.[providerName] || []) {
+      append(nodeName);
+    }
+  }
+
+  for (const nodeName of runtimeNodeNames) {
+    append(nodeName);
+  }
+
+  return ordered;
+};
+
+const CollapsibleGroupContent: React.FC<{
+  collapsed: boolean;
+  children: React.ReactNode;
+}> = ({ collapsed, children }) => {
+  const [shouldRender, setShouldRender] = React.useState(!collapsed);
+
+  useEffect(() => {
+    if (!collapsed) {
+      setShouldRender(true);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShouldRender(false);
+    }, 170);
+
+    return () => window.clearTimeout(timer);
+  }, [collapsed]);
+
+  if (!shouldRender) return null;
+
+  return (
+    <div className={`proxy-group-content ${collapsed ? 'is-collapsed' : 'is-expanded'}`}>
+      <div className="proxy-group-content-inner">
+        {children}
+      </div>
+    </div>
+  );
 };
 
 const renderGroupIcon = (icon?: string | null) => {
@@ -952,6 +1034,23 @@ export default function ProxyNodes() {
       }
       const data = proxiesData;
 
+      let providerNodeOrders = proxyNodesViewCache.providerNodeOrders;
+      const usesProviderNodes = configOrder?.proxyGroups?.some(
+        group => Array.isArray(group.use) && group.use.length > 0,
+      );
+      if (usesProviderNodes) {
+        try {
+          const providersData = await mihomoAPI.proxyProviders();
+          if (!isLatestRequest()) return;
+          providerNodeOrders = providerOrdersFromResponse(providersData);
+          proxyNodesViewCache.providerNodeOrders = providerNodeOrders;
+        } catch (error) {
+          if (isDev) {
+            console.warn('[调试] 获取 provider 节点顺序失败，使用缓存或运行时顺序:', error);
+          }
+        }
+      }
+
       const hiddenGroups = new Set<string>();
       if (configOrder?.proxyGroups && Array.isArray(configOrder.proxyGroups)) {
         for (const group of configOrder.proxyGroups) {
@@ -987,7 +1086,13 @@ export default function ProxyNodes() {
               }
             } else {
 
-            const nodes = globalData.all
+            const runtimeNodeNames = globalData.all as string[];
+            const nodesOrder = orderedRuntimeNodes(
+              runtimeNodeNames,
+              configOrder?.proxyGroups?.find((g) => g.name === 'GLOBAL'),
+              providerNodeOrders,
+            );
+            const nodes = nodesOrder
               .map((nodeName: string): ProxyNode | null => {
                 const node = data.proxies[nodeName];
                 if (!node) {
@@ -1175,13 +1280,16 @@ export default function ProxyNodes() {
           if (proxy.all && Array.isArray(proxy.all)) {
             let nodesOrder = proxy.all;
 
-            if (configGroup && Array.isArray(configGroup.proxies) && configGroup.proxies.length > 0) {
+            if (configGroup) {
               if (isDev) {
                 console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
               }
 
               const apiNodeNames = proxy.all || [];
-              const configNodeNames = configGroup.proxies;
+              const configNodeNames = [
+                ...(configGroup.proxies || []),
+                ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
+              ];
 
               const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
               if (isDev && missingInApi.length > 0) {
@@ -1193,10 +1301,7 @@ export default function ProxyNodes() {
                 console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
               }
 
-              nodesOrder = [...configNodeNames];
-              missingInConfig.forEach((nodeName: string) => {
-                nodesOrder.push(nodeName);
-              });
+              nodesOrder = orderedRuntimeNodes(apiNodeNames, configGroup, providerNodeOrders);
 
               if (isDev) {
                 console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
@@ -1758,8 +1863,6 @@ export default function ProxyNodes() {
     layoutMode,
     sortMode
   }) => {
-    const isCollapsed = collapsedGroups.has(group.name);
-
     // 根据排序模式对节点进行排序
     const sortedNodes = React.useMemo(() => {
       if (sortMode === 'latency') {
@@ -1777,9 +1880,9 @@ export default function ProxyNodes() {
     // 添加监听折叠状态的useEffect
     useEffect(() => {
       if (isDev) {
-        console.log(`组 ${group.name} 折叠状态更新: ${isCollapsed ? '已折叠' : '已展开'}`);
+        console.log(`组 ${group.name} 折叠状态更新: ${collapsedGroups.has(group.name) ? '已折叠' : '已展开'}`);
       }
-    }, [group.name, isCollapsed]);
+    }, [collapsedGroups, group.name]);
 
     // 根据节点名称长度计算最佳列数,传入布局模式，仅使用真实出口节点参与计算
     const baseNodes = group.nodes.filter(n => !n.isGroup && n.type && n.type.toLowerCase() !== 'unknown');
@@ -1971,11 +2074,11 @@ export default function ProxyNodes() {
     
     return (
       <div 
-        className={isCollapsed ? 'nodes-hidden' : 'nodes-visible'} 
-        data-collapsed={isCollapsed ? 'true' : 'false'}
+        className="nodes-visible"
+        data-collapsed={collapsedGroups.has(group.name) ? 'true' : 'false'}
         data-group={group.name}
       >
-        {!isCollapsed && renderContent()}
+        {renderContent()}
       </div>
     );
   };
@@ -2502,22 +2605,22 @@ export default function ProxyNodes() {
                       </div>
                     </div>
 
-                    <div
-                      className={`border-t border-slate-100 dark:border-slate-800/50 ${
-                        isCollapsed ? 'hidden' : 'pt-3'
-                      }`}
-                    >
-                      <GroupNodes
-                        group={group}
-                        collapsedGroups={collapsedGroups}
-                        handleTestNode={handleTestNode}
-                        handleNodeSelect={handleNodeSelect}
-                        handleToggleFavorite={handleToggleFavorite}
-                        testingNodes={testingNodes}
-                        favoriteNodes={favoriteNodes}
-                        layoutMode={layoutMode}
-                        sortMode={sortMode}
-                      />
+                    <div className="border-t border-slate-100 dark:border-slate-800/50">
+                      <CollapsibleGroupContent collapsed={isCollapsed}>
+                        <div className="pt-3">
+                          <GroupNodes
+                            group={group}
+                            collapsedGroups={collapsedGroups}
+                            handleTestNode={handleTestNode}
+                            handleNodeSelect={handleNodeSelect}
+                            handleToggleFavorite={handleToggleFavorite}
+                            testingNodes={testingNodes}
+                            favoriteNodes={favoriteNodes}
+                            layoutMode={layoutMode}
+                            sortMode={sortMode}
+                          />
+                        </div>
+                      </CollapsibleGroupContent>
                     </div>
                   </div>
                 );
@@ -2621,6 +2724,32 @@ export default function ProxyNodes() {
 
         .dark .group-header:hover {
           background-color: rgba(255, 255, 255, 0.04);
+        }
+
+        .proxy-group-content {
+          display: grid;
+          grid-template-rows: 1fr;
+          opacity: 1;
+          overflow: hidden;
+          transition: grid-template-rows 160ms ease-out, opacity 120ms ease-out;
+          contain: layout paint;
+        }
+
+        .proxy-group-content.is-collapsed {
+          grid-template-rows: 0fr;
+          opacity: 0;
+          pointer-events: none;
+        }
+
+        .proxy-group-content-inner {
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .proxy-group-content {
+            transition: none;
+          }
         }
 
         .nodes-hidden {
