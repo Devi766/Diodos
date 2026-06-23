@@ -8,12 +8,27 @@ use crate::runtime_config::mihomo_mixed_port;
 
 type CompatResult = Result<Value, String>;
 
+#[derive(Debug, PartialEq, Eq)]
+enum TargetTransport {
+    MihomoIpc,
+    AbsoluteHttp,
+    RejectControllerFallback,
+}
+
 pub(crate) async fn request(
     app: &AppHandle,
     target: Option<String>,
     options: Option<Value>,
 ) -> CompatResult {
-    request_inner(app, target, options, false).await
+    request_inner(app, target, options, false, true).await
+}
+
+pub(crate) async fn request_mihomo_ipc_only(
+    app: &AppHandle,
+    target: Option<String>,
+    options: Option<Value>,
+) -> CompatResult {
+    request_inner(app, target, options, false, false).await
 }
 
 pub(crate) async fn request_via_proxy(
@@ -21,7 +36,7 @@ pub(crate) async fn request_via_proxy(
     target: Option<String>,
     options: Option<Value>,
 ) -> CompatResult {
-    request_inner(app, target, options, true).await
+    request_inner(app, target, options, true, true).await
 }
 
 fn value_u16(value: Option<&Value>) -> Option<u16> {
@@ -67,6 +82,7 @@ async fn request_inner(
     target: Option<String>,
     options: Option<Value>,
     use_proxy: bool,
+    allow_absolute_url: bool,
 ) -> CompatResult {
     let options = match options {
         Some(value) => {
@@ -82,23 +98,21 @@ async fn request_inner(
         return Err("missing request url".to_string());
     }
 
-    let is_absolute_url = endpoint.starts_with("http://") || endpoint.starts_with("https://");
-    if !is_absolute_url && !use_proxy {
-        return crate::mihomo_ipc::request(
-            app,
-            active_runtime_controller_endpoint(app),
-            endpoint,
-            options,
-        )
-        .await;
-    }
-
-    if !is_absolute_url {
-        return Ok(crate::mihomo_ipc::failure(
-            &active_runtime_controller_endpoint(app),
-            400,
-            "Mihomo controller HTTP fallback has been disabled; use IPC endpoints only",
-        ));
+    let transport = target_transport(&endpoint, use_proxy, allow_absolute_url);
+    match transport {
+        TargetTransport::RejectControllerFallback => {
+            return Ok(controller_http_fallback_disabled(app, 400));
+        }
+        TargetTransport::MihomoIpc => {
+            return crate::mihomo_ipc::request(
+                app,
+                active_runtime_controller_endpoint(app),
+                endpoint,
+                options,
+            )
+            .await;
+        }
+        TargetTransport::AbsoluteHttp => {}
     }
 
     let timeout = Duration::from_millis(options.timeout.unwrap_or(30_000));
@@ -154,4 +168,73 @@ async fn request_inner(
         "data": data,
         "text": text
     }))
+}
+
+fn controller_http_fallback_disabled(app: &AppHandle, status: u16) -> Value {
+    crate::mihomo_ipc::failure(
+        &active_runtime_controller_endpoint(app),
+        status,
+        "Mihomo controller HTTP fallback has been disabled; use IPC endpoints only",
+    )
+}
+
+fn is_absolute_http_url(endpoint: &str) -> bool {
+    endpoint.starts_with("http://") || endpoint.starts_with("https://")
+}
+
+fn target_transport(endpoint: &str, use_proxy: bool, allow_absolute_url: bool) -> TargetTransport {
+    if is_absolute_http_url(endpoint) {
+        return if allow_absolute_url {
+            TargetTransport::AbsoluteHttp
+        } else {
+            TargetTransport::RejectControllerFallback
+        };
+    }
+
+    if use_proxy {
+        TargetTransport::RejectControllerFallback
+    } else {
+        TargetTransport::MihomoIpc
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_absolute_http_url, target_transport, TargetTransport};
+
+    #[test]
+    fn absolute_http_targets_are_detected_for_ipc_only_callers() {
+        assert!(is_absolute_http_url("http://127.0.0.1:9090/proxies"));
+        assert!(is_absolute_http_url("https://example.com/version"));
+        assert!(!is_absolute_http_url("/proxies"));
+        assert!(!is_absolute_http_url("proxies"));
+    }
+
+    #[test]
+    fn ipc_only_callers_reject_absolute_http_targets() {
+        assert_eq!(
+            target_transport("http://127.0.0.1:9090/proxies", false, false),
+            TargetTransport::RejectControllerFallback
+        );
+        assert_eq!(
+            target_transport("https://example.com/version", false, false),
+            TargetTransport::RejectControllerFallback
+        );
+        assert_eq!(
+            target_transport("/proxies", false, false),
+            TargetTransport::MihomoIpc
+        );
+    }
+
+    #[test]
+    fn external_fetch_callers_still_allow_absolute_urls() {
+        assert_eq!(
+            target_transport("https://example.com/subscription.yaml", false, true),
+            TargetTransport::AbsoluteHttp
+        );
+        assert_eq!(
+            target_transport("/proxies", true, true),
+            TargetTransport::RejectControllerFallback
+        );
+    }
 }

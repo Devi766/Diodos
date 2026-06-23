@@ -7,7 +7,10 @@ use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
-    mihomo_transport::{request as request_http, request_via_proxy as request_http_via_proxy},
+    mihomo_transport::{
+        request as request_http, request_mihomo_ipc_only,
+        request_via_proxy as request_http_via_proxy,
+    },
     runtime::active_runtime_controller_endpoint,
     runtime_config::{controller_secret, geodata_config_patch_body, patch_active_geodata_config},
     state::{AppState, TrafficSnapshot},
@@ -610,7 +613,7 @@ async fn dispatch_compat_call(
             if let Some(patch) = geodata_config_patch_body(target.as_deref(), args.get(1)) {
                 patch_active_geodata_config(app, state, patch).await
             } else {
-                request_http(app, target, args.get(1).cloned()).await
+                request_mihomo_ipc_only(app, target, args.get(1).cloned()).await
             }
         }
         "proxyFetch" => {
