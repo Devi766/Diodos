@@ -422,16 +422,39 @@ const CollapsibleGroupContent: React.FC<{
   children: React.ReactNode;
 }> = ({ collapsed, children }) => {
   const [shouldRender, setShouldRender] = React.useState(!collapsed);
+  const [renderCollapsed, setRenderCollapsed] = React.useState(collapsed);
+  const mountedRef = React.useRef(false);
 
   useEffect(() => {
-    if (!collapsed) {
-      setShouldRender(true);
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      setShouldRender(!collapsed);
+      setRenderCollapsed(collapsed);
       return;
     }
 
+    if (!collapsed) {
+      setShouldRender(true);
+      setRenderCollapsed(true);
+      let secondFrame: number | null = null;
+      const firstFrame = window.requestAnimationFrame(() => {
+        secondFrame = window.requestAnimationFrame(() => {
+          setRenderCollapsed(false);
+        });
+      });
+
+      return () => {
+        window.cancelAnimationFrame(firstFrame);
+        if (secondFrame !== null) {
+          window.cancelAnimationFrame(secondFrame);
+        }
+      };
+    }
+
+    setRenderCollapsed(true);
     const timer = window.setTimeout(() => {
       setShouldRender(false);
-    }, 170);
+    }, 180);
 
     return () => window.clearTimeout(timer);
   }, [collapsed]);
@@ -439,7 +462,7 @@ const CollapsibleGroupContent: React.FC<{
   if (!shouldRender) return null;
 
   return (
-    <div className={`proxy-group-content ${collapsed ? 'is-collapsed' : 'is-expanded'}`}>
+    <div className={`proxy-group-content ${renderCollapsed ? 'is-collapsed' : 'is-expanded'}`}>
       <div className="proxy-group-content-inner">
         {children}
       </div>
@@ -2962,7 +2985,7 @@ export default function ProxyNodes() {
           background-color: rgba(255, 255, 255, 0.04);
         }
 
-        .proxy-group-content {
+        :global(.proxy-group-content) {
           display: grid;
           grid-template-rows: 1fr;
           opacity: 1;
@@ -2972,19 +2995,19 @@ export default function ProxyNodes() {
           will-change: grid-template-rows, opacity;
         }
 
-        .proxy-group-content.is-collapsed {
+        :global(.proxy-group-content.is-collapsed) {
           grid-template-rows: 0fr;
           opacity: 0;
           pointer-events: none;
         }
 
-        .proxy-group-content-inner {
+        :global(.proxy-group-content-inner) {
           min-height: 0;
           overflow: hidden;
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .proxy-group-content {
+          :global(.proxy-group-content) {
             transition: none;
           }
         }

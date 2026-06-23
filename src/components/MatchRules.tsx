@@ -69,6 +69,7 @@ export default function MatchRules() {
   const mihomoAPI = useMihomoAPI();
   const mihomoAPIRef = useRef(mihomoAPI);
   const matchRulesRef = useRef(matchRulesList);
+  const ruleDisabledOverridesRef = useRef<Record<number, boolean>>({});
 
   useEffect(() => {
     mihomoAPIRef.current = mihomoAPI;
@@ -117,10 +118,24 @@ export default function MatchRules() {
 
     try {
       const response = await mihomoAPIRef.current.matchRules();
-      const rules = (response.rules || []).map((rule, idx) => ({
-        ...rule,
-        index: typeof rule.index === 'number' ? rule.index : idx,
-      }));
+      const rules = (response.rules || []).map((rule, idx) => {
+        const index = typeof rule.index === 'number' ? rule.index : idx;
+        const extra = { ...(rule.extra || {}) };
+        const hasRuntimeDisabled = typeof extra.disabled === 'boolean';
+        const override = ruleDisabledOverridesRef.current[index];
+
+        if (hasRuntimeDisabled) {
+          ruleDisabledOverridesRef.current[index] = !!extra.disabled;
+        } else if (typeof override === 'boolean') {
+          extra.disabled = override;
+        }
+
+        return {
+          ...rule,
+          index,
+          extra: Object.keys(extra).length > 0 ? extra : rule.extra,
+        };
+      });
       writeAppDataCache(MATCH_RULES_CACHE_KEY, rules);
       setMatchRulesList(rules);
     } catch (error: any) {
@@ -161,8 +176,10 @@ export default function MatchRules() {
     if (!Number.isFinite(ruleIndex)) return;
 
     const willBeDisabled = !rule.extra?.disabled;
+    const previousOverride = ruleDisabledOverridesRef.current[ruleIndex];
     setErrorMessage(null);
     setTogglingRules((current) => ({ ...current, [ruleIndex]: true }));
+    ruleDisabledOverridesRef.current[ruleIndex] = willBeDisabled;
     applyRuleDisabledState(ruleIndex, willBeDisabled);
 
     try {
@@ -175,6 +192,11 @@ export default function MatchRules() {
       });
       void fetchMatchRules();
     } catch (error) {
+      if (typeof previousOverride === 'boolean') {
+        ruleDisabledOverridesRef.current[ruleIndex] = previousOverride;
+      } else {
+        delete ruleDisabledOverridesRef.current[ruleIndex];
+      }
       applyRuleDisabledState(ruleIndex, !willBeDisabled);
       const message = t('matchRules.toggleError', { error: formatMatchRulesError(error) });
       setErrorMessage(message);
@@ -235,7 +257,7 @@ export default function MatchRules() {
   const RuleRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
     const rule = filteredRules[index];
     const isDisabled = !!rule.extra?.disabled;
-    const hasExtra = !!rule.extra;
+    const canToggle = Number.isFinite(rule.index);
     const isToggling = !!togglingRules[rule.index];
 
     return (
@@ -245,9 +267,11 @@ export default function MatchRules() {
             ? 'bg-slate-100/50 dark:bg-slate-900/10 opacity-50'
             : 'bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-900/50'
         }`}>
-          {hasExtra && (
+          {canToggle && (
             <button
               type="button"
+              role="switch"
+              aria-checked={!isDisabled}
               disabled={isToggling}
               onClick={() => void toggleRule(rule)}
               title={isDisabled ? t('matchRules.ruleEnabled', { rule: rule.payload }) : t('matchRules.ruleDisabled', { rule: rule.payload })}
