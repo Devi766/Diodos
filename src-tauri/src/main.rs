@@ -12,6 +12,7 @@ mod core_lifecycle_commands;
 mod fetch;
 mod mihomo_controller;
 mod mihomo_ipc;
+mod mihomo_local_socket;
 mod mihomo_transport;
 mod network_tools;
 mod open_commands;

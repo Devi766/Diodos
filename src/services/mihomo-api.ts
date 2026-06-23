@@ -4,13 +4,26 @@ export interface MihomoConfig {
   port: number
   mode: string
   ipv6: boolean
+  allowLan?: boolean
   'allow-lan': boolean
+  logLevel?: string
   'log-level': string
+  mixedPort?: number
   'mixed-port': number
+  redirPort?: number
   'redir-port': number
+  socksPort?: number
   'socks-port': number
   'external-controller': string
   secret: string
+  geoxUrl?: {
+    geoIp?: string
+    geoSite?: string
+    geoip?: string
+    geosite?: string
+    mmdb?: string
+    asn?: string
+  }
   'geox-url'?: {
     geoip?: string
     geosite?: string
@@ -19,8 +32,11 @@ export interface MihomoConfig {
     mmdb?: string
     asn?: string
   }
+  geodataMode?: boolean
   'geodata-mode'?: boolean
+  geoAutoUpdate?: boolean
   'geo-auto-update'?: boolean
+  geoUpdateInterval?: number
   'geo-update-interval'?: number
 }
 
@@ -182,6 +198,7 @@ export const useMihomoAPI = (controllerConfig?: {
         type: string
         payload: string
         proxy: string
+        index?: number
         size?: number
         extra?: {
           disabled?: boolean
@@ -261,10 +278,10 @@ export const useMihomoAPI = (controllerConfig?: {
    * @param data - { [ruleIndex]: boolean } true=禁用, false=启用
    */
   const toggleRuleDisabled = async (data: Record<number, boolean>) => {
-    void data;
-    throw new Error(
-      'Rule enable/disable is unavailable in IPC-only mode because tauri-plugin-mihomo does not expose a typed rule-disable command.',
-    );
+    return await makeRequest('/rules/disable', {
+      method: 'PATCH',
+      body: data,
+    });
   }
 
   return {

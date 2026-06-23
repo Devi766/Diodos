@@ -24,6 +24,25 @@ const providerMap = (result: any) => {
   return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
 };
 
+const providerKindLabel = (provider: Pick<ProxyProvider, 'type'>) => {
+  const kind = String(provider.type || '').trim().toLowerCase();
+  return kind === 'proxy' || kind === 'proxy-provider' || !kind ? 'proxy-provider' : kind;
+};
+
+const normalizeProviders = (providersRecord: Record<string, any>): ProxyProvider[] => {
+  return Object.entries(providersRecord)
+    .map(([name, provider]) => ({
+      ...provider,
+      name: provider?.name || name,
+      type: provider?.type || 'Proxy',
+      vehicleType: provider?.vehicleType || provider?.vehicle_type || '',
+      proxies: Array.isArray(provider?.proxies) ? provider.proxies : [],
+      updatedAt: provider?.updatedAt ?? provider?.updated_at ?? undefined,
+      subscriptionInfo: provider?.subscriptionInfo ?? null,
+    }))
+    .filter((provider) => provider.name);
+};
+
 const notifyProfileUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'proxy-providers' } }));
@@ -32,16 +51,16 @@ const notifyProfileUpdated = () => {
 
 interface ProxyProvider {
   name: string;
-  type: string;
-  vehicleType: string;
+  type?: string | null;
+  vehicleType?: string | null;
   proxies?: any[];
-  updatedAt?: string;
+  updatedAt?: string | null;
   subscriptionInfo?: {
     Upload: number;
     Download: number;
     Total: number;
     Expire: number;
-  };
+  } | null;
 }
 
 const proxyProvidersViewCache: {
@@ -127,14 +146,9 @@ const ProxyProviders: React.FC = () => {
 
       const providersRecord = providerMap(result);
       if (providersRecord && typeof providersRecord === 'object') {
-        const providerList = Object.values(providersRecord) as ProxyProvider[];
-        // 仅显示真正的远程代理提供者，排除内联 / 文件型和代理组等配置项
-        // Clash 返回的代理组没有 subscriptionInfo 字段，只保留真正的订阅提供者
-        const filteredProviders = providerList.filter(p =>
-          Object.prototype.hasOwnProperty.call(p, 'subscriptionInfo')
-        );
-        writeAppDataCache(PROXY_PROVIDERS_CACHE_KEY, filteredProviders);
-        setProviders(filteredProviders);
+        const providerList = normalizeProviders(providersRecord as Record<string, any>);
+        writeAppDataCache(PROXY_PROVIDERS_CACHE_KEY, providerList);
+        setProviders(providerList);
       } else {
         writeAppDataCache(PROXY_PROVIDERS_CACHE_KEY, []);
         setProviders([]);
@@ -266,7 +280,7 @@ const ProxyProviders: React.FC = () => {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const formatDate = (dateString: string | undefined): string => {
+  const formatDate = (dateString: string | null | undefined): string => {
     if (!dateString) return t('providers.unknown');
 
     try {
@@ -421,10 +435,18 @@ const ProxyProviders: React.FC = () => {
                   <span className="px-2 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-xs rounded-md">
                     {t('providers.nodeCount', { count: provider.proxies?.length || 0 })}
                   </span>
+                  <span className="px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs rounded-md">
+                    {providerKindLabel(provider)}
+                  </span>
+                  {provider.vehicleType && (
+                    <span className="px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs rounded-md">
+                      {provider.vehicleType}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
                   <span>{t('providers.updatedAt')}: {formatDate(provider.updatedAt)}</span>
-                  <span>{t('providers.type')}: {provider.vehicleType}</span>
+                  <span>{t('providers.type')}: {providerKindLabel(provider)}</span>
                 </div>
               </div>
 

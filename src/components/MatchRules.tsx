@@ -14,6 +14,7 @@ import {
   writeAppDataCache,
 } from '@/services/app-data-cache';
 import { isMihomoRuntimeUnavailableError } from '@/services/mihomo-client';
+import { showToast } from '@/components/ui/toast';
 
 type MatchRule = {
   type: string;
@@ -64,6 +65,7 @@ export default function MatchRules() {
   const [isLoading, setIsLoading] = useState(() => !matchRulesViewCache.loaded);
   const [searchTerm, setSearchTerm] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [togglingRules, setTogglingRules] = useState<Record<number, boolean>>({});
   const mihomoAPI = useMihomoAPI();
   const mihomoAPIRef = useRef(mihomoAPI);
   const matchRulesRef = useRef(matchRulesList);
@@ -117,7 +119,7 @@ export default function MatchRules() {
       const response = await mihomoAPIRef.current.matchRules();
       const rules = (response.rules || []).map((rule, idx) => ({
         ...rule,
-        index: idx,
+        index: typeof rule.index === 'number' ? rule.index : idx,
       }));
       writeAppDataCache(MATCH_RULES_CACHE_KEY, rules);
       setMatchRulesList(rules);
@@ -135,6 +137,56 @@ export default function MatchRules() {
   useEffect(() => {
     fetchMatchRules();
   }, [fetchMatchRules]);
+
+  const applyRuleDisabledState = useCallback((ruleIndex: number, disabled: boolean) => {
+    setMatchRulesList((current) => {
+      const next = current.map((rule) => (
+        rule.index === ruleIndex
+          ? {
+              ...rule,
+              extra: {
+                ...(rule.extra || {}),
+                disabled,
+              },
+            }
+          : rule
+      ));
+      writeAppDataCache(MATCH_RULES_CACHE_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const toggleRule = useCallback(async (rule: MatchRule) => {
+    const ruleIndex = rule.index;
+    if (!Number.isFinite(ruleIndex)) return;
+
+    const willBeDisabled = !rule.extra?.disabled;
+    setErrorMessage(null);
+    setTogglingRules((current) => ({ ...current, [ruleIndex]: true }));
+    applyRuleDisabledState(ruleIndex, willBeDisabled);
+
+    try {
+      await mihomoAPIRef.current.toggleRuleDisabled({ [ruleIndex]: willBeDisabled });
+      showToast({
+        message: willBeDisabled
+          ? t('matchRules.ruleDisabled', { rule: rule.payload })
+          : t('matchRules.ruleEnabled', { rule: rule.payload }),
+        type: 'success',
+      });
+      void fetchMatchRules();
+    } catch (error) {
+      applyRuleDisabledState(ruleIndex, !willBeDisabled);
+      const message = t('matchRules.toggleError', { error: formatMatchRulesError(error) });
+      setErrorMessage(message);
+      showToast({ message, type: 'error' });
+    } finally {
+      setTogglingRules((current) => {
+        const next = { ...current };
+        delete next[ruleIndex];
+        return next;
+      });
+    }
+  }, [applyRuleDisabledState, fetchMatchRules, formatMatchRulesError, t]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -184,6 +236,7 @@ export default function MatchRules() {
     const rule = filteredRules[index];
     const isDisabled = !!rule.extra?.disabled;
     const hasExtra = !!rule.extra;
+    const isToggling = !!togglingRules[rule.index];
 
     return (
       <div style={style} className="px-4 py-1">
@@ -195,10 +248,11 @@ export default function MatchRules() {
           {hasExtra && (
             <button
               type="button"
-              disabled
-              title={t('matchRules.toggleUnavailable')}
+              disabled={isToggling}
+              onClick={() => void toggleRule(rule)}
+              title={isDisabled ? t('matchRules.ruleEnabled', { rule: rule.payload }) : t('matchRules.ruleDisabled', { rule: rule.payload })}
               className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                'opacity-60 cursor-not-allowed'
+                isToggling ? 'opacity-70 cursor-wait' : ''
               } ${!isDisabled ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}
             >
               <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${

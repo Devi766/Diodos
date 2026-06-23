@@ -48,6 +48,18 @@ const providerMap = (result: any) => {
   return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
 };
 
+const normalizeProviderList = (providersRecord: Record<string, any>) => {
+  return Object.entries(providersRecord).map(([name, provider]) => ({
+    ...provider,
+    name: provider?.name || name,
+    type: provider?.type || 'Proxy',
+    vehicleType: provider?.vehicleType || provider?.vehicle_type || '',
+    proxies: Array.isArray(provider?.proxies) ? provider.proxies : [],
+    updatedAt: provider?.updatedAt ?? provider?.updated_at ?? undefined,
+    subscriptionInfo: provider?.subscriptionInfo ?? null,
+  }));
+};
+
 const requestMihomo = async (endpoint: string) => {
   const response: unknown = await mihomoClient.request(endpoint);
   if (!response) throw new Error(`${endpoint} returned empty response`);
@@ -192,9 +204,7 @@ const preloadProxyProviders: PreloadTask = {
     }
     const providersRecord = providerMap(result);
     const providers = providersRecord && typeof providersRecord === 'object'
-      ? Object.values(providersRecord).filter((provider: any) =>
-          Object.prototype.hasOwnProperty.call(provider, 'subscriptionInfo'),
-        )
+      ? normalizeProviderList(providersRecord as Record<string, any>)
       : [];
     writeAppDataCache(APP_DATA_CACHE_KEYS.proxyProviders, providers);
   },

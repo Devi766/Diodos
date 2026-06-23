@@ -160,6 +160,28 @@ pub(crate) async fn request(
             &controller_endpoint,
             mihomo.get_rules().await.map_err(|err| err.to_string())?,
         ),
+        ("PATCH", ["rules", "disable"]) => {
+            let (status, text) = crate::mihomo_local_socket::request_json(
+                &controller_endpoint.path,
+                "PATCH",
+                "/rules/disable",
+                &body,
+            )
+            .await?;
+            if (200..300).contains(&status) {
+                Ok(empty_success(&controller_endpoint))
+            } else {
+                Ok(failure(
+                    &controller_endpoint,
+                    status,
+                    if text.is_empty() {
+                        "切换规则状态失败".to_string()
+                    } else {
+                        text
+                    },
+                ))
+            }
+        }
         ("GET", ["providers", "rules"]) => success(
             &controller_endpoint,
             mihomo
@@ -352,6 +374,7 @@ fn is_supported_route(method: &str, segments: &[&str]) -> bool {
             | ("DELETE", ["proxies", _])
             | ("GET", ["proxies", _, "delay"])
             | ("GET", ["rules"])
+            | ("PATCH", ["rules", "disable"])
             | ("GET", ["providers", "rules"])
             | ("PUT", ["providers", "rules", _])
             | ("GET", ["configs"])
@@ -379,6 +402,7 @@ mod tests {
         assert!(supported("PUT", "/proxies/GLOBAL"));
         assert!(supported("DELETE", "/connections"));
         assert!(supported("GET", "/providers/proxies"));
+        assert!(supported("PATCH", "/rules/disable"));
         assert!(supported("PATCH", "/configs"));
         assert!(supported("PUT", "/configs"));
     }

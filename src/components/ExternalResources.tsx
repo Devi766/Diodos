@@ -28,8 +28,8 @@ const DEFAULT_GEOX_URL: GeoDataConfig = {
 };
 
 const toMihomoGeoxUrl = (config: GeoDataConfig) => ({
-  'geo-ip': config.geoip,
-  'geo-site': config.geosite,
+  geoIp: config.geoip,
+  geoSite: config.geosite,
   mmdb: config.mmdb,
   asn: config.asn,
 });
@@ -82,12 +82,13 @@ export default function ExternalResources() {
 
     try {
       const config = await mihomoAPIRef.current.configs();
-      const geoxUrlConfig = (config as any)['geox-url'] || {};
+      const rawConfig = config as any;
+      const geoxUrlConfig = rawConfig.geoxUrl || rawConfig['geox-url'] || {};
 
       // 确保每个字段都有默认值
       const mergedGeoxUrl = {
-        geoip: geoxUrlConfig['geo-ip'] || geoxUrlConfig.geoip || DEFAULT_GEOX_URL.geoip,
-        geosite: geoxUrlConfig['geo-site'] || geoxUrlConfig.geosite || DEFAULT_GEOX_URL.geosite,
+        geoip: geoxUrlConfig.geoIp || geoxUrlConfig['geo-ip'] || geoxUrlConfig.geoip || DEFAULT_GEOX_URL.geoip,
+        geosite: geoxUrlConfig.geoSite || geoxUrlConfig['geo-site'] || geoxUrlConfig.geosite || DEFAULT_GEOX_URL.geosite,
         mmdb: geoxUrlConfig.mmdb || DEFAULT_GEOX_URL.mmdb,
         asn: geoxUrlConfig.asn || DEFAULT_GEOX_URL.asn
       };
@@ -98,9 +99,9 @@ export default function ExternalResources() {
       setMmdbInput(mergedGeoxUrl.mmdb);
       setAsnInput(mergedGeoxUrl.asn);
 
-      setGeoMode((config as any)['geodata-mode'] ? 'dat' : 'db');
-      setGeoAutoUpdate((config as any)['geo-auto-update'] || false);
-      setGeoUpdateInterval((config as any)['geo-update-interval'] || 24);
+      setGeoMode((rawConfig.geodataMode ?? rawConfig['geodata-mode']) ? 'dat' : 'db');
+      setGeoAutoUpdate(Boolean(rawConfig.geoAutoUpdate ?? rawConfig['geo-auto-update'] ?? false));
+      setGeoUpdateInterval(Number(rawConfig.geoUpdateInterval ?? rawConfig['geo-update-interval'] ?? 24));
       setHasLoadedConfig(true);
     } catch (error: any) {
       const message = errorToMessage(error);
@@ -134,7 +135,7 @@ export default function ExternalResources() {
     try {
       const nextGeoxUrl = { ...geoxUrl, [field]: value };
       await mihomoAPIRef.current.patchConfigs({
-        'geox-url': toMihomoGeoxUrl(nextGeoxUrl)
+        geoxUrl: toMihomoGeoxUrl(nextGeoxUrl)
       });
       setGeoxUrl(nextGeoxUrl);
       notifyProfileUpdated();
@@ -156,7 +157,7 @@ export default function ExternalResources() {
     setGeoMode(mode);
     try {
       await mihomoAPIRef.current.patchConfigs({
-        'geodata-mode': mode === 'dat'
+        geodataMode: mode === 'dat'
       });
       notifyProfileUpdated();
       showToast({
@@ -178,7 +179,7 @@ export default function ExternalResources() {
     setGeoAutoUpdate(enabled);
     try {
       await mihomoAPIRef.current.patchConfigs({
-        'geo-auto-update': enabled
+        geoAutoUpdate: enabled
       });
       notifyProfileUpdated();
       showToast({
@@ -202,7 +203,7 @@ export default function ExternalResources() {
     setGeoUpdateInterval(interval);
     try {
       await mihomoAPIRef.current.patchConfigs({
-        'geo-update-interval': interval
+        geoUpdateInterval: interval
       });
       notifyProfileUpdated();
       showToast({

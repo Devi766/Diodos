@@ -130,6 +130,112 @@ const parseBody = (body: unknown): any => {
   return body ?? {};
 };
 
+const CONFIG_PATCH_KEY_MAP: Record<string, string> = {
+  allowLan: 'allow-lan',
+  bindAddress: 'bind-address',
+  disableKeepAlive: 'disable-keep-alive',
+  findProcessMode: 'find-process-mode',
+  geoAutoUpdate: 'geo-auto-update',
+  geodataLoader: 'geodata-loader',
+  geodataMode: 'geodata-mode',
+  geositeMatcher: 'geosite-matcher',
+  geoUpdateInterval: 'geo-update-interval',
+  geoxUrl: 'geox-url',
+  globalUa: 'global-ua',
+  inboundMptcp: 'inbound-mptcp',
+  inboundTfo: 'inbound-tfo',
+  interfaceName: 'interface-name',
+  keepAliveIdle: 'keep-alive-idle',
+  keepAliveInterval: 'keep-alive-interval',
+  lanAllowedIps: 'lan-allowed-ips',
+  lanDisallowedIps: 'lan-disallowed-ips',
+  logLevel: 'log-level',
+  mixedPort: 'mixed-port',
+  redirPort: 'redir-port',
+  routingMark: 'routing-mark',
+  skipAuthPrefixes: 'skip-auth-prefixes',
+  socksPort: 'socks-port',
+  tcpConcurrent: 'tcp-concurrent',
+  tproxyPort: 'tproxy-port',
+  unifiedDelay: 'unified-delay',
+};
+
+const normalizeGeoxUrlPatch = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    'geo-ip': record['geo-ip'] ?? record.geoIp ?? record.geoip,
+    'geo-site': record['geo-site'] ?? record.geoSite ?? record.geosite,
+    mmdb: record.mmdb,
+    asn: record.asn,
+  };
+};
+
+const normalizeRuntimeConfigPatch = (body: unknown): Record<string, unknown> => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
+
+  return Object.fromEntries(
+    Object.entries(body as Record<string, unknown>).map(([key, value]) => {
+      const normalizedKey = CONFIG_PATCH_KEY_MAP[key] || key;
+      const normalizedValue = normalizedKey === 'geox-url' ? normalizeGeoxUrlPatch(value) : value;
+      return [normalizedKey, normalizedValue];
+    }),
+  );
+};
+
+const fromCompatBridgeResponse = async <T>(response: any): Promise<MihomoCompatResponse<T>> => {
+  const data =
+    typeof response?.json === 'function'
+      ? await response.json()
+      : response?.data;
+  const text =
+    typeof response?.text === 'function'
+      ? await response.text()
+      : typeof response?.text === 'string'
+        ? response.text
+        : data == null
+          ? ''
+          : JSON.stringify(data);
+
+  return {
+    ok: !!response?.ok,
+    status: Number(response?.status ?? (response?.ok ? 200 : 0)),
+    statusText: String(response?.statusText ?? ''),
+    headers: response?.headers || {},
+    data,
+    text,
+    controllerMode: 'ipc',
+    httpFallback: false,
+  };
+};
+
+const requestViaCompatBridge = async <T>(
+  endpoint: string,
+  method: string,
+  body: unknown,
+): Promise<MihomoCompatResponse<T>> => {
+  const invoke =
+    typeof window !== 'undefined' ? (window as any).__TAURI__?.core?.invoke : undefined;
+  if (typeof invoke !== 'function') {
+    return toCompatError('Mihomo IPC compat bridge is unavailable') as MihomoCompatResponse<T>;
+  }
+
+  return fromCompatBridgeResponse<T>(
+    await invoke('tauri_compat_call', {
+      request: {
+        method: 'requestMihomoAPI',
+        args: [
+          endpoint,
+          {
+            method,
+            body,
+          },
+        ],
+      },
+    }),
+  );
+};
+
 const withParams = (endpoint: string, params?: Record<string, unknown>) => {
   if (!params) return endpoint;
   const url = new URL(endpoint.startsWith('/') ? endpoint : `/${endpoint}`, 'http://mihomo');
@@ -177,7 +283,7 @@ export const mihomoClient = {
   },
 
   async patchRuntimeConfig(data: Record<string, unknown>) {
-    return callMihomo((api) => api.patchBaseConfig(data));
+    return callMihomo((api) => api.patchBaseConfig(normalizeRuntimeConfigPatch(data)));
   },
 
   async updateGeo() {
@@ -305,7 +411,7 @@ export const mihomoClient = {
         return toCompatResponse(await api.getBaseConfig()) as MihomoCompatResponse<T>;
       }
       if (method === 'PATCH' && segments[0] === 'configs') {
-        await api.patchBaseConfig(body);
+        await api.patchBaseConfig(normalizeRuntimeConfigPatch(body));
         return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
       }
       if (method === 'PUT' && segments[0] === 'configs') {
@@ -367,6 +473,9 @@ export const mihomoClient = {
       }
       if (method === 'GET' && segments[0] === 'rules' && !segments[1]) {
         return toCompatResponse(await api.getRules()) as MihomoCompatResponse<T>;
+      }
+      if (method === 'PATCH' && segments.join('/') === 'rules/disable') {
+        return await requestViaCompatBridge<T>('/rules/disable', method, body);
       }
       if (method === 'GET' && segments.join('/') === 'providers/proxies') {
         return toCompatResponse(await api.getProxyProviders()) as MihomoCompatResponse<T>;

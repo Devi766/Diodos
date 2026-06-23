@@ -41,9 +41,7 @@ const evaluateAvailability = async (): Promise<ProviderStatus> => {
       proxyResult.status === 'fulfilled' &&
       proxyResult.value?.success &&
       proxyProviders &&
-      Object.values(proxyProviders).some((provider: any) =>
-        provider && Object.prototype.hasOwnProperty.call(provider, 'subscriptionInfo')
-      );
+      Object.keys(proxyProviders).length > 0;
 
     const hasRuleProviders =
       ruleResult.status === 'fulfilled' &&
