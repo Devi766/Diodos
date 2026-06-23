@@ -421,6 +421,7 @@
     "unknownError": "未知错误",
     "ruleDisabled": "已禁用规则: {{rule}}",
     "ruleEnabled": "已启用规则: {{rule}}",
+    "toggleUnavailable": "IPC-only 模式暂不支持运行时启用/禁用单条规则",
     "toggleError": "切换规则状态失败: {{error}}"
   },
   "overrides": {

@@ -261,10 +261,10 @@ export const useMihomoAPI = (controllerConfig?: {
    * @param data - { [ruleIndex]: boolean } true=禁用, false=启用
    */
   const toggleRuleDisabled = async (data: Record<number, boolean>) => {
-    return await makeRequest('/rules/disable', {
-      method: 'PATCH',
-      body: data,
-    });
+    void data;
+    throw new Error(
+      'Rule enable/disable is unavailable in IPC-only mode because tauri-plugin-mihomo does not expose a typed rule-disable command.',
+    );
   }
 
   return {

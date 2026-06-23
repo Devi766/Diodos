@@ -6,7 +6,6 @@ import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { useTranslation } from 'react-i18next';
-import { showToast } from '@/components/ui/toast';
 import {
   APP_DATA_CACHE_KEYS,
   hasAppDataCache,
@@ -64,7 +63,6 @@ export default function MatchRules() {
   const [isLoading, setIsLoading] = useState(() => !matchRulesViewCache.loaded);
   const [searchTerm, setSearchTerm] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [togglingIndices, setTogglingIndices] = useState<Set<number>>(new Set());
   const mihomoAPI = useMihomoAPI();
   const mihomoAPIRef = useRef(mihomoAPI);
   const matchRulesRef = useRef(matchRulesList);
@@ -133,44 +131,6 @@ export default function MatchRules() {
     }
   }, [formatMatchRulesError, t]);
 
-  const toggleRule = useCallback(async (rule: MatchRule) => {
-    if (togglingIndices.has(rule.index)) return;
-
-    setTogglingIndices(prev => new Set(prev).add(rule.index));
-    setErrorMessage(null);
-    try {
-      const willBeDisabled = !rule.extra?.disabled;
-      await mihomoAPIRef.current.toggleRuleDisabled({ [rule.index]: willBeDisabled });
-      // 乐观更新
-      setMatchRulesList(prev => prev.map(r =>
-        r.index === rule.index
-          ? { ...r, extra: { ...r.extra, disabled: willBeDisabled } }
-          : r
-      ));
-      showToast({
-        message: willBeDisabled
-          ? t('matchRules.ruleDisabled', { rule: rule.payload })
-          : t('matchRules.ruleEnabled', { rule: rule.payload }),
-        type: 'success',
-      });
-    } catch (error: any) {
-      console.error('切换规则状态失败:', error);
-      const message = t('matchRules.toggleError', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      setErrorMessage(message);
-      showToast({ message, type: 'error' });
-      // 失败时刷新列表
-      await fetchMatchRules();
-    } finally {
-      setTogglingIndices(prev => {
-        const next = new Set(prev);
-        next.delete(rule.index);
-        return next;
-      });
-    }
-  }, [fetchMatchRules, togglingIndices, t]);
-
   useEffect(() => {
     fetchMatchRules();
   }, [fetchMatchRules]);
@@ -222,7 +182,6 @@ export default function MatchRules() {
   const RuleRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
     const rule = filteredRules[index];
     const isDisabled = !!rule.extra?.disabled;
-    const isToggling = togglingIndices.has(rule.index);
     const hasExtra = !!rule.extra;
 
     return (
@@ -234,10 +193,11 @@ export default function MatchRules() {
         }`}>
           {hasExtra && (
             <button
-              onClick={() => toggleRule(rule)}
-              disabled={isToggling}
+              type="button"
+              disabled
+              title={t('matchRules.toggleUnavailable')}
               className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                isToggling ? 'opacity-50 cursor-wait' : ''
+                'opacity-60 cursor-not-allowed'
               } ${!isDisabled ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}
             >
               <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${

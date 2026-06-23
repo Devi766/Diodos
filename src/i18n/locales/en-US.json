@@ -421,6 +421,7 @@
     "unknownError": "Unknown error",
     "ruleDisabled": "Rule disabled: {{rule}}",
     "ruleEnabled": "Rule enabled: {{rule}}",
+    "toggleUnavailable": "Runtime per-rule enable/disable is unavailable in IPC-only mode",
     "toggleError": "Failed to toggle rule status: {{error}}"
   },
   "overrides": {
