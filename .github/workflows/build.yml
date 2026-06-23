@@ -111,7 +111,38 @@ jobs:
         run: npm run prepare -- --${{ matrix.prepare_arch }}
 
       - name: Build Tauri bundle
+        if: runner.os != 'macOS'
         run: npm run tauri -- build --bundles ${{ matrix.bundles }}
+
+      - name: Build Tauri bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -o pipefail
+          if npm run tauri -- build --bundles "${{ matrix.bundles }}"; then
+            exit 0
+          fi
+
+          status=$?
+          echo "::warning::Tauri DMG bundling failed with exit code ${status}; using the built .app as a release fallback."
+
+          if [ -f "src-tauri/target/release/bundle/dmg/bundle_dmg.sh" ]; then
+            echo "::group::bundle_dmg.sh"
+            sed -n '1,240p' "src-tauri/target/release/bundle/dmg/bundle_dmg.sh"
+            echo "::endgroup::"
+          fi
+
+          echo "::group::macOS bundle output"
+          find src-tauri/target/release/bundle -maxdepth 4 -print | sort || true
+          echo "::endgroup::"
+
+          app_bundle="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          if [ -z "$app_bundle" ]; then
+            echo "::error::Tauri DMG failed and no .app bundle was produced."
+            exit "$status"
+          fi
+
+          echo "Using fallback app bundle: $app_bundle"
 
       - name: Package Windows portable zip
         if: runner.os == 'Windows'
@@ -163,9 +194,29 @@ jobs:
             if (-not $appimage) { throw "Missing Linux AppImage package" }
             Copy-Item -LiteralPath $appimage.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.AppImage" -Force
           } elseif ($env:RUNNER_OS -eq "macOS") {
-            $dmg = Get-ChildItem -LiteralPath "$releaseDir/bundle/dmg" -Filter "*.dmg" | Select-Object -First 1
-            if (-not $dmg) { throw "Missing macOS dmg package" }
-            Copy-Item -LiteralPath $dmg.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.dmg" -Force
+            $dmg = Get-ChildItem -LiteralPath "$releaseDir/bundle/dmg" -Filter "*.dmg" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $dmgVerified = $false
+            if ($dmg) {
+              & /usr/bin/hdiutil verify $dmg.FullName
+              $dmgVerified = $LASTEXITCODE -eq 0
+            }
+
+            if ($dmg -and $dmgVerified) {
+              Copy-Item -LiteralPath $dmg.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.dmg" -Force
+            } else {
+              if ($dmg) {
+                Write-Warning "Ignoring invalid macOS dmg: $($dmg.FullName)"
+              }
+              $app = Get-ChildItem -LiteralPath "$releaseDir/bundle/macos" -Filter "*.app" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $app) { throw "Missing macOS dmg package and app bundle" }
+              $zipPath = "$assetDir/FlyClash_${version}_${platform}.app.zip"
+              Push-Location -LiteralPath $app.Parent.FullName
+              try {
+                & /usr/bin/ditto -c -k --sequesterRsrc --keepParent $app.Name $zipPath
+              } finally {
+                Pop-Location
+              }
+            }
           } else {
             throw "Unsupported runner OS: $env:RUNNER_OS"
           }
@@ -224,6 +275,9 @@ jobs:
             Windows assets:
             - `FlyClash_*_windows-x64-installer.exe`: installer
             - `FlyClash_*_windows-x64-portable.zip`: portable package
+            macOS assets:
+            - `FlyClash_*_macos-x64.dmg`: disk image when DMG bundling succeeds
+            - `FlyClash_*_macos-x64.app.zip`: zipped app fallback when DMG bundling is unavailable on the runner
           artifacts: release-assets/*
           artifactErrorsFailBuild: true
           allowUpdates: true
