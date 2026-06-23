@@ -6,7 +6,8 @@ use crate::core::config as core_config;
 use crate::core_lifecycle_commands::refresh_active_config_after_override;
 use crate::fetch::FetchOptions;
 use crate::profiles::{
-    allowed_subscription_ua_key, config_content, read_last_config, save_config_content,
+    allowed_subscription_ua_key, config_content, exported_config_path, read_last_config,
+    save_config_content,
 };
 use crate::resources::{mihomo_dir, sync_bundled_mihomo_data};
 use crate::runtime::active_runtime_controller_endpoint;
@@ -861,6 +862,20 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
     let content = config_content(app, &path).unwrap_or_default();
     let yaml =
         serde_yaml::from_str::<serde_yaml::Value>(&content).unwrap_or(serde_yaml::Value::Null);
+
+    let top_level_proxies = yaml
+        .get("proxies")
+        .and_then(|value| value.as_sequence())
+        .map(|proxies| {
+            proxies
+                .iter()
+                .filter_map(|proxy| proxy.get("name").and_then(|value| value.as_str()))
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let provider_proxies = parse_provider_proxy_orders(app, &path, &yaml);
+
     let groups = yaml
         .get("proxy-groups")
         .and_then(|value| value.as_sequence())
@@ -879,6 +894,10 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
                         .unwrap_or(false);
                     let proxies = yaml_string_array(group.get("proxies"));
                     let use_providers = yaml_string_array(group.get("use"));
+                    let include_all = yaml_bool(group.get("include-all"));
+                    let include_all_providers = yaml_bool(group.get("include-all-providers"));
+                    let filter = yaml_string(group.get("filter"));
+                    let exclude_filter = yaml_string(group.get("exclude-filter"));
                     let icon = group
                         .get("icon")
                         .and_then(|value| value.as_str())
@@ -888,6 +907,10 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
                         "type": group_type,
                         "proxies": proxies,
                         "use": use_providers,
+                        "includeAll": include_all,
+                        "includeAllProviders": include_all_providers,
+                        "filter": filter,
+                        "excludeFilter": exclude_filter,
                         "hidden": hidden,
                         "icon": icon
                     }))
@@ -895,7 +918,13 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    success(json!({ "data": { "proxyGroups": groups } }))
+    success(json!({
+        "data": {
+            "proxyGroups": groups,
+            "proxies": top_level_proxies,
+            "providerProxies": provider_proxies
+        }
+    }))
 }
 
 fn config_group_supported_for_proxy_nodes(group_type: &str) -> bool {
@@ -924,6 +953,88 @@ fn yaml_string_array(value: Option<&serde_yaml::Value>) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn yaml_string(value: Option<&serde_yaml::Value>) -> Option<String> {
+    value
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn yaml_bool(value: Option<&serde_yaml::Value>) -> bool {
+    value
+        .and_then(serde_yaml::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn parse_provider_proxy_orders(
+    app: &AppHandle,
+    config_path: &str,
+    yaml: &serde_yaml::Value,
+) -> Map<String, Value> {
+    let mut orders = Map::new();
+    let Some(providers) = yaml
+        .get("proxy-providers")
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return orders;
+    };
+
+    for (name, provider) in providers {
+        let Some(provider_name) = name.as_str() else {
+            continue;
+        };
+        let Some(provider_path) = provider.get("path").and_then(serde_yaml::Value::as_str) else {
+            continue;
+        };
+        let Some(resolved_path) = resolve_provider_path(app, config_path, provider_path) else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(resolved_path) else {
+            continue;
+        };
+        let Ok(provider_yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+            continue;
+        };
+        let proxy_names = yaml_string_array(provider_yaml.get("proxies"));
+        if !proxy_names.is_empty() {
+            orders.insert(provider_name.to_string(), json!(proxy_names));
+        }
+    }
+
+    orders
+}
+
+fn resolve_provider_path(
+    app: &AppHandle,
+    config_path: &str,
+    provider_path: &str,
+) -> Option<PathBuf> {
+    let trimmed = provider_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        return Some(path);
+    }
+
+    let config_file = if config_path.starts_with("flyclash-db://") {
+        exported_config_path(app, config_path).ok()
+    } else {
+        Some(PathBuf::from(config_path))
+    };
+    if let Some(parent) = config_file.as_deref().and_then(Path::parent) {
+        let candidate = parent.join(&path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    mihomo_dir(app).ok().map(|dir| dir.join(path))
 }
 
 pub(crate) fn parse_proxy_nodes_config(app: &AppHandle, config_path: &str) -> Value {

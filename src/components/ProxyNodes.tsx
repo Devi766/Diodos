@@ -62,13 +62,18 @@ type ConfigProxyGroup = {
   type: string;
   proxies: string[];
   use?: string[];
+  includeAll?: boolean;
+  includeAllProviders?: boolean;
+  filter?: string | null;
+  excludeFilter?: string | null;
   hidden?: boolean;
   icon?: string | null;
 };
 
 type ConfigOrder = {
   proxyGroups: ConfigProxyGroup[];
-  proxies?: Array<{ name: string; type: string; server: string; port: number }>;
+  proxies?: string[] | Array<{ name: string; type: string; server?: string; port?: number }>;
+  providerProxies?: Record<string, string[]>;
 };
 
 type ProxyGroupsCacheValue = ProxyGroup[] | {
@@ -185,6 +190,7 @@ const orderedRuntimeNodes = (
   runtimeNodeNames: string[],
   configGroup?: ConfigProxyGroup,
   providerNodeOrders?: Record<string, string[]> | null,
+  configProxyOrder?: string[],
 ) => {
   if (!configGroup) return runtimeNodeNames;
 
@@ -207,11 +213,57 @@ const orderedRuntimeNodes = (
     }
   }
 
+  if (configGroup.includeAll) {
+    for (const nodeName of configProxyOrder || []) {
+      append(nodeName);
+    }
+  }
+
+  if (configGroup.includeAllProviders && providerNodeOrders) {
+    for (const providerNames of Object.values(providerNodeOrders)) {
+      for (const nodeName of providerNames) {
+        append(nodeName);
+      }
+    }
+  }
+
   for (const nodeName of runtimeNodeNames) {
     append(nodeName);
   }
 
-  return ordered;
+  return applyConfigGroupFilters(ordered, configGroup);
+};
+
+const configProxyNames = (configOrder?: ConfigOrder | null): string[] => {
+  const proxies = configOrder?.proxies;
+  if (!Array.isArray(proxies)) return [];
+  return proxies
+    .map((proxy: string | { name?: string }) => typeof proxy === 'string' ? proxy : proxy?.name)
+    .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
+};
+
+const safeRegex = (pattern?: string | null): RegExp | null => {
+  if (!pattern) return null;
+  try {
+    return new RegExp(pattern);
+  } catch (error) {
+    if (isDev) {
+      console.warn('[调试] 无法解析代理组过滤正则:', pattern, error);
+    }
+    return null;
+  }
+};
+
+const applyConfigGroupFilters = (nodeNames: string[], configGroup: ConfigProxyGroup): string[] => {
+  const include = safeRegex(configGroup.filter);
+  const exclude = safeRegex(configGroup.excludeFilter);
+  if (!include && !exclude) return nodeNames;
+
+  return nodeNames.filter((nodeName) => {
+    if (include && !include.test(nodeName)) return false;
+    if (exclude && exclude.test(nodeName)) return false;
+    return true;
+  });
 };
 
 const CollapsibleGroupContent: React.FC<{
@@ -1034,11 +1086,15 @@ export default function ProxyNodes() {
       }
       const data = proxiesData;
 
-      let providerNodeOrders = proxyNodesViewCache.providerNodeOrders;
+      const configNodeOrder = configProxyNames(configOrder);
+      let providerNodeOrders = configOrder?.providerProxies || proxyNodesViewCache.providerNodeOrders;
       const usesProviderNodes = configOrder?.proxyGroups?.some(
-        group => Array.isArray(group.use) && group.use.length > 0,
+        group => (
+          (Array.isArray(group.use) && group.use.length > 0) ||
+          group.includeAllProviders === true
+        ),
       );
-      if (usesProviderNodes) {
+      if (usesProviderNodes && (!providerNodeOrders || Object.keys(providerNodeOrders).length === 0)) {
         try {
           const providersData = await mihomoAPI.proxyProviders();
           if (!isLatestRequest()) return;
@@ -1091,6 +1147,7 @@ export default function ProxyNodes() {
               runtimeNodeNames,
               configOrder?.proxyGroups?.find((g) => g.name === 'GLOBAL'),
               providerNodeOrders,
+              configNodeOrder,
             );
             const nodes = nodesOrder
               .map((nodeName: string): ProxyNode | null => {
@@ -1289,6 +1346,10 @@ export default function ProxyNodes() {
               const configNodeNames = [
                 ...(configGroup.proxies || []),
                 ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
+                ...(configGroup.includeAll ? configNodeOrder : []),
+                ...(configGroup.includeAllProviders && providerNodeOrders
+                  ? Object.values(providerNodeOrders).flat()
+                  : []),
               ];
 
               const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
@@ -1301,7 +1362,7 @@ export default function ProxyNodes() {
                 console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
               }
 
-              nodesOrder = orderedRuntimeNodes(apiNodeNames, configGroup, providerNodeOrders);
+              nodesOrder = orderedRuntimeNodes(apiNodeNames, configGroup, providerNodeOrders, configNodeOrder);
 
               if (isDev) {
                 console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
