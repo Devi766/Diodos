@@ -1,16 +1,18 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Value};
+#[cfg(any(target_os = "windows", test))]
+use serde_json::value::RawValue;
+use serde_json::{json, Value};
+#[cfg(any(target_os = "windows", test))]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-    process::Command,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+#[cfg(target_os = "windows")]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(any(target_os = "windows", test))]
+use std::{env, fs, path::PathBuf};
+use std::{path::Path, process::Command, thread, time::Duration};
 
+#[cfg(any(target_os = "windows", test))]
 const SECRET_SEED: &str = "flyclash-helper-service-secret-key-v1";
 const HELPER_SERVICE_NAME: &str = "FlyClashHelperService";
 
@@ -289,6 +291,7 @@ pub fn windows_permission_status_payload(
     })
 }
 
+#[cfg(any(target_os = "windows", test))]
 #[derive(Debug, Deserialize)]
 struct HelperWireResponse {
     id: String,
@@ -307,12 +310,14 @@ struct HelperResponse {
     error: Option<String>,
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn sha256_bytes(data: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().to_vec()
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn hex_lower(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -321,6 +326,7 @@ fn hex_lower(bytes: &[u8]) -> String {
     output
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn hmac_sha256_hex(key: &[u8], data: &str) -> String {
     let mut key_block = [0u8; 64];
     if key.len() > 64 {
@@ -348,6 +354,7 @@ fn hmac_sha256_hex(key: &[u8], data: &str) -> String {
     hex_lower(&outer.finalize())
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn constant_time_eq(left: &str, right: &str) -> bool {
     let left = left.as_bytes();
     let right = right.as_bytes();
@@ -362,6 +369,7 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
     diff == 0
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn verify_response_signature(response: &HelperWireResponse) -> Result<(), String> {
     let mut sign_data = format!("{}:{}", response.id, response.success);
     if let Some(data) = response.data.as_deref() {
@@ -381,6 +389,7 @@ fn verify_response_signature(response: &HelperWireResponse) -> Result<(), String
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn parse_response(raw: &str, expected_id: &str) -> Result<HelperResponse, String> {
     let response: HelperWireResponse = serde_json::from_str(raw).map_err(|err| err.to_string())?;
     if response.id != expected_id {
@@ -401,6 +410,7 @@ fn parse_response(raw: &str, expected_id: &str) -> Result<HelperResponse, String
     })
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn secret_key() -> Vec<u8> {
     let key_path = env::var_os("ProgramData")
         .map(PathBuf::from)
@@ -417,6 +427,7 @@ fn secret_key() -> Vec<u8> {
     sha256_bytes(SECRET_SEED.as_bytes())
 }
 
+#[cfg(target_os = "windows")]
 fn request_id() -> String {
     let mut bytes = [0u8; 8];
     if getrandom::getrandom(&mut bytes).is_err() {
@@ -429,6 +440,7 @@ fn request_id() -> String {
     hex_lower(&bytes)
 }
 
+#[cfg(target_os = "windows")]
 fn timestamp_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

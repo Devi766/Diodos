@@ -893,11 +893,9 @@ async fn dispatch_compat_call(
         }
         "selectKernelExecutable" => {
             let path = tauri::async_runtime::spawn_blocking(|| {
-                let mut dialog = rfd::FileDialog::new().set_title("选择 Mihomo 内核");
+                let dialog = rfd::FileDialog::new().set_title("选择 Mihomo 内核");
                 #[cfg(target_os = "windows")]
-                {
-                    dialog = dialog.add_filter("可执行文件", &["exe"]);
-                }
+                let dialog = dialog.add_filter("可执行文件", &["exe"]);
                 dialog.pick_file()
             })
             .await
