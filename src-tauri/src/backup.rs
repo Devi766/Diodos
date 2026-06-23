@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use crate::{
-    app::refresh_active_config_after_override,
+    core_lifecycle_commands::refresh_active_config_after_override,
     profiles::{
         config_content, parse_traffic_string, read_last_config, read_subscriptions,
         save_last_config, save_subscription, sync_runtime_active_config_from_settings,

@@ -8,6 +8,7 @@ mod config_commands;
 mod converter;
 mod core;
 mod core_commands;
+mod core_lifecycle_commands;
 mod fetch;
 mod mihomo_controller;
 mod mihomo_ipc;

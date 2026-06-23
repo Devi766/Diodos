@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
-    app::refresh_active_config_after_override,
+    core_lifecycle_commands::refresh_active_config_after_override,
     profiles::{
         config_content, current_active_config, delete_subscription, edit_subscription,
         emit_active_config_changed, read_subscriptions, resolve_subscription_path,

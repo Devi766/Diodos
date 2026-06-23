@@ -3,11 +3,12 @@ use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
     app::{
-        apply_saved_config, config_yaml, default_dns_config, default_sniffer_config, hosts_to_map,
+        config_yaml, default_dns_config, default_sniffer_config, hosts_to_map,
         merge_object_setting, non_empty_object, parse_config_order, parse_proxy_nodes_config,
         save_config_yaml, save_kernel_yaml, save_yaml_section_value, yaml_key, yaml_root_pick,
         yaml_save_section, yaml_section, KERNEL_FIELDS,
     },
+    core_lifecycle_commands::apply_saved_config,
     profiles::{
         config_content, config_display_name, current_active_config, read_last_config,
         save_config_content,

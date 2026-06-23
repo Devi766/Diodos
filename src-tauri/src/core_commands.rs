@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
-    app::restart_active_config_after_core_switch,
     core::{identity as core_identity, manager::RunningMode, service as core_service},
+    core_lifecycle_commands::restart_active_config_after_core_switch,
     profiles::read_last_config,
     resources::{core_resource_status, existing_resource_dir, existing_resource_file},
     runtime::is_mihomo_running,

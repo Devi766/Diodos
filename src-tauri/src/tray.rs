@@ -5,11 +5,11 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
-use crate::app::{
-    apply_tun_runtime_change, ensure_tun_dns_defaults, mihomo_mixed_port, reload_mihomo_config,
-    request_http, start_mihomo, stop_mihomo_process,
-};
+use crate::app::{ensure_tun_dns_defaults, mihomo_mixed_port, request_http};
 use crate::core::manager::RunningMode;
+use crate::core_lifecycle_commands::{
+    apply_tun_runtime_change, reload_mihomo_config, start_mihomo, stop_mihomo_process,
+};
 use crate::mihomo_controller::fetch_connections_info;
 use crate::platform::{hide_main_window, set_system_proxy, show_main_window, system_proxy_status};
 use crate::profiles::{

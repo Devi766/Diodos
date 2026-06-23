@@ -1,6 +1,10 @@
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
+use crate::core_lifecycle_commands::{
+    reload_mihomo_config as reload_core_config, start_mihomo as start_core, startup_mihomo_config,
+    stop_mihomo_process,
+};
 use crate::profiles::{
     config_content, current_active_config, emit_active_config_changed, normalize_config_reference,
     read_last_config, save_last_config,
@@ -40,7 +44,7 @@ pub(crate) async fn handle_compat_call(
 
         "getActiveConfig" => Some({
             let active = current_active_config(app, state)
-                .or_else(|| crate::app::startup_mihomo_config(app).ok().flatten());
+                .or_else(|| startup_mihomo_config(app).ok().flatten());
             Ok(active.map(Value::String).unwrap_or(Value::Null))
         }),
         "setPreferredConfig" | "saveLastConfig" => Some(set_preferred_config(app, state, args)),
@@ -94,7 +98,7 @@ async fn start_mihomo(
     args: &[Value],
 ) -> CompatResult {
     let config_path = arg_string(args, 0).unwrap_or_default();
-    let result = crate::app::start_mihomo(app, state, &config_path).await?;
+    let result = start_core(app, state, &config_path).await?;
     refresh_tray_menu_after(app, "startMihomo");
     Ok(result)
 }
@@ -104,7 +108,7 @@ async fn stop_mihomo(
     window: &WebviewWindow,
     state: &State<'_, AppState>,
 ) -> CompatResult {
-    let result = match crate::app::stop_mihomo_process(app, state).await {
+    let result = match stop_mihomo_process(app, state).await {
         Ok(()) => {
             let _ = window.emit("mihomo-stopped", 0);
             json!({ "success": true })
@@ -123,7 +127,7 @@ async fn reload_mihomo_config(
     let config_path = arg_string(args, 0)
         .or_else(|| read_last_config(app).ok().flatten())
         .unwrap_or_default();
-    let result = crate::app::reload_mihomo_config(app, state, &config_path).await?;
+    let result = reload_core_config(app, state, &config_path).await?;
     refresh_tray_menu_after(app, "reloadMihomoConfig");
     Ok(result)
 }
@@ -137,7 +141,7 @@ async fn restart_service(
     let config_path = arg_string(args, 0)
         .or_else(|| read_last_config(app).ok().flatten())
         .unwrap_or_default();
-    let result = crate::app::start_mihomo(app, state, &config_path).await?;
+    let result = start_core(app, state, &config_path).await?;
     let event_payload = if result
         .get("success")
         .and_then(Value::as_bool)

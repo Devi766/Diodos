@@ -13,11 +13,12 @@ use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
     app::{
-        apply_saved_config, apply_tun_runtime_change, default_tun_config, ensure_tun_dns_defaults,
-        mihomo_mixed_port, save_proxy_settings, user_settings_view,
+        default_tun_config, ensure_tun_dns_defaults, mihomo_mixed_port, save_proxy_settings,
+        user_settings_view,
     },
     core::{lifecycle as core_lifecycle, manager::RunningMode, service as core_service},
     core_commands::find_mihomo_executable,
+    core_lifecycle_commands::{apply_saved_config, apply_tun_runtime_change},
     platform::{set_system_proxy, system_proxy_status},
     resources::existing_resource_file,
     runtime::is_mihomo_running,
