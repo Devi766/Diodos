@@ -22,6 +22,8 @@ use crate::storage::{set_setting, setting};
 type CompatResult = Result<Value, String>;
 
 const DEFAULT_PROXY_BYPASS: &str = "localhost;127.*;192.168.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;<local>";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn now_millis() -> u128 {
     SystemTime::now()
@@ -68,7 +70,7 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new(program);
     command.args(args);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
     let output = command.output().map_err(|err| err.to_string())?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -79,6 +81,19 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
         } else {
             stderr
         })
+    }
+}
+
+fn command_status(program: &str, args: &[&str]) -> Result<(), String> {
+    let mut command = Command::new(program);
+    command.args(args);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let status = command.status().map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} exited with status {status}"))
     }
 }
 
@@ -399,8 +414,9 @@ fn set_windows_proxy(
     let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     let enable_value = if enabled { "1" } else { "0" };
     let server = format!("{host}:{port}");
-    let status = Command::new("reg")
-        .args([
+    command_status(
+        "reg",
+        &[
             "add",
             key,
             "/v",
@@ -410,15 +426,13 @@ fn set_windows_proxy(
             "/d",
             enable_value,
             "/f",
-        ])
-        .status()
-        .map_err(|err| err.to_string())?;
-    if !status.success() {
-        return Err("写入 ProxyEnable 失败".to_string());
-    }
+        ],
+    )
+    .map_err(|_| "写入 ProxyEnable 失败".to_string())?;
     if enabled {
-        let status = Command::new("reg")
-            .args([
+        command_status(
+            "reg",
+            &[
                 "add",
                 key,
                 "/v",
@@ -428,15 +442,13 @@ fn set_windows_proxy(
                 "/d",
                 &server,
                 "/f",
-            ])
-            .status()
-            .map_err(|err| err.to_string())?;
-        if !status.success() {
-            return Err("写入 ProxyServer 失败".to_string());
-        }
+            ],
+        )
+        .map_err(|_| "写入 ProxyServer 失败".to_string())?;
         let bypass = bypass.unwrap_or(DEFAULT_PROXY_BYPASS);
-        let status = Command::new("reg")
-            .args([
+        command_status(
+            "reg",
+            &[
                 "add",
                 key,
                 "/v",
@@ -446,16 +458,11 @@ fn set_windows_proxy(
                 "/d",
                 bypass,
                 "/f",
-            ])
-            .status()
-            .map_err(|err| err.to_string())?;
-        if !status.success() {
-            return Err("写入 ProxyOverride 失败".to_string());
-        }
+            ],
+        )
+        .map_err(|_| "写入 ProxyOverride 失败".to_string())?;
     }
-    let _ = Command::new("RUNDLL32.EXE")
-        .args(["inetcpl.cpl,ClearMyTracksByProcess", "8"])
-        .status();
+    let _ = command_status("RUNDLL32.EXE", &["inetcpl.cpl,ClearMyTracksByProcess", "8"]);
     Ok(())
 }
 
@@ -667,7 +674,7 @@ $icon.Dispose()
         ])
         .env("FLYCLASH_ICON_PATH", &path);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
 
     let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
@@ -711,7 +718,7 @@ fn run_powershell_script(script: &str) -> Result<String, String> {
         .arg("-File")
         .arg(&path);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
 
     let output = command.output().map_err(|err| err.to_string());
     let _ = fs::remove_file(&path);

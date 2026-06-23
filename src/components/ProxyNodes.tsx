@@ -57,6 +57,19 @@ type ProxyGroup = {
 
 type ProxyMode = 'rule' | 'global' | 'direct';
 
+type ConfigProxyGroup = {
+  name: string;
+  type: string;
+  proxies: string[];
+  hidden?: boolean;
+  icon?: string | null;
+};
+
+type ConfigOrder = {
+  proxyGroups: ConfigProxyGroup[];
+  proxies?: Array<{ name: string; type: string; server: string; port: number }>;
+};
+
 type ProxyGroupsCacheValue = ProxyGroup[] | {
   mode?: unknown;
   groups?: unknown;
@@ -80,12 +93,14 @@ const proxyNodesViewCache: {
   currentMode: string;
   selectedNode: string | null;
   loaded: boolean;
+  configOrder: ConfigOrder | null;
 } = {
   groups: [],
   mihomoRunning: null,
   currentMode: 'rule',
   selectedNode: null,
   loaded: false,
+  configOrder: null,
 };
 
 const normalizeProxyMode = (value: unknown, fallback: ProxyMode = 'rule'): ProxyMode => {
@@ -138,7 +153,13 @@ const readCachedMihomoRunning = (): boolean | null => {
 const isGroupType = (type?: string | null) => {
   if (!type) return false;
   const normalized = type.toLowerCase().replace(/-/g, '');
-  return ['selector', 'urltest', 'fallback', 'loadbalance', 'smart'].includes(normalized);
+  return ['selector', 'urltest', 'fallback', 'loadbalance', 'relay', 'smart'].includes(normalized);
+};
+
+const isValidConfigOrder = (value: unknown): value is ConfigOrder => {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as { proxyGroups?: unknown };
+  return Array.isArray(record.proxyGroups);
 };
 
 const renderGroupIcon = (icon?: string | null) => {
@@ -874,10 +895,7 @@ export default function ProxyNodes() {
       }
       
       // 获取配置文件中的原始顺序
-      let configOrder: {
-        proxyGroups: Array<{ name: string; type: string; proxies: string[]; hidden?: boolean; icon?: string | null }>,
-        proxies: Array<{ name: string; type: string; server: string; port: number }>
-      } | undefined;
+      let configOrder = proxyNodesViewCache.configOrder ?? undefined;
       
       if (window.electronAPI) {
         try {
@@ -891,8 +909,9 @@ export default function ProxyNodes() {
             console.log('[调试] 获取配置文件顺序结果:', result);
           }
 
-          if (result.success && result.data) {
+          if (result.success && isValidConfigOrder(result.data)) {
             configOrder = result.data;
+            proxyNodesViewCache.configOrder = result.data;
             if (isDev) {
               console.log('[调试] 成功获取配置文件顺序');
             }
@@ -915,6 +934,13 @@ export default function ProxyNodes() {
           if (isDev) {
             console.error('[调试] 获取配置顺序失败:', error);
           }
+        }
+      }
+
+      if (!configOrder && proxyNodesViewCache.configOrder) {
+        configOrder = proxyNodesViewCache.configOrder;
+        if (isDev) {
+          console.log('[调试] 使用上次成功读取的配置文件顺序');
         }
       }
 
@@ -981,7 +1007,7 @@ export default function ProxyNodes() {
               })
               .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
             
-            const globalConfigGroup = configOrder?.proxyGroups?.find((g: any) => g.name === 'GLOBAL');
+            const globalConfigGroup = configOrder?.proxyGroups?.find((g) => g.name === 'GLOBAL');
             const globalConfigIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
 
             // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
@@ -1145,7 +1171,7 @@ export default function ProxyNodes() {
             console.log(`构建代理组: ${groupName}`);
           }
           const proxy = selectorGroups[groupName];
-          const configGroup = configOrder?.proxyGroups?.find((g: any) => g.name === groupName);
+          const configGroup = configOrder?.proxyGroups?.find((g) => g.name === groupName);
           if (proxy.all && Array.isArray(proxy.all)) {
             let nodesOrder = proxy.all;
 
@@ -1767,7 +1793,7 @@ export default function ProxyNodes() {
       
       return (
         <div
-          className={`relative rounded-lg overflow-hidden transition-all cursor-pointer p-3 border ${
+          className={`relative rounded-lg overflow-hidden transition-colors cursor-pointer p-3 border ${
             isSelected
               ? 'border-blue-300 dark:border-blue-500 bg-blue-100/90 dark:bg-blue-500/15'
               : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a]'
@@ -2413,7 +2439,7 @@ export default function ProxyNodes() {
       {currentMode === 'direct' ? (
         <DirectModeMessage />
       ) : (
-        <div className={layoutMode === 'double' ? 'columns-2 gap-2' : 'space-y-2'}>
+        <div className={layoutMode === 'double' ? 'grid grid-cols-1 gap-2 xl:grid-cols-2' : 'space-y-2'}>
           {displayGroups.length > 0 ? (
             <>
               {displayGroups.map((group) => {
@@ -2427,9 +2453,7 @@ export default function ProxyNodes() {
                 return (
                   <div
                     key={`${group.name}-${group.type}`}
-                    className={`group-panel rounded-2xl bg-white px-4 py-2 shadow-sm transition dark:bg-[#2a2a2a] overflow-hidden ${
-                      layoutMode === 'double' ? 'break-inside-avoid mb-2' : ''
-                    }`}
+                    className="group-panel rounded-2xl bg-white px-4 py-2 shadow-sm transition-colors dark:bg-[#2a2a2a] overflow-hidden"
                   >
                     <div className="group-header flex w-full items-center justify-between rounded-xl py-1.5">
                       <button
@@ -2479,8 +2503,8 @@ export default function ProxyNodes() {
                     </div>
 
                     <div
-                      className={`border-t border-slate-100 dark:border-slate-800/50 transition-all duration-150 ease-out ${
-                        isCollapsed ? 'max-h-0 opacity-0 overflow-hidden' : 'opacity-100 pt-3'
+                      className={`border-t border-slate-100 dark:border-slate-800/50 ${
+                        isCollapsed ? 'hidden' : 'pt-3'
                       }`}
                     >
                       <GroupNodes
@@ -2583,24 +2607,6 @@ export default function ProxyNodes() {
           background: #64748b;
         }
 
-        .group-content {
-          height: auto;
-          transition: all 0.3s ease;
-          opacity: 1;
-          transform: translateY(0);
-          overflow: hidden;
-        }
-
-        .group-content.collapsed {
-          opacity: 0;
-          transform: translateY(-10px);
-          height: 0 !important;
-          margin: 0;
-          padding: 0;
-          transition: all 0.25s ease;
-          pointer-events: none;
-        }
-
         .group-panel {
           transition: background-color 0.2s ease;
         }
@@ -2617,21 +2623,12 @@ export default function ProxyNodes() {
           background-color: rgba(255, 255, 255, 0.04);
         }
 
-        .nodes-visible {
-          opacity: 1;
-          transform: translateY(0);
-          transition: opacity 0.3s ease, transform 0.3s ease;
-        }
-
         .nodes-hidden {
-          opacity: 0;
-          height: 0;
-          overflow: hidden;
+          display: none;
         }
 
         .node-card-container {
-          transition: transform 0.2s ease-out;
-          will-change: transform;
+          transition: transform 0.12s ease-out;
         }
 
         .node-card-container:hover {

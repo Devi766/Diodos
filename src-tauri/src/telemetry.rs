@@ -15,6 +15,8 @@ use tauri::AppHandle;
 use crate::storage::{app_data_dir, db, set_setting, setting};
 
 type CompatResult = Result<Value, String>;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn now_millis() -> u128 {
     SystemTime::now()
@@ -49,7 +51,7 @@ pub(crate) fn today_key() -> String {
     let mut command = Command::new("powershell.exe");
     command.args(["-NoProfile", "-Command", "Get-Date -Format yyyy-MM-dd"]);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
     let output = command.output();
     output
         .ok()

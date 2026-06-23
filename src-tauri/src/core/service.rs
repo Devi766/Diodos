@@ -15,6 +15,8 @@ use std::{path::Path, process::Command, thread, time::Duration};
 #[cfg(any(target_os = "windows", test))]
 const SECRET_SEED: &str = "flyclash-helper-service-secret-key-v1";
 const HELPER_SERVICE_NAME: &str = "FlyClashHelperService";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -71,7 +73,7 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new(program);
     command.args(args);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
     let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());

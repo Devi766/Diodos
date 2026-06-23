@@ -30,6 +30,9 @@ use crate::{
 type CompatResult = Result<Value, String>;
 
 const WINDOWS_ELEVATED_TASK_NAME: &str = "FlyClash-Elevated";
+const REQUIRED_HELPER_VERSION: &str = "1.0.1";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn success(value: Value) -> Value {
     match value {
@@ -51,7 +54,7 @@ pub(crate) fn command_output(program: &str, args: &[&str]) -> Result<String, Str
     let mut command = Command::new(program);
     command.args(args);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
     let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
@@ -230,7 +233,7 @@ fn schedule_windows_elevated_restart(app: &AppHandle) -> Result<(), String> {
         &ps_command,
     ]);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(CREATE_NO_WINDOW);
     command.spawn().map_err(|err| err.to_string())?;
 
     let app_handle = app.clone();
@@ -320,11 +323,34 @@ fn windows_core_permission_status(app: &AppHandle) -> Value {
     ))
 }
 
+fn helper_version_current(helper: &core_service::HelperIpcSnapshot) -> bool {
+    helper
+        .version
+        .as_ref()
+        .and_then(|value| value.get("version"))
+        .and_then(Value::as_str)
+        .map(|version| version == REQUIRED_HELPER_VERSION)
+        .unwrap_or(false)
+}
+
 fn install_or_start_windows_tun_service(app: &AppHandle) -> CompatResult {
     let flags = core_service::query_helper_service_flags();
     if flags.running {
         let helper = core_service::helper_ipc_snapshot(true);
         let ipc_available = helper.ipc_available();
+        if ipc_available && !helper_version_current(&helper) {
+            let helper_path = find_helper_executable(app)?;
+            let _ = core_service::stop_helper_service();
+            core_service::install_helper_service(&helper_path, !windows_is_admin())?;
+            let ready = core_service::ensure_helper_service_ready().is_ok();
+            let flags = core_service::query_helper_service_flags();
+            let helper = core_service::helper_ipc_snapshot(flags.running);
+            return Ok(success(core_service::helper_service_action_payload(
+                "TUN Helper 服务已更新并启动",
+                helper,
+                ready,
+            )));
+        }
         return Ok(success(core_service::helper_service_action_payload(
             "TUN Helper 服务已运行",
             helper,
@@ -337,6 +363,19 @@ fn install_or_start_windows_tun_service(app: &AppHandle) -> CompatResult {
             Ok(_) => {
                 let helper = core_service::helper_ipc_snapshot(true);
                 let ipc_available = helper.ipc_available();
+                if ipc_available && !helper_version_current(&helper) {
+                    let helper_path = find_helper_executable(app)?;
+                    let _ = core_service::stop_helper_service();
+                    core_service::install_helper_service(&helper_path, !windows_is_admin())?;
+                    let ready = core_service::ensure_helper_service_ready().is_ok();
+                    let flags = core_service::query_helper_service_flags();
+                    let helper = core_service::helper_ipc_snapshot(flags.running);
+                    return Ok(success(core_service::helper_service_action_payload(
+                        "TUN Helper 服务已更新并启动",
+                        helper,
+                        ready,
+                    )));
+                }
                 Ok(success(core_service::helper_service_action_payload(
                     "TUN Helper 服务已启动",
                     helper,

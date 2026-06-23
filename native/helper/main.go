@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -35,6 +36,8 @@ const (
 	pipeName          = `\\.\pipe\flyclash-helper-service`
 	messageExpirySecs = 30
 	secretSeed        = "flyclash-helper-service-secret-key-v1"
+	createNoWindow    = 0x08000000
+	helperVersion     = "1.0.1"
 )
 
 var (
@@ -97,7 +100,7 @@ type VersionData struct {
 }
 
 const (
-	keyFileDir = "FlyClash"
+	keyFileDir  = "FlyClash"
 	keyFileName = "service-key"
 	keyLength   = 32
 )
@@ -311,7 +314,7 @@ func handleCommand(conn net.Conn, req *IpcRequest) {
 		sendResponse(conn, req.ID, true, data, "")
 
 	case CmdGetVersion:
-		data := VersionData{Service: "FlyClash Helper Service", Version: "1.0.0"}
+		data := VersionData{Service: "FlyClash Helper Service", Version: helperVersion}
 		sendResponse(conn, req.ID, true, data, "")
 
 	case CmdStartCore:
@@ -384,6 +387,7 @@ func validateBinPath(binPath string) error {
 // getAllowedCoreDirs 动态推导允许的目录列表
 func getAllowedCoreDirs() []string {
 	var dirs []string
+	appDataNames := []string{"FlyClash", "flyclash", "com.flyclash.desktop"}
 
 	// 1. Helper 自身所在目录及其 cores 子目录
 	if exePath, err := os.Executable(); err == nil {
@@ -397,12 +401,14 @@ func getAllowedCoreDirs() []string {
 
 	// 2. 当前用户的 AppData（含大小写变体）
 	if appData := os.Getenv("APPDATA"); appData != "" {
-		dirs = append(dirs, filepath.Join(appData, "FlyClash", "cores"))
-		dirs = append(dirs, filepath.Join(appData, "flyclash", "cores"))
+		for _, name := range appDataNames {
+			dirs = append(dirs, filepath.Join(appData, name, "cores"))
+		}
 	}
 	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-		dirs = append(dirs, filepath.Join(localAppData, "FlyClash", "cores"))
-		dirs = append(dirs, filepath.Join(localAppData, "flyclash", "cores"))
+		for _, name := range appDataNames {
+			dirs = append(dirs, filepath.Join(localAppData, name, "cores"))
+		}
 	}
 
 	// 3. 所有用户的 profile 目录下的 FlyClash/cores
@@ -433,14 +439,12 @@ func getAllowedCoreDirs() []string {
 		if entries, err := os.ReadDir(usersDir); err == nil {
 			for _, e := range entries {
 				if e.IsDir() {
-					dirs = append(dirs,
-						filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "FlyClash", "cores"))
-					dirs = append(dirs,
-						filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "flyclash", "cores"))
-					dirs = append(dirs,
-						filepath.Join(usersDir, e.Name(), "AppData", "Local", "FlyClash", "cores"))
-					dirs = append(dirs,
-						filepath.Join(usersDir, e.Name(), "AppData", "Local", "flyclash", "cores"))
+					for _, name := range appDataNames {
+						dirs = append(dirs,
+							filepath.Join(usersDir, e.Name(), "AppData", "Roaming", name, "cores"))
+						dirs = append(dirs,
+							filepath.Join(usersDir, e.Name(), "AppData", "Local", name, "cores"))
+					}
 				}
 			}
 		}
@@ -448,7 +452,9 @@ func getAllowedCoreDirs() []string {
 
 	// 4. ProgramData
 	if pd := os.Getenv("ProgramData"); pd != "" {
-		dirs = append(dirs, filepath.Join(pd, "FlyClash", "cores"))
+		for _, name := range appDataNames {
+			dirs = append(dirs, filepath.Join(pd, name, "cores"))
+		}
 	}
 
 	// 5. macOS/Linux 系统目录
@@ -525,6 +531,10 @@ func startCore(payload *StartCorePayload) error {
 	// 创建进程
 	cmd := exec.Command(payload.BinPath, args...)
 	cmd.Dir = filepath.Dir(payload.BinPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 
 	// 如果指定了日志文件，重定向输出
 	if payload.LogFile != "" {
