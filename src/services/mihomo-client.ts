@@ -1,3 +1,8 @@
+import {
+  APP_DATA_CACHE_KEYS,
+  writeAppDataCache,
+} from './app-data-cache';
+
 type MihomoApiModule = typeof import('tauri-plugin-mihomo-api');
 
 export type MihomoCompatResponse<T = unknown> = {
@@ -19,8 +24,79 @@ type RequestLike = {
 
 type MihomoLogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'SILENT';
 
+export const MIHOMO_RUNTIME_UNAVAILABLE_EVENT = 'flyclash-mihomo-runtime-unavailable';
+
 const loadMihomoApi = (): Promise<MihomoApiModule> =>
   import('tauri-plugin-mihomo-api');
+
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (!error || typeof error !== 'object') return String(error ?? '');
+
+  const record = error as {
+    error?: unknown;
+    message?: unknown;
+    statusText?: unknown;
+    data?: { message?: unknown; error?: unknown };
+  };
+  const raw = record.error ?? record.message ?? record.statusText ?? record.data?.message ?? record.data?.error;
+  return typeof raw === 'string' ? raw : String(raw ?? '');
+};
+
+export const isMihomoRuntimeUnavailableError = (error: unknown): boolean => {
+  const message = errorMessage(error);
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('mihomo service unavailable') ||
+    lower.includes('mihomo service is not running') ||
+    lower.includes('mihomo service not running') ||
+    lower.includes('core service is not running') ||
+    lower.includes('connection refused') ||
+    lower.includes('failed to connect') ||
+    lower.includes('connect failed') ||
+    lower.includes('broken pipe') ||
+    lower.includes('closed pipe') ||
+    lower.includes('named pipe') ||
+    lower.includes('local socket') ||
+    lower.includes('unix socket') ||
+    lower.includes('no such file or directory') ||
+    lower.includes('cannot find the file specified') ||
+    lower.includes('the system cannot find the file specified') ||
+    lower.includes('os error 2') ||
+    lower.includes('os error 3') ||
+    lower.includes('os error 231') ||
+    lower.includes('econnrefused') ||
+    lower.includes('enoent') ||
+    lower.includes('epipe') ||
+    message.includes('Mihomo服务未运行') ||
+    message.includes('Mihomo 未运行') ||
+    message.includes('内核服务未运行') ||
+    message.includes('管道') ||
+    message.includes('套接字') ||
+    message.includes('拒绝连接')
+  );
+};
+
+const markMihomoUnavailable = (error: unknown) => {
+  if (!isMihomoRuntimeUnavailableError(error) || typeof window === 'undefined') return;
+  writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
+  window.dispatchEvent(
+    new CustomEvent(MIHOMO_RUNTIME_UNAVAILABLE_EVENT, {
+      detail: { message: errorMessage(error) },
+    }),
+  );
+};
+
+const callMihomo = async <T>(operation: (api: MihomoApiModule) => Promise<T>): Promise<T> => {
+  try {
+    const api = await loadMihomoApi();
+    return await operation(api);
+  } catch (error) {
+    markMihomoUnavailable(error);
+    throw error;
+  }
+};
 
 const toCompatResponse = <T>(
   data: T,
@@ -81,124 +157,123 @@ const parseEndpoint = (endpoint: string, params?: Record<string, unknown>) => {
 
 export const mihomoClient = {
   async getVersion() {
-    return (await loadMihomoApi()).getVersion();
+    return callMihomo((api) => api.getVersion());
   },
 
   async flushFakeIp() {
-    return (await loadMihomoApi()).flushFakeIp();
+    return callMihomo((api) => api.flushFakeIp());
   },
 
   async flushDNS() {
-    return (await loadMihomoApi()).flushDNS();
+    return callMihomo((api) => api.flushDNS());
   },
 
   async getRuntimeConfig() {
-    return (await loadMihomoApi()).getBaseConfig();
+    return callMihomo((api) => api.getBaseConfig());
   },
 
   async reloadConfig(force: boolean, configPath: string) {
-    return (await loadMihomoApi()).reloadConfig(force, configPath);
+    return callMihomo((api) => api.reloadConfig(force, configPath));
   },
 
   async patchRuntimeConfig(data: Record<string, unknown>) {
-    return (await loadMihomoApi()).patchBaseConfig(data);
+    return callMihomo((api) => api.patchBaseConfig(data));
   },
 
   async updateGeo() {
-    return (await loadMihomoApi()).updateGeo();
+    return callMihomo((api) => api.updateGeo());
   },
 
   async restart() {
-    return (await loadMihomoApi()).restart();
+    return callMihomo((api) => api.restart());
   },
 
   async getGroups() {
-    return (await loadMihomoApi()).getGroups();
+    return callMihomo((api) => api.getGroups());
   },
 
   async getGroupByName(groupName: string) {
-    return (await loadMihomoApi()).getGroupByName(groupName);
+    return callMihomo((api) => api.getGroupByName(groupName));
   },
 
   async delayGroup(groupName: string, testUrl: string, timeout: number) {
-    return (await loadMihomoApi()).delayGroup(groupName, testUrl, timeout);
+    return callMihomo((api) => api.delayGroup(groupName, testUrl, timeout));
   },
 
   async getProxies() {
-    return (await loadMihomoApi()).getProxies();
+    return callMihomo((api) => api.getProxies());
   },
 
   async getProxyByName(name: string) {
-    return (await loadMihomoApi()).getProxyByName(name);
+    return callMihomo((api) => api.getProxyByName(name));
   },
 
   async selectNodeForGroup(groupName: string, node: string) {
-    return (await loadMihomoApi()).selectNodeForGroup(groupName, node);
+    return callMihomo((api) => api.selectNodeForGroup(groupName, node));
   },
 
   async unfixedProxy(groupName: string) {
-    return (await loadMihomoApi()).unfixedProxy(groupName);
+    return callMihomo((api) => api.unfixedProxy(groupName));
   },
 
   async getConnections() {
-    return (await loadMihomoApi()).getConnections();
+    return callMihomo((api) => api.getConnections());
   },
 
   async closeConnection(id: string) {
-    return (await loadMihomoApi()).closeConnection(id);
+    return callMihomo((api) => api.closeConnection(id));
   },
 
   async closeAllConnections() {
-    return (await loadMihomoApi()).closeAllConnections();
+    return callMihomo((api) => api.closeAllConnections());
   },
 
   async getProxyProviders() {
-    return (await loadMihomoApi()).getProxyProviders();
+    return callMihomo((api) => api.getProxyProviders());
   },
 
   async getProxyProviderByName(providerName: string) {
-    return (await loadMihomoApi()).getProxyProviderByName(providerName);
+    return callMihomo((api) => api.getProxyProviderByName(providerName));
   },
 
   async updateProxyProvider(providerName: string) {
-    return (await loadMihomoApi()).updateProxyProvider(providerName);
+    return callMihomo((api) => api.updateProxyProvider(providerName));
   },
 
   async healthcheckProxyProvider(providerName: string) {
-    return (await loadMihomoApi()).healthcheckProxyProvider(providerName);
+    return callMihomo((api) => api.healthcheckProxyProvider(providerName));
   },
 
   async getRules() {
-    return (await loadMihomoApi()).getRules();
+    return callMihomo((api) => api.getRules());
   },
 
   async getRuleProviders() {
-    return (await loadMihomoApi()).getRuleProviders();
+    return callMihomo((api) => api.getRuleProviders());
   },
 
   async updateRuleProvider(providerName: string) {
-    return (await loadMihomoApi()).updateRuleProvider(providerName);
+    return callMihomo((api) => api.updateRuleProvider(providerName));
   },
 
   async delayProxyByName(proxyName: string, testUrl: string, timeout: number) {
-    return (await loadMihomoApi()).delayProxyByName(proxyName, testUrl, timeout);
+    return callMihomo((api) => api.delayProxyByName(proxyName, testUrl, timeout));
   },
 
   async connectTraffic() {
-    return (await loadMihomoApi()).MihomoWebSocket.connect_traffic();
+    return callMihomo((api) => api.MihomoWebSocket.connect_traffic());
   },
 
   async connectMemory() {
-    return (await loadMihomoApi()).MihomoWebSocket.connect_memory();
+    return callMihomo((api) => api.MihomoWebSocket.connect_memory());
   },
 
   async connectConnections() {
-    return (await loadMihomoApi()).MihomoWebSocket.connect_connections();
+    return callMihomo((api) => api.MihomoWebSocket.connect_connections());
   },
 
   async connectLogs(level: MihomoLogLevel | Lowercase<MihomoLogLevel>) {
-    const api = await loadMihomoApi();
-    return api.MihomoWebSocket.connect_logs(level.toUpperCase() as MihomoLogLevel);
+    return callMihomo((api) => api.MihomoWebSocket.connect_logs(level.toUpperCase() as MihomoLogLevel));
   },
 
   async request<T = unknown>(
@@ -209,12 +284,12 @@ export const mihomoClient = {
       return toCompatError('Mihomo controller HTTP fallback is disabled') as MihomoCompatResponse<T>;
     }
 
-    const api = await loadMihomoApi();
     const method = (options.method || 'GET').toUpperCase();
     const { url, segments } = parseEndpoint(endpoint, options.params);
     const body = parseBody(options.body);
 
     try {
+      const api = await loadMihomoApi();
       if (method === 'GET' && segments[0] === 'version') {
         return toCompatResponse(await api.getVersion()) as MihomoCompatResponse<T>;
       }
@@ -317,6 +392,7 @@ export const mihomoClient = {
 
       return toCompatError(`Unsupported Mihomo IPC endpoint: ${method} ${endpoint}`) as MihomoCompatResponse<T>;
     } catch (error) {
+      markMihomoUnavailable(error);
       return toCompatError(
         error instanceof Error ? error.message : String(error),
         0,

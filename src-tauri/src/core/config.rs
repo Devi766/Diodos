@@ -1,5 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     fmt, fs,
     path::{Path, PathBuf},
@@ -7,6 +9,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MUST_OVERRIDE_FIELDS: &[&str] = &[
     "mixed-port",
@@ -291,18 +296,21 @@ pub fn validate_runtime_config(
     work_dir: &Path,
     runtime_config: &Path,
 ) -> Result<(), ConfigValidationError> {
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("-t")
         .arg("-d")
         .arg(work_dir)
         .arg("-f")
         .arg(runtime_config)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| {
-            ConfigValidationError::process_failed(format!("启动内核配置验证失败: {err}"))
-        })?;
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = command.spawn().map_err(|err| {
+        ConfigValidationError::process_failed(format!("启动内核配置验证失败: {err}"))
+    })?;
 
     let started = Instant::now();
     loop {

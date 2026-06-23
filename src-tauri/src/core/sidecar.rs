@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     fs,
     path::Path,
@@ -5,6 +7,9 @@ use std::{
 };
 
 use super::controller::{self, ControllerEndpoint};
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct SidecarProcess {
     pub child: Child,
@@ -26,7 +31,8 @@ pub fn start(
         .open(log_path)
         .map_err(|err| err.to_string())?;
 
-    let child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("-d")
         .arg(work_dir)
         .arg("-f")
@@ -36,9 +42,11 @@ pub fn start(
         .stdout(Stdio::from(
             log_file.try_clone().map_err(|err| err.to_string())?,
         ))
-        .stderr(Stdio::from(log_file))
-        .spawn()
-        .map_err(|err| err.to_string())?;
+        .stderr(Stdio::from(log_file));
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let child = command.spawn().map_err(|err| err.to_string())?;
 
     Ok(SidecarProcess {
         child,

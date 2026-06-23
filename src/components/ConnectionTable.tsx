@@ -29,7 +29,7 @@ import {
   subscribeAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
-import { mihomoClient } from '@/services/mihomo-client';
+import { isMihomoRuntimeUnavailableError, mihomoClient } from '@/services/mihomo-client';
 
 interface Connection {
   id: string;
@@ -210,6 +210,7 @@ export default function ConnectionTable() {
     }
 
     if (
+      isMihomoRuntimeUnavailableError(message) ||
       lower.includes('mihomo service unavailable') ||
       lower.includes('mihomo service not running') ||
       lower.includes('core service is not running') ||

@@ -34,6 +34,7 @@ import { getBrowserPlatform, getRuntimePlatform, RuntimePlatform } from '@/utils
 import {
   APP_DATA_CACHE_KEYS,
   readAppDataCache,
+  subscribeAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
 import { mihomoClient } from '@/services/mihomo-client';
@@ -664,10 +665,17 @@ export default function Dashboard() {
   }, [electron, refreshProxyStatus, refreshTunStatus, syncCurrentNode, syncProxyMode]);
 
   useEffect(() => {
-    const cached = readAppDataCache<boolean | string | undefined>(APP_DATA_CACHE_KEYS.mihomoRunning);
-    if (cached === true || cached === 'true') {
-      setIsRunning(true);
-    }
+    const applyCachedRunningState = () => {
+      const cached = readAppDataCache<boolean | string | undefined>(APP_DATA_CACHE_KEYS.mihomoRunning);
+      if (cached === true || cached === 'true') {
+        setIsRunning(true);
+      } else if (cached === false || cached === 'false') {
+        setIsRunning(false);
+      }
+    };
+
+    applyCachedRunningState();
+    return subscribeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, applyCachedRunningState);
   }, []);
 
   // 保存运行状态到共享缓存，避免页面刷新/切换时丢失状态

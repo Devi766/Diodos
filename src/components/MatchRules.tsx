@@ -13,6 +13,7 @@ import {
   subscribeAppDataCache,
   writeAppDataCache,
 } from '@/services/app-data-cache';
+import { isMihomoRuntimeUnavailableError } from '@/services/mihomo-client';
 
 type MatchRule = {
   type: string;
@@ -98,7 +99,7 @@ export default function MatchRules() {
     if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
       return t('matchRules.apiUnavailable');
     }
-    if (message.includes('Mihomo service unavailable') || message.includes('Mihomo服务未运行')) {
+    if (isMihomoRuntimeUnavailableError(message)) {
       return t('matchRules.serviceUnavailable');
     }
     return message || fallback;

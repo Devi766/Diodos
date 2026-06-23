@@ -9,6 +9,7 @@ import { Switch } from './ui/switch';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
+import { isMihomoRuntimeUnavailableError } from '@/services/mihomo-client';
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
@@ -69,11 +70,7 @@ export default function ExternalResources() {
     if (message.includes(TAURI_RUNTIME_UNAVAILABLE)) {
       return t('externalResources.apiUnavailable');
     }
-    if (
-      message.includes('Mihomo service unavailable') ||
-      message.includes('Mihomo服务未运行') ||
-      message.includes('Mihomo服务未运行或无法访问')
-    ) {
+    if (isMihomoRuntimeUnavailableError(message)) {
       return t('externalResources.serviceUnavailable');
     }
     return message;
