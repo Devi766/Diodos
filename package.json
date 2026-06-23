@@ -41,6 +41,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "smoke:tauri-ipc": "node scripts/smoke-tauri-ipc.mjs",
+    "audit:proxy-order": "node scripts/audit-proxy-order-cache.mjs",
     "audit:mihomo-ipc": "node scripts/audit-mihomo-ipc.mjs",
     "audit:tauri-compat": "node scripts/audit-tauri-compat.mjs",
     "clean": "node -e \"const fs=require('fs');['.next','out','dist','release'].forEach(d=>{try{fs.rmSync(d,{recursive:true,force:true})}catch{}})\""

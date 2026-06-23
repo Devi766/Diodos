@@ -75,28 +75,6 @@ const normalizeRules = (value: any) => {
   return rules.map((rule: any, index: number) => ({ ...rule, index }));
 };
 
-const normalizeProxyGroups = (value: any) => {
-  const groups = Array.isArray(value?.groups) ? value.groups : [];
-  return groups.map((group: any) => ({
-    name: String(group?.name ?? ''),
-    type: String(group?.type ?? ''),
-    now: typeof group?.now === 'string' ? group.now : undefined,
-    icon: group?.icon ?? null,
-    nodes: Array.isArray(group?.nodes)
-      ? group.nodes.map((node: any) => ({
-          name: String(node?.name ?? ''),
-          type: String(node?.type ?? ''),
-          server: String(node?.server ?? ''),
-          port: Number.isFinite(Number(node?.port)) ? Number(node.port) : 0,
-          delay: Number.isFinite(Number(node?.delay)) ? Number(node.delay) : undefined,
-          isGroup: ['selector', 'urltest', 'fallback', 'loadbalance', 'smart'].includes(
-            String(node?.type ?? '').toLowerCase().replace(/-/g, ''),
-          ),
-        }))
-      : [],
-  })).filter((group: any) => group.name);
-};
-
 const normalizeOverrides = (value: any) => {
   if (Array.isArray(value)) return value;
   if (isRecord(value)) {
@@ -168,22 +146,6 @@ const preloadActiveConfig: PreloadTask = {
     const result = await api.getActiveConfig();
     const activeConfig = typeof result === 'string' && result.trim() ? result : null;
     writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, activeConfig);
-  },
-};
-
-const preloadProxyGroups: PreloadTask = {
-  id: 'proxy-groups',
-  keys: [APP_DATA_CACHE_KEYS.proxyGroups, APP_DATA_CACHE_KEYS.mihomoRunning],
-  run: async () => {
-    const api = window.electronAPI;
-    if (!hasElectronMethod(api, 'getProxies')) throw new Error('getProxies unavailable');
-    const result: unknown = await api.getProxies();
-    if (isRecord(result) && result.success === false) {
-      writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
-      throw new Error(String(result.error || result.message || 'getProxies failed'));
-    }
-    writeAppDataCache(APP_DATA_CACHE_KEYS.proxyGroups, normalizeProxyGroups(result));
-    writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
   },
 };
 
@@ -292,7 +254,6 @@ const preloadLogs: PreloadTask = {
 const commonTasks = [
   preloadSubscriptions,
   preloadActiveConfig,
-  preloadProxyGroups,
   preloadProxyMode,
   preloadConnections,
   preloadRules,
@@ -303,9 +264,9 @@ const commonTasks = [
 ];
 
 const routeTasks: Array<{ match: (path: string) => boolean; tasks: PreloadTask[] }> = [
-  { match: (path) => path === '/', tasks: [preloadSubscriptions, preloadActiveConfig, preloadProxyGroups, preloadProxyMode, preloadRules] },
-  { match: (path) => path.startsWith('/nodes'), tasks: [preloadProxyGroups, preloadProxyMode] },
-  { match: (path) => path.startsWith('/subscriptions'), tasks: [preloadSubscriptions, preloadActiveConfig, preloadProxyGroups] },
+  { match: (path) => path === '/', tasks: [preloadSubscriptions, preloadActiveConfig, preloadProxyMode, preloadRules] },
+  { match: (path) => path.startsWith('/nodes'), tasks: [preloadProxyMode] },
+  { match: (path) => path.startsWith('/subscriptions'), tasks: [preloadSubscriptions, preloadActiveConfig] },
   { match: (path) => path.startsWith('/connections'), tasks: [preloadConnections] },
   { match: (path) => path.startsWith('/match-rules'), tasks: [preloadRules] },
   { match: (path) => path.startsWith('/providers'), tasks: [preloadProxyProviders, preloadRuleProviders] },

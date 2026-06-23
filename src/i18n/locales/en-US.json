@@ -225,7 +225,7 @@
     "options": "Options",
     "expandAll": "Expand All Proxy Groups",
     "collapseAll": "Collapse All Proxy Groups",
-    "defaultSort": "Default Sort",
+    "defaultSort": "Config File Order",
     "sortByLatency": "Sort by Latency",
     "nodes": "nodes",
     "testAllNodes": "Test All Nodes in Proxy Group",

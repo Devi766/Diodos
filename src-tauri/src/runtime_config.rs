@@ -920,6 +920,7 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
         .unwrap_or_default();
     success(json!({
         "data": {
+            "configPath": path,
             "proxyGroups": groups,
             "proxies": top_level_proxies,
             "providerProxies": provider_proxies

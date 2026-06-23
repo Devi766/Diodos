@@ -225,7 +225,7 @@
     "options": "选项",
     "expandAll": "展开所有代理组",
     "collapseAll": "收起所有代理组",
-    "defaultSort": "默认排序",
+    "defaultSort": "配置文件顺序",
     "sortByLatency": "按延迟排序",
     "nodes": "个节点",
     "testAllNodes": "测试代理组所有节点",
