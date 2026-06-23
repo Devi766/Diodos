@@ -5,7 +5,6 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
-use crate::app::{ensure_tun_dns_defaults, mihomo_mixed_port};
 use crate::core::manager::RunningMode;
 use crate::core_lifecycle_commands::{
     apply_tun_runtime_change, reload_mihomo_config, start_mihomo, stop_mihomo_process,
@@ -18,6 +17,7 @@ use crate::profiles::{
     read_last_config, read_subscriptions, save_last_config, SubscriptionMeta,
 };
 use crate::runtime::{is_mihomo_running, sync_core_running_state};
+use crate::runtime_config::{ensure_tun_dns_defaults, mihomo_mixed_port};
 use crate::state::AppState;
 use crate::storage::{set_setting, setting};
 

@@ -22,6 +22,7 @@ mod proxy_icons;
 mod resources;
 mod runtime;
 mod runtime_commands;
+mod runtime_config;
 mod settings_commands;
 mod state;
 mod storage;

@@ -2,7 +2,6 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
-use crate::app::{prepare_runtime_config, runtime_config_error_response};
 use crate::core::{lifecycle as core_lifecycle, manager::RunningMode, service as core_service};
 use crate::core_commands::{
     emit_core_error, emit_core_progress, find_mihomo_executable, service_compatible_core_path,
@@ -16,6 +15,7 @@ use crate::runtime::{
     is_mihomo_running, set_runtime_running_mode, sync_core_running_state,
     sync_mihomo_plugin_endpoint,
 };
+use crate::runtime_config::{prepare_runtime_config, runtime_config_error_response};
 use crate::state::AppState;
 use crate::storage::set_setting;
 

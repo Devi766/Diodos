@@ -2,9 +2,9 @@ use serde_json::{json, Map, Value};
 use std::time::Duration;
 use tauri::AppHandle;
 
-use crate::app::mihomo_mixed_port;
 use crate::fetch::FetchOptions;
 use crate::runtime::active_runtime_controller_endpoint;
+use crate::runtime_config::mihomo_mixed_port;
 
 type CompatResult = Result<Value, String>;
 

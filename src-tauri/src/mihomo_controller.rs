@@ -7,9 +7,9 @@ use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
-    app::{controller_secret, geodata_config_patch_body, patch_active_geodata_config},
     mihomo_transport::{request as request_http, request_via_proxy as request_http_via_proxy},
     runtime::active_runtime_controller_endpoint,
+    runtime_config::{controller_secret, geodata_config_patch_body, patch_active_geodata_config},
     state::{AppState, TrafficSnapshot},
 };
 
