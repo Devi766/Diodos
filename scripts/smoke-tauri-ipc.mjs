@@ -1,5 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -9,6 +11,24 @@ const timeoutMs = Number(process.env.FLYCLASH_SMOKE_TIMEOUT_MS || 30000);
 const productIdentifier = 'com.flyclash.desktop';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const smokeConfigContent = `mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+dns:
+  enable: false
+proxies: []
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - DIRECT
+      - REJECT
+rules:
+  - MATCH,PROXY
+`;
 
 const execText = (file, args) =>
   new Promise((resolve, reject) => {
@@ -132,6 +152,351 @@ const verifyRuntimeConfig = () => {
   return { file, markers };
 };
 
+const extractControllerSocketPath = (commandLine) => {
+  const pipeMatch = commandLine.match(/-ext-ctl-pipe\s+((?:\\\\\.\\pipe\\|\/\/\.\/pipe\/)\S+)/i);
+  if (pipeMatch) {
+    return pipeMatch[1].replaceAll('/', '\\');
+  }
+
+  const unixMatch = commandLine.match(/-ext-ctl-unix\s+(\S+)/i);
+  if (unixMatch) return unixMatch[1];
+
+  throw new Error(`Could not find mihomo IPC controller socket in command line: ${commandLine}`);
+};
+
+const parseHttpResponse = (buffer) => {
+  const headerEnd = buffer.indexOf('\r\n\r\n');
+  if (headerEnd < 0) return null;
+
+  const headerText = buffer.slice(0, headerEnd).toString('utf8');
+  const [statusLine, ...headerLines] = headerText.split('\r\n');
+  const statusMatch = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)/i);
+  if (!statusMatch) {
+    throw new Error(`Invalid HTTP response over IPC: ${statusLine}`);
+  }
+
+  const headers = new Map();
+  for (const line of headerLines) {
+    const separator = line.indexOf(':');
+    if (separator > 0) {
+      headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
+    }
+  }
+
+  const bodyStart = headerEnd + 4;
+  if ((headers.get('transfer-encoding') || '').toLowerCase().includes('chunked')) {
+    const bodyBuffer = buffer.slice(bodyStart);
+    const decoded = decodeChunkedBody(bodyBuffer);
+    if (!decoded) return null;
+    return responseFromBody(Number(statusMatch[1]), headers, decoded.toString('utf8'));
+  }
+
+  const contentLength = Number(headers.get('content-length') || 0);
+  if (buffer.length < bodyStart + contentLength) return null;
+
+  const bodyText = buffer.slice(bodyStart, bodyStart + contentLength).toString('utf8');
+  return responseFromBody(Number(statusMatch[1]), headers, bodyText);
+};
+
+const responseFromBody = (status, headers, bodyText) => {
+  let data = null;
+  if (bodyText.trim()) {
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      data = bodyText;
+    }
+  }
+
+  return {
+    status,
+    headers: Object.fromEntries(headers),
+    text: bodyText,
+    data,
+  };
+};
+
+const decodeChunkedBody = (buffer) => {
+  let offset = 0;
+  const chunks = [];
+
+  while (offset < buffer.length) {
+    const lineEnd = buffer.indexOf('\r\n', offset);
+    if (lineEnd < 0) return null;
+    const sizeText = buffer.slice(offset, lineEnd).toString('ascii').split(';')[0].trim();
+    const size = Number.parseInt(sizeText, 16);
+    if (!Number.isFinite(size)) {
+      throw new Error(`Invalid chunk size in IPC response: ${sizeText}`);
+    }
+    offset = lineEnd + 2;
+    if (size === 0) {
+      if (buffer.length < offset + 2) return null;
+      return Buffer.concat(chunks);
+    }
+    if (buffer.length < offset + size + 2) return null;
+    chunks.push(buffer.slice(offset, offset + size));
+    offset += size + 2;
+  }
+
+  return null;
+};
+
+const ipcRequest = (socketPath, method, requestPath, body) =>
+  new Promise((resolve, reject) => {
+    const bodyText = body === undefined ? '' : JSON.stringify(body);
+    const request = [
+      `${method} ${requestPath} HTTP/1.1`,
+      'Host: mihomo.local',
+      'Connection: close',
+      'Accept: application/json',
+      bodyText ? 'Content-Type: application/json' : '',
+      bodyText ? `Content-Length: ${Buffer.byteLength(bodyText)}` : '',
+      '',
+      bodyText,
+    ].filter((line, index, items) => line || index >= items.length - 2).join('\r\n');
+
+    const socket = net.connect(socketPath);
+    const chunks = [];
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`Timed out waiting for IPC response: ${method} ${requestPath}`));
+    }, 8000);
+
+    socket.on('connect', () => {
+      socket.write(request);
+    });
+    socket.on('data', (chunk) => {
+      chunks.push(chunk);
+      const parsed = parseHttpResponse(Buffer.concat(chunks));
+      if (parsed) {
+        clearTimeout(timer);
+        socket.end();
+        resolve(parsed);
+      }
+    });
+    socket.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    socket.on('close', () => {
+      const parsed = parseHttpResponse(Buffer.concat(chunks));
+      if (parsed) {
+        clearTimeout(timer);
+        resolve(parsed);
+      }
+    });
+  });
+
+const parseWebSocketFrame = (buffer) => {
+  if (buffer.length < 2) return null;
+  const opcode = buffer[0] & 0x0f;
+  let length = buffer[1] & 0x7f;
+  let offset = 2;
+
+  if (length === 126) {
+    if (buffer.length < offset + 2) return null;
+    length = buffer.readUInt16BE(offset);
+    offset += 2;
+  } else if (length === 127) {
+    if (buffer.length < offset + 8) return null;
+    const high = buffer.readUInt32BE(offset);
+    const low = buffer.readUInt32BE(offset + 4);
+    length = high * 2 ** 32 + low;
+    offset += 8;
+  }
+
+  const masked = (buffer[1] & 0x80) !== 0;
+  let mask;
+  if (masked) {
+    if (buffer.length < offset + 4) return null;
+    mask = buffer.slice(offset, offset + 4);
+    offset += 4;
+  }
+
+  if (buffer.length < offset + length) return null;
+  const payload = Buffer.from(buffer.slice(offset, offset + length));
+  if (mask) {
+    for (let index = 0; index < payload.length; index += 1) {
+      payload[index] ^= mask[index % 4];
+    }
+  }
+
+  return {
+    opcode,
+    text: payload.toString('utf8'),
+    consumed: offset + length,
+  };
+};
+
+const ipcWebSocket = (socketPath, requestPath, { waitForMessage = true } = {}) =>
+  new Promise((resolve, reject) => {
+    const key = randomBytes(16).toString('base64');
+    const request = [
+      `GET ${requestPath} HTTP/1.1`,
+      'Host: mihomo.local',
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      `Sec-WebSocket-Key: ${key}`,
+      'Sec-WebSocket-Version: 13',
+      '',
+      '',
+    ].join('\r\n');
+
+    const socket = net.connect(socketPath);
+    let buffer = Buffer.alloc(0);
+    let upgraded = false;
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`Timed out waiting for IPC WebSocket: ${requestPath}`));
+    }, waitForMessage ? 8000 : 3000);
+
+    socket.on('connect', () => {
+      socket.write(request);
+    });
+    socket.on('data', (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (!upgraded) {
+        const headerEnd = buffer.indexOf('\r\n\r\n');
+        if (headerEnd < 0) return;
+        const headerText = buffer.slice(0, headerEnd).toString('utf8');
+        const statusMatch = headerText.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)/i);
+        if (!statusMatch || Number(statusMatch[1]) !== 101) {
+          clearTimeout(timer);
+          socket.destroy();
+          reject(new Error(`WebSocket ${requestPath} did not upgrade: ${headerText}`));
+          return;
+        }
+        upgraded = true;
+        buffer = buffer.slice(headerEnd + 4);
+        if (!waitForMessage) {
+          clearTimeout(timer);
+          socket.end();
+          resolve({ upgraded: true, text: null });
+          return;
+        }
+      }
+
+      const frame = parseWebSocketFrame(buffer);
+      if (frame && frame.opcode === 1) {
+        clearTimeout(timer);
+        socket.end();
+        resolve({ upgraded: true, text: frame.text });
+      }
+    });
+    socket.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+
+const expectStatus = (response, requestName, statuses = [200, 204]) => {
+  if (!statuses.includes(response.status)) {
+    throw new Error(`${requestName} returned ${response.status}: ${response.text}`);
+  }
+  return response.data;
+};
+
+const writeSmokeConfig = (mihomoHomeDir) => {
+  const dir = path.join(mihomoHomeDir, 'smoke');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `mihomo-smoke-${process.pid}.yaml`);
+  fs.writeFileSync(file, smokeConfigContent, 'utf8');
+  return file;
+};
+
+const verifyControllerApi = async (socketPath, mihomoHomeDir) => {
+  const configFile = writeSmokeConfig(mihomoHomeDir);
+  const endpoints = [];
+
+  const version = expectStatus(await ipcRequest(socketPath, 'GET', '/version'), 'GET /version');
+  if (!version || typeof version.version !== 'string') {
+    throw new Error(`GET /version did not return a version payload: ${JSON.stringify(version)}`);
+  }
+  endpoints.push(`version=${version.version}`);
+
+  expectStatus(
+    await ipcRequest(socketPath, 'PUT', '/configs?force=true', { path: configFile }),
+    'PUT /configs',
+  );
+
+  const initialConfig = expectStatus(await ipcRequest(socketPath, 'GET', '/configs'), 'GET /configs');
+  if (!['rule', 'global', 'direct'].includes(String(initialConfig?.mode).toLowerCase())) {
+    throw new Error(`GET /configs returned an unexpected mode: ${JSON.stringify(initialConfig)}`);
+  }
+  endpoints.push(`mode=${initialConfig.mode}`);
+
+  expectStatus(await ipcRequest(socketPath, 'PATCH', '/configs', { mode: 'global' }), 'PATCH /configs mode=global');
+  const globalConfig = expectStatus(await ipcRequest(socketPath, 'GET', '/configs'), 'GET /configs after global');
+  if (String(globalConfig?.mode).toLowerCase() !== 'global') {
+    throw new Error(`PATCH /configs did not switch to global: ${JSON.stringify(globalConfig)}`);
+  }
+
+  expectStatus(await ipcRequest(socketPath, 'PATCH', '/configs', { mode: 'rule' }), 'PATCH /configs mode=rule');
+  const ruleConfig = expectStatus(await ipcRequest(socketPath, 'GET', '/configs'), 'GET /configs after rule');
+  if (String(ruleConfig?.mode).toLowerCase() !== 'rule') {
+    throw new Error(`PATCH /configs did not restore rule mode: ${JSON.stringify(ruleConfig)}`);
+  }
+  endpoints.push('modeSwitch=global->rule');
+
+  const proxies = expectStatus(await ipcRequest(socketPath, 'GET', '/proxies'), 'GET /proxies');
+  const proxyGroup = proxies?.proxies?.PROXY;
+  if (!proxyGroup || !Array.isArray(proxyGroup.all) || !proxyGroup.all.includes('DIRECT')) {
+    throw new Error(`GET /proxies did not return the smoke PROXY group: ${JSON.stringify(proxies)}`);
+  }
+  endpoints.push(`proxyGroup=${proxyGroup.name || 'PROXY'}`);
+
+  expectStatus(await ipcRequest(socketPath, 'PUT', '/proxies/PROXY', { name: 'REJECT' }), 'PUT /proxies/PROXY REJECT');
+  const rejectedProxy = expectStatus(await ipcRequest(socketPath, 'GET', '/proxies/PROXY'), 'GET /proxies/PROXY after REJECT');
+  if (rejectedProxy?.now !== 'REJECT') {
+    throw new Error(`PUT /proxies/PROXY did not select REJECT: ${JSON.stringify(rejectedProxy)}`);
+  }
+  expectStatus(await ipcRequest(socketPath, 'PUT', '/proxies/PROXY', { name: 'DIRECT' }), 'PUT /proxies/PROXY DIRECT');
+  endpoints.push('selectNode=REJECT->DIRECT');
+
+  const rules = expectStatus(await ipcRequest(socketPath, 'GET', '/rules'), 'GET /rules');
+  if (!Array.isArray(rules?.rules) || rules.rules.length === 0) {
+    throw new Error(`GET /rules did not return smoke rules: ${JSON.stringify(rules)}`);
+  }
+  endpoints.push(`rules=${rules.rules.length}`);
+
+  const connections = expectStatus(await ipcRequest(socketPath, 'GET', '/connections'), 'GET /connections');
+  if (connections?.connections !== null && !Array.isArray(connections?.connections)) {
+    throw new Error(`GET /connections did not return a connections array: ${JSON.stringify(connections)}`);
+  }
+  expectStatus(await ipcRequest(socketPath, 'DELETE', '/connections'), 'DELETE /connections');
+  endpoints.push(`connections=${Array.isArray(connections.connections) ? connections.connections.length : 0}`);
+
+  const proxyProviders = expectStatus(await ipcRequest(socketPath, 'GET', '/providers/proxies'), 'GET /providers/proxies');
+  if (!proxyProviders || typeof proxyProviders.providers !== 'object') {
+    throw new Error(`GET /providers/proxies returned unexpected payload: ${JSON.stringify(proxyProviders)}`);
+  }
+  const ruleProviders = expectStatus(await ipcRequest(socketPath, 'GET', '/providers/rules'), 'GET /providers/rules');
+  if (!ruleProviders || typeof ruleProviders.providers !== 'object') {
+    throw new Error(`GET /providers/rules returned unexpected payload: ${JSON.stringify(ruleProviders)}`);
+  }
+  endpoints.push(`providers=${Object.keys(proxyProviders.providers).length}/${Object.keys(ruleProviders.providers).length}`);
+
+  const trafficFrame = await ipcWebSocket(socketPath, '/traffic');
+  const traffic = JSON.parse(trafficFrame.text);
+  if (!Number.isFinite(Number(traffic?.up)) || !Number.isFinite(Number(traffic?.down))) {
+    throw new Error(`WebSocket /traffic returned unexpected payload: ${trafficFrame.text}`);
+  }
+  endpoints.push('trafficStream=ok');
+
+  const connectionsFrame = await ipcWebSocket(socketPath, '/connections');
+  const streamedConnections = JSON.parse(connectionsFrame.text);
+  if (!('connections' in streamedConnections)) {
+    throw new Error(`WebSocket /connections returned unexpected payload: ${connectionsFrame.text}`);
+  }
+  endpoints.push('connectionsStream=ok');
+
+  await ipcWebSocket(socketPath, '/logs?level=info', { waitForMessage: false });
+  endpoints.push('logsStream=upgrade');
+
+  fs.rmSync(configFile, { force: true });
+  return { configFile, endpoints, configCleaned: true };
+};
+
 const main = async () => {
   const exe = exePath();
   if (!fs.existsSync(exe)) {
@@ -169,11 +534,17 @@ const main = async () => {
     if (!usesPipe && !usesUnixSocket) {
       throw new Error(`mihomo was not launched with an IPC controller endpoint: ${commandLine}`);
     }
+    const socketPath = extractControllerSocketPath(commandLine);
+    const controllerApi = await verifyControllerApi(socketPath, path.dirname(config.file));
 
     console.log('Tauri IPC smoke passed');
     console.log(`flyclashPid: ${child.pid}`);
     console.log(`mihomoPid: ${mihomo.ProcessId}`);
     console.log(`mihomoCommand: ${commandLine}`);
+    console.log(`controllerSocket: ${socketPath}`);
+    console.log(`controllerApi: ${controllerApi.endpoints.join(', ')}`);
+    console.log(`smokeConfig: ${controllerApi.configFile}`);
+    console.log(`smokeConfigCleaned: ${controllerApi.configCleaned}`);
     console.log(`runtimeConfig: ${config.file}`);
     console.log(`runtimeMarkers: ${JSON.stringify(config.markers)}`);
   } finally {
