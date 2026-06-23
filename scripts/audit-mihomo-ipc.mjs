@@ -42,6 +42,7 @@ check('main.rs is below 300 lines', mainLines <= 300, `${mainLines} lines`);
 
 const cargoToml = readText('src-tauri/Cargo.toml');
 const packageJson = readText('package.json');
+const mainCapability = JSON.parse(readText('src-tauri/capabilities/main-capability.json'));
 check(
   'Rust mihomo plugin is locked to the Verge commit',
   cargoToml.includes('https://github.com/clash-verge-rev/tauri-plugin-mihomo') &&
@@ -55,6 +56,11 @@ check(
   'Tauri builder registers tauri-plugin-mihomo as LocalSocket',
   includes('src-tauri/src/app.rs', 'tauri_plugin_mihomo::Builder::new()') &&
     includes('src-tauri/src/app.rs', 'tauri_plugin_mihomo::models::Protocol::LocalSocket'),
+);
+check(
+  'Main Tauri capability allows mihomo plugin commands',
+  Array.isArray(mainCapability.permissions) &&
+    mainCapability.permissions.includes('mihomo:default'),
 );
 check(
   'Runtime updates the active mihomo socket path',
