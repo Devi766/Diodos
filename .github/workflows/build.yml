@@ -96,8 +96,11 @@ jobs:
             native/helper/go.sum
             native/sysproxy/go.mod
 
+      # Tauri packaging does not need Electron native rebuilds
+      # (better-sqlite3 / ref-napi / ffi-napi). Skipping scripts avoids
+      # node-gyp + Python distutils failures on modern macOS runners.
       - name: Install npm dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build Windows sysproxy
         if: runner.os == 'Windows'
