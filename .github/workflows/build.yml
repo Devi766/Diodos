@@ -37,14 +37,22 @@ jobs:
             runner: windows-latest
             prepare_arch: x64
             bundles: nsis
+            rust_target: ""
           - name: linux-x64
             runner: ubuntu-22.04
             prepare_arch: x64
             bundles: deb,appimage
+            rust_target: ""
           - name: macos-x64
             runner: macos-15-intel
             prepare_arch: x64
             bundles: dmg
+            rust_target: x86_64-apple-darwin
+          - name: macos-arm64
+            runner: macos-15
+            prepare_arch: arm64
+            bundles: dmg
+            rust_target: aarch64-apple-darwin
 
     steps:
       - name: Checkout
@@ -59,11 +67,14 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          shared-key: ${{ matrix.name }}
 
       - name: Install Linux Tauri dependencies
         if: runner.os == 'Linux'
@@ -119,24 +130,34 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if npm run tauri -- build --bundles "${{ matrix.bundles }}"; then
+          TARGET_ARGS=()
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            TARGET_ARGS=(--target "${{ matrix.rust_target }}")
+          fi
+
+          if npm run tauri -- build --bundles "${{ matrix.bundles }}" "${TARGET_ARGS[@]}"; then
             exit 0
           fi
 
           status=$?
           echo "::warning::Tauri DMG bundling failed with exit code ${status}; using the built .app as a release fallback."
 
-          if [ -f "src-tauri/target/release/bundle/dmg/bundle_dmg.sh" ]; then
+          BUNDLE_ROOT="src-tauri/target"
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            BUNDLE_ROOT="src-tauri/target/${{ matrix.rust_target }}"
+          fi
+
+          if [ -f "${BUNDLE_ROOT}/release/bundle/dmg/bundle_dmg.sh" ]; then
             echo "::group::bundle_dmg.sh"
-            sed -n '1,240p' "src-tauri/target/release/bundle/dmg/bundle_dmg.sh"
+            sed -n '1,240p' "${BUNDLE_ROOT}/release/bundle/dmg/bundle_dmg.sh"
             echo "::endgroup::"
           fi
 
           echo "::group::macOS bundle output"
-          find src-tauri/target/release/bundle -maxdepth 4 -print | sort || true
+          find "${BUNDLE_ROOT}/release/bundle" -maxdepth 4 -print | sort || true
           echo "::endgroup::"
 
-          app_bundle="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          app_bundle="$(find "${BUNDLE_ROOT}/release/bundle/macos" -maxdepth 1 -name '*.app' -type d | head -n 1)"
           if [ -z "$app_bundle" ]; then
             echo "::error::Tauri DMG failed and no .app bundle was produced."
             exit "$status"
@@ -194,6 +215,11 @@ jobs:
             if (-not $appimage) { throw "Missing Linux AppImage package" }
             Copy-Item -LiteralPath $appimage.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.AppImage" -Force
           } elseif ($env:RUNNER_OS -eq "macOS") {
+            $bundleRoot = "src-tauri/target"
+            if ("${{ matrix.rust_target }}" -ne "") {
+              $bundleRoot = "src-tauri/target/${{ matrix.rust_target }}"
+            }
+            $releaseDir = "$bundleRoot/release"
             $dmg = Get-ChildItem -LiteralPath "$releaseDir/bundle/dmg" -Filter "*.dmg" -ErrorAction SilentlyContinue | Select-Object -First 1
             $dmgVerified = $false
             if ($dmg) {

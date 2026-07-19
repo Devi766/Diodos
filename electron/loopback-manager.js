@@ -397,10 +397,83 @@ async function removeLoopbackExemption(sid) {
   }
 }
 
+/**
+ * Resolve classic EnableLoopback.exe (Clash Party / Verge style fallback).
+ * @returns {string|null}
+ */
+function findEnableLoopbackTool() {
+  const candidates = [
+    path.join(__dirname, '..', 'extra', 'files', 'EnableLoopback.exe'),
+    path.join(__dirname, '..', 'extra', 'files', 'enableLoopback.exe'),
+    path.join(process.resourcesPath || '', 'extra', 'files', 'EnableLoopback.exe'),
+    path.join(process.resourcesPath || '', 'files', 'EnableLoopback.exe'),
+    path.join(process.resourcesPath || '', 'EnableLoopback.exe'),
+    path.join(process.cwd(), 'extra', 'files', 'EnableLoopback.exe'),
+    path.join(process.cwd(), 'files', 'EnableLoopback.exe'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+function isEnableLoopbackToolAvailable() {
+  return !!findEnableLoopbackTool();
+}
+
+/**
+ * Launch classic EnableLoopback utility. Elevates via UAC when needed.
+ * @returns {Promise<{success: boolean, launched?: boolean, elevated?: boolean, path?: string, error?: string}>}
+ */
+async function openEnableLoopbackTool() {
+  const toolPath = findEnableLoopbackTool();
+  if (!toolPath) {
+    return {
+      success: false,
+      error: '未找到 EnableLoopback.exe，请确认 extra/files 中已打包该工具',
+    };
+  }
+
+  return new Promise((resolve) => {
+    // Always try RunAs so non-admin Electron can still open the classic tool.
+    // If already elevated, RunAs still works without another prompt on most setups.
+    const escaped = toolPath.replace(/'/g, "''");
+    const command = `Start-Process -FilePath '${escaped}' -Verb RunAs`;
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
+      { windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error) {
+          resolve({
+            success: false,
+            error: error.message + (stderr ? `\n${stderr}` : ''),
+            path: toolPath,
+          });
+          return;
+        }
+        resolve({
+          success: true,
+          launched: true,
+          elevated: true,
+          path: toolPath,
+        });
+      }
+    );
+  });
+}
+
 module.exports = {
   validateSid,
   getAppsWithLoopbackStatus,
   saveLoopbackConfig,
   addLoopbackExemption,
-  removeLoopbackExemption
+  removeLoopbackExemption,
+  findEnableLoopbackTool,
+  isEnableLoopbackToolAvailable,
+  openEnableLoopbackTool,
 };

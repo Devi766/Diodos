@@ -650,6 +650,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveConfig: (exemptSids) => ipcRenderer.invoke('loopback:save-config', exemptSids),
     addExemption: (sid) => ipcRenderer.invoke('loopback:add-exemption', sid),
     removeExemption: (sid) => ipcRenderer.invoke('loopback:remove-exemption', sid),
+    openTool: () => ipcRenderer.invoke('loopback:open-tool'),
+    toolAvailable: () => ipcRenderer.invoke('loopback:tool-available'),
+    launchEnableLoopback: () => ipcRenderer.invoke('loopback:open-tool'),
   },
 });
 

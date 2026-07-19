@@ -31,6 +31,8 @@ mod subscription_commands;
 mod telemetry;
 mod tray;
 mod tun_service;
+#[cfg(windows)]
+mod win_sysproxy;
 
 fn main() {
     app::run();

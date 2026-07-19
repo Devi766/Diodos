@@ -667,6 +667,10 @@ export interface ElectronAPI {
     saveConfig: (exemptSids: string[]) => Promise<{ success: boolean; error?: string; count?: number; added?: number; failed?: number }>;
     addExemption: (sid: string) => Promise<{ success: boolean; error?: string; count?: number }>;
     removeExemption: (sid: string) => Promise<{ success: boolean; error?: string; count?: number }>;
+    /** Clash Party style fallback: launch bundled EnableLoopback.exe (may UAC elevate). */
+    openTool?: () => Promise<{ success: boolean; error?: string; launched?: boolean; elevated?: boolean; path?: string }>;
+    toolAvailable?: () => Promise<{ success: boolean; available?: boolean; error?: string }>;
+    launchEnableLoopback?: () => Promise<{ success: boolean; error?: string; launched?: boolean; elevated?: boolean; path?: string }>;
   };
 }
 
@@ -721,6 +725,9 @@ interface LoopbackAppsResult {
   apps?: LoopbackApp[];
   isAdmin: boolean;
   error?: string;
+  toolAvailable?: boolean;
+  total?: number;
+  exempt?: number;
 }
 
 // TUN 配置接口

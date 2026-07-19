@@ -18,6 +18,7 @@ use tauri::{
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 
+use crate::resources::existing_resource_file;
 use crate::storage::{set_setting, setting};
 
 type CompatResult = Result<Value, String>;
@@ -666,98 +667,59 @@ fn parse_host_port(value: &str) -> (Option<String>, Option<u16>) {
     )
 }
 
+/// Native Windows system-proxy control.
+/// Port of `native/sysproxy/main.go` (Advapi32 registry + WinINet InternetSetOption).
+/// Does **not** shell out to sysproxy.exe / reg.exe / PowerShell.
+#[cfg(windows)]
 fn set_windows_proxy(
+    _app: Option<&AppHandle>,
     enabled: bool,
     host: &str,
     port: u16,
     bypass: Option<&str>,
 ) -> Result<(), String> {
-    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-    let enable_value = if enabled { "1" } else { "0" };
-    let server = format!("{host}:{port}");
-    command_status(
-        "reg",
-        &[
-            "add",
-            key,
-            "/v",
-            "ProxyEnable",
-            "/t",
-            "REG_DWORD",
-            "/d",
-            enable_value,
-            "/f",
-        ],
-    )
-    .map_err(|_| "写入 ProxyEnable 失败".to_string())?;
-    if enabled {
-        command_status(
-            "reg",
-            &[
-                "add",
-                key,
-                "/v",
-                "ProxyServer",
-                "/t",
-                "REG_SZ",
-                "/d",
-                &server,
-                "/f",
-            ],
-        )
-        .map_err(|_| "写入 ProxyServer 失败".to_string())?;
-        let bypass = bypass.unwrap_or(DEFAULT_PROXY_BYPASS);
-        command_status(
-            "reg",
-            &[
-                "add",
-                key,
-                "/v",
-                "ProxyOverride",
-                "/t",
-                "REG_SZ",
-                "/d",
-                bypass,
-                "/f",
-            ],
-        )
-        .map_err(|_| "写入 ProxyOverride 失败".to_string())?;
-    }
-    let _ = command_status("RUNDLL32.EXE", &["inetcpl.cpl,ClearMyTracksByProcess", "8"]);
-    Ok(())
+    crate::win_sysproxy::set_proxy(enabled, host, port, bypass)
+}
+
+#[cfg(not(windows))]
+fn set_windows_proxy(
+    _app: Option<&AppHandle>,
+    _enabled: bool,
+    _host: &str,
+    _port: u16,
+    _bypass: Option<&str>,
+) -> Result<(), String> {
+    Err("系统代理仅支持 Windows".to_string())
 }
 
 fn windows_proxy_status() -> Result<Value, String> {
-    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-    let enable_output = command_output("reg", &["query", key, "/v", "ProxyEnable"])?;
-    let enabled = enable_output
-        .split_whitespace()
-        .last()
-        .map(|value| value.eq_ignore_ascii_case("0x1") || value == "1")
-        .unwrap_or(false);
-    let server_output =
-        command_output("reg", &["query", key, "/v", "ProxyServer"]).unwrap_or_default();
-    let server = server_output
-        .lines()
-        .find(|line| line.contains("ProxyServer"))
-        .and_then(|line| line.split_whitespace().last())
-        .unwrap_or_default();
-    let (host, port) = parse_host_port(server);
-    let bypass_output =
-        command_output("reg", &["query", key, "/v", "ProxyOverride"]).unwrap_or_default();
-    let bypass = bypass_output
-        .lines()
-        .find(|line| line.contains("ProxyOverride"))
-        .and_then(|line| line.split_once("REG_SZ"))
-        .map(|(_, value)| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    Ok(success(json!({
-        "enabled": enabled,
-        "host": host,
-        "port": port,
-        "bypass": bypass,
-        "source": "windows"
-    })))
+    // Prefer native Advapi32 query (same source as set path) over shelling `reg query`.
+    #[cfg(windows)]
+    {
+        let query = crate::win_sysproxy::query_proxy()?;
+        let (host, port) = query
+            .server
+            .as_deref()
+            .map(parse_host_port)
+            .unwrap_or((None, None));
+        return Ok(success(json!({
+            "enabled": query.enabled,
+            "host": host,
+            "port": port,
+            "bypass": query.bypass,
+            "pacUrl": query.pac_url,
+            "source": "windows-native"
+        })));
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(success(json!({
+            "enabled": false,
+            "host": Value::Null,
+            "port": Value::Null,
+            "source": "windows"
+        })))
+    }
 }
 
 fn macos_network_services() -> Result<Vec<String>, String> {
@@ -876,7 +838,7 @@ pub(crate) fn set_system_proxy(
         .ok()
         .and_then(|value| value.as_str().map(ToString::to_string));
     if cfg!(target_os = "windows") {
-        set_windows_proxy(enabled, host, port, bypass.as_deref())?;
+        set_windows_proxy(Some(app), enabled, host, port, bypass.as_deref())?;
     } else if cfg!(target_os = "macos") {
         set_macos_proxy(enabled, host, port)?;
     } else if enabled {
@@ -886,9 +848,17 @@ pub(crate) fn set_system_proxy(
     if enabled {
         std::env::set_var("HTTP_PROXY", format!("http://{host}:{port}"));
         std::env::set_var("HTTPS_PROXY", format!("http://{host}:{port}"));
+        std::env::set_var("ALL_PROXY", format!("http://{host}:{port}"));
+        std::env::set_var("http_proxy", format!("http://{host}:{port}"));
+        std::env::set_var("https_proxy", format!("http://{host}:{port}"));
+        std::env::set_var("all_proxy", format!("http://{host}:{port}"));
     } else {
         std::env::remove_var("HTTP_PROXY");
         std::env::remove_var("HTTPS_PROXY");
+        std::env::remove_var("ALL_PROXY");
+        std::env::remove_var("http_proxy");
+        std::env::remove_var("https_proxy");
+        std::env::remove_var("all_proxy");
     }
     set_setting(app, "systemProxyEnabled", json!(enabled))?;
     Ok(())
@@ -1084,25 +1054,160 @@ fn loopback_resolve_display_name(app: &mut Value, names: &HashMap<String, String
 }
 
 fn loopback_sid_valid(sid: &str) -> bool {
-    sid.to_ascii_uppercase().starts_with("S-1-15-2-")
-        && sid
-            .chars()
-            .all(|ch| ch.is_ascii_digit() || ch == 'S' || ch == 's' || ch == '-')
+    // AppContainer SIDs look like S-1-15-2-<digits>...
+    let upper = sid.trim();
+    if !upper.to_ascii_uppercase().starts_with("S-1-15-2-") {
+        return false;
+    }
+    upper
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        && upper.contains('-')
+        && upper.len() >= 12
+}
+
+fn find_enable_loopback_tool(app: &AppHandle) -> Option<PathBuf> {
+    existing_resource_file(
+        app,
+        &[
+            PathBuf::from("extra")
+                .join("files")
+                .join("EnableLoopback.exe"),
+            PathBuf::from("files").join("EnableLoopback.exe"),
+            PathBuf::from("tools").join("EnableLoopback.exe"),
+            PathBuf::from("EnableLoopback.exe"),
+            PathBuf::from("extra")
+                .join("files")
+                .join("enableLoopback.exe"),
+            PathBuf::from("files").join("enableLoopback.exe"),
+            PathBuf::from("tools").join("enableLoopback.exe"),
+            PathBuf::from("enableLoopback.exe"),
+        ],
+    )
+}
+
+fn windows_process_is_elevated() -> bool {
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
+    // Mirror helper service check used elsewhere; best-effort via whoami /groups.
+    let mut command = Command::new("whoami");
+    command.arg("/groups");
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let Ok(output) = command.output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_ascii_lowercase();
+    text.contains("s-1-5-32-544") && text.contains("enabled")
+}
+
+/// Open the classic EnableLoopback utility (Clash Party / Verge style fallback).
+/// Elevates with UAC when the current process is not admin.
+fn open_enable_loopback_tool(app: &AppHandle) -> CompatResult {
+    if !cfg!(target_os = "windows") {
+        return Ok(json!({
+            "success": false,
+            "error": "EnableLoopback 仅支持 Windows"
+        }));
+    }
+
+    let Some(tool_path) = find_enable_loopback_tool(app) else {
+        return Ok(json!({
+            "success": false,
+            "error": "未找到 EnableLoopback.exe，请确认 extra/files 或应用资源目录中已打包该工具"
+        }));
+    };
+
+    let elevated = windows_process_is_elevated();
+    if elevated {
+        // GUI tool must keep its window — do not set CREATE_NO_WINDOW here.
+        Command::new(&tool_path)
+            .spawn()
+            .map_err(|err| format!("启动 EnableLoopback 失败: {err}"))?;
+        return Ok(success(json!({
+            "launched": true,
+            "elevated": true,
+            "path": tool_path.to_string_lossy()
+        })));
+    }
+
+    // Not elevated: relaunch tool with RunAs, matching Clash Party openUWPTool().
+    let escaped = tool_path.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "Start-Process -FilePath '{escaped}' -Verb RunAs"
+    );
+    let mut command = Command::new("powershell.exe");
+    command
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(ps);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .output()
+        .map_err(|err| format!("提权启动 EnableLoopback 失败: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Ok(json!({
+            "success": false,
+            "error": if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else {
+                "用户取消了 UAC 提权或启动失败".to_string()
+            }
+        }));
+    }
+
+    Ok(success(json!({
+        "launched": true,
+        "elevated": false,
+        "path": tool_path.to_string_lossy()
+    })))
 }
 
 fn loopback_apps(app: &AppHandle) -> CompatResult {
     if !cfg!(target_os = "windows") {
-        return Ok(success(json!({ "apps": [], "isAdmin": false })));
+        return Ok(success(json!({
+            "apps": [],
+            "isAdmin": false,
+            "toolAvailable": false,
+            "total": 0,
+            "exempt": 0
+        })));
     }
 
+    let tool_available = find_enable_loopback_tool(app).is_some();
     let output = match loopback_api_call("[NetworkIsolationHelper]::EnumAppContainers()") {
         Ok(output) => output,
         Err(error) => {
-            return Ok(json!({ "success": false, "error": error, "apps": [], "isAdmin": true }))
+            return Ok(json!({
+                "success": false,
+                "error": error,
+                "apps": [],
+                "isAdmin": true,
+                "toolAvailable": tool_available
+            }))
         }
     };
     if output.is_empty() || output == "null" {
-        return Ok(success(json!({ "apps": [], "isAdmin": true })));
+        return Ok(success(json!({
+            "apps": [],
+            "isAdmin": true,
+            "toolAvailable": tool_available,
+            "total": 0,
+            "exempt": 0
+        })));
     }
 
     let parsed = match serde_json::from_str::<Value>(&output) {
@@ -1112,21 +1217,63 @@ fn loopback_apps(app: &AppHandle) -> CompatResult {
                 "success": false,
                 "error": format!("解析 Loopback 应用列表失败: {error}"),
                 "apps": [],
-                "isAdmin": true
+                "isAdmin": true,
+                "toolAvailable": tool_available
             }))
         }
     };
     if let Some(error) = parsed.get("error").and_then(Value::as_str) {
-        return Ok(json!({ "success": false, "error": error, "apps": [], "isAdmin": true }));
+        return Ok(json!({
+            "success": false,
+            "error": error,
+            "apps": [],
+            "isAdmin": true,
+            "toolAvailable": tool_available
+        }));
     }
 
     let mut apps = match parsed {
         Value::Array(items) => items,
         other => vec![other],
     };
+
+    // Drop invalid entries and dedupe by SID (last wins).
+    let mut by_sid: HashMap<String, Value> = HashMap::new();
+    for item in apps.drain(..) {
+        let Some(sid) = item
+            .get("sid")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && loopback_sid_valid(value))
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+        by_sid.insert(sid.to_ascii_uppercase(), item);
+    }
+    apps = by_sid.into_values().collect();
+
     let display_names = loopback_display_names();
     for app in &mut apps {
         loopback_resolve_display_name(app, &display_names);
+        // Prefer a non-empty displayName fallback.
+        if let Some(object) = app.as_object_mut() {
+            let display = object
+                .get("displayName")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            if display.is_none() {
+                let fallback = object
+                    .get("packageFamilyName")
+                    .and_then(Value::as_str)
+                    .or_else(|| object.get("appContainerName").and_then(Value::as_str))
+                    .unwrap_or("Unknown App")
+                    .to_string();
+                object.insert("displayName".to_string(), Value::String(fallback));
+            }
+        }
     }
     apps.sort_by(|left, right| {
         let left_exempt = left
@@ -1161,9 +1308,17 @@ fn loopback_apps(app: &AppHandle) -> CompatResult {
         })
         .filter_map(|item| item.get("sid").and_then(Value::as_str))
         .collect::<Vec<_>>();
+    let total = apps.len();
+    let exempt = exempt_sids.len();
     set_setting(app, "loopbackExemptSids", json!(exempt_sids))?;
 
-    Ok(success(json!({ "apps": apps, "isAdmin": true })))
+    Ok(success(json!({
+        "apps": apps,
+        "isAdmin": true,
+        "toolAvailable": tool_available,
+        "total": total,
+        "exempt": exempt
+    })))
 }
 
 fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
@@ -1648,6 +1803,13 @@ async fn dispatch_compat_call(
                 .collect();
             loopback_set(app, sids)
         }
+        "loopback.openTool"
+        | "loopback:open-tool"
+        | "loopback.launchEnableLoopback"
+        | "openEnableLoopback" => open_enable_loopback_tool(app),
+        "loopback.toolAvailable" | "loopback:tool-available" => Ok(success(json!({
+            "available": find_enable_loopback_tool(app).is_some()
+        }))),
         _ => Err(format!("Unsupported loopback method: {method}")),
     }
 }

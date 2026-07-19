@@ -45,6 +45,25 @@ function registerLoopbackIpcHandlers(deps) {
       return { success: false, error: error.message };
     }
   });
+
+  ipcMain.handle('loopback:open-tool', async () => {
+    try {
+      return await loopbackManager.openEnableLoopbackTool();
+    } catch (error) {
+      console.error('[IPC] loopback:open-tool failed:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('loopback:tool-available', async () => {
+    try {
+      const available = loopbackManager.isEnableLoopbackToolAvailable();
+      return { success: true, available };
+    } catch (error) {
+      console.error('[IPC] loopback:tool-available failed:', error);
+      return { success: false, available: false, error: error.message };
+    }
+  });
 }
 
 module.exports = { registerLoopbackIpcHandlers };
