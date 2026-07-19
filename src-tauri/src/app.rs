@@ -1,23 +1,24 @@
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewWindow, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_mihomo::RejectPolicy;
 
 use crate::core::controller as core_controller;
 use crate::core_lifecycle_commands::{
-    refresh_active_config_after_override, schedule_mihomo_autostart,
+    refresh_active_config_after_override, schedule_mihomo_autostart, stop_mihomo_process,
 };
-use crate::tun_service::schedule_pending_tun_enable;
 use crate::platform::{
     apply_appearance_mode_for_app, emit_window_state,
     handle_compat_call as handle_platform_compat_call, schedule_auto_lightweight_timer,
-    show_main_window,
+    set_system_proxy, show_main_window,
 };
 use crate::runtime_config::mihomo_mixed_port;
 use crate::state::AppState;
 use crate::storage::setting;
 use crate::tray::setup_tray;
+use crate::tun_service::schedule_pending_tun_enable;
 
 type CompatResult = Result<Value, String>;
 
@@ -183,6 +184,32 @@ fn current_deep_link_import(app: &AppHandle) -> Option<String> {
         .find_map(|url| subscription_url_from_protocol_arg(url.as_str()))
 }
 
+fn exit_cleanup_started() -> &'static AtomicBool {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    &STARTED
+}
+
+pub(crate) fn request_app_quit(app: &AppHandle) {
+    app.exit(0);
+}
+
+fn cleanup_on_exit(app: &AppHandle) {
+    if exit_cleanup_started().swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    if let Err(error) = set_system_proxy(app, false, "127.0.0.1", mihomo_mixed_port(app)) {
+        eprintln!("[exit] disable system proxy failed: {error}");
+    }
+
+    let state = app.state::<AppState>();
+    let app = app.clone();
+    let result = tauri::async_runtime::block_on(async move { stop_mihomo_process(&app, &state).await });
+    if let Err(error) = result {
+        eprintln!("[exit] stop core failed: {error}");
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -216,7 +243,6 @@ pub fn run() {
                 }
             }
 
-            // After elevated helper install / restart, resume the pending TUN enable.
             schedule_pending_tun_enable(app.handle());
 
             let deep_link_app = app.handle().clone();
@@ -274,6 +300,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![crate::compat::tauri_compat_call])
-        .run(tauri::generate_context!())
-        .expect("error while running FlyClash Tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building FlyClash Tauri application")
+        .run(|app_handle, event| match event {
+            RunEvent::ExitRequested { api, .. } => {
+                if !exit_cleanup_started().load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    cleanup_on_exit(app_handle);
+                    app_handle.exit(0);
+                }
+            }
+            RunEvent::Exit => {
+                cleanup_on_exit(app_handle);
+            }
+            _ => {}
+        });
 }

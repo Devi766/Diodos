@@ -876,8 +876,17 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
         return success(json!({ "data": { "proxyGroups": [] } }));
     };
     let content = config_content(app, &path).unwrap_or_default();
-    let yaml =
-        serde_yaml::from_str::<serde_yaml::Value>(&content).unwrap_or(serde_yaml::Value::Null);
+    let base_json = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+        Ok(yaml) => serde_json::to_value(yaml).unwrap_or(Value::Null),
+        Err(_) => Value::Null,
+    };
+    let config_json = if base_json.is_object() {
+        crate::overrides::apply_overrides(app, &path, base_json.clone()).unwrap_or(base_json)
+    } else {
+        base_json
+    };
+    let yaml = serde_json::from_value::<serde_yaml::Value>(config_json)
+        .unwrap_or(serde_yaml::Value::Null);
 
     let top_level_proxies = yaml
         .get("proxies")

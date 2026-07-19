@@ -361,16 +361,22 @@ fn run_js_override(config: &Value, script_content: &str, item_name: &str) -> Res
         r#"
 globalThis.console = globalThis.console || {{
   log() {{}},
+  info() {{}},
   warn() {{}},
-  error() {{}}
+  error() {{}},
+  debug() {{}}
 }};
-const __flyclash_config = {config_json};
 {script_content}
 if (typeof main !== 'function') {{
   throw new Error('JS override must define main(config)');
 }}
-const __flyclash_result = main(__flyclash_config);
-JSON.stringify(__flyclash_result || __flyclash_config);
+const __flyclash_input = {config_json};
+const __flyclash_result = main(__flyclash_input);
+const __flyclash_output =
+  __flyclash_result && typeof __flyclash_result === 'object'
+    ? __flyclash_result
+    : __flyclash_input;
+JSON.stringify(__flyclash_output);
 "#
     );
 
@@ -687,10 +693,16 @@ function main(config) {
     }
 
     #[test]
-    fn js_override_rejects_non_object_result() {
-        let config = json!({ "proxies": [] });
-        let result = run_js_override(&config, "function main() { return 'bad'; }", "test-js");
-
-        assert!(result.is_err());
+    fn js_override_falls_back_when_non_object_result() {
+        let config = json!({ "proxies": [{ "name": "node-a" }] });
+        let result =
+            run_js_override(&config, "function main() { return 'bad'; }", "test-js").unwrap();
+        assert_eq!(
+            result
+                .get("proxies")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
     }
 }

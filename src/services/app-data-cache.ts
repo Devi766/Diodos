@@ -91,6 +91,13 @@ export const writeAppDataCache = <T,>(
   options: { persist?: boolean; broadcast?: boolean } = {},
 ) => {
   const { persist = true, broadcast = true } = options;
+
+  // Bail out when value is referentially equal — avoids notify storms that
+  // can drive useSyncExternalStore into "Maximum update depth exceeded".
+  if (memoryCache.has(key) && Object.is(memoryCache.get(key), value)) {
+    return;
+  }
+
   memoryCache.set(key, value);
 
   if (persist && canUseSessionStorage()) {

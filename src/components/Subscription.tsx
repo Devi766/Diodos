@@ -471,19 +471,22 @@ export default function SubscriptionManager() {
   const { hasProviders, refreshProvidersAvailability } = useProviderAvailability();
 
   const updateActiveConfig = useCallback((value: string | null) => {
-    setActiveConfig(value);
-    writeActiveConfigCache(value);
+    setActiveConfig((prev) => (prev === value ? prev : value));
+    // Only write when value actually changes to avoid cache notify loops.
+    if (readActiveConfigCache() !== value) {
+      writeActiveConfigCache(value);
+    }
   }, []);
 
   useEffect(() => {
-    setSubscriptions(cachedSubscriptions);
+    setSubscriptions((prev) => (prev === cachedSubscriptions ? prev : cachedSubscriptions));
     if (hasSubscriptionsCache()) {
       setIsSubscriptionsLoading(false);
     }
   }, [cachedSubscriptions]);
 
   useEffect(() => {
-    setActiveConfig(cachedActiveConfig);
+    setActiveConfig((prev) => (prev === cachedActiveConfig ? prev : cachedActiveConfig));
   }, [cachedActiveConfig]);
 
   const highlightSubscriptions = useCallback((paths: Array<string | null | undefined>, reason: HighlightReason) => {

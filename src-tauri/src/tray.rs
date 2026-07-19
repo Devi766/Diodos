@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::{
@@ -8,6 +10,7 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
+use crate::app::request_app_quit;
 use crate::core::manager::RunningMode;
 use crate::core_lifecycle_commands::{
     apply_tun_runtime_change, reload_mihomo_config, start_mihomo, stop_mihomo_process,
@@ -77,6 +80,36 @@ fn write_tray_proxy_snapshot(snapshot: Option<TrayProxySnapshot>) {
 
 fn clear_tray_proxy_snapshot() {
     write_tray_proxy_snapshot(None);
+}
+
+fn tray_menu_hold() -> &'static Mutex<Option<Instant>> {
+    static HOLD: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    HOLD.get_or_init(|| Mutex::new(None))
+}
+
+fn mark_tray_menu_hold() {
+    if let Ok(mut guard) = tray_menu_hold().lock() {
+        *guard = Some(Instant::now() + Duration::from_millis(1800));
+    }
+}
+
+fn tray_menu_is_held() -> bool {
+    tray_menu_hold()
+        .lock()
+        .ok()
+        .and_then(|guard| *guard)
+        .map(|until| Instant::now() < until)
+        .unwrap_or(false)
+}
+
+fn tray_snapshot_refresh_token() -> &'static AtomicU64 {
+    static TOKEN: AtomicU64 = AtomicU64::new(0);
+    &TOKEN
+}
+
+fn tray_snapshot_refresh_inflight() -> &'static AtomicBool {
+    static FLAG: AtomicBool = AtomicBool::new(false);
+    &FLAG
 }
 
 fn success(value: Value) -> Value {
@@ -325,7 +358,16 @@ fn load_config_group_order(app: &AppHandle, active_config: Option<&str>) -> Vec<
     let Ok(content) = config_content(app, &path) else {
         return Vec::new();
     };
-    let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+    let base = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+        Ok(yaml) => serde_json::to_value(yaml).unwrap_or(Value::Null),
+        Err(_) => return Vec::new(),
+    };
+    let config = if base.is_object() {
+        crate::overrides::apply_overrides(app, &path, base.clone()).unwrap_or(base)
+    } else {
+        base
+    };
+    let Ok(yaml) = serde_json::from_value::<serde_yaml::Value>(config) else {
         return Vec::new();
     };
 
@@ -523,10 +565,22 @@ async fn fetch_tray_proxy_snapshot(app: &AppHandle) -> Option<TrayProxySnapshot>
 }
 
 fn schedule_tray_proxy_snapshot_refresh(app: &AppHandle) {
+    if tray_menu_is_held() {
+        return;
+    }
+    if tray_snapshot_refresh_inflight().swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let token = tray_snapshot_refresh_token().fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let _reset = scopeguard_reset_inflight();
         match fetch_tray_proxy_snapshot(&app).await {
             Some(snapshot) => {
+                if tray_snapshot_refresh_token().load(Ordering::SeqCst) != token {
+                    return;
+                }
                 let previous = read_tray_proxy_snapshot();
                 let changed = previous
                     .as_ref()
@@ -546,18 +600,33 @@ fn schedule_tray_proxy_snapshot_refresh(app: &AppHandle) {
                     })
                     .unwrap_or(true);
                 write_tray_proxy_snapshot(Some(snapshot));
-                if changed {
+                if changed && !tray_menu_is_held() {
                     refresh_tray_menu_after(&app, "proxy-snapshot");
                 }
             }
             None => {
+                if tray_snapshot_refresh_token().load(Ordering::SeqCst) != token {
+                    return;
+                }
                 if read_tray_proxy_snapshot().is_some() {
                     clear_tray_proxy_snapshot();
-                    refresh_tray_menu_after(&app, "proxy-snapshot-clear");
+                    if !tray_menu_is_held() {
+                        refresh_tray_menu_after(&app, "proxy-snapshot-clear");
+                    }
                 }
             }
         }
     });
+}
+
+struct InFlightGuard;
+fn scopeguard_reset_inflight() -> InFlightGuard {
+    InFlightGuard
+}
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        tray_snapshot_refresh_inflight().store(false, Ordering::SeqCst);
+    }
 }
 
 fn encode_tray_pair(left: &str, right: &str) -> String {
@@ -686,9 +755,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
                 .and_then(|runtime| runtime.current_node.clone())
         });
 
-    if core_running {
-        schedule_tray_proxy_snapshot_refresh(app);
-    } else if proxy_snapshot.is_some() {
+    if !core_running && proxy_snapshot.is_some() {
         clear_tray_proxy_snapshot();
     }
 
@@ -874,6 +941,9 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
 }
 
 fn refresh_tray_menu(app: &AppHandle) -> Result<(), String> {
+    if tray_menu_is_held() {
+        return Ok(());
+    }
     let (menu, tooltip) = build_tray_menu(app)?;
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_menu(Some(menu)).map_err(|err| err.to_string())?;
@@ -884,6 +954,9 @@ fn refresh_tray_menu(app: &AppHandle) -> Result<(), String> {
 }
 
 pub(crate) fn refresh_tray_menu_after(app: &AppHandle, reason: &str) {
+    if tray_menu_is_held() {
+        return;
+    }
     if let Err(error) = refresh_tray_menu(app) {
         eprintln!("[tray] failed to refresh menu after {reason}: {error}");
     }
@@ -1259,26 +1332,44 @@ pub(crate) fn setup_tray(app: &AppHandle) -> Result<(), String> {
                 "toggle-system-proxy" => tray_toggle_system_proxy(app),
                 "toggle-tun" => tray_toggle_tun(app),
                 "close-all-connections" => tray_close_all_connections(app),
-                "quit" => app.exit(0),
+                "quit" => request_app_quit(app),
                 _ => {}
             }
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let visible = window.is_visible().unwrap_or(false);
-                    if visible {
-                        let _ = window.hide();
-                    } else {
-                        show_main_window(app);
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    let app = tray.app_handle();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let visible = window.is_visible().unwrap_or(false);
+                        if visible {
+                            let _ = window.hide();
+                        } else {
+                            show_main_window(app);
+                        }
                     }
                 }
+                TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Down,
+                    ..
+                }
+                | TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    mark_tray_menu_hold();
+                    let app = tray.app_handle().clone();
+                    if is_mihomo_running(&app) && read_tray_proxy_snapshot().is_none() {
+                        schedule_tray_proxy_snapshot_refresh(&app);
+                    }
+                }
+                _ => {}
             }
         });
 
@@ -1287,7 +1378,6 @@ pub(crate) fn setup_tray(app: &AppHandle) -> Result<(), String> {
     }
 
     builder.build(app).map_err(|err| err.to_string())?;
-    // Warm proxy group snapshot after tray is ready so the second open has node menus.
     schedule_tray_proxy_snapshot_refresh(app);
     Ok(())
 }

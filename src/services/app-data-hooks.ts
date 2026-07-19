@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   APP_DATA_CACHE_KEYS,
   emitAppDataInvalidate,
@@ -19,13 +20,16 @@ export type { AppDataCacheKey, AppDataInvalidationScope };
 
 export type ProxyMode = 'rule' | 'global' | 'direct';
 
+/** Stable empty array for useSyncExternalStore snapshots (never allocate per read). */
+const EMPTY_ARRAY: never[] = [];
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 };
 
 export const toArrayValue = <T,>(value: unknown): T[] => {
   if (Array.isArray(value)) return value as T[];
-  if (!isRecord(value)) return [];
+  if (!isRecord(value)) return EMPTY_ARRAY as T[];
 
   const nested = value.data ?? value.items ?? value.subscriptions ?? value.overrides;
   if (Array.isArray(nested)) return nested as T[];
@@ -40,7 +44,7 @@ export const toArrayValue = <T,>(value: unknown): T[] => {
     }
   }
 
-  return [];
+  return EMPTY_ARRAY as T[];
 };
 
 export const normalizeProxyMode = (
@@ -151,29 +155,51 @@ export type ProxyGroupsCacheEnvelope<T = unknown> = {
   configPath?: string | null;
 };
 
+const EMPTY_PROXY_GROUPS_ENVELOPE: ProxyGroupsCacheEnvelope<never> = {
+  groups: EMPTY_ARRAY,
+};
+
 export const unpackProxyGroupsCache = <T = unknown>(
   cached: unknown,
 ): ProxyGroupsCacheEnvelope<T> => {
   if (Array.isArray(cached)) {
+    if (cached.length === 0) {
+      return EMPTY_PROXY_GROUPS_ENVELOPE as ProxyGroupsCacheEnvelope<T>;
+    }
     return { groups: cached as T[] };
   }
 
   if (!isRecord(cached)) {
-    return { groups: [] };
+    return EMPTY_PROXY_GROUPS_ENVELOPE as ProxyGroupsCacheEnvelope<T>;
   }
 
   const mode =
     cached.mode === undefined || cached.mode === null
       ? undefined
       : normalizeProxyMode(cached.mode) ?? undefined;
-  const groups = Array.isArray(cached.groups) ? (cached.groups as T[]) : [];
+  const rawGroups = Array.isArray(cached.groups) ? (cached.groups as T[]) : (EMPTY_ARRAY as T[]);
+  const groups = rawGroups.length === 0 ? (EMPTY_ARRAY as T[]) : rawGroups;
+  const source = typeof cached.source === 'string' ? cached.source : undefined;
+  const version = typeof cached.version === 'number' ? cached.version : undefined;
+  const configPath = normalizeActiveConfig(cached.configPath);
+
+  // Fully empty envelope — return stable singleton so useSyncExternalStore is happy.
+  if (
+    groups === EMPTY_ARRAY &&
+    source === undefined &&
+    version === undefined &&
+    mode === undefined &&
+    configPath === null
+  ) {
+    return EMPTY_PROXY_GROUPS_ENVELOPE as ProxyGroupsCacheEnvelope<T>;
+  }
 
   return {
-    source: typeof cached.source === 'string' ? cached.source : undefined,
-    version: typeof cached.version === 'number' ? cached.version : undefined,
+    source,
+    version,
     mode: mode ?? undefined,
     groups,
-    configPath: normalizeActiveConfig(cached.configPath),
+    configPath,
   };
 };
 
@@ -245,8 +271,8 @@ export const writeMatchRulesCache = <T = unknown>(
 export const subscribeMatchRulesCache = (listener: () => void) =>
   subscribeAppDataCache(APP_DATA_CACHE_KEYS.matchRules, listener);
 export const useMatchRulesCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.matchRules, []);
-  return Array.isArray(value) ? (value as T[]) : [];
+  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.matchRules, EMPTY_ARRAY);
+  return Array.isArray(value) ? (value as T[]) : (EMPTY_ARRAY as T[]);
 };
 
 export const hasLogsCache = (): boolean => hasAppDataCache(APP_DATA_CACHE_KEYS.logs);
@@ -259,8 +285,8 @@ export const writeLogsCache = <T = unknown>(
 export const subscribeLogsCache = (listener: () => void) =>
   subscribeAppDataCache(APP_DATA_CACHE_KEYS.logs, listener);
 export const useLogsCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.logs, []);
-  return Array.isArray(value) ? (value as T[]) : [];
+  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.logs, EMPTY_ARRAY);
+  return Array.isArray(value) ? (value as T[]) : (EMPTY_ARRAY as T[]);
 };
 
 export const hasOverridesCache = (): boolean => hasAppDataCache(APP_DATA_CACHE_KEYS.overrides);
@@ -273,7 +299,7 @@ export const writeOverridesCache = <T = unknown>(
 export const subscribeOverridesCache = (listener: () => void) =>
   subscribeAppDataCache(APP_DATA_CACHE_KEYS.overrides, listener);
 export const useOverridesCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.overrides, []);
+  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.overrides, EMPTY_ARRAY);
   return toArrayValue<T>(value);
 };
 
@@ -288,8 +314,11 @@ export const writeProxyProvidersCache = <T = unknown>(
 export const subscribeProxyProvidersCache = (listener: () => void) =>
   subscribeAppDataCache(APP_DATA_CACHE_KEYS.proxyProviders, listener);
 export const useProxyProvidersCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.proxyProviders, []);
-  return Array.isArray(value) ? (value as T[]) : [];
+  const value = useAppDataCache<unknown>(
+    APP_DATA_CACHE_KEYS.proxyProviders,
+    EMPTY_ARRAY,
+  );
+  return Array.isArray(value) ? (value as T[]) : (EMPTY_ARRAY as T[]);
 };
 
 export const hasRuleProvidersCache = (): boolean =>
@@ -303,8 +332,11 @@ export const writeRuleProvidersCache = <T = unknown>(
 export const subscribeRuleProvidersCache = (listener: () => void) =>
   subscribeAppDataCache(APP_DATA_CACHE_KEYS.ruleProviders, listener);
 export const useRuleProvidersCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.ruleProviders, []);
-  return Array.isArray(value) ? (value as T[]) : [];
+  const value = useAppDataCache<unknown>(
+    APP_DATA_CACHE_KEYS.ruleProviders,
+    EMPTY_ARRAY,
+  );
+  return Array.isArray(value) ? (value as T[]) : (EMPTY_ARRAY as T[]);
 };
 
 export const hasIpInfoCache = (): boolean => hasAppDataCache(APP_DATA_CACHE_KEYS.ipInfo);
@@ -352,7 +384,10 @@ export const readTunEnabledCache = (): boolean | null =>
   normalizeBooleanCache(readAppDataCache(APP_DATA_CACHE_KEYS.tunEnabled));
 
 export const useSubscriptionsCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.subscriptions, []);
+  const value = useAppDataCache<unknown>(
+    APP_DATA_CACHE_KEYS.subscriptions,
+    EMPTY_ARRAY,
+  );
   return toArrayValue<T>(value);
 };
 
@@ -384,18 +419,21 @@ export const useTunEnabledCache = (fallback = false): boolean => {
 };
 
 export const useConnectionsCache = <T = unknown>(): T[] => {
-  const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.connections, []);
-  return Array.isArray(value) ? (value as T[]) : [];
+  const value = useAppDataCache<unknown>(
+    APP_DATA_CACHE_KEYS.connections,
+    EMPTY_ARRAY,
+  );
+  return Array.isArray(value) ? (value as T[]) : (EMPTY_ARRAY as T[]);
 };
 
 export const useProxyGroupsCache = <T = unknown>(): T[] => {
   const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.proxyGroups, null);
-  return unpackProxyGroupsCache<T>(value).groups;
+  return useMemo(() => unpackProxyGroupsCache<T>(value).groups, [value]);
 };
 
 export const useProxyGroupsEnvelope = <T = unknown>(): ProxyGroupsCacheEnvelope<T> => {
   const value = useAppDataCache<unknown>(APP_DATA_CACHE_KEYS.proxyGroups, null);
-  return unpackProxyGroupsCache<T>(value);
+  return useMemo(() => unpackProxyGroupsCache<T>(value), [value]);
 };
 
 export const appDataKey = (key: AppDataCacheKey) => key;
