@@ -10,13 +10,16 @@ export const APP_DATA_CACHE_KEYS = {
   mihomoRunning: 'mihomoRunningState',
   connections: 'connectionsCache',
   matchRules: 'matchRulesCache',
-  proxyProviders: 'proxyProvidersCache',
-  ruleProviders: 'ruleProvidersCache',
+  proxyProviders: 'proxyProvidersCache:v2',
+  ruleProviders: 'ruleProvidersCache:v2',
   overrides: 'overridesCache',
   logs: 'logsCache',
   activeConfig: 'activeConfigCache',
   proxyMode: 'proxyModeCache',
+  systemProxyEnabled: 'systemProxyEnabledCache',
+  tunEnabled: 'tunEnabledCache',
   ipInfo: 'ipInfoCache',
+  dashboardRuntime: 'dashboardRuntimeCache',
 } as const;
 
 export type AppDataCacheKey =
@@ -161,5 +164,90 @@ export const useAppDataCache = <T,>(key: AppDataCacheKey, fallback: T): T => {
     (listener) => subscribeAppDataCache(key, listener),
     () => readAppDataCache<T>(key, fallback) ?? fallback,
     () => fallback,
+  );
+};
+
+export type AppDataInvalidationScope =
+  | 'all'
+  | 'profile'
+  | 'active-config'
+  | 'providers'
+  | 'runtime'
+  | 'network'
+  | 'backup';
+
+const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
+  all: Object.values(APP_DATA_CACHE_KEYS),
+  profile: [
+    APP_DATA_CACHE_KEYS.subscriptions,
+    APP_DATA_CACHE_KEYS.activeConfig,
+    APP_DATA_CACHE_KEYS.proxyGroups,
+    APP_DATA_CACHE_KEYS.proxyMode,
+    APP_DATA_CACHE_KEYS.matchRules,
+    APP_DATA_CACHE_KEYS.proxyProviders,
+    APP_DATA_CACHE_KEYS.ruleProviders,
+    APP_DATA_CACHE_KEYS.overrides,
+    APP_DATA_CACHE_KEYS.connections,
+    APP_DATA_CACHE_KEYS.dashboardRuntime,
+    APP_DATA_CACHE_KEYS.ipInfo,
+  ],
+  'active-config': [
+    APP_DATA_CACHE_KEYS.activeConfig,
+    APP_DATA_CACHE_KEYS.proxyGroups,
+    APP_DATA_CACHE_KEYS.proxyMode,
+    APP_DATA_CACHE_KEYS.matchRules,
+    APP_DATA_CACHE_KEYS.proxyProviders,
+    APP_DATA_CACHE_KEYS.ruleProviders,
+    APP_DATA_CACHE_KEYS.connections,
+    APP_DATA_CACHE_KEYS.dashboardRuntime,
+    APP_DATA_CACHE_KEYS.ipInfo,
+  ],
+  providers: [
+    APP_DATA_CACHE_KEYS.proxyProviders,
+    APP_DATA_CACHE_KEYS.ruleProviders,
+    APP_DATA_CACHE_KEYS.proxyGroups,
+  ],
+  runtime: [
+    APP_DATA_CACHE_KEYS.mihomoRunning,
+    APP_DATA_CACHE_KEYS.proxyMode,
+    APP_DATA_CACHE_KEYS.systemProxyEnabled,
+    APP_DATA_CACHE_KEYS.tunEnabled,
+    APP_DATA_CACHE_KEYS.dashboardRuntime,
+    APP_DATA_CACHE_KEYS.connections,
+  ],
+  network: [
+    APP_DATA_CACHE_KEYS.connections,
+    APP_DATA_CACHE_KEYS.ipInfo,
+    APP_DATA_CACHE_KEYS.dashboardRuntime,
+  ],
+  backup: Object.values(APP_DATA_CACHE_KEYS),
+};
+
+export const invalidateAppDataCache = (
+  scope: AppDataInvalidationScope | AppDataCacheKey[] = 'profile',
+  options: { broadcast?: boolean } = {},
+) => {
+  const keys = Array.isArray(scope) ? scope : INVALIDATION_MAP[scope] || INVALIDATION_MAP.profile;
+  const uniqueKeys = Array.from(new Set(keys));
+  uniqueKeys.forEach((key) => {
+    removeAppDataCache(key, { broadcast: options.broadcast ?? true });
+  });
+  return uniqueKeys;
+};
+
+export const APP_DATA_INVALIDATE_EVENT = 'flyclash-cache-invalidate';
+
+export const emitAppDataInvalidate = (
+  scope: AppDataInvalidationScope = 'profile',
+  detail: Record<string, unknown> = {},
+) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(APP_DATA_INVALIDATE_EVENT, {
+      detail: {
+        scope,
+        ...detail,
+      },
+    }),
   );
 };

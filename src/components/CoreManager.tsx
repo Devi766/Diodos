@@ -116,65 +116,6 @@ const errorToMessage = (error: unknown) => {
   return error instanceof Error ? error.message : String(error);
 };
 
-const renderCoreToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-  if (typeof document === 'undefined' || !message) return;
-
-  let root = document.getElementById('flyclash-toast-root');
-  if (!root) {
-    root = document.createElement('div');
-    root.id = 'flyclash-toast-root';
-    root.setAttribute('aria-live', 'polite');
-    Object.assign(root.style, {
-      position: 'fixed',
-      top: '16px',
-      right: '16px',
-      zIndex: '2147483647',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-      pointerEvents: 'none',
-      maxWidth: 'min(420px, calc(100vw - 32px))'
-    });
-    document.body.appendChild(root);
-  }
-
-  const toast = document.createElement('div');
-  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-  toast.textContent = message;
-  Object.assign(toast.style, {
-    boxSizing: 'border-box',
-    width: '100%',
-    padding: '12px 16px',
-    borderRadius: '12px',
-    background: {
-      success: '#16a34a',
-      error: '#dc2626',
-      info: '#2563eb'
-    }[type],
-    color: '#fff',
-    boxShadow: '0 18px 45px rgba(15, 23, 42, 0.22)',
-    fontSize: '14px',
-    fontWeight: '600',
-    lineHeight: '1.45',
-    whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
-    opacity: '1',
-    transform: 'translateY(0)',
-    transition: 'opacity 160ms ease, transform 160ms ease',
-    pointerEvents: 'auto'
-  });
-  root.appendChild(toast);
-
-  window.setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-6px)';
-    window.setTimeout(() => {
-      toast.remove();
-      if (!root.hasChildNodes()) root.remove();
-    }, 180);
-  }, 8000);
-};
-
 const notifyCoreConfigChanged = (detail: Record<string, unknown> = {}) => {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent('core-config-changed', { detail }));
@@ -239,7 +180,6 @@ export default function CoreManager() {
   const withErrorDetail = (label: string, detail: string) => `${label}: ${detail}`;
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ type, message });
-    renderCoreToast(message, type);
     showGlobalToast({ type, message });
   };
 

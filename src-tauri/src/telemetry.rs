@@ -12,6 +12,8 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+use crate::core::identity as core_identity;
+use crate::resources;
 use crate::storage::{app_data_dir, db, set_setting, setting};
 
 type CompatResult = Result<Value, String>;
@@ -42,9 +44,11 @@ fn arg_string(args: &[Value], index: usize) -> Option<String> {
 }
 
 fn mihomo_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app_data_dir(app)?.join("mihomo");
-    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    Ok(dir)
+    resources::mihomo_dir(app)
+}
+
+fn core_log_file(app: &AppHandle) -> Result<PathBuf, String> {
+    resources::core_log_path(app)
 }
 
 pub(crate) fn today_key() -> String {
@@ -112,7 +116,7 @@ fn parse_mihomo_log_line(line: &str) -> Value {
 }
 
 fn read_mihomo_logs(app: &AppHandle, limit: usize) -> Result<Vec<Value>, String> {
-    let log_path = mihomo_dir(app)?.join("mihomo.log");
+    let log_path = core_log_file(app)?;
     if !log_path.exists() {
         return Ok(vec![]);
     }
@@ -235,9 +239,14 @@ fn save_mihomo_logs(app: &AppHandle, log_entries: &Value) -> Result<PathBuf, Str
 }
 
 fn clear_mihomo_logs(app: &AppHandle) -> Result<(), String> {
-    let log_path = mihomo_dir(app)?.join("mihomo.log");
+    let log_path = core_log_file(app)?;
     if log_path.exists() {
-        fs::write(log_path, "").map_err(|err| err.to_string())?;
+        fs::write(&log_path, "").map_err(|err| err.to_string())?;
+    }
+    // Also clear legacy path if both exist during migration.
+    let legacy = mihomo_dir(app)?.join(core_identity::legacy_core_log_file_name());
+    if legacy.exists() && legacy != log_path {
+        let _ = fs::write(legacy, "");
     }
     set_setting(app, "logs", json!([]))?;
     Ok(())

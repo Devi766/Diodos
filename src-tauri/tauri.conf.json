@@ -51,7 +51,7 @@
       "../tools"
     ],
     "shortDescription": "FlyClash Desktop",
-    "longDescription": "FlyClash is a desktop proxy client based on Mihomo.",
+    "longDescription": "FlyClash is a desktop proxy client powered by FlyClash Core (mihomo-compatible).",
     "icon": [
       "icons/512x512.png",
       "icons/icon.png",

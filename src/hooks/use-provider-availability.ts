@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  filterProviderRecord,
+  getConfiguredProviderNames,
+  providerMap,
+} from '@/services/provider-filter';
 
 type ProviderStatus = 'unknown' | 'present' | 'absent';
 
@@ -13,8 +18,20 @@ const notifyListeners = (status: ProviderStatus) => {
   listeners.forEach((listener) => listener(status));
 };
 
-const providerMap = (result: any) => {
-  return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
+const waitForIdleSlot = async (timeoutMs = 1200) => {
+  if (typeof window === 'undefined') return;
+
+  await new Promise<void>((resolve) => {
+    const requestIdle = (window as any).requestIdleCallback as
+      | ((callback: () => void, options?: { timeout?: number }) => number)
+      | undefined;
+
+    if (typeof requestIdle === 'function') {
+      requestIdle(resolve, { timeout: timeoutMs });
+    } else {
+      window.setTimeout(resolve, Math.min(timeoutMs, 180));
+    }
+  });
 };
 
 const evaluateAvailability = async (): Promise<ProviderStatus> => {
@@ -36,18 +53,30 @@ const evaluateAvailability = async (): Promise<ProviderStatus> => {
 
     const proxyProviders = proxyResult.status === 'fulfilled' ? providerMap(proxyResult.value) : undefined;
     const ruleProviders = ruleResult.status === 'fulfilled' ? providerMap(ruleResult.value) : undefined;
+    const [configuredProxyProviders, configuredRuleProviders] = await Promise.all([
+      getConfiguredProviderNames('proxyProviders'),
+      getConfiguredProviderNames('ruleProviders'),
+    ]);
+    const filteredProxyProviders =
+      proxyProviders && typeof proxyProviders === 'object'
+        ? filterProviderRecord(proxyProviders as Record<string, any>, 'proxyProviders', configuredProxyProviders)
+        : undefined;
+    const filteredRuleProviders =
+      ruleProviders && typeof ruleProviders === 'object'
+        ? filterProviderRecord(ruleProviders as Record<string, any>, 'ruleProviders', configuredRuleProviders)
+        : undefined;
 
     const hasProxyProviders =
       proxyResult.status === 'fulfilled' &&
       proxyResult.value?.success &&
-      proxyProviders &&
-      Object.keys(proxyProviders).length > 0;
+      filteredProxyProviders &&
+      Object.keys(filteredProxyProviders).length > 0;
 
     const hasRuleProviders =
       ruleResult.status === 'fulfilled' &&
       ruleResult.value?.success &&
-      ruleProviders &&
-      Object.keys(ruleProviders).length > 0;
+      filteredRuleProviders &&
+      Object.keys(filteredRuleProviders).length > 0;
 
     return hasProxyProviders || hasRuleProviders ? 'present' : 'absent';
   } catch (error) {
@@ -97,7 +126,17 @@ export const useProviderAvailability = () => {
 
   useEffect(() => {
     if (cachedStatus === 'unknown') {
-      refreshAvailability();
+      let canceled = false;
+      const timer = window.setTimeout(() => {
+        void waitForIdleSlot(1800).then(() => {
+          if (!canceled) void refreshAvailability();
+        });
+      }, 700);
+
+      return () => {
+        canceled = true;
+        window.clearTimeout(timer);
+      };
     }
   }, []);
 
@@ -105,14 +144,21 @@ export const useProviderAvailability = () => {
     if (typeof window === 'undefined') return;
 
     const timers = new Set<number>();
-    const refreshAfterConfigChange = () => {
-      void refreshAvailability({ preserveKnownOnUnknown: true });
-
+    let canceled = false;
+    const scheduleRefresh = (delay: number) => {
       const timer = window.setTimeout(() => {
         timers.delete(timer);
-        void refreshAvailability({ preserveKnownOnUnknown: true });
-      }, 300);
+        void waitForIdleSlot(1200).then(() => {
+          if (!canceled) {
+            void refreshAvailability({ preserveKnownOnUnknown: true });
+          }
+        });
+      }, delay);
       timers.add(timer);
+    };
+    const refreshAfterConfigChange = () => {
+      scheduleRefresh(120);
+      scheduleRefresh(650);
     };
     const refreshWhenVisible = () => {
       if (!document.hidden) refreshAfterConfigChange();
@@ -131,6 +177,7 @@ export const useProviderAvailability = () => {
     });
 
     return () => {
+      canceled = true;
       window.removeEventListener('profile-updated', refreshAfterConfigChange);
       window.removeEventListener('backup-restored', refreshAfterConfigChange);
       window.removeEventListener('subscription-auto-updated', refreshAfterConfigChange);

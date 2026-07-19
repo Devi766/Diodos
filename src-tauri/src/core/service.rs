@@ -170,12 +170,137 @@ pub fn ensure_helper_service_ready() -> Result<(), String> {
     Err("FlyClash Helper 服务已启动，但 IPC 未就绪".to_string())
 }
 
+/// Restart a running helper service and wait until IPC answers.
+///
+/// Used for the "running but pipe dead" failure mode, where `sc query`
+/// still reports RUNNING while named-pipe IPC is broken.
+pub fn repair_helper_service_ipc() -> Result<(), String> {
+    if !cfg!(target_os = "windows") {
+        return Err("当前平台不支持 Windows Helper 服务".to_string());
+    }
+
+    let flags = query_helper_service_flags();
+    if !flags.installed {
+        return Err(flags
+            .error
+            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string()));
+    }
+
+    if flags.running {
+        // Best-effort stop; even if sc stop fails, ensure_helper_service_ready
+        // will still try to start / wait for IPC.
+        let _ = stop_helper_service();
+        for _ in 0..20 {
+            let current = query_helper_service_flags();
+            if !current.running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(150));
+        }
+    }
+
+    ensure_helper_service_ready()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HelperEnsureOutcome {
+    AlreadyReady,
+    Started,
+    RepairedIpc,
+}
+
+/// Pure decision helper for ensure/repair paths. Separated so unit tests do not
+/// need Windows service control.
+pub fn helper_ensure_plan(
+    installed: bool,
+    running: bool,
+    ipc_available: bool,
+) -> Result<HelperEnsureOutcome, &'static str> {
+    if !installed {
+        return Err("not-installed");
+    }
+    if running {
+        if ipc_available {
+            return Ok(HelperEnsureOutcome::AlreadyReady);
+        }
+        return Ok(HelperEnsureOutcome::RepairedIpc);
+    }
+    Ok(HelperEnsureOutcome::Started)
+}
+
+/// Ensure helper service is installed, running, and IPC-ready.
+///
+/// Unlike `ensure_helper_service_ready`, this repairs the
+/// `running + no IPC` state by restarting the Windows service.
+pub fn ensure_helper_service_ipc_ready() -> Result<HelperEnsureOutcome, String> {
+    if !cfg!(target_os = "windows") {
+        return Err("当前平台不支持 Windows Helper 服务".to_string());
+    }
+
+    let flags = query_helper_service_flags();
+    if !flags.installed {
+        return Err(flags
+            .error
+            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string()));
+    }
+
+    let running = flags.running;
+    let ipc_available = if running {
+        helper_ipc_snapshot(true).ipc_available()
+    } else {
+        false
+    };
+
+    match helper_ensure_plan(flags.installed, running, ipc_available) {
+        Ok(HelperEnsureOutcome::AlreadyReady) => Ok(HelperEnsureOutcome::AlreadyReady),
+        Ok(HelperEnsureOutcome::RepairedIpc) => {
+            repair_helper_service_ipc()?;
+            Ok(HelperEnsureOutcome::RepairedIpc)
+        }
+        Ok(HelperEnsureOutcome::Started) => {
+            ensure_helper_service_ready()?;
+            Ok(HelperEnsureOutcome::Started)
+        }
+        Err(_) => Err(flags
+            .error
+            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string())),
+    }
+}
+
 pub fn stop_helper_service() -> Result<String, String> {
     if !cfg!(target_os = "windows") {
         return Err("当前平台不支持 Windows Helper 服务".to_string());
     }
 
     command_output("sc", &["stop", HELPER_SERVICE_NAME])
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HelperServiceReadiness {
+    Unsupported,
+    NotInstalled,
+    InstalledStopped,
+    RunningNoIpc,
+    Ready,
+}
+
+impl HelperServiceReadiness {
+    pub fn from_state(installed: bool, running: bool, ipc_available: bool, unsupported: bool) -> Self {
+        if unsupported {
+            return Self::Unsupported;
+        }
+        if !installed {
+            return Self::NotInstalled;
+        }
+        if !running {
+            return Self::InstalledStopped;
+        }
+        if !ipc_available {
+            return Self::RunningNoIpc;
+        }
+        Self::Ready
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +310,9 @@ pub struct HelperServiceStatus {
     pub running: bool,
     pub mode: String,
     pub ipc_available: bool,
+    /// Service process is running AND helper IPC answers. Prefer this over `running`.
+    pub service_ready: bool,
+    pub readiness: HelperServiceReadiness,
     pub core_running: bool,
     pub core_pid: Option<u32>,
     pub version: Option<Value>,
@@ -200,6 +328,8 @@ impl HelperServiceStatus {
             running: false,
             mode: "unsupported".to_string(),
             ipc_available: false,
+            service_ready: false,
+            readiness: HelperServiceReadiness::Unsupported,
             core_running: false,
             core_pid: None,
             version: None,
@@ -210,11 +340,20 @@ impl HelperServiceStatus {
     }
 
     pub fn from_flags(flags: HelperServiceFlags, helper: HelperIpcSnapshot) -> Self {
+        let ipc_available = helper.ipc_available();
+        let service_ready = flags.running && ipc_available;
         Self {
             installed: flags.installed,
             running: flags.running,
             mode: "service".to_string(),
-            ipc_available: helper.ipc_available(),
+            ipc_available,
+            service_ready,
+            readiness: HelperServiceReadiness::from_state(
+                flags.installed,
+                flags.running,
+                ipc_available,
+                false,
+            ),
             core_running: helper.core_running(),
             core_pid: helper.core_pid(),
             version: helper.version,
@@ -245,16 +384,27 @@ pub fn helper_service_action_payload(
     helper: HelperIpcSnapshot,
     ipc_available: bool,
 ) -> Value {
+    helper_service_action_payload_with_repaired(message, helper, ipc_available, false)
+}
+
+pub fn helper_service_action_payload_with_repaired(
+    message: impl Into<String>,
+    helper: HelperIpcSnapshot,
+    ipc_available: bool,
+    repaired: bool,
+) -> Value {
     json!({
         "message": message.into(),
         "mode": "service",
         "ipcAvailable": ipc_available,
+        "serviceReady": ipc_available,
         "coreRunning": helper.core_running(),
         "corePid": helper.core_pid(),
         "helperStatusError": helper.status_error,
         "helperVersionError": helper.version_error,
         "version": helper.version,
-        "needRestart": false
+        "needRestart": false,
+        "repaired": repaired
     })
 }
 
@@ -266,12 +416,12 @@ pub fn windows_permission_status_payload(
     helper: HelperIpcSnapshot,
 ) -> Value {
     let mode = mode.into();
+    let service_ready = flags.running && helper.ipc_available();
     let has_permission = if mode == "service" {
-        flags.installed || is_admin
+        service_ready || is_admin
     } else {
         has_elevate_task || is_admin
     };
-    let service_ready = flags.running && helper.ipc_available();
 
     json!({
         "hasPermission": has_permission,
@@ -663,6 +813,8 @@ mod tests {
         assert_eq!(payload["running"], json!(true));
         assert_eq!(payload["mode"], json!("service"));
         assert_eq!(payload["ipcAvailable"], json!(true));
+        assert_eq!(payload["serviceReady"], json!(true));
+        assert_eq!(payload["readiness"], json!("ready"));
         assert_eq!(payload["coreRunning"], json!(true));
         assert_eq!(payload["corePid"], json!(4242));
         assert_eq!(payload["version"]["version"], json!("1.2.3"));
@@ -679,9 +831,64 @@ mod tests {
         assert_eq!(payload["running"], json!(false));
         assert_eq!(payload["mode"], json!("service"));
         assert_eq!(payload["ipcAvailable"], json!(false));
+        assert_eq!(payload["serviceReady"], json!(false));
+        assert_eq!(payload["readiness"], json!("not-installed"));
         assert_eq!(payload["coreRunning"], json!(false));
         assert_eq!(payload["corePid"], Value::Null);
         assert_eq!(payload["error"], json!("service missing"));
+    }
+
+    #[test]
+    fn helper_service_readiness_marks_running_without_ipc() {
+        let payload = helper_service_status_payload(
+            HelperServiceFlags::new(true, true, None),
+            HelperIpcSnapshot {
+                status_error: Some("pipe missing".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(payload["running"], json!(true));
+        assert_eq!(payload["ipcAvailable"], json!(false));
+        assert_eq!(payload["serviceReady"], json!(false));
+        assert_eq!(payload["readiness"], json!("running-no-ipc"));
+    }
+
+    #[test]
+    fn helper_ensure_plan_repairs_running_without_ipc() {
+        assert_eq!(
+            helper_ensure_plan(true, true, false),
+            Ok(HelperEnsureOutcome::RepairedIpc)
+        );
+        assert_eq!(
+            helper_ensure_plan(true, true, true),
+            Ok(HelperEnsureOutcome::AlreadyReady)
+        );
+        assert_eq!(
+            helper_ensure_plan(true, false, false),
+            Ok(HelperEnsureOutcome::Started)
+        );
+        assert_eq!(helper_ensure_plan(false, false, false), Err("not-installed"));
+    }
+
+    #[test]
+    fn helper_service_action_payload_reports_service_ready_and_repair() {
+        let helper = HelperIpcSnapshot {
+            status: Some(HelperCoreStatus {
+                running: true,
+                pid: Some(7),
+            }),
+            version: Some(json!({ "version": "1.0.2" })),
+            ..Default::default()
+        };
+        let payload =
+            helper_service_action_payload_with_repaired("fixed", helper, true, true);
+
+        assert_eq!(payload["message"], json!("fixed"));
+        assert_eq!(payload["ipcAvailable"], json!(true));
+        assert_eq!(payload["serviceReady"], json!(true));
+        assert_eq!(payload["repaired"], json!(true));
+        assert_eq!(payload["corePid"], json!(7));
     }
 
     #[test]
@@ -707,6 +914,22 @@ mod tests {
             payload["details"]["helperVersion"]["version"],
             json!("ready")
         );
+    }
+
+    #[test]
+    fn windows_permission_status_requires_ready_service_in_service_mode() {
+        let payload = windows_permission_status_payload(
+            "service",
+            false,
+            false,
+            HelperServiceFlags::new(true, false, None),
+            HelperIpcSnapshot::default(),
+        );
+
+        assert_eq!(payload["hasPermission"], json!(false));
+        assert_eq!(payload["serviceReady"], json!(false));
+        assert_eq!(payload["details"]["serviceInstalled"], json!(true));
+        assert_eq!(payload["details"]["serviceRunning"], json!(false));
     }
 
     #[test]

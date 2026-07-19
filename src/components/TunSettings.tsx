@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
 import * as Toast from '@radix-ui/react-toast';
-import { Cross2Icon } from '@radix-ui/react-icons';
+import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getBrowserPlatform, getRuntimePlatform } from '@/utils/platform';
 
@@ -25,14 +25,69 @@ type TunServiceStatus = {
   running: boolean;
   mode?: string;
   ipcAvailable?: boolean;
+  serviceReady?: boolean;
+  readiness?: 'unsupported' | 'not-installed' | 'installed-stopped' | 'running-no-ipc' | 'ready';
   coreRunning?: boolean;
   corePid?: number | null;
   version?: string | null;
   error?: string;
+  helperStatusError?: string;
+  helperVersionError?: string;
 };
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
-const defaultServiceStatus: TunServiceStatus = { installed: false, running: false };
+const defaultServiceStatus: TunServiceStatus = {
+  installed: false,
+  running: false,
+  serviceReady: false,
+  readiness: 'not-installed',
+};
+
+const normalizeServiceStatus = (status: any): TunServiceStatus => {
+  const installed = Boolean(status?.installed ?? status?.serviceInstalled ?? false);
+  const running = Boolean(status?.running ?? status?.serviceRunning ?? false);
+  const ipcAvailable =
+    typeof status?.ipcAvailable === 'boolean' ? status.ipcAvailable : undefined;
+  const serviceReady =
+    typeof status?.serviceReady === 'boolean'
+      ? status.serviceReady
+      : Boolean(running && ipcAvailable);
+  const readiness =
+    (status?.readiness as TunServiceStatus['readiness'] | undefined) ||
+    (!installed
+      ? 'not-installed'
+      : !running
+        ? 'installed-stopped'
+        : serviceReady
+          ? 'ready'
+          : 'running-no-ipc');
+
+  let version: string | null = null;
+  if (typeof status?.version === 'string') {
+    version = status.version;
+  } else if (status?.version && typeof status.version === 'object') {
+    version =
+      status.version.version ||
+      status.version.name ||
+      status.version.value ||
+      null;
+  }
+
+  return {
+    installed,
+    running,
+    mode: status?.mode,
+    ipcAvailable,
+    serviceReady,
+    readiness,
+    coreRunning: status?.coreRunning,
+    corePid: status?.corePid ?? null,
+    version,
+    error: status?.error,
+    helperStatusError: status?.helperStatusError,
+    helperVersionError: status?.helperVersionError,
+  };
+};
 
 const getTunApi = () => {
   if (typeof window === 'undefined') return undefined;
@@ -166,28 +221,9 @@ const TunSettings: React.FC = () => {
       }
 
       const status = await api.getTunServiceStatus();
-      if (status.success) {
-        setServiceStatus({
-          installed: status.installed ?? status.serviceInstalled ?? false,
-          running: status.running ?? status.serviceRunning ?? false,
-          mode: status.mode,
-          ipcAvailable: status.ipcAvailable,
-          coreRunning: status.coreRunning,
-          corePid: status.corePid ?? null,
-          version: status.version ?? null,
-          error: status.error
-        });
-      } else {
-        setServiceStatus({
-          installed: status.installed ?? status.serviceInstalled ?? false,
-          running: status.running ?? status.serviceRunning ?? false,
-          mode: status.mode,
-          ipcAvailable: status.ipcAvailable,
-          coreRunning: status.coreRunning,
-          corePid: status.corePid ?? null,
-          version: status.version ?? null,
-          error: status.error
-        });
+      const normalized = normalizeServiceStatus(status);
+      setServiceStatus(normalized);
+      if (!status.success) {
         showError(`${t('tunSettings.loadServiceStatusFailed')}: ${resultFailed(status, 'tunSettings.loadServiceStatusFailed')}`);
       }
     } catch (error) {
@@ -323,11 +359,20 @@ const TunSettings: React.FC = () => {
     return 'text-gray-500 dark:text-gray-400';
   };
 
-  const serviceStateText = serviceStatus.running
-    ? t('tunSettings.serviceRunning')
-    : serviceStatus.installed
-      ? t('tunSettings.serviceInstalledStopped')
-      : t('tunSettings.serviceNotInstalled');
+  const readiness = serviceStatus.readiness;
+  const serviceReady = Boolean(serviceStatus.serviceReady);
+  const needsIpcRepair = readiness === 'running-no-ipc' || (serviceStatus.running && !serviceReady);
+
+  const serviceStateText =
+    readiness === 'ready' || serviceReady
+      ? t('tunSettings.serviceReady')
+      : readiness === 'running-no-ipc'
+        ? t('tunSettings.serviceRunningNoIpc')
+        : readiness === 'installed-stopped' || serviceStatus.installed
+          ? t('tunSettings.serviceInstalledStopped')
+          : readiness === 'unsupported'
+            ? t('tunSettings.serviceUnsupported')
+            : t('tunSettings.serviceNotInstalled');
 
   const serviceCoreText = serviceStatus.coreRunning
     ? serviceStatus.corePid
@@ -335,10 +380,15 @@ const TunSettings: React.FC = () => {
       : t('tunSettings.serviceCoreRunning')
     : t('tunSettings.serviceCoreStopped');
 
-  const isExpectedMissingServiceError = serviceStatus.error
-    ? /1060|does not exist|not exist|未安装|不存在/i.test(serviceStatus.error)
+  const rawServiceError =
+    serviceStatus.error ||
+    serviceStatus.helperStatusError ||
+    serviceStatus.helperVersionError;
+  const isExpectedMissingServiceError = rawServiceError
+    ? /1060|does not exist|not exist|未安装|不存在/i.test(rawServiceError)
     : false;
-  const serviceStatusError = serviceStatus.error && !isExpectedMissingServiceError ? serviceStatus.error : undefined;
+  const serviceStatusError =
+    rawServiceError && !isExpectedMissingServiceError ? rawServiceError : undefined;
 
   const checkPermissionStatus = async () => {
     const api = getTunApi();
@@ -604,15 +654,29 @@ const TunSettings: React.FC = () => {
               <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-gray-600 dark:text-gray-300">{t('tunSettings.helperService')}</span>
-                  <span className={`text-xs font-medium ${statusClass(serviceStatus.running, serviceStatus.installed)}`}>
+                  <span className={`text-xs font-medium ${statusClass(serviceReady, needsIpcRepair || serviceStatus.installed)}`}>
                     {serviceStateText}
                   </span>
                 </div>
 
                 <div className="space-y-1.5 text-xs mb-3">
                   <div className="flex items-center justify-between gap-3">
+                    <span className="text-gray-500 dark:text-gray-400">{t('tunSettings.serviceReadiness')}</span>
+                    <span className={`font-medium ${statusClass(serviceReady, needsIpcRepair)}`}>
+                      {readiness === 'ready'
+                        ? t('tunSettings.serviceReady')
+                        : readiness === 'running-no-ipc'
+                          ? t('tunSettings.serviceRunningNoIpc')
+                          : readiness === 'installed-stopped'
+                            ? t('tunSettings.serviceInstalledStopped')
+                            : readiness === 'unsupported'
+                              ? t('tunSettings.serviceUnsupported')
+                              : t('tunSettings.serviceNotInstalled')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
                     <span className="text-gray-500 dark:text-gray-400">{t('tunSettings.serviceIpc')}</span>
-                    <span className={`font-medium ${statusClass(serviceStatus.ipcAvailable, serviceStatus.running)}`}>
+                    <span className={`font-medium ${statusClass(serviceStatus.ipcAvailable, serviceStatus.running && !serviceStatus.ipcAvailable)}`}>
                       {serviceStatus.ipcAvailable ? t('tunSettings.serviceIpcReady') : t('tunSettings.serviceIpcUnavailable')}
                     </span>
                   </div>
@@ -631,6 +695,11 @@ const TunSettings: React.FC = () => {
                   {serviceStatusError && (
                     <div className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
                       {t('tunSettings.serviceStatusError')}: {serviceStatusError}
+                    </div>
+                  )}
+                  {needsIpcRepair && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                      {t('tunSettings.serviceRunningNoIpcHint')}
                     </div>
                   )}
                 </div>
@@ -665,6 +734,16 @@ const TunSettings: React.FC = () => {
                   )}
                   {serviceStatus.running && (
                     <>
+                      {needsIpcRepair && (
+                        <button
+                          className="py-1 px-2.5 text-xs rounded-md bg-amber-500 hover:bg-amber-600 text-white transition-colors disabled:opacity-50"
+                          onClick={handleStartService}
+                          disabled={serviceLoading}
+                          title={t('tunSettings.serviceRunningNoIpcHint')}
+                        >
+                          {serviceLoading ? '处理中...' : t('tunSettings.repairIpc')}
+                        </button>
+                      )}
                       <button
                         className="py-1 px-2.5 text-xs rounded-md bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-50"
                         onClick={handleStopService}
@@ -944,7 +1023,7 @@ const TunSettings: React.FC = () => {
                 className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
                 aria-label="Close"
               >
-                <Cross2Icon className="w-4 h-4" />
+                <X className="w-4 h-4" />
               </button>
             </Toast.Close>
           </div>

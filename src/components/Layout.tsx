@@ -3,24 +3,21 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import classNames from 'classnames';
 import {
-  HomeIcon,
-  GlobeIcon,
-  ReaderIcon,
-  GearIcon,
-  DashboardIcon,
-  InfoCircledIcon,
-  HamburgerMenuIcon,
-  Cross1Icon,
-  BarChartIcon,
-  RocketIcon,
-  MixerHorizontalIcon,
-  FileTextIcon,
-  LayersIcon,
-  CodeIcon
-} from '@radix-ui/react-icons';
+  Globe,
+  BookOpen,
+  Settings,
+  LayoutDashboard,
+  Info,
+  Menu,
+  X,
+  BarChart3,
+  FileText,
+  Layers,
+  Code2,
+  Bot,
+} from 'lucide-react';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
-import { Bot } from 'lucide-react';
 import TitleBar from '@/components/TitleBar';
 import { showToast } from '@/components/ui/toast';
 import { useTranslation } from 'react-i18next';
@@ -35,6 +32,7 @@ import {
   UpdateEventDetail,
 } from '@/utils/update-check';
 import { preloadRouteData } from '@/services/app-data-preload';
+import { preloadRouteModule } from '@/services/route-preload';
 
 type CompatWarningDetail = {
   method?: string;
@@ -52,6 +50,7 @@ declare global {
 
 let hasRunAutoUpdateCheck = false;
 const FALLBACK_APP_VERSION = '0.2.9';
+const ENABLE_IDLE_ROUTE_MODULE_PRELOAD = false;
 
 const normalizeVersionLabel = (value: unknown): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -93,7 +92,7 @@ export default function Layout({ children }: LayoutProps) {
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const hasCheckedUpdatesRef = useRef(false);
   const compatWarningToastRef = useRef<Map<string, number>>(new Map());
-  const navigationSeqRef = useRef(0);
+  const routeWarmupRef = useRef<Map<string, number>>(new Map());
   const { hasProviders } = useProviderAvailability();
   const showUpdateDialog = useCallback((release: ReleaseInfo, currentVersion: string) => {
     setPendingUpdate({ ...release, currentVersion });
@@ -177,14 +176,22 @@ export default function Layout({ children }: LayoutProps) {
     const syncTheme = () => {
       const isDark = document.documentElement.classList.contains('dark');
       document.body.classList.toggle('theme-dark', isDark);
+      document.body.classList.toggle('theme-light', !isDark);
+      // Mirror on <html> too so CSS can rely on either root.
+      document.documentElement.classList.toggle('theme-dark', isDark);
     };
 
     syncTheme();
+    // Run again after paint in case root layout sets dark a tick later.
+    const raf = window.requestAnimationFrame(syncTheme);
+    const timer = window.setTimeout(syncTheme, 50);
 
     const observer = new MutationObserver(syncTheme);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
       observer.disconnect();
     };
   }, []);
@@ -238,11 +245,30 @@ export default function Layout({ children }: LayoutProps) {
     });
   }, []);
 
-  const warmRouteData = useCallback((href: string) => {
+  const warmRouteData = useCallback((href: string, force = false) => {
+    void preloadRouteModule(href);
+
     try {
       router.prefetch(href);
     } catch {}
-    void preloadRouteData(href, { force: true, timeoutMs: 1200 });
+
+    if (typeof window === 'undefined') return;
+    const now = Date.now();
+    const lastWarmup = routeWarmupRef.current.get(href) || 0;
+    if (!force && now - lastWarmup < 30_000) return;
+    routeWarmupRef.current.set(href, now);
+
+    const run = () => {
+      void preloadRouteData(href, { force, timeoutMs: 450 });
+    };
+    const requestIdle = (window as any).requestIdleCallback as
+      | ((callback: () => void, options?: { timeout?: number }) => number)
+      | undefined;
+    if (typeof requestIdle === 'function') {
+      requestIdle(run, { timeout: force ? 120 : 800 });
+    } else {
+      window.setTimeout(run, force ? 0 : 120);
+    }
   }, [router]);
 
   const handleNavigationClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, href: string) => {
@@ -262,35 +288,26 @@ export default function Layout({ children }: LayoutProps) {
       return;
     }
 
-    event.preventDefault();
     setMobileMenuOpen(false);
-
-    const seq = navigationSeqRef.current + 1;
-    navigationSeqRef.current = seq;
-    void preloadRouteData(href, { force: true, timeoutMs: 900 }).finally(() => {
-      if (navigationSeqRef.current === seq) {
-        router.push(href);
-      }
-    });
-  }, [pathname, router]);
+  }, [pathname]);
   
   const menuItems = useMemo(() => {
     const items = [
-      { name: t('nav.dashboard'), href: '/', icon: <DashboardIcon className="w-5 h-5" /> },
-      { name: t('nav.nodes'), href: '/nodes', icon: <GlobeIcon className="w-5 h-5" /> },
-      { name: t('nav.subscriptions'), href: '/subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
-      { name: t('nav.connections'), href: '/connections', icon: <BarChartIcon className="w-5 h-5" /> },
-      { name: t('nav.matchRules'), href: '/match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
-      { name: t('nav.overrides'), href: '/overrides', icon: <CodeIcon className="w-5 h-5" /> },
-      { name: t('nav.externalResources'), href: '/external-resources', icon: <LayersIcon className="w-5 h-5" /> },
+      { name: t('nav.dashboard'), href: '/', icon: <LayoutDashboard className="w-5 h-5" /> },
+      { name: t('nav.nodes'), href: '/nodes', icon: <Globe className="w-5 h-5" /> },
+      { name: t('nav.subscriptions'), href: '/subscriptions', icon: <BookOpen className="w-5 h-5" /> },
+      { name: t('nav.connections'), href: '/connections', icon: <BarChart3 className="w-5 h-5" /> },
+      { name: t('nav.matchRules'), href: '/match-rules', icon: <FileText className="w-5 h-5" /> },
+      { name: t('nav.overrides'), href: '/overrides', icon: <Code2 className="w-5 h-5" /> },
+      { name: t('nav.externalResources'), href: '/external-resources', icon: <Layers className="w-5 h-5" /> },
       { name: t('nav.tools'), href: '/tools', icon: (
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M21.71 20.29L20.29 21.71A1 1 0 0 1 18.88 21.71L7 9.85A3.81 3.81 0 0 1 6 10A4 4 0 0 1 2.22 4.7L4.76 7.24L5.29 6.71L6.71 5.29L7.24 4.76L4.7 2.22A4 4 0 0 1 10 6A3.81 3.81 0 0 1 9.85 7L21.71 18.88A1 1 0 0 1 21.71 20.29M2.29 18.88A1 1 0 0 0 2.29 20.29L3.71 21.71A1 1 0 0 0 5.12 21.71L10.59 16.25L7.76 13.42M20 2L16 4V6L13.83 8.17L15.83 10.17L18 8H20L22 4Z" />
         </svg>
       ) },
-      { name: t('nav.logs'), href: '/logs', icon: <InfoCircledIcon className="w-5 h-5" /> },
+      { name: t('nav.logs'), href: '/logs', icon: <Info className="w-5 h-5" /> },
       { name: t('nav.aiAssistant'), href: '/ai-assistant', icon: <Bot className="w-5 h-5" /> },
-      { name: t('nav.settings'), href: '/settings', icon: <GearIcon className="w-5 h-5" /> },
+      { name: t('nav.settings'), href: '/settings', icon: <Settings className="w-5 h-5" /> },
     ];
 
     if (hasProviders) {
@@ -299,6 +316,77 @@ export default function Layout({ children }: LayoutProps) {
 
     return items;
   }, [hasProviders, t]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!ENABLE_IDLE_ROUTE_MODULE_PRELOAD) return;
+
+    const routes = menuItems.map((item) => item.href);
+    let disposed = false;
+    let routeIndex = 0;
+    let timer: number | null = null;
+    let idleHandle: number | null = null;
+
+    const clearScheduled = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+      if (idleHandle !== null) {
+        const cancelIdle = (window as any).cancelIdleCallback as
+          | ((handle: number) => void)
+          | undefined;
+        if (typeof cancelIdle === 'function') {
+          cancelIdle(idleHandle);
+        } else {
+          window.clearTimeout(idleHandle);
+        }
+        idleHandle = null;
+      }
+    };
+
+    const scheduleNext = (delay: number) => {
+      clearScheduled();
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (disposed) return;
+
+        const run = () => {
+          idleHandle = null;
+          if (disposed) return;
+
+          const href = routes[routeIndex];
+          routeIndex += 1;
+          if (href) {
+            void preloadRouteModule(href);
+            try {
+              router.prefetch(href);
+            } catch {}
+          }
+
+          if (routeIndex < routes.length) {
+            scheduleNext(320);
+          }
+        };
+
+        const requestIdle = (window as any).requestIdleCallback as
+          | ((callback: () => void, options?: { timeout?: number }) => number)
+          | undefined;
+        if (typeof requestIdle === 'function') {
+          idleHandle = requestIdle(run, { timeout: 2400 });
+        } else {
+          idleHandle = window.setTimeout(run, 180);
+        }
+      }, delay);
+    };
+
+    scheduleNext(2200);
+
+    return () => {
+      disposed = true;
+      clearScheduled();
+    };
+  }, [menuItems, router]);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -1114,7 +1202,7 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <>
-      <div className="app-window-surface relative h-screen overflow-hidden bg-transparent">
+      <div className="relative h-screen overflow-hidden bg-transparent">
         <TitleBar />
 
         <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
@@ -1148,7 +1236,7 @@ export default function Layout({ children }: LayoutProps) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  prefetch
+                  prefetch={false}
                   onMouseEnter={() => warmRouteData(item.href)}
                   onFocus={() => warmRouteData(item.href)}
                   onClick={(event) => handleNavigationClick(event, item.href)}
@@ -1196,7 +1284,7 @@ export default function Layout({ children }: LayoutProps) {
                 className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-muted-foreground hover:text-foreground"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               >
-                {mobileMenuOpen ? <Cross1Icon className="h-4 w-4" /> : <HamburgerMenuIcon className="h-4 w-4" />}
+                {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
               </button>
             </div>
 
@@ -1206,7 +1294,7 @@ export default function Layout({ children }: LayoutProps) {
                   <Link
                     key={item.href}
                     href={item.href}
-                    prefetch
+                    prefetch={false}
                     onMouseEnter={() => warmRouteData(item.href)}
                     onFocus={() => warmRouteData(item.href)}
                     onClick={(event) => handleNavigationClick(event, item.href)}

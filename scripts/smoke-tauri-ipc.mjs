@@ -97,7 +97,7 @@ const windowsProcesses = async () => {
   const script = [
     '$ErrorActionPreference="Stop";',
     'Get-CimInstance Win32_Process |',
-    'Where-Object { $_.Name -ieq "flyclash.exe" -or $_.Name -ieq "mihomo.exe" } |',
+    'Where-Object { $_.Name -ieq "flyclash.exe" -or $_.Name -like "mihomo*.exe" } |',
     'Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Depth 4',
   ].join(' ');
   const text = await execText('powershell.exe', ['-NoProfile', '-Command', script]);

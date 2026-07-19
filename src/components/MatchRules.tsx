@@ -7,12 +7,11 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { useTranslation } from 'react-i18next';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasMatchRulesCache,
+  readMatchRulesCache,
+  subscribeMatchRulesCache,
+  writeMatchRulesCache,
+} from '@/services/app-data-hooks';
 import { isMihomoRuntimeUnavailableError } from '@/services/mihomo-client';
 import { showToast } from '@/components/ui/toast';
 
@@ -41,11 +40,9 @@ const matchRulesViewCache: {
   loaded: false,
 };
 
-const MATCH_RULES_CACHE_KEY = APP_DATA_CACHE_KEYS.matchRules;
-
 const readMatchRulesSessionCache = (): MatchRule[] | null => {
-  const cached = readAppDataCache<unknown>(MATCH_RULES_CACHE_KEY);
-  return Array.isArray(cached) ? cached as MatchRule[] : null;
+  const cached = readMatchRulesCache<MatchRule>();
+  return cached.length > 0 || hasMatchRulesCache() ? cached : null;
 };
 
 const hydrateMatchRulesFromSession = () => {
@@ -87,7 +84,7 @@ export default function MatchRules() {
   }, [isLoading]);
 
   useEffect(() => {
-    return subscribeAppDataCache(MATCH_RULES_CACHE_KEY, () => {
+    return subscribeMatchRulesCache( () => {
       const cached = readMatchRulesSessionCache();
       if (!cached) return;
       matchRulesViewCache.rules = cached;
@@ -112,7 +109,7 @@ export default function MatchRules() {
     const coldLoad =
       matchRulesRef.current.length === 0 &&
       !matchRulesViewCache.loaded &&
-      !hasAppDataCache(MATCH_RULES_CACHE_KEY);
+      !hasMatchRulesCache();
     if (coldLoad) setIsLoading(true);
     setErrorMessage(null);
 
@@ -136,7 +133,7 @@ export default function MatchRules() {
           extra: Object.keys(extra).length > 0 ? extra : rule.extra,
         };
       });
-      writeAppDataCache(MATCH_RULES_CACHE_KEY, rules);
+      writeMatchRulesCache( rules);
       setMatchRulesList(rules);
     } catch (error: any) {
       console.error('获取规则列表失败:', error);
@@ -166,7 +163,7 @@ export default function MatchRules() {
             }
           : rule
       ));
-      writeAppDataCache(MATCH_RULES_CACHE_KEY, next);
+      writeMatchRulesCache( next);
       return next;
     });
   }, []);
@@ -252,7 +249,7 @@ export default function MatchRules() {
     isLoading &&
     filteredRules.length === 0 &&
     !matchRulesViewCache.loaded &&
-    !hasAppDataCache(MATCH_RULES_CACHE_KEY);
+    !hasMatchRulesCache();
 
   const RuleRow = ({ index, style }: { index: number; style: React.CSSProperties }) => {
     const rule = filteredRules[index];

@@ -173,90 +173,33 @@
       linear-gradient(180deg, rgba(7, 13, 26, 0.96), rgba(10, 19, 33, 0.93));
   }
 
+  /* Match main-branch Windows background treatment exactly. */
   body.platform-windows {
-    background: transparent !important;
-    --glass-surface: 210 45% 98% / 0.34;
-    --glass-border: 210 34% 84% / 0.42;
-    --glass-shadow: 220 60% 18% / 0.18;
-    --glass-highlight: 0 0% 100% / 0.44;
-    --sidebar-surface: 210 42% 97% / 0.46;
-    --sidebar-border: 210 30% 84% / 0.38;
-    --control-surface: 0 0% 100% / 0.48;
-    --card: 0 0% 100% / 0.58;
-    --popover: 0 0% 100% / 0.74;
-    --secondary: 214 59% 94% / 0.46;
-    --muted: 216 33% 92% / 0.42;
-    --border: 210 20% 78% / 0.42;
-    --input: 210 24% 82% / 0.5;
-    --glass-blur: 34px;
-  }
-
-  body.platform-windows.appearance-acrylic {
-    --glass-surface: 210 42% 98% / 0.4;
-    --sidebar-surface: 210 40% 97% / 0.52;
-    --control-surface: 0 0% 100% / 0.56;
-    --card: 0 0% 100% / 0.64;
-    --glass-blur: 46px;
-  }
-
-  body.platform-windows.appearance-solid {
-    background: #f5f8fc !important;
-    --glass-surface: 0 0% 100% / 0.96;
-    --glass-border: 210 30% 86% / 0.72;
-    --glass-shadow: 217 61% 25% / 0.08;
-    --glass-highlight: 0 0% 100% / 0.55;
-    --sidebar-surface: 210 28% 96% / 0.96;
-    --sidebar-border: 210 32% 86% / 0.68;
-    --control-surface: 0 0% 100% / 0.9;
-    --card: 0 0% 100% / 0.92;
-    --popover: 0 0% 100% / 0.96;
-    --secondary: 214 59% 94% / 0.75;
-    --muted: 216 33% 92% / 0.65;
-    --border: 210 25% 86% / 0.72;
-    --input: 210 25% 86% / 0.64;
-    --glass-blur: 18px;
+    background: #ffffff61 !important;
+    --glass-surface: 0 0% 100% / 0.08;
+    --glass-border: 210 40% 92% / 0.18;
+    --glass-shadow: 220 60% 18% / 0.22;
+    --glass-highlight: 0 0% 100% / 0.22;
+    --sidebar-surface: 210 36% 96% / 0.16;
+    --sidebar-border: 210 28% 86% / 0.18;
+    --control-surface: 0 0% 100% / 0.1;
+    --card: 0 0% 100% / 0.85;
+    --border: 210 18% 82% / 0.3;
+    --glass-blur: 38px;
   }
 
   body.platform-windows.theme-dark {
-    background: transparent !important;
-    --glass-surface: 220 24% 9% / 0.42;
-    --glass-border: 215 18% 42% / 0.38;
-    --glass-shadow: 220 85% 6% / 0.42;
-    --glass-highlight: 0 0% 100% / 0.12;
-    --sidebar-surface: 220 23% 8% / 0.5;
-    --sidebar-border: 215 17% 38% / 0.34;
-    --control-surface: 220 22% 10% / 0.52;
-    --card: 220 24% 10% / 0.62;
-    --popover: 220 24% 9% / 0.74;
-    --secondary: 220 18% 18% / 0.62;
-    --muted: 220 18% 20% / 0.56;
-    --border: 215 16% 40% / 0.38;
-    --input: 215 16% 36% / 0.45;
-    --glass-blur: 42px;
-  }
-
-  body.platform-windows.appearance-solid.theme-dark {
-    background: #111827 !important;
-    --glass-surface: 220 22% 12% / 0.96;
-    --sidebar-surface: 220 20% 10% / 0.96;
-    --control-surface: 220 18% 13% / 0.92;
-    --card: 220 20% 12% / 0.94;
-    --popover: 220 20% 11% / 0.96;
-    --border: 215 15% 40% / 0.7;
-    --input: 215 15% 36% / 0.64;
-    --glass-blur: 18px;
-  }
-
-  body.platform-windows:not(.appearance-solid) :where(.control-surface, .glass-control) {
-    background-color: hsl(var(--control-surface)) !important;
-    backdrop-filter: blur(var(--glass-blur)) saturate(150%);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
-  }
-
-  body.platform-windows:not(.appearance-solid) .switch-thumb {
-    background-color: #ffffff !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: #ffffff17 !important;
+    --glass-surface: 0 0% 16% / 1;
+    --glass-border: 0 0% 40% / 1;
+    --glass-shadow: 220 85% 6% / 0.45;
+    --glass-highlight: 0 0% 100% / 0.1;
+    --sidebar-surface: 0 0% 14% / 1;
+    --sidebar-border: 0 0% 38% / 1;
+    --control-surface: 0 0% 13% / 1;
+    --card: 0 0% 16% / 1;
+    --border: 0 0% 40% / 1;
+    --glass-blur: 38px;
   }
 
   ::selection {
@@ -320,29 +263,7 @@
 }
 
 @layer components {
-  .app-window-surface::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.08)),
-      radial-gradient(100% 70% at 12% 0%, rgba(59, 130, 246, 0.1), transparent 58%),
-      radial-gradient(84% 80% at 100% 10%, rgba(20, 184, 166, 0.08), transparent 60%);
-  }
-
-  .theme-dark .app-window-surface::before {
-    background:
-      linear-gradient(180deg, rgba(15, 23, 42, 0.24), rgba(15, 23, 42, 0.12)),
-      radial-gradient(100% 70% at 12% 0%, rgba(59, 130, 246, 0.16), transparent 58%),
-      radial-gradient(84% 80% at 100% 10%, rgba(20, 184, 166, 0.12), transparent 60%);
-  }
-
-  .appearance-solid .app-window-surface::before,
-  .appearance-custom .app-window-surface::before {
-    display: none;
-  }
+  /* app-window-surface overlay removed — match main branch (no wash layer). */
 
   /* 性能优化 - 滚动容器和节点渲染 */
   .nodes-visible {
@@ -524,5 +445,45 @@
     border-radius: 999px;
     background: linear-gradient(135deg, #34d399, #22d3ee);
     box-shadow: 0 0 12px rgba(34, 211, 238, 0.6);
+  }
+
+  [data-sonner-toaster] {
+    --normal-border: transparent !important;
+    --success-border: transparent !important;
+    --info-border: transparent !important;
+    --warning-border: transparent !important;
+    --error-border: transparent !important;
+  }
+
+  :where(
+    [data-sonner-toast],
+    [data-radix-toast-root],
+    [data-radix-popover-content],
+    [data-radix-menu-content],
+    [data-radix-dropdown-menu-content],
+    [role="menu"],
+    [role="listbox"],
+    [role="dialog"]
+  ) {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow:
+      0 20px 46px -32px rgba(15, 23, 42, 0.38),
+      0 8px 22px -18px rgba(15, 23, 42, 0.2) !important;
+  }
+
+  .theme-dark :where(
+    [data-sonner-toast],
+    [data-radix-toast-root],
+    [data-radix-popover-content],
+    [data-radix-menu-content],
+    [data-radix-dropdown-menu-content],
+    [role="menu"],
+    [role="listbox"],
+    [role="dialog"]
+  ) {
+    box-shadow:
+      0 22px 52px -34px rgba(0, 0, 0, 0.68),
+      0 8px 24px -18px rgba(0, 0, 0, 0.52) !important;
   }
 }

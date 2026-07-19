@@ -37,7 +37,7 @@ const (
 	messageExpirySecs = 30
 	secretSeed        = "flyclash-helper-service-secret-key-v1"
 	createNoWindow    = 0x08000000
-	helperVersion     = "1.0.1"
+	helperVersion     = "1.0.2"
 )
 
 var (
@@ -385,6 +385,54 @@ func validateBinPath(binPath string) error {
 }
 
 // getAllowedCoreDirs 动态推导允许的目录列表
+func appendUniqueDir(dirs []string, dir string) []string {
+	clean := filepath.Clean(dir)
+	if clean == "." || clean == "" {
+		return dirs
+	}
+	for _, existing := range dirs {
+		if strings.EqualFold(existing, clean) {
+			return dirs
+		}
+	}
+	return append(dirs, clean)
+}
+
+func usersRootFromProfile(profile string) string {
+	if strings.TrimSpace(profile) == "" {
+		return ""
+	}
+	parent := filepath.Dir(filepath.Clean(profile))
+	if strings.EqualFold(filepath.Base(parent), "Users") {
+		return parent
+	}
+	return ""
+}
+
+func defaultWindowsUsersRoot() string {
+	sysDrive := os.Getenv("SystemDrive")
+	if strings.TrimSpace(sysDrive) == "" {
+		sysDrive = "C:"
+	}
+	return filepath.Clean(sysDrive + `\Users`)
+}
+
+func candidateWindowsUsersDirs() []string {
+	var usersDirs []string
+	if publicProfile := os.Getenv("PUBLIC"); publicProfile != "" {
+		if root := usersRootFromProfile(publicProfile); root != "" {
+			usersDirs = appendUniqueDir(usersDirs, root)
+		}
+	}
+	if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+		if root := usersRootFromProfile(userProfile); root != "" {
+			usersDirs = appendUniqueDir(usersDirs, root)
+		}
+	}
+	usersDirs = appendUniqueDir(usersDirs, defaultWindowsUsersRoot())
+	return usersDirs
+}
+
 func getAllowedCoreDirs() []string {
 	var dirs []string
 	appDataNames := []string{"FlyClash", "flyclash", "com.flyclash.desktop"}
@@ -414,27 +462,7 @@ func getAllowedCoreDirs() []string {
 	// 3. 所有用户的 profile 目录下的 FlyClash/cores
 	//    SYSTEM 服务的 USERPROFILE 指向 system32\config\systemprofile，
 	//    所以直接枚举系统盘的 Users 目录
-	usersDirs := []string{}
-	if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
-		usersDir := filepath.Dir(userProfile)
-		usersDirs = append(usersDirs, usersDir)
-	}
-	// SYSTEM 账户下 USERPROFILE 不在 C:\Users，需要硬编码 fallback
-	sysDrive := os.Getenv("SystemDrive")
-	if sysDrive == "" {
-		sysDrive = "C:"
-	}
-	fallbackUsersDir := sysDrive + `\Users`
-	found := false
-	for _, d := range usersDirs {
-		if strings.EqualFold(d, fallbackUsersDir) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		usersDirs = append(usersDirs, fallbackUsersDir)
-	}
+	usersDirs := candidateWindowsUsersDirs()
 	for _, usersDir := range usersDirs {
 		if entries, err := os.ReadDir(usersDir); err == nil {
 			for _, e := range entries {
@@ -484,7 +512,7 @@ func getAllowedCoreDirs() []string {
 	// 规范化
 	result := make([]string, 0, len(dirs))
 	for _, d := range dirs {
-		result = append(result, filepath.Clean(d))
+		result = appendUniqueDir(result, d)
 	}
 	return result
 }

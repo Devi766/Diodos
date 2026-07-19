@@ -1,7 +1,13 @@
 'use client';
 
-import ConnectionTable from '@/components/ConnectionTable';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useTranslation } from 'react-i18next';
+
+const ConnectionTable = dynamic(() => import('@/components/ConnectionTable'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function ConnectionsPage() {
   const { t } = useTranslation();

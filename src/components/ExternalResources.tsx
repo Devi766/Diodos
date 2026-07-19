@@ -28,8 +28,8 @@ const DEFAULT_GEOX_URL: GeoDataConfig = {
 };
 
 const toMihomoGeoxUrl = (config: GeoDataConfig) => ({
-  geoIp: config.geoip,
-  geoSite: config.geosite,
+  'geo-ip': config.geoip,
+  'geo-site': config.geosite,
   mmdb: config.mmdb,
   asn: config.asn,
 });
@@ -135,7 +135,7 @@ export default function ExternalResources() {
     try {
       const nextGeoxUrl = { ...geoxUrl, [field]: value };
       await mihomoAPIRef.current.patchConfigs({
-        geoxUrl: toMihomoGeoxUrl(nextGeoxUrl)
+        'geox-url': toMihomoGeoxUrl(nextGeoxUrl)
       });
       setGeoxUrl(nextGeoxUrl);
       notifyProfileUpdated();
@@ -157,7 +157,7 @@ export default function ExternalResources() {
     setGeoMode(mode);
     try {
       await mihomoAPIRef.current.patchConfigs({
-        geodataMode: mode === 'dat'
+        'geodata-mode': mode === 'dat'
       });
       notifyProfileUpdated();
       showToast({
@@ -179,7 +179,7 @@ export default function ExternalResources() {
     setGeoAutoUpdate(enabled);
     try {
       await mihomoAPIRef.current.patchConfigs({
-        geoAutoUpdate: enabled
+        'geo-auto-update': enabled
       });
       notifyProfileUpdated();
       showToast({
@@ -203,7 +203,7 @@ export default function ExternalResources() {
     setGeoUpdateInterval(interval);
     try {
       await mihomoAPIRef.current.patchConfigs({
-        geoUpdateInterval: interval
+        'geo-update-interval': interval
       });
       notifyProfileUpdated();
       showToast({

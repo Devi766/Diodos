@@ -1031,66 +1031,6 @@ export default function Settings() {
 
   // 显示Toast提示
   const showToast = (title: string, description: string, type: 'success' | 'error' | 'info') => {
-    if (typeof document !== 'undefined') {
-      const message = description ? `${title}: ${description}` : title;
-      let root = document.getElementById('flyclash-toast-root');
-      if (!root) {
-        root = document.createElement('div');
-        root.id = 'flyclash-toast-root';
-        root.setAttribute('aria-live', 'polite');
-        Object.assign(root.style, {
-          position: 'fixed',
-          top: '16px',
-          right: '16px',
-          zIndex: '2147483647',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px',
-          pointerEvents: 'none',
-          maxWidth: 'min(420px, calc(100vw - 32px))'
-        });
-        document.body.appendChild(root);
-      }
-
-      const color = {
-        success: '#16a34a',
-        error: '#dc2626',
-        info: '#2563eb'
-      }[type];
-
-      const toast = document.createElement('div');
-      toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-      toast.textContent = message;
-      Object.assign(toast.style, {
-        boxSizing: 'border-box',
-        width: '100%',
-        padding: '12px 16px',
-        borderRadius: '12px',
-        background: color,
-        color: '#fff',
-        boxShadow: '0 18px 45px rgba(15, 23, 42, 0.22)',
-        fontSize: '14px',
-        fontWeight: '600',
-        lineHeight: '1.45',
-        whiteSpace: 'pre-wrap',
-        overflowWrap: 'anywhere',
-        opacity: '1',
-        transform: 'translateY(0)',
-        transition: 'opacity 160ms ease, transform 160ms ease',
-        pointerEvents: 'auto'
-      });
-      root.appendChild(toast);
-
-      window.setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateY(-6px)';
-        window.setTimeout(() => {
-          toast.remove();
-          if (!root?.hasChildNodes()) root?.remove();
-        }, 180);
-      }, 4000);
-    }
-
     if (toastTimerRef.current !== null) {
       window.clearTimeout(toastTimerRef.current);
     }

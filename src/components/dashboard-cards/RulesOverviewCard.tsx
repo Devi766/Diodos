@@ -3,12 +3,11 @@ import { CheckCircle, XCircle, Scale } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useMihomoAPI } from '@/services/mihomo-api';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasMatchRulesCache,
+  readMatchRulesCache,
+  subscribeMatchRulesCache,
+  writeMatchRulesCache,
+} from '@/services/app-data-hooks';
 
 type ViewMode = 'hit' | 'miss';
 
@@ -25,9 +24,15 @@ interface RuleTypeGroup {
   rules: number;
 }
 
+let rulesOverviewMemoryCache: any[] | null = null;
+
 const readCachedRules = () => {
-  const cached = readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.matchRules);
-  return Array.isArray(cached) ? cached : [];
+  if (rulesOverviewMemoryCache) return rulesOverviewMemoryCache;
+  const rules = readMatchRulesCache<any>();
+  if (rules.length > 0) {
+    rulesOverviewMemoryCache = rules;
+  }
+  return rules;
 };
 
 const hasRuleExtra = (items: any[]) => {
@@ -57,10 +62,10 @@ export function RulesOverviewCard() {
     const cached = readCachedRules();
     return cached.length === 0 ? true : hasRuleExtra(cached);
   });
-  const [loading, setLoading] = useState(() => !hasAppDataCache(APP_DATA_CACHE_KEYS.matchRules));
+  const [loading, setLoading] = useState(() => readCachedRules().length === 0 && !hasMatchRulesCache());
 
   const fetchRules = useCallback(async (options: { showLoading?: boolean } = {}) => {
-    if (options.showLoading) {
+    if (options.showLoading && rulesOverviewMemoryCache?.length !== 0) {
       setLoading(true);
     }
 
@@ -68,17 +73,18 @@ export function RulesOverviewCard() {
       const data = await apiRef.current.matchRules();
       if (!mountedRef.current) return;
 
-      const nextRules = Array.isArray(data?.rules) ? data.rules : [];
-      writeAppDataCache(APP_DATA_CACHE_KEYS.matchRules, nextRules.map((rule: any, index: number) => ({ ...rule, index })));
+      if (!Array.isArray(data?.rules)) {
+        return;
+      }
+
+      const nextRules = data.rules.map((rule: any, index: number) => ({ ...rule, index }));
+      rulesOverviewMemoryCache = nextRules;
+      writeMatchRulesCache(nextRules);
       setRules(nextRules);
-      setHasExtra(hasRuleExtra(nextRules));
+      setHasExtra(nextRules.length === 0 ? false : hasRuleExtra(nextRules));
     } catch (error) {
       if (!mountedRef.current) return;
       console.error('获取规则数据失败:', error);
-      if (!hasAppDataCache(APP_DATA_CACHE_KEYS.matchRules)) {
-        setRules([]);
-        setHasExtra(false);
-      }
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -123,10 +129,13 @@ export function RulesOverviewCard() {
   }, [fetchRules]);
 
   useEffect(() => {
-    return subscribeAppDataCache(APP_DATA_CACHE_KEYS.matchRules, () => {
+    return subscribeMatchRulesCache(() => {
       const cached = readCachedRules();
-      setRules(cached);
-      setHasExtra(cached.length === 0 ? false : hasRuleExtra(cached));
+      if (cached.length > 0 || hasMatchRulesCache()) {
+        rulesOverviewMemoryCache = cached;
+        setRules(cached);
+        setHasExtra(cached.length === 0 ? false : hasRuleExtra(cached));
+      }
       setLoading(false);
     });
   }, []);
@@ -175,10 +184,26 @@ export function RulesOverviewCard() {
     ? 'from-blue-500 to-blue-600'
     : 'from-orange-400 to-orange-500';
 
-  if (loading) {
+  if (loading && rules.length === 0) {
     return (
-      <div className="flex h-[260px] flex-col items-center justify-center rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-        <span className="sr-only">{t('dashboard.rulesOverview')}</span>
+      <div className="flex h-[260px] flex-col space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+        <div className="flex flex-shrink-0 items-center justify-between">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t('dashboard.rulesOverview')}
+          </p>
+          <Scale className="h-4 w-4 text-muted-foreground/70" />
+        </div>
+        <div className="flex-1 space-y-3 pt-2">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="h-3 w-32 rounded-full bg-slate-100 dark:bg-[#1f1f1f]" />
+                <div className="h-3 w-10 rounded-full bg-slate-100 dark:bg-[#1f1f1f]" />
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-100 dark:bg-[#1f1f1f]" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

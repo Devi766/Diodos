@@ -9,12 +9,11 @@ import { Switch } from './ui/switch';
 import { useTranslation } from 'react-i18next';
 import { useThemeColor } from '../hooks/useThemeColor';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasOverridesCache,
+  readOverridesCache,
+  subscribeOverridesCache,
+  writeOverridesCache,
+} from '@/services/app-data-hooks';
 import {
   DndContext,
   closestCenter,
@@ -108,10 +107,8 @@ const overridesViewCache: {
   loaded: false,
 };
 
-const OVERRIDES_CACHE_KEY = APP_DATA_CACHE_KEYS.overrides;
-
 const readOverridesSessionCache = (): OverrideItem[] | null => {
-  const cached = readAppDataCache<unknown>(OVERRIDES_CACHE_KEY);
+  const cached = readOverridesCache<unknown>();
   return Array.isArray(cached) ? cached as OverrideItem[] : null;
 };
 
@@ -437,7 +434,7 @@ export default function Overrides() {
   }, [isLoading]);
 
   useEffect(() => {
-    return subscribeAppDataCache(OVERRIDES_CACHE_KEY, () => {
+    return subscribeOverridesCache( () => {
       const cached = readOverridesSessionCache();
       if (!cached) return;
       overridesViewCache.items = cached;
@@ -489,7 +486,7 @@ export default function Overrides() {
     const coldLoad =
       itemsRef.current.length === 0 &&
       !overridesViewCache.loaded &&
-      !hasAppDataCache(OVERRIDES_CACHE_KEY);
+      !hasOverridesCache();
     if (coldLoad) setIsLoading(true);
     setErrorMessage(null);
 
@@ -500,11 +497,11 @@ export default function Overrides() {
           throw new Error(getCompatError(result, t('overrides.unknownError')));
         }
         const nextItems = toOverrideItems(result);
-        writeAppDataCache(OVERRIDES_CACHE_KEY, nextItems);
+        writeOverridesCache( nextItems);
         setItems(nextItems);
       } else {
         if (itemsRef.current.length === 0 && !overridesViewCache.loaded) {
-          writeAppDataCache(OVERRIDES_CACHE_KEY, []);
+          writeOverridesCache( []);
           setItems([]);
         }
       }
@@ -707,7 +704,7 @@ export default function Overrides() {
     isLoading &&
     items.length === 0 &&
     !overridesViewCache.loaded &&
-    !hasAppDataCache(OVERRIDES_CACHE_KEY)
+    !hasOverridesCache()
   ) {
     return <div className="min-h-[220px]" aria-busy="true" />;
   }

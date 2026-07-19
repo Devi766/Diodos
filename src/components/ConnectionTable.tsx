@@ -23,12 +23,11 @@ import { Network } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasConnectionsCache,
+  readConnectionsCache,
+  useConnectionsCache,
+  writeConnectionsCache,
+} from '@/services/app-data-hooks';
 import { isMihomoRuntimeUnavailableError, mihomoClient } from '@/services/mihomo-client';
 
 interface Connection {
@@ -89,11 +88,9 @@ const connectionViewCache: {
   loaded: false,
 };
 
-const CONNECTIONS_CACHE_KEY = APP_DATA_CACHE_KEYS.connections;
-
 const readConnectionsSessionCache = (): Connection[] | null => {
-  const cached = readAppDataCache<unknown>(CONNECTIONS_CACHE_KEY);
-  return Array.isArray(cached) ? cached as Connection[] : null;
+  const cached = readConnectionsCache<Connection>();
+  return cached.length > 0 || hasConnectionsCache() ? cached : null;
 };
 
 const hydrateConnectionsFromSession = () => {
@@ -139,6 +136,7 @@ const isRuntimeUnavailableMessage = (message: string) => {
 
 export default function ConnectionTable() {
   const { t } = useTranslation();
+  const cachedConnections = useConnectionsCache<Connection>();
 
   const FILTERS: Array<{ value: 'all' | 'http' | 'https' | 'tcp' | 'udp'; label: string }> = [
     { value: 'all', label: t('connections.all') },
@@ -188,18 +186,17 @@ export default function ConnectionTable() {
   }, [stats]);
 
   useEffect(() => {
-    return subscribeAppDataCache(CONNECTIONS_CACHE_KEY, () => {
-      const cached = readConnectionsSessionCache();
-      if (!cached) return;
-      const nextStats = calculateStats(cached);
-      connectionViewCache.connections = cached;
-      connectionViewCache.stats = nextStats;
-      connectionViewCache.loaded = true;
-      setConnections(cached);
-      setStats(nextStats);
-      setIsLoading(false);
-    });
-  }, []);
+    if (!hasConnectionsCache() && cachedConnections.length === 0) {
+      return;
+    }
+    const nextStats = calculateStats(cachedConnections);
+    connectionViewCache.connections = cachedConnections;
+    connectionViewCache.stats = nextStats;
+    connectionViewCache.loaded = true;
+    setConnections(cachedConnections);
+    setStats(nextStats);
+    setIsLoading(false);
+  }, [cachedConnections]);
 
   const formatConnectionError = useCallback((error: unknown, fallback?: string) => {
     const message = readErrorMessage(error, fallback || t('connections.disconnectError', { error: '' })).trim();
@@ -342,7 +339,7 @@ export default function ConnectionTable() {
     if (
       connectionsRef.current.length === 0 &&
       !connectionViewCache.loaded &&
-      !hasAppDataCache(CONNECTIONS_CACHE_KEY)
+      !hasConnectionsCache()
     ) {
       setIsLoading(true);
       showedLoading = true;
@@ -357,12 +354,12 @@ export default function ConnectionTable() {
         // 只在初始加载或从有数据变为无数据时才更新为空
         setConnections([]);
         setStats(emptyStats);
-        writeAppDataCache(CONNECTIONS_CACHE_KEY, []);
+        writeConnectionsCache([]);
         return;
       }
 
       const nextConnections = data.connections as unknown as Connection[];
-      writeAppDataCache(CONNECTIONS_CACHE_KEY, nextConnections);
+      writeConnectionsCache(nextConnections);
       setConnections(nextConnections);
       setStats(calculateStats(nextConnections));
     } catch (err) {
@@ -370,7 +367,7 @@ export default function ConnectionTable() {
       if (message === t('connections.mihomoNotRunning')) {
         setConnections([]);
         setStats(emptyStats);
-        writeAppDataCache(CONNECTIONS_CACHE_KEY, []);
+        writeConnectionsCache([]);
         return;
       }
 
@@ -571,7 +568,7 @@ export default function ConnectionTable() {
     isLoading &&
     filteredConnections.length === 0 &&
     !connectionViewCache.loaded &&
-    !hasAppDataCache(CONNECTIONS_CACHE_KEY);
+    !hasConnectionsCache();
 
   return (
     <div className="space-y-6 min-w-0 w-full">

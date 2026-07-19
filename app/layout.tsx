@@ -105,35 +105,24 @@ export default function RootLayout({
             }
 
             // 监听主题变化事件
-            const unsubscribeThemeListener = window.electronAPI.onThemeChanged((_, newTheme) => {
-              if (newTheme === 'system') {
-                // 跟随系统设置
-                const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                setTheme(systemTheme);
-                if (systemTheme === 'dark') {
-                  document.documentElement.classList.add('dark');
-                  document.documentElement.classList.remove('light');
-                  document.body.classList.add('theme-dark');
-                  document.body.classList.remove('theme-light');
-                } else {
-                  document.documentElement.classList.add('light');
-                  document.documentElement.classList.remove('dark');
-                  document.body.classList.add('theme-light');
-                  document.body.classList.remove('theme-dark');
-                }
+            // onThemeChanged may pass (theme) or (_, theme) depending on bridge shape.
+            const unsubscribeThemeListener = window.electronAPI.onThemeChanged((...args: any[]) => {
+              const newTheme = typeof args[0] === 'string' ? args[0] : args[1];
+              const actualTheme =
+                newTheme === 'system'
+                  ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+                  : newTheme;
+              setTheme(actualTheme);
+              if (actualTheme === 'dark') {
+                document.documentElement.classList.add('dark');
+                document.documentElement.classList.remove('light');
+                document.body.classList.add('theme-dark');
+                document.body.classList.remove('theme-light');
               } else {
-                setTheme(newTheme);
-                if (newTheme === 'dark') {
-                  document.documentElement.classList.add('dark');
-                  document.documentElement.classList.remove('light');
-                  document.body.classList.add('theme-dark');
-                  document.body.classList.remove('theme-light');
-                } else {
-                  document.documentElement.classList.add('light');
-                  document.documentElement.classList.remove('dark');
-                  document.body.classList.add('theme-light');
-                  document.body.classList.remove('theme-dark');
-                }
+                document.documentElement.classList.add('light');
+                document.documentElement.classList.remove('dark');
+                document.body.classList.add('theme-light');
+                document.body.classList.remove('theme-dark');
               }
 
               // 强制触发重新渲染
@@ -201,7 +190,7 @@ export default function RootLayout({
     <html lang="zh-CN" className={theme}>
       <head>
         <title>FlyClash</title>
-        <meta name="description" content="现代、美观的Clash客户端，基于Mihomo内核" />
+        <meta name="description" content="现代、美观的 Clash 客户端，基于 FlyClash Core" />
         <link rel="icon" href="/favicon.ico" />
         <Script src={`/tauri-compat.js?v=${TAURI_COMPAT_VERSION}`} strategy="beforeInteractive" />
       </head>
@@ -210,7 +199,7 @@ export default function RootLayout({
         <Layout>
           {children}
         </Layout>
-        <Toaster richColors closeButton position="top-right" />
+        <Toaster closeButton position="bottom-right" />
         <ToastContainer />
       </body>
     </html>

@@ -10,11 +10,13 @@ use std::{
 use flate2::read::GzDecoder;
 use regex::Regex;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
-    core::{identity as core_identity, manager::RunningMode, service as core_service},
+    core::{
+        identity as core_identity, manager::RunningMode, paths as core_paths,
+        service as core_service,
+    },
     core_lifecycle_commands::restart_active_config_after_core_switch,
     profiles::read_last_config,
     resources::{core_resource_status, existing_resource_dir, existing_resource_file},
@@ -72,41 +74,36 @@ pub(crate) fn set_custom_kernel_path(app: &AppHandle, path: Option<&str>) -> Res
 }
 
 pub(crate) fn default_mihomo_executable(app: &AppHandle) -> Result<PathBuf, String> {
-    let exe_name = if cfg!(windows) {
-        "mihomo.exe"
-    } else {
-        "mihomo"
-    };
-    let managed_core = app_data_dir(app)?.join("cores").join(exe_name);
-    if managed_core.is_file() {
-        return Ok(managed_core);
-    }
-
-    existing_resource_file(
-        app,
-        &[
-            PathBuf::from("cores").join(exe_name),
-            PathBuf::from("extra").join("sidecar").join(exe_name),
-            PathBuf::from("sidecar").join(exe_name),
-            PathBuf::from(exe_name),
-        ],
-    )
-    .ok_or_else(|| {
+    let exe_name = format!("mihomo{}", core_identity::executable_ext());
+    let managed_cores_dir = app_data_dir(app)?.join("cores");
+    let resource_candidates = [
+        PathBuf::from("cores").join(&exe_name),
+        PathBuf::from("extra").join("sidecar").join(&exe_name),
+        PathBuf::from("sidecar").join(&exe_name),
+        PathBuf::from(&exe_name),
+    ];
+    let resolved_resources = resource_candidates
+        .iter()
+        .filter_map(|relative| existing_resource_file(app, std::slice::from_ref(relative)))
+        .collect::<Vec<_>>();
+    let candidates = core_paths::default_core_candidates(&managed_cores_dir, &resolved_resources);
+    core_paths::first_existing_file(candidates.iter().map(PathBuf::as_path)).ok_or_else(|| {
         format!(
-            "未找到 Mihomo 内核，已检查应用资源、extra/sidecar 与应用数据 cores 目录中的 {exe_name}"
+            "未找到 {}，已检查应用资源、extra/sidecar 与应用数据 cores 目录中的 {exe_name}",
+            core_identity::product_core_display_name()
         )
     })
 }
 
 pub(crate) fn find_mihomo_executable(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(custom) = custom_kernel_path(app)?.filter(|path| Path::new(path).exists()) {
-        return Ok(PathBuf::from(custom));
-    }
+    let custom = custom_kernel_path(app)?.map(PathBuf::from);
     let selected = core_path(app, None, None)?;
-    if selected.is_file() {
-        return Ok(selected);
+    // Prefer custom/selected when present; fall back to default discovery so the
+    // missing-binary error still comes from the default search path message.
+    match core_paths::choose_core_executable(custom.as_deref(), &selected, &[]) {
+        Ok(path) => Ok(path),
+        Err(_) => default_mihomo_executable(app),
     }
-    default_mihomo_executable(app)
 }
 
 pub(crate) fn cores_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -115,86 +112,16 @@ pub(crate) fn cores_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn short_path_digest(path: &Path) -> String {
-    let digest = Sha256::digest(path.to_string_lossy().as_bytes());
-    digest
-        .iter()
-        .take(6)
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
-}
-
 pub(crate) fn service_compatible_core_path(
     app: &AppHandle,
     source: &Path,
 ) -> Result<PathBuf, String> {
-    if !cfg!(target_os = "windows") {
-        return Ok(source.to_path_buf());
-    }
-
     let managed_dir = cores_dir(app)?;
-    if let (Ok(source_real), Ok(managed_real)) =
-        (fs::canonicalize(source), fs::canonicalize(&managed_dir))
-    {
-        if source_real.starts_with(&managed_real) {
-            return Ok(source.to_path_buf());
-        }
-    }
-
-    let source_name = source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or("mihomo.exe");
-    let ext = Path::new(source_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_else(|| ".exe".to_string());
-    let stem = Path::new(source_name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("mihomo");
-    let digest = short_path_digest(source);
-    let target = managed_dir.join(format!(".service-runtime-{stem}-{digest}{ext}"));
-
-    let should_copy = match (source.metadata(), target.metadata()) {
-        (Ok(source_meta), Ok(target_meta)) => {
-            source_meta.len() != target_meta.len()
-                || source_meta
-                    .modified()
-                    .ok()
-                    .zip(target_meta.modified().ok())
-                    .map(|(source_modified, target_modified)| source_modified > target_modified)
-                    .unwrap_or(false)
-        }
-        (Ok(_), Err(_)) => true,
-        _ => false,
-    };
-
-    if should_copy {
-        fs::copy(source, &target).map_err(|err| {
-            format!(
-                "复制 service 模式内核 {} 到 {} 失败: {err}",
-                source.display(),
-                target.display()
-            )
-        })?;
-    }
-
-    Ok(target)
+    core_paths::ensure_service_compatible_core(source, &managed_dir, cfg!(target_os = "windows"))
 }
 
 pub(crate) fn same_existing_path(left: &Path, right: &Path) -> bool {
-    match (fs::canonicalize(left), fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn core_file_name(core_type: &str, specific_version: Option<&str>) -> String {
-    core_identity::managed_core_file_name(core_type, specific_version)
+    core_paths::same_existing_path(left, right)
 }
 
 pub(crate) fn normalize_core_version(value: &str) -> String {
@@ -256,10 +183,11 @@ pub(crate) fn core_path(
     } else {
         None
     };
-    Ok(cores_dir(app)?.join(core_file_name(
+    Ok(core_paths::managed_core_path(
+        &cores_dir(app)?,
         &core_type,
         specific_version.or(stored_specific_version.as_deref()),
-    )))
+    ))
 }
 
 pub(crate) fn core_current_config(app: &AppHandle) -> CompatResult {
@@ -716,16 +644,33 @@ async fn dispatch_compat_call(
         "coreGetRuntimeState" | "core:get-runtime-state" => {
             let running = is_mihomo_running(app);
             let preferred_config = read_last_config(app).ok().flatten();
-            let (core_state, runtime_active_config) = {
+            let probe = crate::mihomo_controller::controller_probe_payload(app).await;
+            let controller_available = probe
+                .get("controllerAvailable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let (core_state, runtime_view) = {
                 let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
                 let core_state = runtime.core.state();
-                let runtime_active_config = runtime
-                    .core
-                    .runtime_active_config(running, preferred_config.clone());
-                (core_state, runtime_active_config)
+                let runtime_view = runtime.core.resolve_runtime_state(
+                    running,
+                    controller_available,
+                    preferred_config.clone(),
+                );
+                (core_state, runtime_view)
             };
             let mut payload = serde_json::to_value(&core_state).unwrap_or_else(|_| json!({}));
-            if core_state.running_mode == RunningMode::Service {
+            if let Some(object) = payload.as_object_mut() {
+                object.insert(
+                    "runningMode".to_string(),
+                    Value::String(match runtime_view.running_mode {
+                        RunningMode::Service => "service".to_string(),
+                        RunningMode::Sidecar => "sidecar".to_string(),
+                        RunningMode::NotRunning => "notRunning".to_string(),
+                    }),
+                );
+            }
+            if runtime_view.running_mode == RunningMode::Service {
                 if let Ok(helper_status) = core_service::get_status() {
                     if let Some(object) = payload.as_object_mut() {
                         object.insert(
@@ -741,6 +686,16 @@ async fn dispatch_compat_call(
                     }
                 }
             }
+
+            // Always attach helper readiness so Dashboard/TUN can share one status machine.
+            let helper_flags = core_service::query_helper_service_flags();
+            let helper_snapshot =
+                core_service::helper_ipc_snapshot(helper_flags.running);
+            let helper_status =
+                core_service::helper_service_status_payload(helper_flags, helper_snapshot);
+            if let Some(object) = payload.as_object_mut() {
+                object.insert("helper".to_string(), helper_status);
+            }
             if let Some(object) = payload.as_object_mut() {
                 object.insert(
                     "preferredConfig".to_string(),
@@ -751,15 +706,30 @@ async fn dispatch_compat_call(
                 );
                 object.insert(
                     "runtimeActiveConfig".to_string(),
-                    runtime_active_config
-                        .config
-                        .clone()
-                        .map(Value::String)
-                        .unwrap_or(Value::Null),
+                    if runtime_view.effective_running {
+                        runtime_view
+                            .active_config
+                            .config
+                            .clone()
+                            .or_else(|| preferred_config.clone())
+                    } else {
+                        None
+                    }
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
                 );
                 object.insert(
                     "activeConfigSource".to_string(),
-                    Value::String(runtime_active_config.source.as_str().to_string()),
+                    Value::String(
+                        if runtime_view.effective_running
+                            && runtime_view.active_config.config.is_none()
+                        {
+                            "preferred"
+                        } else {
+                            runtime_view.active_config.source.as_str()
+                        }
+                        .to_string(),
+                    ),
                 );
                 object.insert(
                     "identity".to_string(),
@@ -767,22 +737,13 @@ async fn dispatch_compat_call(
                         .unwrap_or_else(|_| json!({})),
                 );
                 object.insert("resources".to_string(), core_resource_status(app));
-                if running {
-                    if let Some(probe) = crate::mihomo_controller::controller_probe_payload(app)
-                        .await
-                        .as_object()
-                    {
-                        for (key, value) in probe {
-                            object.insert(key.clone(), value.clone());
-                        }
+                if let Some(probe) = probe.as_object() {
+                    for (key, value) in probe {
+                        object.insert(key.clone(), value.clone());
                     }
-                } else {
-                    object.insert("controllerAvailable".to_string(), Value::Bool(false));
-                    object.insert("controllerError".to_string(), Value::Null);
-                    object.insert("controllerStatus".to_string(), Value::Null);
-                    object.insert("coreVersion".to_string(), Value::Null);
-                    object.insert("coreMeta".to_string(), Value::Null);
-                    object.insert("corePremium".to_string(), Value::Null);
+                }
+                if runtime_view.effective_running {
+                    object.insert("coreRunning".to_string(), Value::Bool(true));
                 }
             }
             Ok(success(payload))
@@ -853,10 +814,10 @@ async fn dispatch_compat_call(
                         .and_then(Value::as_str)
                 });
             if restart_failed || restart_error.is_some() {
-                let error = restart_error.unwrap_or("重启 Mihomo 失败");
+                let error = restart_error.unwrap_or("重启内核失败");
                 return Ok(json!({
                     "success": false,
-                    "error": format!("内核已切换，但重启 Mihomo 失败: {error}"),
+                    "error": format!("内核已切换，但重启内核失败: {error}"),
                     "runtimeRestart": runtime_restart
                 }));
             }
@@ -893,7 +854,7 @@ async fn dispatch_compat_call(
         }
         "selectKernelExecutable" => {
             let path = tauri::async_runtime::spawn_blocking(|| {
-                let dialog = rfd::FileDialog::new().set_title("选择 Mihomo 内核");
+                let dialog = rfd::FileDialog::new().set_title("选择 FlyClash Core");
                 #[cfg(target_os = "windows")]
                 let dialog = dialog.add_filter("可执行文件", &["exe"]);
                 dialog.pick_file()

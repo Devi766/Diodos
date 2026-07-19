@@ -51,6 +51,15 @@ pub struct RuntimeActiveConfig {
     pub source: ActiveConfigSource,
 }
 
+/// Resolved view of manager memory + controller probe for UI/runtime APIs.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStateView {
+    pub running_mode: RunningMode,
+    pub effective_running: bool,
+    pub active_config: RuntimeActiveConfig,
+}
+
 #[derive(Default)]
 pub struct CoreManager {
     running_mode: RunningMode,
@@ -97,6 +106,43 @@ impl CoreManager {
         RuntimeActiveConfig {
             config: None,
             source: ActiveConfigSource::None,
+        }
+    }
+
+    /// Combine manager memory with a live controller probe.
+    ///
+    /// If the controller answers while manager memory still says NotRunning
+    /// (common after process hand-off / external recovery), report sidecar so
+    /// the UI does not show a false stopped state.
+    pub fn resolve_runtime_state(
+        &self,
+        manager_running: bool,
+        controller_available: bool,
+        preferred_config: Option<String>,
+    ) -> RuntimeStateView {
+        let effective_running = manager_running || controller_available;
+        let running_mode = if effective_running {
+            match self.running_mode {
+                RunningMode::NotRunning => RunningMode::Sidecar,
+                other => other,
+            }
+        } else {
+            RunningMode::NotRunning
+        };
+
+        let mut active_config = self.runtime_active_config(effective_running, preferred_config);
+        if effective_running
+            && active_config.config.is_none()
+            && matches!(active_config.source, ActiveConfigSource::None)
+        {
+            // Keep source explicit for callers that only check source strings.
+            active_config.source = ActiveConfigSource::None;
+        }
+
+        RuntimeStateView {
+            running_mode,
+            effective_running,
+            active_config,
         }
     }
 
@@ -147,6 +193,32 @@ impl CoreManager {
 
     pub fn mark_stopped(&mut self) {
         self.mark_not_running();
+    }
+
+    /// Own the stop completion transition for every running mode.
+    ///
+    /// Sidecar must kill the child; service/not-running only clear manager memory
+    /// (helper core stop is performed by the lifecycle caller before this).
+    pub fn finish_stop(&mut self) {
+        if matches!(self.running_mode, RunningMode::Sidecar) {
+            self.stop_sidecar();
+        } else {
+            self.mark_stopped();
+        }
+    }
+
+    /// Prefer runtime-owned active config, then preferred/last config.
+    pub fn prefer_runtime_or_preferred(
+        &self,
+        preferred_config: Option<String>,
+    ) -> Option<String> {
+        self.active_config_owned()
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| {
+                preferred_config
+                    .map(|path| path.trim().to_string())
+                    .filter(|path| !path.is_empty())
+            })
     }
 
     pub fn sync_service_running(
@@ -329,5 +401,38 @@ mod tests {
         let not_running = manager.runtime_active_config(false, Some("preferred.yaml".to_string()));
         assert_eq!(not_running.config, None);
         assert_eq!(not_running.source, ActiveConfigSource::None);
+    }
+
+    #[test]
+    fn resolve_runtime_state_promotes_controller_probe_to_sidecar() {
+        let mut manager = CoreManager::default();
+        manager.activate_config("runtime.yaml".to_string());
+
+        let recovered = manager.resolve_runtime_state(
+            false,
+            true,
+            Some("preferred.yaml".to_string()),
+        );
+        assert!(recovered.effective_running);
+        assert_eq!(recovered.running_mode, RunningMode::Sidecar);
+        assert_eq!(recovered.active_config.config.as_deref(), Some("runtime.yaml"));
+        assert_eq!(recovered.active_config.source, ActiveConfigSource::Runtime);
+
+        let stopped = manager.resolve_runtime_state(false, false, Some("preferred.yaml".to_string()));
+        assert!(!stopped.effective_running);
+        assert_eq!(stopped.running_mode, RunningMode::NotRunning);
+        assert_eq!(stopped.active_config.config, None);
+        assert_eq!(stopped.active_config.source, ActiveConfigSource::None);
+    }
+
+    #[test]
+    fn resolve_runtime_state_keeps_service_mode_when_manager_knows_service() {
+        let mut manager = CoreManager::default();
+        manager.complete_service_start(endpoint(), "profile.yaml".to_string());
+
+        let view = manager.resolve_runtime_state(true, true, None);
+        assert!(view.effective_running);
+        assert_eq!(view.running_mode, RunningMode::Service);
+        assert_eq!(view.active_config.config.as_deref(), Some("profile.yaml"));
     }
 }

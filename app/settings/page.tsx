@@ -1,7 +1,13 @@
 'use client';
 
-import Settings from '@/components/Settings';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useTranslation } from 'react-i18next';
+
+const Settings = dynamic(() => import('@/components/Settings'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function SettingsPage() {
   const { t } = useTranslation();

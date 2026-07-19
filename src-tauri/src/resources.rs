@@ -5,6 +5,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+use crate::core::identity as core_identity;
 use crate::storage::app_data_dir;
 
 const MIHOMO_DATA_FILES: &[&str] = &[
@@ -80,9 +81,23 @@ fn tool_dirs(app: &AppHandle) -> Vec<PathBuf> {
 }
 
 pub(crate) fn mihomo_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app_data_dir(app)?.join("mihomo");
+    // Keep on-disk compatibility with existing installs that already use `mihomo/`.
+    let dir = app_data_dir(app)?.join(core_identity::runtime_work_dir_name());
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     Ok(dir)
+}
+
+pub(crate) fn core_log_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = mihomo_dir(app)?;
+    let product = dir.join(core_identity::product_core_log_file_name());
+    if product.exists() {
+        return Ok(product);
+    }
+    let legacy = dir.join(core_identity::legacy_core_log_file_name());
+    if legacy.exists() {
+        return Ok(legacy);
+    }
+    Ok(product)
 }
 
 fn should_copy_bundled_file(source: &Path, target: &Path) -> bool {
@@ -123,7 +138,7 @@ pub(crate) fn sync_bundled_mihomo_data(app: &AppHandle) -> Result<(), String> {
         if should_copy_bundled_file(&source, &target) {
             fs::copy(&source, &target).map_err(|err| {
                 format!(
-                    "复制 Mihomo 数据文件 {} 到 {} 失败: {err}",
+                    "复制内核数据文件 {} 到 {} 失败: {err}",
                     source.display(),
                     target.display()
                 )
@@ -135,7 +150,7 @@ pub(crate) fn sync_bundled_mihomo_data(app: &AppHandle) -> Result<(), String> {
             if should_copy_bundled_file(&source, &alias_target) {
                 fs::copy(&source, &alias_target).map_err(|err| {
                     format!(
-                        "复制 Mihomo 数据文件 {} 到 {} 失败: {err}",
+                        "复制内核数据文件 {} 到 {} 失败: {err}",
                         source.display(),
                         alias_target.display()
                     )

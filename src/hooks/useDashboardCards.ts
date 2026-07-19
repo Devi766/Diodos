@@ -18,14 +18,58 @@ const isTauriRuntimeUnavailable = (result: unknown) =>
   (result as { success?: boolean; error?: string }).success === false &&
   (result as { error?: string }).error === 'Tauri runtime is not available';
 
+let dashboardCardsMemoryCache: DashboardCard[] | null = null;
+
+const normalizeDashboardCards = (value: unknown): DashboardCard[] | null => {
+  if (!Array.isArray(value)) return null;
+  const knownTypes = new Set(DEFAULT_DASHBOARD_CARDS.map((card) => card.type));
+  const cards = value.filter((card): card is DashboardCard => (
+    !!card &&
+    typeof card === 'object' &&
+    typeof (card as DashboardCard).id === 'string' &&
+    knownTypes.has((card as DashboardCard).type) &&
+    typeof (card as DashboardCard).enabled === 'boolean' &&
+    typeof (card as DashboardCard).order === 'number'
+  ));
+  if (cards.length === 0) return null;
+
+  const byId = new Map(cards.map((card) => [card.id, card]));
+  const merged = [
+    ...cards,
+    ...DEFAULT_DASHBOARD_CARDS.filter((defaultCard) => !byId.has(defaultCard.id)),
+  ];
+  return merged;
+};
+
 const loadCardsFromLocalStorage = () => {
-  const savedConfig = localStorage.getItem(DASHBOARD_CONFIG_KEY);
-  return savedConfig ? JSON.parse(savedConfig) as DashboardCard[] : null;
+  try {
+    const savedConfig = localStorage.getItem(DASHBOARD_CONFIG_KEY);
+    return savedConfig ? normalizeDashboardCards(JSON.parse(savedConfig)) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCardsToLocalStorage = (cards: DashboardCard[]) => {
+  try {
+    localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(cards));
+  } catch {}
+};
+
+const readInitialCards = () => {
+  if (dashboardCardsMemoryCache) return dashboardCardsMemoryCache;
+  if (typeof window === 'undefined') return DEFAULT_DASHBOARD_CARDS;
+  const localCards = loadCardsFromLocalStorage();
+  if (localCards) {
+    dashboardCardsMemoryCache = localCards;
+    return localCards;
+  }
+  return DEFAULT_DASHBOARD_CARDS;
 };
 
 export function useDashboardCards() {
   const { t } = useTranslation();
-  const [cards, setCards] = useState<DashboardCard[]>(DEFAULT_DASHBOARD_CARDS);
+  const [cards, setCards] = useState<DashboardCard[]>(readInitialCards);
   const [isEditMode, setIsEditMode] = useState(false);
   const saveSequenceRef = useRef(0);
 
@@ -39,19 +83,30 @@ export function useDashboardCards() {
           const result = await electron.getSetting(DASHBOARD_CONFIG_KEY, null);
           if (isTauriRuntimeUnavailable(result)) {
             const localCards = loadCardsFromLocalStorage();
-            if (localCards) setCards(localCards);
+            if (localCards) {
+              dashboardCardsMemoryCache = localCards;
+              setCards(localCards);
+            }
             return;
           }
           if (result?.success === false) {
             throw new Error(result.error || t('dashboard.layoutLoadFailed'));
           }
-          if (result?.success && Array.isArray(result.value)) {
-            setCards(result.value as DashboardCard[]);
+          if (result?.success) {
+            const loadedCards = normalizeDashboardCards(result.value);
+            if (loadedCards) {
+              dashboardCardsMemoryCache = loadedCards;
+              writeCardsToLocalStorage(loadedCards);
+              setCards(loadedCards);
+            }
           }
         } else {
           // 浏览器环境：使用 localStorage
           const localCards = loadCardsFromLocalStorage();
-          if (localCards) setCards(localCards);
+          if (localCards) {
+            dashboardCardsMemoryCache = localCards;
+            setCards(localCards);
+          }
         }
       } catch (error) {
         console.error('Failed to load dashboard config:', error);
@@ -73,7 +128,8 @@ export function useDashboardCards() {
         // Electron 环境：使用 IPC 保存到数据库
         const result = await electron.setSetting(DASHBOARD_CONFIG_KEY, newCards);
         if (isTauriRuntimeUnavailable(result)) {
-          localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(newCards));
+          dashboardCardsMemoryCache = newCards;
+          writeCardsToLocalStorage(newCards);
           return true;
         }
         if (result?.success === false) {
@@ -82,8 +138,10 @@ export function useDashboardCards() {
         }
       } else {
         // 浏览器环境：使用 localStorage
-        localStorage.setItem(DASHBOARD_CONFIG_KEY, JSON.stringify(newCards));
+        writeCardsToLocalStorage(newCards);
       }
+      dashboardCardsMemoryCache = newCards;
+      writeCardsToLocalStorage(newCards);
       return true;
     } catch (error) {
       console.error('Failed to save dashboard config:', error);
@@ -98,11 +156,15 @@ export function useDashboardCards() {
     setCards((currentCards) => {
       const previousCards = currentCards;
       const updatedCards = updater(currentCards);
+      dashboardCardsMemoryCache = updatedCards;
+      writeCardsToLocalStorage(updatedCards);
 
       void saveCardsToStorage(updatedCards).then((saved) => {
         if (saved) return;
         if (saveSequenceRef.current !== saveSequence) return;
 
+        dashboardCardsMemoryCache = previousCards;
+        writeCardsToLocalStorage(previousCards);
         setCards(previousCards);
         showToast({
           message: t('dashboard.layoutSaveFailed'),

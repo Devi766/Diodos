@@ -8,13 +8,15 @@ use crate::core::controller as core_controller;
 use crate::core_lifecycle_commands::{
     refresh_active_config_after_override, schedule_mihomo_autostart,
 };
+use crate::tun_service::schedule_pending_tun_enable;
 use crate::platform::{
-    apply_appearance_mode, emit_window_state, handle_compat_call as handle_platform_compat_call,
+    apply_appearance_mode_for_app, emit_window_state,
+    handle_compat_call as handle_platform_compat_call, schedule_auto_lightweight_timer,
     show_main_window,
 };
 use crate::runtime_config::mihomo_mixed_port;
 use crate::state::AppState;
-use crate::storage::{set_setting, setting};
+use crate::storage::setting;
 use crate::tray::setup_tray;
 
 type CompatResult = Result<Value, String>;
@@ -214,14 +216,8 @@ pub fn run() {
                 }
             }
 
-            let pending_tun_enable = setting(app.handle(), "pendingTunEnable", json!(false))
-                .ok()
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            if pending_tun_enable {
-                let _ = set_setting(app.handle(), "pendingTunEnable", json!(false));
-                let _ = set_setting(app.handle(), "tunModeEnabled", json!(true));
-            }
+            // After elevated helper install / restart, resume the pending TUN enable.
+            schedule_pending_tun_enable(app.handle());
 
             let deep_link_app = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
@@ -237,7 +233,7 @@ pub fn run() {
                     .ok()
                     .and_then(|value| value.as_str().map(ToString::to_string))
                     .unwrap_or_else(|| "dynamic".to_string());
-                let _ = apply_appearance_mode(&window, &mode);
+                let _ = apply_appearance_mode_for_app(app.handle(), &window, &mode);
 
                 let close_app = app.handle().clone();
                 window.on_window_event(move |event| match event {
@@ -252,33 +248,12 @@ pub fn run() {
                                 let _ = window.hide();
                             }
 
-                            let auto_enter =
-                                setting(&close_app, "autoEnterLightweightMode", json!(false))
-                                    .ok()
-                                    .and_then(|value| value.as_bool())
-                                    .unwrap_or(false);
-                            if auto_enter {
-                                let delay = setting(&close_app, "lightweightModeDelay", json!(60))
-                                    .ok()
-                                    .and_then(|value| value.as_u64())
-                                    .unwrap_or(60)
-                                    .clamp(10, 600);
-                                let timer_app = close_app.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    tokio::time::sleep(Duration::from_secs(delay)).await;
-                                    let still_hidden = timer_app
-                                        .get_webview_window("main")
-                                        .map(|window| !window.is_visible().unwrap_or(false))
-                                        .unwrap_or(false);
-                                    if still_hidden {
-                                        let _ = set_setting(
-                                            &timer_app,
-                                            "lightweightModeActive",
-                                            json!(true),
-                                        );
-                                    }
-                                });
-                            }
+                            let delay = setting(&close_app, "lightweightModeDelay", json!(60))
+                                .ok()
+                                .and_then(|value| value.as_u64())
+                                .unwrap_or(60)
+                                .clamp(10, 600);
+                            schedule_auto_lightweight_timer(&close_app, delay);
                         }
                     }
                     WindowEvent::Resized(_) => {

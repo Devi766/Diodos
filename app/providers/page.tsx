@@ -1,9 +1,18 @@
 'use client';
 
-import ProxyProviders from '@/components/ProxyProviders';
-import RuleProviders from '@/components/RuleProviders';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import { useTranslation } from 'react-i18next';
+
+const ProxyProviders = dynamic(() => import('@/components/ProxyProviders'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
+const RuleProviders = dynamic(() => import('@/components/RuleProviders'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function ProvidersPage() {
   const { t } = useTranslation();

@@ -3,6 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use tauri::{
     window::{Color, Effect, EffectsBuilder},
-    AppHandle, Emitter, Manager, WebviewWindow,
+    AppHandle, Emitter, Manager, Theme, WebviewWindow,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -24,6 +25,27 @@ type CompatResult = Result<Value, String>;
 const DEFAULT_PROXY_BYPASS: &str = "localhost;127.*;192.168.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;<local>";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Generation counter for auto-lightweight timers. Incrementing cancels pending timers.
+fn lightweight_timer_generation() -> &'static Mutex<u64> {
+    static GEN: OnceLock<Mutex<u64>> = OnceLock::new();
+    GEN.get_or_init(|| Mutex::new(0))
+}
+
+pub(crate) fn cancel_auto_lightweight_timer() {
+    if let Ok(mut gen) = lightweight_timer_generation().lock() {
+        *gen = gen.saturating_add(1);
+    }
+}
+
+fn next_lightweight_timer_token() -> u64 {
+    let mut gen = lightweight_timer_generation()
+        .lock()
+        .expect("lightweight timer mutex poisoned");
+    *gen = gen.saturating_add(1);
+    *gen
+}
+
 
 fn now_millis() -> u128 {
     SystemTime::now()
@@ -129,7 +151,63 @@ fn set_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
                 ],
             );
         }
+        return Ok(());
     }
+
+    if cfg!(target_os = "macos") {
+        // Best-effort LaunchAgent style autostart via `osascript` login item is brittle;
+        // store preference and create a LaunchAgent plist under ~/Library/LaunchAgents.
+        let home = std::env::var("HOME").map_err(|err| err.to_string())?;
+        let agents = PathBuf::from(home).join("Library/LaunchAgents");
+        let plist = agents.join("com.flyclash.desktop.plist");
+        if enabled {
+            let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+            fs::create_dir_all(&agents).map_err(|err| err.to_string())?;
+            let content = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.flyclash.desktop</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+"#,
+                exe.to_string_lossy()
+            );
+            fs::write(&plist, content).map_err(|err| err.to_string())?;
+            let _ = command_status("launchctl", &["load", &plist.to_string_lossy()]);
+        } else if plist.exists() {
+            let _ = command_status("launchctl", &["unload", &plist.to_string_lossy()]);
+            let _ = fs::remove_file(&plist);
+        }
+        return Ok(());
+    }
+
+    if cfg!(target_os = "linux") {
+        let home = std::env::var("HOME").map_err(|err| err.to_string())?;
+        let autostart_dir = PathBuf::from(home).join(".config/autostart");
+        let desktop = autostart_dir.join("flyclash.desktop");
+        if enabled {
+            let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+            fs::create_dir_all(&autostart_dir).map_err(|err| err.to_string())?;
+            let content = format!(
+                "[Desktop Entry]\nType=Application\nName=FlyClash\nExec=\"{}\"\nX-GNOME-Autostart-enabled=true\n",
+                exe.to_string_lossy()
+            );
+            fs::write(&desktop, content).map_err(|err| err.to_string())?;
+        } else if desktop.exists() {
+            let _ = fs::remove_file(&desktop);
+        }
+        return Ok(());
+    }
+
     Ok(())
 }
 
@@ -156,6 +234,24 @@ fn autostart_enabled(app: &AppHandle) -> bool {
                 let _ = set_setting(app, "autoStart", json!(false));
                 return false;
             }
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        if let Ok(home) = std::env::var("HOME") {
+            let plist = PathBuf::from(home).join("Library/LaunchAgents/com.flyclash.desktop.plist");
+            let enabled = plist.exists();
+            let _ = set_setting(app, "autoStart", json!(enabled));
+            return enabled;
+        }
+    }
+
+    if cfg!(target_os = "linux") {
+        if let Ok(home) = std::env::var("HOME") {
+            let desktop = PathBuf::from(home).join(".config/autostart/flyclash.desktop");
+            let enabled = desktop.exists();
+            let _ = set_setting(app, "autoStart", json!(enabled));
+            return enabled;
         }
     }
 
@@ -206,6 +302,8 @@ pub(crate) fn open_file_location(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn show_main_window(app: &AppHandle) {
+    // Showing the window always exits lightweight mode and cancels pending auto-enter.
+    cancel_auto_lightweight_timer();
     let _ = set_setting(app, "lightweightModeActive", json!(false));
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -220,49 +318,211 @@ pub(crate) fn hide_main_window(app: &AppHandle) {
     }
 }
 
-pub(crate) fn apply_appearance_mode(window: &WebviewWindow, mode: &str) -> Result<(), String> {
-    match mode {
-        "solid" => {
-            window.set_effects(None).map_err(|err| err.to_string())?;
-            window
-                .set_background_color(Some(Color(245, 248, 252, 255)))
-                .map_err(|err| err.to_string())?;
-        }
-        "acrylic" => {
-            window
-                .set_background_color(Some(Color(0, 0, 0, 0)))
-                .map_err(|err| err.to_string())?;
-            window
-                .set_effects(
-                    EffectsBuilder::new()
-                        .effect(Effect::Acrylic)
-                        .color(Color(245, 248, 252, 86))
-                        .build(),
-                )
-                .map_err(|err| err.to_string())?;
-        }
-        "custom" => {
-            window.set_effects(None).map_err(|err| err.to_string())?;
-            window
-                .set_background_color(Some(Color(0, 0, 0, 0)))
-                .map_err(|err| err.to_string())?;
-        }
-        _ => {
-            window
-                .set_background_color(Some(Color(0, 0, 0, 0)))
-                .map_err(|err| err.to_string())?;
-            window
-                .set_effects(
-                    EffectsBuilder::new()
-                        .effects([Effect::Tabbed, Effect::Mica, Effect::Blur])
-                        .color(Color(245, 248, 252, 58))
-                        .build(),
-                )
-                .map_err(|err| err.to_string())?;
-        }
+/// Enter lightweight mode.
+///
+/// Tauri parity with Electron:
+/// - Always hide the main window and mark lightweight active.
+/// - When core is already under helper service mode, the UI process can exit
+///   while the helper keeps the core running (closest to Electron detached mode).
+/// - Otherwise keep tray-only UI process so the sidecar core is not orphaned.
+pub(crate) fn enter_lightweight_mode(app: &AppHandle) -> Result<Value, String> {
+    cancel_auto_lightweight_timer();
+    set_setting(app, "lightweightModeActive", json!(true))?;
+    hide_main_window(app);
+
+    let service_mode = crate::tun_service::should_start_core_by_service(app)
+        && crate::runtime::is_mihomo_running(app);
+    if service_mode {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            app.exit(0);
+        });
+        return Ok(json!({
+            "success": true,
+            "mode": "service-exit",
+            "message": "已进入轻量模式：UI 即将退出，Helper 服务继续运行内核"
+        }));
     }
 
-    Ok(())
+    Ok(json!({
+        "success": true,
+        "mode": "tray",
+        "message": "已进入托盘轻量模式（Sidecar 模式下保留 UI 进程以维持内核）"
+    }))
+}
+
+/// Schedule auto enter lightweight mode after `delay_secs`, cancellable via
+/// `cancel_auto_lightweight_timer` / `show_main_window`.
+pub(crate) fn schedule_auto_lightweight_timer(app: &AppHandle, delay_secs: u64) {
+    let auto_enter = setting(app, "autoEnterLightweightMode", json!(false))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !auto_enter {
+        return;
+    }
+
+    let delay = delay_secs.clamp(10, 600);
+    let token = next_lightweight_timer_token();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        let current = lightweight_timer_generation()
+            .lock()
+            .map(|gen| *gen)
+            .unwrap_or(0);
+        if current != token {
+            return;
+        }
+        let still_hidden = app
+            .get_webview_window("main")
+            .map(|window| !window.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if !still_hidden {
+            return;
+        }
+        if let Err(error) = enter_lightweight_mode(&app) {
+            eprintln!("[lightweight] auto enter failed: {error}");
+        }
+    });
+}
+
+fn apply_solid_appearance(window: &WebviewWindow, is_dark: bool) -> Result<(), String> {
+    // Clear any previous system effect first so a failed acrylic/mica path can recover.
+    let _ = window.set_effects(None);
+    // Match main Electron solid colors: dark #1a1a1a / light #e5e7eb
+    let color = if is_dark {
+        Color(26, 26, 26, 255)
+    } else {
+        Color(229, 231, 235, 255)
+    };
+    window
+        .set_background_color(Some(color))
+        .map_err(|err| err.to_string())
+}
+
+fn theme_setting(app: Option<&AppHandle>) -> String {
+    app.and_then(|app| setting(app, "theme", json!("system")).ok())
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| "system".to_string())
+}
+
+/// Mirror Electron `nativeTheme.themeSource` so Windows DWM backdrop follows the app theme.
+fn apply_native_theme_source(window: &WebviewWindow, theme: &str) {
+    let source = match theme {
+        "dark" => Some(Theme::Dark),
+        "light" => Some(Theme::Light),
+        _ => None, // system
+    };
+    if let Err(error) = window.set_theme(source) {
+        eprintln!("[appearance] set_theme({theme}) failed: {error}");
+    }
+}
+
+fn current_is_dark(window: &WebviewWindow, app: Option<&AppHandle>) -> bool {
+    let theme = theme_setting(app);
+    resolved_theme(window, &theme) == "dark"
+}
+
+fn apply_effectful_appearance(
+    window: &WebviewWindow,
+    effects: EffectsBuilder,
+    label: &str,
+    is_dark: bool,
+) -> Result<(), String> {
+    // Transparent first so the system effect can show through when it works.
+    window
+        .set_background_color(Some(Color(0, 0, 0, 0)))
+        .map_err(|err| err.to_string())?;
+
+    match window.set_effects(effects.build()) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            // Windows/WebView2 can reject acrylic/mica on some builds. Fall back to a
+            // solid surface so the UI never becomes a fully invisible transparent pane.
+            eprintln!(
+                "[appearance] {label} effect failed, falling back to solid: {error}"
+            );
+            apply_solid_appearance(window, is_dark)
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn apply_appearance_mode(window: &WebviewWindow, mode: &str) -> Result<(), String> {
+    apply_appearance_mode_for_theme(window, mode, None)
+}
+
+pub(crate) fn apply_appearance_mode_for_app(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    mode: &str,
+) -> Result<(), String> {
+    apply_appearance_mode_for_theme(window, mode, Some(app))
+}
+
+fn apply_appearance_mode_for_theme(
+    window: &WebviewWindow,
+    mode: &str,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
+    // Keep DWM immersive dark mode in sync before applying materials. Without this,
+    // Tabbed/Mica follow the *system* theme and dark app chrome sits on a light backdrop.
+    apply_native_theme_source(window, &theme_setting(app));
+
+    let is_dark = current_is_dark(window, app);
+
+    // Main Electron acrylic tint:
+    // dark  => rgba(0xf0, 24, 32, 68)
+    // light => rgba(0x99, 255, 255, 255)
+    let acrylic_color = if is_dark {
+        Color(24, 32, 68, 0xf0)
+    } else {
+        Color(255, 255, 255, 0x99)
+    };
+
+    match mode {
+        "solid" => apply_solid_appearance(window, is_dark),
+        "acrylic" => apply_effectful_appearance(
+            window,
+            EffectsBuilder::new()
+                .effect(Effect::Acrylic)
+                .color(acrylic_color),
+            "acrylic",
+            is_dark,
+        ),
+        "custom" => {
+            // Custom mode paints its own image from the frontend. Keep the window
+            // transparent, but never leave a previous mica/acrylic effect active.
+            let _ = window.set_effects(None);
+            window
+                .set_background_color(Some(Color(0, 0, 0, 0)))
+                .map_err(|err| err.to_string())
+        }
+        // Force dark/light material variants. Generic Tabbed/Mica follow the OS theme
+        // and are the root cause of "dark UI on light window background".
+        _ if is_dark => apply_effectful_appearance(
+            window,
+            EffectsBuilder::new().effects([
+                Effect::TabbedDark,
+                Effect::MicaDark,
+                Effect::Blur,
+            ]),
+            "dynamic-dark",
+            true,
+        ),
+        _ => apply_effectful_appearance(
+            window,
+            EffectsBuilder::new().effects([
+                Effect::TabbedLight,
+                Effect::MicaLight,
+                Effect::Blur,
+            ]),
+            "dynamic-light",
+            false,
+        ),
+    }
 }
 
 pub(crate) fn resolved_theme(window: &WebviewWindow, theme: &str) -> String {
@@ -274,7 +534,7 @@ pub(crate) fn resolved_theme(window: &WebviewWindow, theme: &str) -> String {
         .theme()
         .ok()
         .map(|theme| {
-            let name = if matches!(theme, tauri::Theme::Dark) {
+            let name = if matches!(theme, Theme::Dark) {
                 "dark"
             } else {
                 "light"
@@ -283,6 +543,7 @@ pub(crate) fn resolved_theme(window: &WebviewWindow, theme: &str) -> String {
         })
         .unwrap_or_else(|| "light".to_string())
 }
+
 
 pub(crate) fn window_state_payload(window: &WebviewWindow) -> Value {
     let maximized = window.is_maximized().unwrap_or(false);
@@ -1073,7 +1334,16 @@ async fn dispatch_compat_call(
         "setTheme" => {
             let theme = arg_string(args, 0).unwrap_or_else(|| "system".to_string());
             set_setting(app, "theme", json!(theme))?;
-            let _ = window.emit("theme-changed", resolved_theme(window, &theme));
+            // Electron sets nativeTheme.themeSource here; do the same for DWM.
+            apply_native_theme_source(window, &theme);
+            let resolved = resolved_theme(window, &theme);
+            let _ = window.emit("theme-changed", resolved);
+            // Re-apply backdrop so mica/acrylic/tabbed follow the app theme.
+            let mode = setting(app, "appearanceMode", json!("dynamic"))?
+                .as_str()
+                .unwrap_or("dynamic")
+                .to_string();
+            let _ = apply_appearance_mode_for_app(app, window, &mode);
             Ok(success(json!({ "theme": theme })))
         }
         "getThemeColor" => Ok(success(
@@ -1101,7 +1371,7 @@ async fn dispatch_compat_call(
             }
 
             set_setting(app, "appearanceMode", json!(mode.clone()))?;
-            apply_appearance_mode(window, &mode)?;
+            apply_appearance_mode_for_app(app, window, &mode)?;
 
             if mode == "custom" {
                 emit_custom_background(app, window)?;
@@ -1348,14 +1618,7 @@ async fn dispatch_compat_call(
             }
             Ok(success(json!({})))
         }
-        "enterLightweightMode" => {
-            set_setting(app, "lightweightModeActive", json!(true))?;
-            window.hide().map_err(|err| err.to_string())?;
-            Ok(success(json!({
-                "mode": "tray",
-                "message": "已进入 Tauri 托盘轻量模式"
-            })))
-        }
+        "enterLightweightMode" => enter_lightweight_mode(app),
         "loopback.getApps" | "loopback:get-apps" => loopback_apps(app),
         "loopback.saveConfig" | "loopback:save-config" => {
             let sids = args

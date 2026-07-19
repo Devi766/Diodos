@@ -5,18 +5,17 @@ import { useTranslation } from 'react-i18next';
 import { IpInfoDialog } from './IpInfoDialog';
 import { fetchIpInfo, type IpInfo } from '@/utils/ip-info';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasIpInfoCache,
+  readIpInfoCache,
+  writeIpInfoCache,
+} from '@/services/app-data-hooks';
 
 export function IpAddressCard() {
   const { t } = useTranslation();
   const [ipInfo, setIpInfo] = useState<IpInfo | null>(() => {
-    return readAppDataCache<IpInfo | null>(APP_DATA_CACHE_KEYS.ipInfo, null) ?? null;
+    return readIpInfoCache<IpInfo>();
   });
-  const [loading, setLoading] = useState(() => !hasAppDataCache(APP_DATA_CACHE_KEYS.ipInfo));
+  const [loading, setLoading] = useState(() => !hasIpInfoCache());
   const [error, setError] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -27,13 +26,13 @@ export function IpAddressCard() {
   }, [ipInfo]);
 
   const loadIpInfo = useCallback(async () => {
-    const coldLoad = !ipInfoRef.current && !hasAppDataCache(APP_DATA_CACHE_KEYS.ipInfo);
+    const coldLoad = !ipInfoRef.current && !hasIpInfoCache();
     if (coldLoad) setLoading(true);
     setError(null);
 
     try {
       const nextIpInfo = await fetchIpInfo();
-      writeAppDataCache(APP_DATA_CACHE_KEYS.ipInfo, nextIpInfo);
+      writeIpInfoCache(nextIpInfo);
       setIpInfo(nextIpInfo);
       setLoading(false);
     } catch (err) {
@@ -97,17 +96,8 @@ export function IpAddressCard() {
   const displayIp = isVisible
     ? limitLength(ipInfo?.ip, 24)
     : '•••.•••.•••.•••';
-  const sourceLabel = ipInfo?.source === 'proxy'
-    ? t('dashboard.proxyExit')
-    : ipInfo?.source === 'direct'
-      ? t('dashboard.directExit')
-      : ipInfo?.source === 'browser'
-        ? t('dashboard.browserExit')
-        : '';
   const displayIsp = truncateText(
-    [sourceLabel, ipInfo?.isp || ipInfo?.country || t('dashboard.unknown')]
-      .filter(Boolean)
-      .join(' · '),
+    ipInfo?.isp || ipInfo?.country || t('dashboard.unknown'),
     30
   );
 

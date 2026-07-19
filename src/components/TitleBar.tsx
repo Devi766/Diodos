@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { MinusIcon, Cross2Icon } from '@radix-ui/react-icons';
-import { Square } from 'lucide-react';
+import { Minus, X, Square } from 'lucide-react';
 import { getBrowserPlatform, getRuntimePlatform } from '@/utils/platform';
 
 const resolveElectron = () => {
@@ -139,7 +138,7 @@ export default function TitleBar() {
           onClick={runMinimize}
           className="inline-flex h-7 w-9 items-center justify-center rounded-md text-slate-600 transition hover:bg-slate-200/70 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-700/60"
         >
-          <MinusIcon className="h-3.5 w-3.5" />
+          <Minus className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
@@ -157,7 +156,7 @@ export default function TitleBar() {
           onClick={runClose}
           className="inline-flex h-7 w-9 items-center justify-center rounded-md text-slate-600 transition hover:bg-slate-200/70 focus:outline-none dark:text-slate-200 dark:hover:bg-slate-700/60"
         >
-          <Cross2Icon className="h-3.5 w-3.5" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
     </div>

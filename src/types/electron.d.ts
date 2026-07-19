@@ -148,6 +148,9 @@ interface TunServiceStatusResult {
   serviceRunning?: boolean;
   mode?: string;
   ipcAvailable?: boolean;
+  /** Helper service process is running and IPC answers. Prefer over `running`. */
+  serviceReady?: boolean;
+  readiness?: 'unsupported' | 'not-installed' | 'installed-stopped' | 'running-no-ipc' | 'ready';
   coreRunning?: boolean;
   corePid?: number | null;
   version?: string | null;
@@ -418,7 +421,7 @@ export interface ElectronAPI {
   isMihomoRunning: () => Promise<boolean>;
   getProxyNodes: (configPath?: string) => Promise<any>;
   getConfigOrder: () => Promise<{ success: boolean, data?: any, error?: string }>;
-  notifyNodeChanged: (nodeName: string) => Promise<{ success: boolean, error?: string }>;
+  notifyNodeChanged: (nodeName: string, groupName?: string) => Promise<{ success: boolean, error?: string }>;
   
   // 配置管理
   saveLastConfig?: (configPath: string) => Promise<{ success: boolean, error?: string, path?: string, filePath?: string }>;
@@ -608,7 +611,7 @@ export interface ElectronAPI {
   onMihomoAutostart: (callback: (data: any) => void) => (() => void);
   onSubscriptionAutoUpdated?: (callback: (data: { name?: string; filePath?: string; result?: any }) => void) => (() => void);
   onSubscriptionAutoUpdateFailed?: (callback: (data: { name?: string; filePath?: string; error?: string }) => void) => (() => void);
-  onNodeChanged: (callback: (data: { nodeName: string }) => void) => (() => void);
+  onNodeChanged: (callback: (data: { nodeName: string; groupName?: string }) => void) => (() => void);
   onConnectionsUpdate: (callback: (data: any) => void) => (() => void);
   onTrafficUpdate: (callback: (stats: any) => void) => (() => void);
   onServiceRestarted: (callback: (result: {success: boolean, error?: string}) => void) => () => void;

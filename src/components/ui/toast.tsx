@@ -18,35 +18,57 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
     }
   }, [duration, onClose]);
 
-  const bgColor = {
-    success: 'bg-green-500/90',
-    error: 'bg-red-500/90',
-    info: 'bg-blue-500/90',
-    warning: 'bg-amber-500/90'
+  const tone = {
+    success: {
+      title: '成功',
+      icon: '✓',
+      className: 'bg-green-500/10 text-green-600 dark:text-green-400',
+    },
+    error: {
+      title: '错误',
+      icon: '✕',
+      className: 'bg-red-500/10 text-red-600 dark:text-red-400',
+    },
+    info: {
+      title: '提示',
+      icon: 'ℹ',
+      className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+    },
+    warning: {
+      title: '警告',
+      icon: '!',
+      className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    },
   }[type];
 
-  const icon = {
-    success: '✓',
-    error: '✕',
-    info: 'ℹ',
-    warning: '!'
-  }[type];
+  const separatorMatch = message.match(/^([^:：]{1,16})[:：]\s*([\s\S]+)$/);
+  const title = separatorMatch?.[1]?.trim() || tone.title;
+  const description = separatorMatch?.[2]?.trim() || message;
 
   return (
     <div className={cn(
-      "fixed top-4 right-4 z-50 flex items-start gap-3 px-6 py-4 rounded-xl shadow-lg backdrop-blur-md text-white animate-in slide-in-from-top-5 max-w-md",
-      bgColor
+      "w-full rounded-2xl bg-white/95 p-4 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.32),0_8px_22px_-18px_rgba(15,23,42,0.2)] backdrop-blur-sm animate-in slide-in-from-bottom-2 dark:bg-[#2a2a2a]/95"
     )}>
-      <span className="text-xl font-bold flex-shrink-0">{icon}</span>
-      <span className="text-sm font-medium break-words flex-1 min-w-0">{message}</span>
-      {onClose && (
-        <button
-          onClick={onClose}
-          className="ml-2 text-white/80 hover:text-white transition-colors flex-shrink-0"
-        >
-          ✕
-        </button>
-      )}
+      <div className="flex items-start gap-3">
+        <span className={cn("flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold", tone.className)}>
+          {tone.icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-foreground">{title}</div>
+          <div className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+            {description}
+          </div>
+        </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="flex-shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        )}
+      </div>
     </div>
   );
 };
@@ -105,14 +127,14 @@ const getDomToastRoot = () => {
     root.setAttribute('aria-live', 'polite');
     Object.assign(root.style, {
       position: 'fixed',
-      top: '16px',
-      right: '16px',
+      right: '24px',
+      bottom: '24px',
       zIndex: '2147483647',
       display: 'flex',
       flexDirection: 'column',
-      gap: '10px',
+      gap: '12px',
       pointerEvents: 'none',
-      maxWidth: 'min(420px, calc(100vw - 32px))'
+      width: 'min(320px, calc(100vw - 48px))',
     });
     document.body.appendChild(root);
   }
@@ -124,40 +146,93 @@ const renderDomToast = ({ message, type = 'info', duration = 3000 }: ToastEventP
   const root = getDomToastRoot();
   if (!root) return;
 
-  const color = {
-    success: '#16a34a',
-    error: '#dc2626',
-    info: '#2563eb',
-    warning: '#d97706'
+  const tone = {
+    success: { title: '成功', icon: '✓', color: '#16a34a', background: 'rgba(34, 197, 94, 0.10)' },
+    error: { title: '错误', icon: '✕', color: '#dc2626', background: 'rgba(239, 68, 68, 0.10)' },
+    info: { title: '提示', icon: 'ℹ', color: '#2563eb', background: 'rgba(59, 130, 246, 0.10)' },
+    warning: { title: '警告', icon: '!', color: '#d97706', background: 'rgba(245, 158, 11, 0.10)' },
   }[type];
+  const separatorMatch = message.match(/^([^:：]{1,16})[:：]\s*([\s\S]+)$/);
+  const title = separatorMatch?.[1]?.trim() || tone.title;
+  const description = separatorMatch?.[2]?.trim() || message;
 
   const toast = document.createElement('div');
   toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-  toast.textContent = message;
   Object.assign(toast.style, {
     boxSizing: 'border-box',
     width: '100%',
-    padding: '12px 16px',
-    borderRadius: '12px',
-    background: color,
-    color: '#fff',
-    boxShadow: '0 18px 45px rgba(15, 23, 42, 0.22)',
-    fontSize: '14px',
-    fontWeight: '600',
+    padding: '16px',
+    borderRadius: '16px',
+    background: 'rgba(255, 255, 255, 0.96)',
+    color: '#0f172a',
+    border: '0',
+    boxShadow: '0 18px 45px -28px rgba(15, 23, 42, 0.32), 0 8px 22px -18px rgba(15, 23, 42, 0.2)',
+    fontSize: '13px',
+    fontWeight: '400',
     lineHeight: '1.45',
-    whiteSpace: 'pre-wrap',
-    overflowWrap: 'anywhere',
+    maxHeight: '160px',
     opacity: '1',
     transform: 'translateY(0)',
     transition: 'opacity 160ms ease, transform 160ms ease',
     pointerEvents: 'auto'
   });
+  const row = document.createElement('div');
+  Object.assign(row.style, {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '12px',
+  });
+
+  const icon = document.createElement('span');
+  icon.textContent = tone.icon;
+  Object.assign(icon.style, {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: '0 0 auto',
+    width: '20px',
+    height: '20px',
+    borderRadius: '999px',
+    background: tone.background,
+    color: tone.color,
+    fontSize: '12px',
+    fontWeight: '700',
+  });
+
+  const content = document.createElement('div');
+  Object.assign(content.style, {
+    minWidth: '0',
+    flex: '1',
+  });
+
+  const titleElement = document.createElement('div');
+  titleElement.textContent = title;
+  Object.assign(titleElement.style, {
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#0f172a',
+  });
+
+  const descriptionElement = document.createElement('div');
+  descriptionElement.textContent = description;
+  Object.assign(descriptionElement.style, {
+    marginTop: '4px',
+    color: '#64748b',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+  });
+
+  content.appendChild(titleElement);
+  content.appendChild(descriptionElement);
+  row.appendChild(icon);
+  row.appendChild(content);
+  toast.appendChild(row);
 
   root.appendChild(toast);
 
   const remove = () => {
     toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-6px)';
+    toast.style.transform = 'translateY(6px)';
     window.setTimeout(() => {
       toast.remove();
       if (!root.hasChildNodes()) {
@@ -218,13 +293,13 @@ export const ToastContainer: React.FC = () => {
   }, []);
 
   return (
-    <>
-      {currentToasts.map((toast, index) => (
-        <div key={toast.id} style={{ top: `${16 + index * 80}px` }} className="fixed right-4 z-50">
+    <div className="fixed bottom-6 right-6 z-50 flex w-80 max-w-[calc(100vw-3rem)] flex-col gap-3">
+      {currentToasts.map((toast) => (
+        <div key={toast.id}>
           <Toast {...toast} />
         </div>
       ))}
-    </>
+    </div>
   );
 };
 

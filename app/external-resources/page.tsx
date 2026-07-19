@@ -1,7 +1,13 @@
 'use client';
 
-import ExternalResources from '@/components/ExternalResources';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useTranslation } from 'react-i18next';
+
+const ExternalResources = dynamic(() => import('@/components/ExternalResources'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function ExternalResourcesPage() {
   const { t } = useTranslation();

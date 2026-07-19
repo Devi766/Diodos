@@ -45,9 +45,13 @@ pub(crate) const KERNEL_FIELDS: &[&str] = &[
 
 const GEODATA_CONFIG_FIELDS: &[&str] = &[
     "geox-url",
+    "geoxUrl",
     "geodata-mode",
+    "geodataMode",
     "geo-auto-update",
+    "geoAutoUpdate",
     "geo-update-interval",
+    "geoUpdateInterval",
 ];
 
 fn success(value: Value) -> Value {
@@ -499,6 +503,14 @@ pub(crate) async fn patch_active_geodata_config(
 
     if let serde_yaml::Value::Mapping(map) = &mut yaml {
         for (key, value) in patch {
+            let key = match key.as_str() {
+                "geoxUrl" => "geox-url",
+                "geodataMode" => "geodata-mode",
+                "geoAutoUpdate" => "geo-auto-update",
+                "geoUpdateInterval" => "geo-update-interval",
+                other => other,
+            }
+            .to_string();
             let value = if key == "geox-url" {
                 normalize_geox_url_patch(&value)
             } else {
@@ -832,6 +844,10 @@ pub(crate) fn runtime_config_error_response(
     Value::Object(payload)
 }
 
+/// AppHandle adapter for runtime-config prep.
+///
+/// Pure build/validate/write lives in `core::config::prepare_validated_runtime_config`;
+/// this only loads content/settings, syncs bundled data, and injects overrides.
 pub(crate) fn prepare_runtime_config(
     app: &AppHandle,
     config_path: &str,
@@ -875,6 +891,8 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
         })
         .unwrap_or_default();
     let provider_proxies = parse_provider_proxy_orders(app, &path, &yaml);
+    let proxy_providers = yaml_mapping_names(yaml.get("proxy-providers"));
+    let rule_providers = yaml_mapping_names(yaml.get("rule-providers"));
 
     let groups = yaml
         .get("proxy-groups")
@@ -923,6 +941,8 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
             "configPath": path,
             "proxyGroups": groups,
             "proxies": top_level_proxies,
+            "proxyProviders": proxy_providers,
+            "ruleProviders": rule_providers,
             "providerProxies": provider_proxies
         }
     }))
@@ -965,9 +985,22 @@ fn yaml_string(value: Option<&serde_yaml::Value>) -> Option<String> {
 }
 
 fn yaml_bool(value: Option<&serde_yaml::Value>) -> bool {
+    value.and_then(serde_yaml::Value::as_bool).unwrap_or(false)
+}
+
+fn yaml_mapping_names(value: Option<&serde_yaml::Value>) -> Vec<String> {
     value
-        .and_then(serde_yaml::Value::as_bool)
-        .unwrap_or(false)
+        .and_then(serde_yaml::Value::as_mapping)
+        .map(|mapping| {
+            mapping
+                .keys()
+                .filter_map(serde_yaml::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_provider_proxy_orders(

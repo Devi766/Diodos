@@ -1,8 +1,3 @@
-import {
-  APP_DATA_CACHE_KEYS,
-  writeAppDataCache,
-} from './app-data-cache';
-
 type MihomoApiModule = typeof import('tauri-plugin-mihomo-api');
 
 export type MihomoCompatResponse<T = unknown> = {
@@ -80,7 +75,6 @@ export const isMihomoRuntimeUnavailableError = (error: unknown): boolean => {
 
 const markMihomoUnavailable = (error: unknown) => {
   if (!isMihomoRuntimeUnavailableError(error) || typeof window === 'undefined') return;
-  writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
   window.dispatchEvent(
     new CustomEvent(MIHOMO_RUNTIME_UNAVAILABLE_EVENT, {
       detail: { message: errorMessage(error) },
@@ -261,109 +255,163 @@ const parseEndpoint = (endpoint: string, params?: Record<string, unknown>) => {
   return { url, segments };
 };
 
+const requestViaBackendIpc = async <T = any>(
+  endpoint: string,
+  options: RequestLike = {},
+): Promise<MihomoCompatResponse<T>> => {
+  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+    return toCompatError('Mihomo controller HTTP fallback is disabled') as MihomoCompatResponse<T>;
+  }
+
+  const method = (options.method || 'GET').toUpperCase();
+  const body = parseBody(options.body);
+  return requestViaCompatBridge<T>(withParams(endpoint, options.params), method, body);
+};
+
+const assertOk = <T>(response: MihomoCompatResponse<T>): T => {
+  if (response.ok) return response.data;
+
+  const data = response.data as any;
+  const message =
+    (typeof data === 'string' ? data : data?.message || data?.error) ||
+    response.statusText ||
+    response.text ||
+    'Mihomo IPC request failed';
+  const error = new Error(String(message));
+  (error as Error & { status?: number }).status = response.status;
+  throw error;
+};
+
+const bridgeData = async <T = any>(
+  endpoint: string,
+  options: RequestLike = {},
+): Promise<T> => {
+  try {
+    return assertOk(await requestViaBackendIpc<T>(endpoint, options));
+  } catch (error) {
+    markMihomoUnavailable(error);
+    throw error;
+  }
+};
+
+const encoded = (value: string) => encodeURIComponent(value);
+
 export const mihomoClient = {
   async getVersion() {
-    return callMihomo((api) => api.getVersion());
+    return bridgeData('/version');
   },
 
   async flushFakeIp() {
-    return callMihomo((api) => api.flushFakeIp());
+    return bridgeData('/cache/fakeip/flush', { method: 'POST' });
   },
 
   async flushDNS() {
-    return callMihomo((api) => api.flushDNS());
+    return bridgeData('/cache/dns/flush', { method: 'POST' });
   },
 
   async getRuntimeConfig() {
-    return callMihomo((api) => api.getBaseConfig());
+    return bridgeData('/configs');
   },
 
   async reloadConfig(force: boolean, configPath: string) {
-    return callMihomo((api) => api.reloadConfig(force, configPath));
+    return bridgeData(`/configs?force=${force ? 'true' : 'false'}`, {
+      method: 'PUT',
+      body: { path: configPath },
+    });
   },
 
   async patchRuntimeConfig(data: Record<string, unknown>) {
-    return callMihomo((api) => api.patchBaseConfig(normalizeRuntimeConfigPatch(data)));
+    return bridgeData('/configs', {
+      method: 'PATCH',
+      body: normalizeRuntimeConfigPatch(data),
+    });
   },
 
   async updateGeo() {
-    return callMihomo((api) => api.updateGeo());
+    return bridgeData('/configs/geo', { method: 'POST' });
   },
 
   async restart() {
-    return callMihomo((api) => api.restart());
+    return bridgeData('/restart', { method: 'POST' });
   },
 
   async getGroups() {
-    return callMihomo((api) => api.getGroups());
+    return bridgeData('/group');
   },
 
   async getGroupByName(groupName: string) {
-    return callMihomo((api) => api.getGroupByName(groupName));
+    return bridgeData(`/group/${encoded(groupName)}`);
   },
 
   async delayGroup(groupName: string, testUrl: string, timeout: number) {
-    return callMihomo((api) => api.delayGroup(groupName, testUrl, timeout));
+    return bridgeData(`/group/${encoded(groupName)}/delay`, {
+      params: { url: testUrl, timeout },
+    });
   },
 
   async getProxies() {
-    return callMihomo((api) => api.getProxies());
+    return bridgeData('/proxies');
   },
 
   async getProxyByName(name: string) {
-    return callMihomo((api) => api.getProxyByName(name));
+    return bridgeData(`/proxies/${encoded(name)}`);
   },
 
   async selectNodeForGroup(groupName: string, node: string) {
-    return callMihomo((api) => api.selectNodeForGroup(groupName, node));
+    return bridgeData(`/proxies/${encoded(groupName)}`, {
+      method: 'PUT',
+      body: { name: node },
+    });
   },
 
   async unfixedProxy(groupName: string) {
-    return callMihomo((api) => api.unfixedProxy(groupName));
+    return bridgeData(`/proxies/${encoded(groupName)}`, { method: 'DELETE' });
   },
 
   async getConnections() {
-    return callMihomo((api) => api.getConnections());
+    return bridgeData('/connections');
   },
 
   async closeConnection(id: string) {
-    return callMihomo((api) => api.closeConnection(id));
+    return bridgeData(`/connections/${encoded(id)}`, { method: 'DELETE' });
   },
 
   async closeAllConnections() {
-    return callMihomo((api) => api.closeAllConnections());
+    return bridgeData('/connections', { method: 'DELETE' });
   },
 
   async getProxyProviders() {
-    return callMihomo((api) => api.getProxyProviders());
+    return bridgeData('/providers/proxies');
   },
 
   async getProxyProviderByName(providerName: string) {
-    return callMihomo((api) => api.getProxyProviderByName(providerName));
+    return bridgeData(`/providers/proxies/${encoded(providerName)}`);
   },
 
   async updateProxyProvider(providerName: string) {
-    return callMihomo((api) => api.updateProxyProvider(providerName));
+    return bridgeData(`/providers/proxies/${encoded(providerName)}`, { method: 'PUT' });
   },
 
   async healthcheckProxyProvider(providerName: string) {
-    return callMihomo((api) => api.healthcheckProxyProvider(providerName));
+    return bridgeData(`/providers/proxies/${encoded(providerName)}/healthcheck`);
   },
 
   async getRules() {
-    return callMihomo((api) => api.getRules());
+    return bridgeData('/rules');
   },
 
   async getRuleProviders() {
-    return callMihomo((api) => api.getRuleProviders());
+    return bridgeData('/providers/rules');
   },
 
   async updateRuleProvider(providerName: string) {
-    return callMihomo((api) => api.updateRuleProvider(providerName));
+    return bridgeData(`/providers/rules/${encoded(providerName)}`, { method: 'PUT' });
   },
 
   async delayProxyByName(proxyName: string, testUrl: string, timeout: number) {
-    return callMihomo((api) => api.delayProxyByName(proxyName, testUrl, timeout));
+    return bridgeData(`/proxies/${encoded(proxyName)}/delay`, {
+      params: { url: testUrl, timeout },
+    });
   },
 
   async connectTraffic() {
@@ -386,120 +434,8 @@ export const mihomoClient = {
     endpoint: string,
     options: RequestLike = {},
   ): Promise<MihomoCompatResponse<T>> {
-    if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
-      return toCompatError('Mihomo controller HTTP fallback is disabled') as MihomoCompatResponse<T>;
-    }
-
-    const method = (options.method || 'GET').toUpperCase();
-    const { url, segments } = parseEndpoint(endpoint, options.params);
-    const body = parseBody(options.body);
-
     try {
-      const api = await loadMihomoApi();
-      if (method === 'GET' && segments[0] === 'version') {
-        return toCompatResponse(await api.getVersion()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'POST' && segments.join('/') === 'cache/fakeip/flush') {
-        await api.flushFakeIp();
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'POST' && segments.join('/') === 'cache/dns/flush') {
-        await api.flushDNS();
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'configs') {
-        return toCompatResponse(await api.getBaseConfig()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'PATCH' && segments[0] === 'configs') {
-        await api.patchBaseConfig(normalizeRuntimeConfigPatch(body));
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'PUT' && segments[0] === 'configs') {
-        if (!body?.path) return toCompatError('Missing config path') as MihomoCompatResponse<T>;
-        await api.reloadConfig(url.searchParams.get('force') === 'true', String(body.path));
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'POST' && segments.join('/') === 'configs/geo') {
-        await api.updateGeo();
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'POST' && segments[0] === 'restart') {
-        await api.restart();
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'connections') {
-        return toCompatResponse(await api.getConnections()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'DELETE' && segments[0] === 'connections' && !segments[1]) {
-        await api.closeAllConnections();
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'DELETE' && segments[0] === 'connections' && segments[1]) {
-        await api.closeConnection(segments[1]);
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'group' && !segments[1]) {
-        return toCompatResponse(await api.getGroups()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'group' && segments[1] && !segments[2]) {
-        return toCompatResponse(await api.getGroupByName(segments[1])) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'group' && segments[1] && segments[2] === 'delay') {
-        const timeout = Number(url.searchParams.get('timeout') || 10000);
-        const testUrl =
-          url.searchParams.get('url') || 'https://www.gstatic.com/generate_204';
-        return toCompatResponse(await api.delayGroup(segments[1], testUrl, timeout)) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'proxies' && !segments[1]) {
-        return toCompatResponse(await api.getProxies()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'proxies' && segments[1] && !segments[2]) {
-        return toCompatResponse(await api.getProxyByName(segments[1])) as MihomoCompatResponse<T>;
-      }
-      if (method === 'PUT' && segments[0] === 'proxies' && segments[1]) {
-        if (!body?.name) return toCompatError('Missing proxy node name') as MihomoCompatResponse<T>;
-        await api.selectNodeForGroup(segments[1], String(body.name));
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'DELETE' && segments[0] === 'proxies' && segments[1]) {
-        await api.unfixedProxy(segments[1]);
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'proxies' && segments[2] === 'delay') {
-        const timeout = Number(url.searchParams.get('timeout') || 10000);
-        const testUrl =
-          url.searchParams.get('url') || 'https://www.gstatic.com/generate_204';
-        return toCompatResponse(await api.delayProxyByName(segments[1], testUrl, timeout)) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'rules' && !segments[1]) {
-        return toCompatResponse(await api.getRules()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'PATCH' && segments.join('/') === 'rules/disable') {
-        return await requestViaCompatBridge<T>('/rules/disable', method, body);
-      }
-      if (method === 'GET' && segments.join('/') === 'providers/proxies') {
-        return toCompatResponse(await api.getProxyProviders()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && !segments[3]) {
-        return toCompatResponse(await api.getProxyProviderByName(segments[2])) as MihomoCompatResponse<T>;
-      }
-      if (method === 'PUT' && segments[0] === 'providers' && segments[1] === 'proxies' && segments[2]) {
-        await api.updateProxyProvider(segments[2]);
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments[0] === 'providers' && segments[1] === 'proxies' && segments[2] && segments[3] === 'healthcheck') {
-        await api.healthcheckProxyProvider(segments[2]);
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-      if (method === 'GET' && segments.join('/') === 'providers/rules') {
-        return toCompatResponse(await api.getRuleProviders()) as MihomoCompatResponse<T>;
-      }
-      if (method === 'PUT' && segments[0] === 'providers' && segments[1] === 'rules' && segments[2]) {
-        await api.updateRuleProvider(segments[2]);
-        return toCompatResponse(null, 204) as MihomoCompatResponse<T>;
-      }
-
-      return toCompatError(`Unsupported Mihomo IPC endpoint: ${method} ${endpoint}`) as MihomoCompatResponse<T>;
+      return await requestViaBackendIpc<T>(endpoint, options);
     } catch (error) {
       markMihomoUnavailable(error);
       return toCompatError(

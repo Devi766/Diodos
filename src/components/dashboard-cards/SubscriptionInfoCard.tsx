@@ -2,12 +2,16 @@ import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { CloudDownload, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasActiveConfigCache,
+  hasSubscriptionsCache,
+  readActiveConfigCache,
+  readSubscriptionsCache,
+  toArrayValue,
+  useActiveConfigCache,
+  useSubscriptionsCache,
+  writeActiveConfigCache,
+  writeSubscriptionsCache,
+} from '@/services/app-data-hooks';
 
 interface SubscriptionData {
   name: string;
@@ -35,32 +39,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
-function toSubscriptionArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-
-  const record = value as Record<string, unknown>;
-  const nested = record.data ?? record.subscriptions ?? record.items;
-  if (Array.isArray(nested)) return nested;
-
-  if (nested && typeof nested === 'object') {
-    const nestedRecord = nested as Record<string, unknown>;
-    if (Array.isArray(nestedRecord.subscriptions)) return nestedRecord.subscriptions;
-    if (Array.isArray(nestedRecord.items)) return nestedRecord.items;
-  }
-
-  return [];
-}
-
-const readCachedActiveConfig = () => {
-  const cached = readAppDataCache<string | null>(APP_DATA_CACHE_KEYS.activeConfig);
-  return typeof cached === 'string' && cached.trim() ? cached : null;
-};
-
-const readCachedSubscriptions = () => {
-  return toSubscriptionArray(readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.subscriptions));
-};
-
 const findSubscriptionData = (activeConfig: string | null, subs: any[]): SubscriptionData | null => {
   if (!activeConfig || subs.length === 0) return null;
   const activeSub = subs.find((s: any) => s.path === activeConfig);
@@ -76,15 +54,27 @@ const findSubscriptionData = (activeConfig: string | null, subs: any[]): Subscri
 
 export function SubscriptionInfoCard() {
   const { t } = useTranslation();
+  const activeConfig = useActiveConfigCache();
+  const subscriptions = useSubscriptionsCache<any>();
   const [subData, setSubData] = useState<SubscriptionData | null>(() => {
-    return findSubscriptionData(readCachedActiveConfig(), readCachedSubscriptions());
+    return findSubscriptionData(readActiveConfigCache(), readSubscriptionsCache());
   });
   const [loading, setLoading] = useState(() => {
-    const hasActiveConfig = hasAppDataCache(APP_DATA_CACHE_KEYS.activeConfig);
-    const activeConfig = readCachedActiveConfig();
+    const hasActiveConfig = hasActiveConfigCache();
+    const cachedActiveConfig = readActiveConfigCache();
     return !hasActiveConfig ||
-      (activeConfig !== null && !hasAppDataCache(APP_DATA_CACHE_KEYS.subscriptions));
+      (cachedActiveConfig !== null && !hasSubscriptionsCache());
   });
+
+  useEffect(() => {
+    setSubData(findSubscriptionData(activeConfig, subscriptions));
+    if (
+      hasActiveConfigCache() &&
+      (activeConfig === null || hasSubscriptionsCache())
+    ) {
+      setLoading(false);
+    }
+  }, [activeConfig, subscriptions]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -93,14 +83,14 @@ export function SubscriptionInfoCard() {
       const configPath = typeof activeConfigResult === 'string' && activeConfigResult.trim()
         ? activeConfigResult
         : null;
-      writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, configPath);
+      writeActiveConfigCache(configPath);
       if (!configPath) {
         setSubData(null);
         setLoading(false);
         return;
       }
-      const subs = toSubscriptionArray(await window.electronAPI.getSubscriptions());
-      writeAppDataCache(APP_DATA_CACHE_KEYS.subscriptions, subs);
+      const subs = toArrayValue<any>(await window.electronAPI.getSubscriptions());
+      writeSubscriptionsCache(subs);
       if (subs.length === 0) {
         setSubData(null);
         setLoading(false);
@@ -130,27 +120,20 @@ export function SubscriptionInfoCard() {
 
   useEffect(() => {
     const applyCachedSnapshot = () => {
-      const hasActiveConfig = hasAppDataCache(APP_DATA_CACHE_KEYS.activeConfig);
-      const activeConfig = readCachedActiveConfig();
+      const hasActiveConfig = hasActiveConfigCache();
+      const nextActiveConfig = readActiveConfigCache();
       if (!hasActiveConfig) {
         return;
       }
-      if (activeConfig !== null && !hasAppDataCache(APP_DATA_CACHE_KEYS.subscriptions)) {
+      if (nextActiveConfig !== null && !hasSubscriptionsCache()) {
         return;
       }
-      setSubData(findSubscriptionData(activeConfig, readCachedSubscriptions()));
+      setSubData(findSubscriptionData(nextActiveConfig, readSubscriptionsCache()));
       setLoading(false);
     };
 
-    const unsubscribeActive = subscribeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, applyCachedSnapshot);
-    const unsubscribeSubscriptions = subscribeAppDataCache(APP_DATA_CACHE_KEYS.subscriptions, applyCachedSnapshot);
     applyCachedSnapshot();
-
-    return () => {
-      unsubscribeActive();
-      unsubscribeSubscriptions();
-    };
-  }, []);
+  }, [activeConfig, subscriptions]);
 
   useEffect(() => {
     fetchData();

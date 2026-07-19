@@ -2,17 +2,21 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityLogIcon,
-  BarChartIcon,
-  DownloadIcon,
-  GlobeIcon,
-  MixerHorizontalIcon,
-  PlayIcon,
-  ReloadIcon,
-  StopIcon,
-  UploadIcon,
-  ExitIcon
-} from '@radix-ui/react-icons';
+  Activity,
+  BarChart3,
+  Download,
+  Globe,
+  SlidersHorizontal,
+  Play,
+  RefreshCw,
+  Square,
+  Upload,
+  LogOut,
+  Settings2,
+  Plus,
+  RotateCcw,
+  Check,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -26,29 +30,108 @@ import {
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { CustomizableDashboard } from '@/components/CustomizableDashboard';
-import { Settings2, Plus, RotateCcw, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { DASHBOARD_CONFIG_KEY, DEFAULT_DASHBOARD_CARDS } from '@/types/dashboard';
 import { getBrowserPlatform, getRuntimePlatform, RuntimePlatform } from '@/utils/platform';
 import {
   APP_DATA_CACHE_KEYS,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  readActiveConfigCache,
+  readConnectionsCache,
+  readDashboardRuntimeCache,
+  readMihomoRunningCache,
+  readProxyModeCache,
+  readSystemProxyEnabledCache,
+  readTunEnabledCache,
+  subscribeConnectionsCache,
+  subscribeDashboardRuntimeCache,
+  subscribeMihomoRunningCache,
+  subscribeSystemProxyEnabledCache,
+  subscribeTunEnabledCache,
+  writeActiveConfigCache,
+  writeDashboardRuntimeCache,
+  writeMihomoRunningCache,
+  writeProxyModeCache,
+  writeSystemProxyEnabledCache,
+  writeTunEnabledCache,
+  type ProxyMode,
+} from '@/services/app-data-hooks';
 import { mihomoClient } from '@/services/mihomo-client';
 
-type ProxyMode = 'rule' | 'global' | 'direct';
-
-const readCachedProxyMode = (): ProxyMode | null => {
-  const cached = readAppDataCache<string | null>(APP_DATA_CACHE_KEYS.proxyMode);
-  return cached === 'rule' || cached === 'global' || cached === 'direct' ? cached : null;
+const readCachedBoolean = (key: typeof APP_DATA_CACHE_KEYS[keyof typeof APP_DATA_CACHE_KEYS]) => {
+  if (key === APP_DATA_CACHE_KEYS.mihomoRunning) return readMihomoRunningCache() ?? false;
+  if (key === APP_DATA_CACHE_KEYS.systemProxyEnabled) return readSystemProxyEnabledCache() ?? false;
+  if (key === APP_DATA_CACHE_KEYS.tunEnabled) return readTunEnabledCache() ?? false;
+  return false;
 };
 
-const readCachedActiveConfig = (): string | null => {
-  const cached = readAppDataCache<string | null>(APP_DATA_CACHE_KEYS.activeConfig);
-  return typeof cached === 'string' && cached.trim() ? cached : null;
+const readCachedBooleanMaybe = (
+  key: typeof APP_DATA_CACHE_KEYS[keyof typeof APP_DATA_CACHE_KEYS],
+): boolean | null => {
+  if (key === APP_DATA_CACHE_KEYS.mihomoRunning) return readMihomoRunningCache();
+  if (key === APP_DATA_CACHE_KEYS.systemProxyEnabled) return readSystemProxyEnabledCache();
+  if (key === APP_DATA_CACHE_KEYS.tunEnabled) return readTunEnabledCache();
+  return null;
+};
+
+const writeCachedBoolean = (
+  key: typeof APP_DATA_CACHE_KEYS[keyof typeof APP_DATA_CACHE_KEYS],
+  value: boolean,
+) => {
+  if (key === APP_DATA_CACHE_KEYS.mihomoRunning) {
+    writeMihomoRunningCache(value);
+    return;
+  }
+  if (key === APP_DATA_CACHE_KEYS.systemProxyEnabled) {
+    writeSystemProxyEnabledCache(value);
+    return;
+  }
+  if (key === APP_DATA_CACHE_KEYS.tunEnabled) {
+    writeTunEnabledCache(value);
+  }
+};
+
+const hasDesktopRuntime = () => {
+  if (typeof window === 'undefined') return false;
+  const runtimeWindow = window as any;
+  const tauriCore = runtimeWindow.__TAURI__?.core;
+  const tauriInternals = runtimeWindow.__TAURI_INTERNALS__;
+  return (
+    (!!tauriCore && typeof tauriCore.invoke === 'function') ||
+    (!!tauriInternals && typeof tauriInternals.invoke === 'function') ||
+    typeof runtimeWindow.__TAURI_IPC__ === 'function' ||
+    /Electron/i.test(window.navigator.userAgent || '')
+  );
+};
+
+const isWindowsTunServiceReady = (status: any) => {
+  if (!status || status.success === false) return false;
+  if (typeof status.serviceReady === 'boolean') {
+    return status.serviceReady;
+  }
+  if (status.readiness === 'ready') return true;
+  if (status.readiness === 'running-no-ipc') return false;
+  // Back-compat for older helper payloads that only expose running/ipcAvailable.
+  return Boolean(status.running && status.ipcAvailable !== false);
+};
+
+const tunServiceStatusError = (status: any) => {
+  if (!status || typeof status !== 'object') return '';
+  if (status.readiness === 'running-no-ipc') {
+    return String(
+      status.error ||
+        status.helperStatusError ||
+        status.helperVersionError ||
+        'Helper 服务运行中但 IPC 不可用，请在 TUN 设置中点击“修复 IPC”',
+    );
+  }
+  return String(
+    status.error ||
+      status.helperStatusError ||
+      status.helperVersionError ||
+      status.status?.error ||
+      '',
+  );
 };
 
 type TrafficStats = {
@@ -72,6 +155,20 @@ type ConnectionsSnapshot = {
   uploadTotal?: number;
 };
 
+type DashboardRuntimeSnapshot = {
+  connectionCount: number;
+  totalUpload: number;
+  totalDownload: number;
+  upSpeed: number;
+  downSpeed: number;
+  uploadTotal: number;
+  downloadTotal: number;
+  trafficSamples: TrafficSample[];
+  connections: any[];
+  currentNode: string;
+  updatedAt: number;
+};
+
 type BannerState = {
   type: 'success' | 'error' | 'info' | 'warning';
   message: string;
@@ -79,12 +176,24 @@ type BannerState = {
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
-const GROUP_PROXY_TYPE_REGEX = /(selector|test|fallback|balance|relay|chain|auto|lazy|switch)/i;
+const GROUP_PROXY_TYPE_REGEX = /(selector|test|fallback|balance|relay|chain|auto|lazy|switch|smart)/i;
 const KNOWN_GROUPS = new Set(['PROXY', 'GLOBAL', 'AUTO']);
 const KNOWN_BUILTINS = new Set(['DIRECT', 'REJECT', 'PASS']);
+const CURRENT_NODE_SELECTION_GRACE_MS = 2500;
+const MAX_DASHBOARD_CONNECTIONS = 80;
+const DASHBOARD_CONNECTION_POLL_MS = 5000;
+const isKnownBuiltinName = (name: string) => KNOWN_BUILTINS.has(String(name || '').toUpperCase());
 const isLikelyGroupOrBuiltin = (name: string) => {
   const upper = String(name || '').toUpperCase();
   return KNOWN_GROUPS.has(upper) || KNOWN_BUILTINS.has(upper);
+};
+
+const isProxyGroupInfo = (info: any) => {
+  if (!info || typeof info !== 'object') return false;
+  const type = typeof info.type === 'string' ? info.type : '';
+  if (GROUP_PROXY_TYPE_REGEX.test(type)) return true;
+  if (Array.isArray(info.all) || Array.isArray(info.proxies)) return true;
+  return false;
 };
 
 const formatBytes = (value: number, fractionDigits = 1) => {
@@ -119,6 +228,67 @@ const getFileName = (path?: string | null, t?: any) => {
   const parts = path.split(/[/\\]/);
   const name = parts[parts.length - 1];
   return name || path;
+};
+
+const emptyDashboardRuntimeSnapshot = (): DashboardRuntimeSnapshot => ({
+  connectionCount: 0,
+  totalUpload: 0,
+  totalDownload: 0,
+  upSpeed: 0,
+  downSpeed: 0,
+  uploadTotal: 0,
+  downloadTotal: 0,
+  trafficSamples: [],
+  connections: [],
+  currentNode: '',
+  updatedAt: 0,
+});
+
+const finiteNumber = (value: unknown, fallback = 0) => {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+};
+
+const sanitizeTrafficSamples = (value: unknown): TrafficSample[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((sample): sample is TrafficSample => (
+      !!sample &&
+      typeof sample === 'object' &&
+      Number.isFinite((sample as TrafficSample).timestamp)
+    ))
+    .map((sample) => ({
+      timestamp: finiteNumber(sample.timestamp, Date.now()),
+      upSpeed: finiteNumber(sample.upSpeed),
+      downSpeed: finiteNumber(sample.downSpeed),
+    }))
+    .slice(-120);
+};
+
+const sanitizeDashboardRuntimeSnapshot = (value: unknown): DashboardRuntimeSnapshot => {
+  const fallback = emptyDashboardRuntimeSnapshot();
+  if (!value || typeof value !== 'object') return fallback;
+
+  const record = value as Partial<DashboardRuntimeSnapshot>;
+  const connections = Array.isArray(record.connections) ? record.connections.slice(0, MAX_DASHBOARD_CONNECTIONS) : [];
+  return {
+    connectionCount: finiteNumber(record.connectionCount, connections.length),
+    totalUpload: finiteNumber(record.totalUpload, finiteNumber(record.uploadTotal)),
+    totalDownload: finiteNumber(record.totalDownload, finiteNumber(record.downloadTotal)),
+    upSpeed: finiteNumber(record.upSpeed),
+    downSpeed: finiteNumber(record.downSpeed),
+    uploadTotal: finiteNumber(record.uploadTotal, finiteNumber(record.totalUpload)),
+    downloadTotal: finiteNumber(record.downloadTotal, finiteNumber(record.totalDownload)),
+    trafficSamples: sanitizeTrafficSamples(record.trafficSamples),
+    connections,
+    currentNode: typeof record.currentNode === 'string' ? record.currentNode : '',
+    updatedAt: finiteNumber(record.updatedAt),
+  };
+};
+
+const readCachedDashboardRuntimeSnapshot = () => {
+  return sanitizeDashboardRuntimeSnapshot(
+    readDashboardRuntimeCache<Partial<DashboardRuntimeSnapshot>>(),
+  );
 };
 
 const toSubscriptionArray = (value: unknown): any[] => {
@@ -172,38 +342,62 @@ const notifyDashboardProfileUpdated = (detail: Record<string, unknown> = {}) => 
   }));
 };
 
+const pickPrimaryProxyGroupName = (groups: any[] | undefined | null): string | null => {
+  const availableGroups = Array.isArray(groups)
+    ? groups.filter((group) => {
+        const name = typeof group?.name === 'string' ? group.name.trim() : '';
+        return name.length > 0 && group?.hidden !== true;
+      })
+    : [];
+  if (availableGroups.length === 0) return null;
+
+  const proxyGroup = availableGroups.find((group) => group.name === 'PROXY');
+  if (proxyGroup?.name) return proxyGroup.name;
+
+  const firstNonGlobal = availableGroups.find((group) => group.name !== 'GLOBAL');
+  if (firstNonGlobal?.name) return firstNonGlobal.name;
+
+  return availableGroups[0]?.name ?? null;
+};
+
 export default function Dashboard() {
   const { t } = useTranslation();
   const themeColor = useThemeColor();
 
-  const [isRunning, setIsRunning] = useState(false);
-  const [proxyEnabled, setProxyEnabled] = useState(false);
-  const [tunEnabled, setTunEnabled] = useState(false);
-  const [proxyMode, setProxyMode] = useState<ProxyMode | null>(() => readCachedProxyMode());
+  const initialRunningCache = readCachedBooleanMaybe(APP_DATA_CACHE_KEYS.mihomoRunning);
+  const initialRuntimeSnapshotRef = useRef(readCachedDashboardRuntimeSnapshot());
+  const [isRunning, setIsRunning] = useState(() => initialRunningCache === true);
+  const [runningStatusHydrated, setRunningStatusHydrated] = useState(() => initialRunningCache === true);
+  const [proxyEnabled, setProxyEnabled] = useState(() => readCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled));
+  const [tunEnabled, setTunEnabled] = useState(() => readCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled));
+  const [proxyMode, setProxyMode] = useState<ProxyMode | null>(() => readProxyModeCache());
   const [isModeUpdating, setIsModeUpdating] = useState(false);
   const [isProxyUpdating, setIsProxyUpdating] = useState(false);
   const [isTunUpdating, setIsTunUpdating] = useState(false);
   const [isServiceBusy, setIsServiceBusy] = useState(false);
-  const [activeConfig, setActiveConfig] = useState<string | null>(() => readCachedActiveConfig());
-  const [preferredConfig, setPreferredConfig] = useState<string | null>(() => readCachedActiveConfig());
+  const [activeConfig, setActiveConfig] = useState<string | null>(() => readActiveConfigCache());
+  const [preferredConfig, setPreferredConfig] = useState<string | null>(() => readActiveConfigCache());
   const [activeConfigIcon, setActiveConfigIcon] = useState<string | null>(null);
-  const [currentNode, setCurrentNode] = useState<string>('');
+  const [currentNode, setCurrentNode] = useState<string>(() => initialRuntimeSnapshotRef.current.currentNode);
   const [primaryProxyGroup, setPrimaryProxyGroup] = useState<string>('PROXY');
-  const [connectionCount, setConnectionCount] = useState(0);
-  const [totalUpload, setTotalUpload] = useState(0);
-  const [totalDownload, setTotalDownload] = useState(0);
-  const [upSpeed, setUpSpeed] = useState(0);
-  const [downSpeed, setDownSpeed] = useState(0);
-  const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>([]);
+  const [connectionCount, setConnectionCount] = useState(() => initialRuntimeSnapshotRef.current.connectionCount);
+  const [totalUpload, setTotalUpload] = useState(() => initialRuntimeSnapshotRef.current.totalUpload);
+  const [totalDownload, setTotalDownload] = useState(() => initialRuntimeSnapshotRef.current.totalDownload);
+  const [upSpeed, setUpSpeed] = useState(() => initialRuntimeSnapshotRef.current.upSpeed);
+  const [downSpeed, setDownSpeed] = useState(() => initialRuntimeSnapshotRef.current.downSpeed);
+  const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>(() => initialRuntimeSnapshotRef.current.trafficSamples);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [tunConfirmOpen, setTunConfirmOpen] = useState(false);
   const [hasAdminPermission, setHasAdminPermission] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showAddCardDialog, setShowAddCardDialog] = useState(false);
   const [startErrorMsg, setStartErrorMsg] = useState<string | null>(null);
-  const [connections, setConnections] = useState<any[]>([]);
-  const [uploadTotal, setUploadTotal] = useState(0);
-  const [downloadTotal, setDownloadTotal] = useState(0);
+  const [connections, setConnections] = useState<any[]>(() => initialRuntimeSnapshotRef.current.connections);
+  const [uploadTotal, setUploadTotal] = useState(() => initialRuntimeSnapshotRef.current.uploadTotal);
+  const [downloadTotal, setDownloadTotal] = useState(() => initialRuntimeSnapshotRef.current.downloadTotal);
+  const runtimeSnapshotRef = useRef<DashboardRuntimeSnapshot>(initialRuntimeSnapshotRef.current);
+  const currentNodeRequestRef = useRef(0);
+  const lastNodeSelectionRef = useRef<{ nodeName: string; groupName: string; timestamp: number } | null>(null);
 
   const electron = useMemo(resolveElectron, []);
   const [runtimePlatform, setRuntimePlatform] = useState<RuntimePlatform>(() => getBrowserPlatform());
@@ -270,6 +464,60 @@ export default function Dashboard() {
       data: null
     }
   );
+
+  const rememberNodeSelection = useCallback((nodeName?: string | null, groupName?: string | null) => {
+    const normalizedNode = typeof nodeName === 'string' ? nodeName.trim() : '';
+    const normalizedGroup = typeof groupName === 'string' ? groupName.trim() : '';
+    if (!normalizedNode || !normalizedGroup) return;
+
+    lastNodeSelectionRef.current = {
+      nodeName: normalizedNode,
+      groupName: normalizedGroup,
+      timestamp: Date.now(),
+    };
+
+    const snapshot = proxiesSnapshotRef.current.data;
+    if (snapshot) {
+      snapshot[normalizedGroup] = {
+        ...(snapshot[normalizedGroup] || {}),
+        name: normalizedGroup,
+        type: snapshot[normalizedGroup]?.type || 'Selector',
+        now: normalizedNode,
+      };
+    }
+  }, []);
+
+  const isWithinNodeSelectionGrace = useCallback(() => {
+    const lastSelection = lastNodeSelectionRef.current;
+    return !!lastSelection && Date.now() - lastSelection.timestamp < CURRENT_NODE_SELECTION_GRACE_MS;
+  }, []);
+
+  const writeRuntimeSnapshot = useCallback((patch: Partial<DashboardRuntimeSnapshot>) => {
+    const next = sanitizeDashboardRuntimeSnapshot({
+      ...runtimeSnapshotRef.current,
+      ...patch,
+      updatedAt: Date.now(),
+    });
+    runtimeSnapshotRef.current = next;
+    writeDashboardRuntimeCache(next as Record<string, unknown>);
+    return next;
+  }, []);
+
+  const clearRuntimeSnapshot = useCallback(() => {
+    const next = emptyDashboardRuntimeSnapshot();
+    runtimeSnapshotRef.current = next;
+    setCurrentNode('');
+    setConnectionCount(0);
+    setTotalUpload(0);
+    setTotalDownload(0);
+    setUpSpeed(0);
+    setDownSpeed(0);
+    setTrafficSamples([]);
+    setConnections([]);
+    setUploadTotal(0);
+    setDownloadTotal(0);
+    writeDashboardRuntimeCache(next as Record<string, unknown>);
+  }, []);
 
   const getProxiesSnapshot = useCallback(
     async (force = false): Promise<Record<string, any>> => {
@@ -338,15 +586,6 @@ export default function Dashboard() {
         return info;
       };
 
-      const isGroupInfo = (info: any) => {
-        if (!info || typeof info !== 'object') return false;
-        const type = typeof info.type === 'string' ? info.type : '';
-        if (GROUP_PROXY_TYPE_REGEX.test(type)) return true;
-        if (Array.isArray(info.all) || Array.isArray(info.proxies)) return true;
-        if (Array.isArray(info.history)) return true;
-        return false;
-      };
-
       const traverse = async (name: string): Promise<string> => {
         const normalized = name.trim();
         if (!normalized) return normalized;
@@ -357,7 +596,7 @@ export default function Dashboard() {
         if (!info) return normalized;
 
         const next = typeof info.now === 'string' ? info.now.trim() : '';
-        if (next && next !== normalized && isGroupInfo(info)) {
+        if (next && next !== normalized && isProxyGroupInfo(info)) {
           return traverse(next);
         }
 
@@ -377,20 +616,42 @@ export default function Dashboard() {
   const commitCurrentNode = useCallback(
     (value: string) => {
       const trimmed = value.trim();
-      setCurrentNode((prev) => {
-        if (trimmed && trimmed !== prev) {
-          try {
-            electron?.notifyNodeChanged?.(trimmed);
-          } catch {}
-        }
-        return trimmed;
-      });
+      writeRuntimeSnapshot({ currentNode: trimmed });
+      setCurrentNode(trimmed);
     },
-    [electron]
+    [writeRuntimeSnapshot]
+  );
+
+  const isRuntimeProxyGroupName = useCallback((name?: string | null) => {
+    const normalized = typeof name === 'string' ? name.trim() : '';
+    if (!normalized) return false;
+    const info = proxiesSnapshotRef.current.data?.[normalized];
+    return isProxyGroupInfo(info);
+  }, []);
+
+  const isDisplayableCurrentNode = useCallback(
+    (
+      name?: string | null,
+      modeOverride?: ProxyMode | null,
+      options?: { allowBuiltin?: boolean }
+    ) => {
+      const normalized = typeof name === 'string' ? name.trim() : '';
+      if (!normalized) return false;
+      const effectiveMode = modeOverride ?? proxyMode;
+      if (isKnownBuiltinName(normalized)) {
+        return options?.allowBuiltin === true || effectiveMode === 'direct' || effectiveMode === 'global';
+      }
+      return !isLikelyGroupOrBuiltin(normalized) && !isRuntimeProxyGroupName(normalized);
+    },
+    [isRuntimeProxyGroupName, proxyMode]
   );
 
   const updateCurrentNodeDisplay = useCallback(
-    (rawNodeName?: string | null, fallbackGroup?: string, options?: { forceRefresh?: boolean }) => {
+    (
+      rawNodeName?: string | null,
+      fallbackGroup?: string,
+      options?: { forceRefresh?: boolean; mode?: ProxyMode | null; source?: 'selection' | 'sync' | 'connections' | 'bootstrap' }
+    ) => {
       const base = typeof rawNodeName === 'string' ? rawNodeName.trim() : '';
       const fallback = typeof fallbackGroup === 'string' ? fallbackGroup.trim() : '';
 
@@ -398,18 +659,29 @@ export default function Dashboard() {
         return;
       }
 
+      const requestId = ++currentNodeRequestRef.current;
       void (async () => {
-        const resolved = await resolveEffectiveNode(base || null, fallback || undefined, options);
-        if (resolved && resolved.length > 0) {
+        const shouldPreferFallback = !!fallback && (!base || isLikelyGroupOrBuiltin(base) || isRuntimeProxyGroupName(base));
+        const resolved = shouldPreferFallback
+          ? await resolveEffectiveNode(null, fallback, options)
+          : await resolveEffectiveNode(base || null, fallback || undefined, options);
+        if (requestId !== currentNodeRequestRef.current) return;
+
+        if (
+          resolved &&
+          isDisplayableCurrentNode(resolved, options?.mode, {
+            allowBuiltin: shouldPreferFallback || !!fallback,
+          })
+        ) {
           commitCurrentNode(resolved);
-        } else if (base && !isLikelyGroupOrBuiltin(base)) {
+        } else if (base && isDisplayableCurrentNode(base, options?.mode)) {
           commitCurrentNode(base);
-        } else if (fallback && !isLikelyGroupOrBuiltin(fallback)) {
+        } else if (fallback && isDisplayableCurrentNode(fallback, options?.mode)) {
           commitCurrentNode(fallback);
         }
       })();
     },
-    [commitCurrentNode, resolveEffectiveNode]
+    [commitCurrentNode, isDisplayableCurrentNode, isRuntimeProxyGroupName, resolveEffectiveNode]
   );
 
   const MODE_LABELS: Record<ProxyMode, string> = {
@@ -422,63 +694,84 @@ export default function Dashboard() {
     {
       key: 'rule',
       label: MODE_LABELS.rule,
-      icon: <MixerHorizontalIcon className="h-[14px] w-[14px]" />
+      icon: <SlidersHorizontal className="h-[14px] w-[14px]" />
     },
     {
       key: 'global',
       label: MODE_LABELS.global,
-      icon: <GlobeIcon className="h-[14px] w-[14px]" />
+      icon: <Globe className="h-[14px] w-[14px]" />
     },
     {
       key: 'direct',
       label: MODE_LABELS.direct,
-      icon: <ExitIcon className="h-[14px] w-[14px]" />
+      icon: <LogOut className="h-[14px] w-[14px]" />
     }
   ];
 
   const hydrateConnections = useCallback(
     (snapshot: ConnectionsSnapshot | null | undefined) => {
       if (!snapshot) return;
+      const patch: Partial<DashboardRuntimeSnapshot> = {};
       if (typeof snapshot.activeConnections === 'number') {
         setConnectionCount(snapshot.activeConnections);
+        patch.connectionCount = snapshot.activeConnections;
       }
       if (typeof snapshot.downloadTotal === 'number') {
         setTotalDownload(snapshot.downloadTotal);
         setDownloadTotal(snapshot.downloadTotal);
+        patch.totalDownload = snapshot.downloadTotal;
+        patch.downloadTotal = snapshot.downloadTotal;
       }
       if (typeof snapshot.uploadTotal === 'number') {
         setTotalUpload(snapshot.uploadTotal);
         setUploadTotal(snapshot.uploadTotal);
+        patch.totalUpload = snapshot.uploadTotal;
+        patch.uploadTotal = snapshot.uploadTotal;
+      }
+      if (Object.keys(patch).length > 0) {
+        writeRuntimeSnapshot(patch);
       }
       if (snapshot.currentNode) {
-        updateCurrentNodeDisplay(snapshot.currentNode, primaryProxyGroup);
+        const modeForDisplay = proxyMode ?? readProxyModeCache();
+        if (modeForDisplay === 'direct') {
+          commitCurrentNode('DIRECT');
+        } else if (!isWithinNodeSelectionGrace()) {
+          const displayGroup = modeForDisplay === 'global' ? 'GLOBAL' : primaryProxyGroup;
+          updateCurrentNodeDisplay(undefined, displayGroup, {
+            mode: modeForDisplay,
+            source: 'connections',
+          });
+        }
       }
     },
-    [primaryProxyGroup, updateCurrentNodeDisplay]
+    [commitCurrentNode, isWithinNodeSelectionGrace, primaryProxyGroup, proxyMode, updateCurrentNodeDisplay, writeRuntimeSnapshot]
   );
 
   const syncCurrentNode = useCallback(async (overrideMode?: ProxyMode | null) => {
     if (!electron || !isRunning) return;
+    const requestId = ++currentNodeRequestRef.current;
     try {
       await getProxiesSnapshot(true);
+      if (requestId !== currentNodeRequestRef.current) return;
       if (!proxiesSnapshotRef.current.data) {
         proxiesSnapshotRef.current.data = {};
       }
 
       const snapshotCache = proxiesSnapshotRef.current.data;
       // 根据代理模式决定候选组的优先级
-      // 全局模式下优先使用 GLOBAL 组，规则模式下优先使用 primaryProxyGroup 和 PROXY
-      // 使用传入的 overrideMode 或当前的 proxyMode
-      const effectiveMode = overrideMode ?? proxyMode;
+      // 全局模式使用 GLOBAL 组，规则模式使用配置里的主策略组，避免两种模式互相污染显示。
+      // 使用传入的 overrideMode 或当前的 proxyMode；未知时按 rule 处理。
+      const effectiveMode: ProxyMode = overrideMode ?? proxyMode ?? 'rule';
       let allCandidates: string[];
       if (effectiveMode === 'global') {
-        // 全局模式：优先 GLOBAL
         allCandidates = ['GLOBAL', primaryProxyGroup, 'PROXY'].filter(Boolean);
+      } else if (effectiveMode === 'direct') {
+        commitCurrentNode('DIRECT');
+        return;
       } else {
-        // 规则模式或其他：优先 primaryProxyGroup 和 PROXY
-        allCandidates = [primaryProxyGroup, 'PROXY', 'GLOBAL'].filter(Boolean);
+        allCandidates = [primaryProxyGroup, 'PROXY'].filter(Boolean);
       }
-      const candidateGroups = allCandidates.filter(groupName =>
+      const candidateGroups = Array.from(new Set(allCandidates)).filter(groupName =>
         snapshotCache && typeof snapshotCache[groupName] !== 'undefined'
       );
 
@@ -488,6 +781,7 @@ export default function Dashboard() {
       }
 
       let resolvedNode: string | null = null;
+      let resolvedFromGroup: string | null = null;
 
       for (const groupName of candidateGroups) {
         if (resolvedNode) break;
@@ -504,8 +798,10 @@ export default function Dashboard() {
               typeof payload.now === 'string' && payload.now.length > 0 ? payload.now : null,
               groupName
             );
+            if (requestId !== currentNodeRequestRef.current) return;
             if (finalNode && finalNode.length > 0) {
               resolvedNode = finalNode;
+              resolvedFromGroup = groupName;
             }
           }
         } catch {}
@@ -514,8 +810,10 @@ export default function Dashboard() {
       if (!resolvedNode) {
         for (const groupName of candidateGroups) {
           const finalNode = await resolveEffectiveNode(null, groupName);
+          if (requestId !== currentNodeRequestRef.current) return;
           if (finalNode && finalNode.length > 0) {
             resolvedNode = finalNode;
+            resolvedFromGroup = groupName;
             break;
           }
         }
@@ -528,29 +826,40 @@ export default function Dashboard() {
             hydrateConnections(snapshot);
             if (snapshot.currentNode) {
               const finalNode = await resolveEffectiveNode(snapshot.currentNode);
+              if (requestId !== currentNodeRequestRef.current) return;
               if (finalNode && finalNode.length > 0) {
                 resolvedNode = finalNode;
+                resolvedFromGroup = null;
               }
             }
           }
         } catch {}
       }
 
-      if (resolvedNode && !isLikelyGroupOrBuiltin(resolvedNode) && !candidateGroups.includes(resolvedNode)) {
+      const allowBuiltin =
+        effectiveMode === 'global' ||
+        (!!resolvedFromGroup && resolvedFromGroup !== 'GLOBAL');
+      if (
+        resolvedNode &&
+        isDisplayableCurrentNode(resolvedNode, effectiveMode, { allowBuiltin }) &&
+        !candidateGroups.includes(resolvedNode)
+      ) {
+        if (requestId !== currentNodeRequestRef.current) return;
         commitCurrentNode(resolvedNode);
       } else {
         // 不提交分组/内置名称，稍后重试一次解析
+        const retryRequestId = requestId;
         setTimeout(() => {
           // 仅当仍在运行时重试
-          if (electron && isRunning) {
-            syncCurrentNode();
+          if (electron && isRunning && currentNodeRequestRef.current === retryRequestId) {
+            syncCurrentNode(effectiveMode);
           }
         }, 800);
       }
     } catch (error) {
       console.error('Failed to sync current node:', error);
     }
-  }, [commitCurrentNode, electron, getProxiesSnapshot, hydrateConnections, isRunning, primaryProxyGroup, proxyMode, resolveEffectiveNode]);
+  }, [commitCurrentNode, electron, getProxiesSnapshot, hydrateConnections, isDisplayableCurrentNode, isRunning, primaryProxyGroup, proxyMode, resolveEffectiveNode]);
 
   const fetchProxyMode = useCallback(async (): Promise<ProxyMode | null> => {
     try {
@@ -581,19 +890,23 @@ export default function Dashboard() {
   };
 
   const refreshProxyStatus = useCallback(async () => {
+    if (!hasDesktopRuntime()) return;
     try {
       const latest = await electron?.getProxyStatus?.();
       if (typeof latest === 'boolean') {
         setProxyEnabled(latest);
+        writeCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled, latest);
       }
     } catch {}
   }, [electron]);
 
   const refreshTunStatus = useCallback(async () => {
+    if (!hasDesktopRuntime()) return;
     try {
       const latest = await electron?.getTunStatus?.();
       if (typeof latest === 'boolean') {
         setTunEnabled(latest);
+        writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, latest);
       }
     } catch {}
   }, [electron]);
@@ -601,7 +914,9 @@ export default function Dashboard() {
   useEffect(() => {
     if (!electron?.onTunStatus) return;
     const unsubscribe = electron.onTunStatus((enabled: boolean) => {
-      setTunEnabled(Boolean(enabled));
+      const nextEnabled = Boolean(enabled);
+      setTunEnabled(nextEnabled);
+      writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, nextEnabled);
     });
     return () => {
       if (typeof unsubscribe === 'function') {
@@ -613,7 +928,9 @@ export default function Dashboard() {
   useEffect(() => {
     if (!electron?.onProxyStatus) return;
     const unsubscribe = electron.onProxyStatus((enabled: boolean) => {
-      setProxyEnabled(Boolean(enabled));
+      const nextEnabled = Boolean(enabled);
+      setProxyEnabled(nextEnabled);
+      writeCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled, nextEnabled);
     });
     return () => {
       if (typeof unsubscribe === 'function') {
@@ -626,8 +943,8 @@ export default function Dashboard() {
     if (!electron?.onMihomoStopped) return;
     const unsubscribe = electron.onMihomoStopped(() => {
       setIsRunning(false);
-      commitCurrentNode('');
-      setTrafficSamples([]);
+      setRunningStatusHydrated(true);
+      clearRuntimeSnapshot();
       refreshProxyStatus();
       refreshTunStatus();
       notifyDashboardProfileUpdated({ action: 'service-stopped' });
@@ -637,18 +954,58 @@ export default function Dashboard() {
         unsubscribe();
       }
     };
-  }, [electron, commitCurrentNode, refreshProxyStatus, refreshTunStatus]);
+  }, [electron, clearRuntimeSnapshot, refreshProxyStatus, refreshTunStatus]);
+
+  useEffect(() => {
+    const applyCachedRuntimeSnapshot = () => {
+      const snapshot = readCachedDashboardRuntimeSnapshot();
+      runtimeSnapshotRef.current = snapshot;
+      setCurrentNode(snapshot.currentNode);
+      setConnectionCount(snapshot.connectionCount);
+      setTotalUpload(snapshot.totalUpload);
+      setTotalDownload(snapshot.totalDownload);
+      setUpSpeed(snapshot.upSpeed);
+      setDownSpeed(snapshot.downSpeed);
+      setTrafficSamples(snapshot.trafficSamples);
+      setConnections(snapshot.connections);
+      setUploadTotal(snapshot.uploadTotal);
+      setDownloadTotal(snapshot.downloadTotal);
+    };
+
+    return subscribeDashboardRuntimeCache(applyCachedRuntimeSnapshot);
+  }, []);
+
+  useEffect(() => {
+    const applyCachedConnections = () => {
+      const cached = readConnectionsCache<unknown>();
+      if (!Array.isArray(cached)) return;
+      const nextConnections = cached.slice(0, MAX_DASHBOARD_CONNECTIONS);
+      setConnections(nextConnections);
+      setConnectionCount((prev) => (prev > 0 ? prev : nextConnections.length));
+      writeRuntimeSnapshot({
+        connections: nextConnections,
+        connectionCount: runtimeSnapshotRef.current.connectionCount > 0
+          ? runtimeSnapshotRef.current.connectionCount
+          : nextConnections.length,
+      });
+    };
+
+    applyCachedConnections();
+    return subscribeConnectionsCache(applyCachedConnections);
+  }, [writeRuntimeSnapshot]);
 
   useEffect(() => {
     if (!electron?.onServiceRestarted) return;
     const unsubscribe = electron.onServiceRestarted((result: { success?: boolean }) => {
       if (result?.success) {
         setIsRunning(true);
+        setRunningStatusHydrated(true);
         syncCurrentNode();
         syncProxyMode();
       } else {
         electron.isMihomoRunning?.().then((running) => {
           setIsRunning(Boolean(running));
+          setRunningStatusHydrated(true);
         }).catch(() => {});
       }
       refreshProxyStatus();
@@ -665,33 +1022,63 @@ export default function Dashboard() {
   }, [electron, refreshProxyStatus, refreshTunStatus, syncCurrentNode, syncProxyMode]);
 
   useEffect(() => {
-    const applyCachedRunningState = () => {
-      const cached = readAppDataCache<boolean | string | undefined>(APP_DATA_CACHE_KEYS.mihomoRunning);
-      if (cached === true || cached === 'true') {
+    const applyCachedRunningState = (allowStopped: boolean) => {
+      const cached = readMihomoRunningCache();
+      if (cached === true) {
         setIsRunning(true);
-      } else if (cached === false || cached === 'false') {
+        setRunningStatusHydrated(true);
+      } else if (cached === false) {
+        if (!allowStopped) return;
         setIsRunning(false);
+        setRunningStatusHydrated(true);
       }
     };
 
-    applyCachedRunningState();
-    return subscribeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, applyCachedRunningState);
+    applyCachedRunningState(false);
+    return subscribeMihomoRunningCache(() => applyCachedRunningState(true));
+  }, []);
+
+  useEffect(() => {
+    const applyCachedProxyState = () => {
+      setProxyEnabled(readCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled));
+    };
+
+    applyCachedProxyState();
+    return subscribeSystemProxyEnabledCache(applyCachedProxyState);
+  }, []);
+
+  useEffect(() => {
+    const applyCachedTunState = () => {
+      setTunEnabled(readCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled));
+    };
+
+    applyCachedTunState();
+    return subscribeTunEnabledCache(applyCachedTunState);
   }, []);
 
   // 保存运行状态到共享缓存，避免页面刷新/切换时丢失状态
   useEffect(() => {
-    writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, isRunning);
-  }, [isRunning]);
+    if (!runningStatusHydrated) return;
+    writeMihomoRunningCache(isRunning);
+  }, [isRunning, runningStatusHydrated]);
 
   useEffect(() => {
     if (proxyMode) {
-      writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, proxyMode);
+      writeProxyModeCache(proxyMode);
     }
   }, [proxyMode]);
 
   useEffect(() => {
+    writeCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled, proxyEnabled);
+  }, [proxyEnabled]);
+
+  useEffect(() => {
+    writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, tunEnabled);
+  }, [tunEnabled]);
+
+  useEffect(() => {
     if (activeConfig) {
-      writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, activeConfig);
+      writeActiveConfigCache(activeConfig);
     }
   }, [activeConfig]);
 
@@ -701,19 +1088,23 @@ export default function Dashboard() {
     let retryTimeoutId: NodeJS.Timeout | null = null;
 
     const bootstrap = async (retryCount = 0) => {
-      try {
-        const status = await electron.getProxyStatus?.();
-        if (!cancelled && typeof status === 'boolean') {
-          setProxyEnabled(status);
-        }
-      } catch {}
+      if (hasDesktopRuntime()) {
+        try {
+          const status = await electron.getProxyStatus?.();
+          if (!cancelled && typeof status === 'boolean') {
+            setProxyEnabled(status);
+            writeCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled, status);
+          }
+        } catch {}
 
-      try {
-        const tunStatus = await electron.getTunStatus?.();
-        if (!cancelled && typeof tunStatus === 'boolean') {
-          setTunEnabled(tunStatus);
-        }
-      } catch {}
+        try {
+          const tunStatus = await electron.getTunStatus?.();
+          if (!cancelled && typeof tunStatus === 'boolean') {
+            setTunEnabled(tunStatus);
+            writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, tunStatus);
+          }
+        } catch {}
+      }
 
       try {
         const config = await electron.getActiveConfig?.();
@@ -726,22 +1117,34 @@ export default function Dashboard() {
         }
 
         try {
-          const running = await electron.isMihomoRunning?.();
-          console.log('[Dashboard bootstrap] isMihomoRunning result:', running);
-          if (!cancelled) {
+          let running: boolean | null = null;
+          const runtimeState = await electron.coreGetRuntimeState?.();
+          if (runtimeState && runtimeState.success !== false) {
+            if (typeof runtimeState.coreRunning === 'boolean') {
+              running = runtimeState.coreRunning;
+            } else if (typeof runtimeState.runningMode === 'string') {
+              running = runtimeState.runningMode !== 'notRunning';
+            }
+          }
+
+          if (running === null) {
+            const legacyRunning = await electron.isMihomoRunning?.();
+            if (typeof legacyRunning === 'boolean') {
+              running = legacyRunning;
+            }
+          }
+
+          if (!cancelled && running !== null) {
+            setIsRunning(running);
+            setRunningStatusHydrated(true);
+            writeMihomoRunningCache(running);
             if (running) {
-              console.log('[Dashboard bootstrap] Setting isRunning = true');
-              setIsRunning(true);
               await syncCurrentNode();
               await syncProxyMode();
-            } else {
-              console.log('[Dashboard bootstrap] Setting isRunning = false');
-              setIsRunning(false);
             }
           }
         } catch (error) {
-          console.log('[Dashboard bootstrap] isMihomoRunning failed, setting isRunning = false', error);
-          setIsRunning(false);
+          console.debug('[Dashboard bootstrap] running state sync skipped:', error);
         }
       } catch {}
 
@@ -759,12 +1162,11 @@ export default function Dashboard() {
       try {
         const order = await electron.getConfigOrder?.();
         if (!cancelled && order?.success && Array.isArray(order.data?.proxyGroups) && order.data.proxyGroups.length > 0) {
-          const availableGroups = order.data.proxyGroups.filter((g: any) => g?.hidden !== true);
-          const groupName = availableGroups[0]?.name;
+          const groupName = pickPrimaryProxyGroupName(order.data.proxyGroups);
           if (typeof groupName === 'string' && groupName.length > 0) {
             setPrimaryProxyGroup(groupName);
             // 立刻尝试解析一次，避免初渲染显示组名
-            updateCurrentNodeDisplay(undefined, groupName, { forceRefresh: true });
+            updateCurrentNodeDisplay(undefined, groupName, { forceRefresh: true, mode: proxyMode, source: 'bootstrap' });
           }
         }
       } catch {}
@@ -811,7 +1213,7 @@ export default function Dashboard() {
         unsubAutostart();
       }
     };
-  }, [electron, fetchProxyMode, hydrateConnections, normalizeConfigPath, syncCurrentNode, syncProxyMode]);
+  }, [electron, fetchProxyMode, hydrateConnections, normalizeConfigPath, proxyMode, syncCurrentNode, syncProxyMode, updateCurrentNodeDisplay]);
 
   // 周期性同步当前激活配置，避免在配置页面切换后 Dashboard 仍显示旧配置
   useEffect(() => {
@@ -878,23 +1280,24 @@ export default function Dashboard() {
             setDownSpeed(payload.downSpeed);
           }
           const sampleTimestamp = typeof payload.timestamp === 'number' ? payload.timestamp : Date.now();
-          setTrafficSamples((prev) => {
-            const last = prev[prev.length - 1];
-            const sample: TrafficSample = {
-              timestamp: sampleTimestamp,
-              upSpeed: Number.isFinite(payload.upSpeed) ? payload.upSpeed : last?.upSpeed ?? 0,
-              downSpeed: Number.isFinite(payload.downSpeed) ? payload.downSpeed : last?.downSpeed ?? 0
-            };
-            const next = [...prev, sample];
-            return next.length > 120 ? next.slice(next.length - 120) : next;
+          const previousSamples = runtimeSnapshotRef.current.trafficSamples;
+          const last = previousSamples[previousSamples.length - 1];
+          const sample: TrafficSample = {
+            timestamp: sampleTimestamp,
+            upSpeed: Number.isFinite(payload.upSpeed) ? payload.upSpeed : last?.upSpeed ?? 0,
+            downSpeed: Number.isFinite(payload.downSpeed) ? payload.downSpeed : last?.downSpeed ?? 0
+          };
+          const nextSamples = [...previousSamples, sample];
+          const boundedSamples = nextSamples.length > 120
+            ? nextSamples.slice(nextSamples.length - 120)
+            : nextSamples;
+          setTrafficSamples(boundedSamples);
+          writeRuntimeSnapshot({
+            upSpeed: sample.upSpeed,
+            downSpeed: sample.downSpeed,
+            trafficSamples: boundedSamples,
           });
 
-          try {
-            const snapshot = await electron.fetchConnectionsInfo?.();
-            if (!disposed) {
-              hydrateConnections(snapshot);
-            }
-          } catch {}
         }
       } catch {}
     };
@@ -906,7 +1309,7 @@ export default function Dashboard() {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [electron, hydrateConnections]);
+  }, [electron, hydrateConnections, writeRuntimeSnapshot]);
 
   useEffect(() => {
     if (!electron?.fetchConnectionsInfo) return;
@@ -947,16 +1350,28 @@ export default function Dashboard() {
         unsubscribe();
       }
     };
-  }, [electron, hydrateConnections]);
+  }, [electron, hydrateConnections, writeRuntimeSnapshot]);
 
   useEffect(() => {
     if (!electron?.onNodeChanged) return;
 
-    const handler = (payload: { nodeName?: string }) => {
+    const handler = (payload: { nodeName?: string; groupName?: string }) => {
+      const groupName = typeof payload?.groupName === 'string' && payload.groupName.trim()
+        ? payload.groupName
+        : primaryProxyGroup;
+      rememberNodeSelection(payload?.nodeName, groupName);
       if (payload?.nodeName) {
-        updateCurrentNodeDisplay(payload.nodeName, primaryProxyGroup, { forceRefresh: true });
+        updateCurrentNodeDisplay(undefined, groupName, {
+          forceRefresh: true,
+          mode: proxyMode,
+          source: 'selection',
+        });
       } else {
-        updateCurrentNodeDisplay(undefined, primaryProxyGroup, { forceRefresh: true });
+        updateCurrentNodeDisplay(undefined, groupName, {
+          forceRefresh: true,
+          mode: proxyMode,
+          source: 'selection',
+        });
       }
     };
 
@@ -967,7 +1382,34 @@ export default function Dashboard() {
         unsubscribe();
       }
     };
-  }, [electron, primaryProxyGroup, updateCurrentNodeDisplay]);
+  }, [electron, primaryProxyGroup, proxyMode, rememberNodeSelection, updateCurrentNodeDisplay]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleProfileUpdated = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.source !== 'proxy-nodes' || detail?.action !== 'node-changed') {
+        return;
+      }
+
+      const groupName = typeof detail.groupName === 'string' && detail.groupName.trim()
+        ? detail.groupName
+        : primaryProxyGroup;
+      rememberNodeSelection(
+        typeof detail.nodeName === 'string' ? detail.nodeName : undefined,
+        groupName,
+      );
+      updateCurrentNodeDisplay(undefined, groupName, {
+        forceRefresh: true,
+        mode: proxyMode,
+        source: 'selection',
+      });
+    };
+
+    window.addEventListener('profile-updated', handleProfileUpdated);
+    return () => window.removeEventListener('profile-updated', handleProfileUpdated);
+  }, [primaryProxyGroup, proxyMode, rememberNodeSelection, updateCurrentNodeDisplay]);
 
   useEffect(() => {
     if (!electron || !isRunning) return;
@@ -985,13 +1427,29 @@ export default function Dashboard() {
         const data = await mihomoClient.getConnections();
         if (!disposed && data) {
           if (data.connections && Array.isArray(data.connections)) {
-            setConnections(data.connections);
+            const nextConnections = data.connections.slice(0, MAX_DASHBOARD_CONNECTIONS);
+            setConnections(nextConnections);
+            setConnectionCount(nextConnections.length);
+            writeRuntimeSnapshot({
+              connections: nextConnections,
+              connectionCount: nextConnections.length,
+            });
           }
+          const patch: Partial<DashboardRuntimeSnapshot> = {};
           if (typeof data.uploadTotal === 'number') {
             setUploadTotal(data.uploadTotal);
+            setTotalUpload(data.uploadTotal);
+            patch.uploadTotal = data.uploadTotal;
+            patch.totalUpload = data.uploadTotal;
           }
           if (typeof data.downloadTotal === 'number') {
             setDownloadTotal(data.downloadTotal);
+            setTotalDownload(data.downloadTotal);
+            patch.downloadTotal = data.downloadTotal;
+            patch.totalDownload = data.downloadTotal;
+          }
+          if (Object.keys(patch).length > 0) {
+            writeRuntimeSnapshot(patch);
           }
         }
       } catch (error) {
@@ -1000,13 +1458,13 @@ export default function Dashboard() {
     };
 
     fetchConnections();
-    const timer = window.setInterval(fetchConnections, 2000);
+    const timer = window.setInterval(fetchConnections, DASHBOARD_CONNECTION_POLL_MS);
 
     return () => {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [electron, isRunning]);
+  }, [electron, isRunning, writeRuntimeSnapshot]);
 
   const resolveConfigForLaunch = async () => {
     if (!electron) return null;
@@ -1066,12 +1524,11 @@ export default function Dashboard() {
         try {
           const order = await electron.getConfigOrder?.();
           if (order?.success && Array.isArray(order.data?.proxyGroups) && order.data.proxyGroups.length > 0) {
-            const availableGroups = order.data.proxyGroups.filter((g: any) => g?.hidden !== true);
-            const groupName = availableGroups[0]?.name;
+            const groupName = pickPrimaryProxyGroupName(order.data.proxyGroups);
             if (typeof groupName === 'string' && groupName.length > 0) {
               setPrimaryProxyGroup(groupName);
               // 主代理组确定后尝试立即解析一次
-              updateCurrentNodeDisplay(undefined, groupName, { forceRefresh: true });
+              updateCurrentNodeDisplay(undefined, groupName, { forceRefresh: true, mode: proxyMode, source: 'bootstrap' });
             }
           }
         } catch {}
@@ -1115,11 +1572,11 @@ export default function Dashboard() {
 
       if (success) {
         setIsRunning(false);
-        commitCurrentNode('');
-        setTrafficSamples([]);
+        clearRuntimeSnapshot();
         // 停止服务时自动关闭TUN模式
         if (tunEnabled) {
           setTunEnabled(false);
+          writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, false);
         }
         showBanner({ type: 'info', message: t('dashboard.serviceStopped') });
         notifyDashboardProfileUpdated({ action: 'service-stopped' });
@@ -1175,6 +1632,7 @@ export default function Dashboard() {
           ? result.enabled
           : value;
       setProxyEnabled(actualEnabled);
+      writeCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled, actualEnabled);
       showBanner({ type: 'success', message: t('dashboard.systemProxyToggled', { status: actualEnabled ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = formatDashboardError(error, t('dashboard.toggleSystemProxyFailed'));
@@ -1217,6 +1675,7 @@ export default function Dashboard() {
           ? result.enabled
           : value;
       setTunEnabled(actualEnabled);
+      writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, actualEnabled);
       showBanner({ type: 'success', message: t('dashboard.tunModeToggled', { status: actualEnabled ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = formatDashboardError(error, t('dashboard.toggleTunModeFailed'));
@@ -1251,27 +1710,51 @@ export default function Dashboard() {
 
         if (elevationMode === 'service') {
           // 服务模式：检查服务状态
-          const serviceStatus = await electron.getTunServiceStatus?.();
+          let serviceStatus = await electron.getTunServiceStatus?.();
           console.log('[Dashboard] Service status:', serviceStatus);
 
-          if (serviceStatus?.running) {
-            // 服务正在运行，直接启用 TUN 模式
-            console.log('[Dashboard] Service is running, directly enabling TUN mode');
-            await runTunToggle(true);
-            return;
-          } else if (serviceStatus?.installed) {
-            // 服务已安装但未运行，提示用户启动服务
-            showBanner({ type: 'warning', message: t('dashboard.tunServiceNotRunning') });
-            // 刷新 TUN 状态确保与后端同步
-            await refreshTunStatus();
-            return;
-          } else {
-            // 服务未安装，提示用户安装服务
-            showBanner({ type: 'warning', message: t('dashboard.tunServiceNotInstalled') });
-            // 刷新 TUN 状态确保与后端同步
-            await refreshTunStatus();
-            return;
+          if (!isWindowsTunServiceReady(serviceStatus)) {
+            console.log('[Dashboard] Service is not ready, preparing TUN helper service');
+            showBanner({ type: 'info', message: t('dashboard.requestingTunAuthorization') });
+
+            const prepareResult = electron.grantTunPermissions
+              ? await electron.grantTunPermissions()
+              : await electron.startTunService?.();
+
+            if (!prepareResult?.success) {
+              const fallbackMessage = serviceStatus?.installed
+                ? t('dashboard.tunServiceNotRunning')
+                : t('dashboard.tunServiceNotInstalled');
+              const message = formatDashboardError(
+                prepareResult?.error || tunServiceStatusError(serviceStatus),
+                fallbackMessage,
+              );
+              showBanner({ type: 'error', message });
+              await refreshTunStatus();
+              return;
+            }
+
+            serviceStatus = await electron.getTunServiceStatus?.();
+            console.log('[Dashboard] Service status after preparation:', serviceStatus);
+
+            if (!isWindowsTunServiceReady(serviceStatus)) {
+              const fallbackMessage = serviceStatus?.installed
+                ? t('dashboard.tunServiceNotRunning')
+                : t('dashboard.tunServiceNotInstalled');
+              const message = formatDashboardError(
+                tunServiceStatusError(serviceStatus) || prepareResult?.message,
+                fallbackMessage,
+              );
+              showBanner({ type: 'error', message });
+              await refreshTunStatus();
+              return;
+            }
           }
+
+          // 服务可用，直接启用 TUN 模式
+          console.log('[Dashboard] Service is ready, enabling TUN mode');
+          await runTunToggle(true);
+          return;
         } else {
           // 计划任务模式：检查计划任务
           const taskResult = await electron.checkElevateTask?.();
@@ -1352,16 +1835,26 @@ export default function Dashboard() {
       if (isModeUpdating || proxyMode === nextMode) {
         return;
       }
+      const previousMode = proxyMode;
       setIsModeUpdating(true);
+      setProxyMode(nextMode);
+      writeProxyModeCache(nextMode);
+      if (nextMode === 'direct') {
+        commitCurrentNode('DIRECT');
+      }
       showBanner(null);
       try {
         await mihomoClient.patchRuntimeConfig({ mode: nextMode });
 
-        setProxyMode(nextMode);
         showBanner({ type: 'success', message: t('dashboard.switchedToMode', { mode: MODE_LABELS[nextMode] }) });
-        // 传入新的模式，避免等待 React 状态更新
-        await syncCurrentNode(nextMode);
+        window.setTimeout(() => {
+          void syncCurrentNode(nextMode);
+        }, 120);
       } catch (error) {
+        setProxyMode(previousMode);
+        if (previousMode) {
+          writeProxyModeCache(previousMode);
+        }
         const message = formatDashboardError(error, t('dashboard.switchProxyModeFailedTitle'));
         showBanner({ type: 'error', message: t('dashboard.switchProxyModeFailed', { message }) });
         await syncProxyMode();
@@ -1369,7 +1862,7 @@ export default function Dashboard() {
         setIsModeUpdating(false);
       }
     },
-    [formatDashboardError, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
+    [commitCurrentNode, formatDashboardError, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
   );
 
   const handleResetDashboardLayout = useCallback(async () => {
@@ -1398,28 +1891,38 @@ export default function Dashboard() {
     {
       label: t('dashboard.activeConnections'),
       value: connectionCount.toString(),
-      helper: isRunning ? t('dashboard.realtimeConnections') : t('dashboard.serviceNotRunning'),
-      icon: <ActivityLogIcon className="h-4 w-4 text-primary" />
+      helper: isRunning
+        ? t('dashboard.realtimeConnections')
+        : runningStatusHydrated
+          ? t('dashboard.serviceNotRunning')
+          : t('common.loading'),
+      icon: <Activity className="h-4 w-4 text-primary" />
     },
     {
       label: t('dashboard.downloadSpeed'),
       value: formatSpeed(downSpeed),
       helper: `${t('dashboard.total')} ${formatBytes(totalDownload, 2)}`,
-      icon: <DownloadIcon className="h-4 w-4 text-blue-500" />
+      icon: <Download className="h-4 w-4 text-blue-500" />
     },
     {
       label: t('dashboard.uploadSpeed'),
       value: formatSpeed(upSpeed),
       helper: `${t('dashboard.total')} ${formatBytes(totalUpload, 2)}`,
-      icon: <UploadIcon className="h-4 w-4 text-emerald-500" />
+      icon: <Upload className="h-4 w-4 text-emerald-500" />
     },
     {
       label: t('dashboard.totalTraffic'),
       value: formatBytes(totalUpload + totalDownload, 2),
-      helper: `${t('dashboard.currentNode')} ${currentNode || t('dashboard.notSelected')}`,
-      icon: <BarChartIcon className="h-4 w-4 text-violet-500" />
+      helper: currentNode || t('dashboard.notSelected'),
+      icon: <BarChart3 className="h-4 w-4 text-violet-500" />
     }
   ];
+
+  const runningStatusLabel = runningStatusHydrated
+    ? isRunning
+      ? t('dashboard.running')
+      : t('dashboard.notRunning')
+    : t('common.loading');
 
   return (
     <div className="space-y-5">
@@ -1433,10 +1936,14 @@ export default function Dashboard() {
             <span
               className={cn(
                 'rounded-full px-2.5 py-1 text-xs font-medium',
-                isRunning ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-700'
+                !runningStatusHydrated
+                  ? 'bg-slate-100 text-slate-500'
+                  : isRunning
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-slate-200 text-slate-700'
               )}
             >
-              {isRunning ? t('dashboard.running') : t('dashboard.notRunning')}
+              {runningStatusLabel}
             </span>
             <span className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-muted-foreground dark:border-slate-700">
               {getFileName(activeConfig || preferredConfig, t)}
@@ -1449,20 +1956,20 @@ export default function Dashboard() {
                   size="sm"
                   variant={isRunning ? "outline" : "primary"}
                   onClick={isRunning ? handleStop : handleStart}
-                  disabled={isServiceBusy}
+                  disabled={isServiceBusy || !runningStatusHydrated}
                 >
                   {isRunning ? (
                     <>
-                      <StopIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.stop')}
+                      <Square className="mr-1 h-3.5 w-3.5" /> {t('dashboard.stop')}
                     </>
                   ) : (
                     <>
-                      <PlayIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.start')}
+                      <Play className="mr-1 h-3.5 w-3.5" /> {t('dashboard.start')}
                     </>
                   )}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={handleRestart} disabled={isServiceBusy || !isRunning}>
-                  <ReloadIcon className="mr-1 h-3.5 w-3.5" /> {t('dashboard.restart')}
+                <Button size="sm" variant="ghost" onClick={handleRestart} disabled={isServiceBusy || !runningStatusHydrated || !isRunning}>
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" /> {t('dashboard.restart')}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setIsEditMode(true)}>
                   <Settings2 className="mr-1 h-3.5 w-3.5" /> {t('dashboard.customizeLayout')}
@@ -1492,7 +1999,7 @@ export default function Dashboard() {
       {banner && (
         <div
           className={cn(
-            'rounded-xl border px-4 py-3 text-sm shadow-sm transition-all duration-300 animate-in slide-in-from-top-2',
+            'max-h-32 overflow-y-auto rounded-xl border px-4 py-3 text-sm leading-relaxed shadow-sm transition-all duration-300 animate-in slide-in-from-top-2 break-words [overflow-wrap:anywhere]',
             banner.type === 'success' && 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400',
             banner.type === 'error' && 'border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-400',
             banner.type === 'info' && 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/20 dark:text-slate-300',

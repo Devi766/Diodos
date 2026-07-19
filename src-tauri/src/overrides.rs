@@ -364,9 +364,13 @@ globalThis.console = globalThis.console || {{
   warn() {{}},
   error() {{}}
 }};
+const __flyclash_config = {config_json};
 {script_content}
-const __flyclash_result = main({config_json});
-JSON.stringify(__flyclash_result || {config_json});
+if (typeof main !== 'function') {{
+  throw new Error('JS override must define main(config)');
+}}
+const __flyclash_result = main(__flyclash_config);
+JSON.stringify(__flyclash_result || __flyclash_config);
 "#
     );
 
@@ -452,13 +456,17 @@ pub(crate) fn apply_overrides(
                 let name = item.get("name").and_then(Value::as_str).unwrap_or(&id);
                 match run_js_override(&result, &content, name) {
                     Ok(next) => result = next,
-                    Err(error) => eprintln!("{}", error),
+                    Err(error) => eprintln!("[overrides] {}", error),
                 }
             }
             Some("yaml") => {
                 let patch_yaml = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
                     Ok(value) => value,
-                    Err(_) => continue,
+                    Err(error) => {
+                        let name = item.get("name").and_then(Value::as_str).unwrap_or(&id);
+                        eprintln!("[overrides] YAML覆写解析失败 [{}]: {}", name, error);
+                        continue;
+                    }
                 };
                 let patch = serde_json::to_value(patch_yaml).unwrap_or(Value::Null);
                 if patch.is_object() {
@@ -645,6 +653,29 @@ function main(config) {
 "#;
 
         let result = run_js_override(&config, script, "test-js").unwrap();
+
+        assert_eq!(
+            result
+                .get("proxies")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn js_override_preserves_in_place_mutation_without_return() {
+        let config = json!({
+            "proxies": [{ "name": "node-a" }],
+            "proxy-groups": []
+        });
+        let script = r#"
+function main(config) {
+  config.proxies.push({ name: 'node-b' });
+}
+"#;
+
+        let result = run_js_override(&config, script, "mutation-js").unwrap();
 
         assert_eq!(
             result

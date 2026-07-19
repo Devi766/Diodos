@@ -3,12 +3,16 @@ import { CheckIcon, ReloadIcon, UpdateIcon } from '@radix-ui/react-icons';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasProxyProvidersCache,
+  readProxyProvidersCache,
+  subscribeProxyProvidersCache,
+  writeProxyProvidersCache,
+} from '@/services/app-data-hooks';
+import {
+  filterProviderRecord,
+  getConfiguredProviderNames,
+  providerMap,
+} from '@/services/provider-filter';
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
@@ -18,10 +22,6 @@ const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Re
   } catch {
     return false;
   }
-};
-
-const providerMap = (result: any) => {
-  return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
 };
 
 const providerKindLabel = (provider: Pick<ProxyProvider, 'type'>) => {
@@ -71,11 +71,9 @@ const proxyProvidersViewCache: {
   loaded: false,
 };
 
-const PROXY_PROVIDERS_CACHE_KEY = APP_DATA_CACHE_KEYS.proxyProviders;
-
 const readProxyProvidersSessionCache = (): ProxyProvider[] | null => {
-  const cached = readAppDataCache<unknown>(PROXY_PROVIDERS_CACHE_KEY);
-  return Array.isArray(cached) ? cached as ProxyProvider[] : null;
+  const cached = readProxyProvidersCache<ProxyProvider>();
+  return cached.length > 0 || hasProxyProvidersCache() ? cached : null;
 };
 
 const hydrateProxyProvidersFromSession = () => {
@@ -116,7 +114,7 @@ const ProxyProviders: React.FC = () => {
   }, [loading]);
 
   useEffect(() => {
-    return subscribeAppDataCache(PROXY_PROVIDERS_CACHE_KEY, () => {
+    return subscribeProxyProvidersCache( () => {
       const cached = readProxyProvidersSessionCache();
       if (!cached) return;
       proxyProvidersViewCache.providers = cached;
@@ -130,7 +128,7 @@ const ProxyProviders: React.FC = () => {
     const coldLoad =
       providersRef.current.length === 0 &&
       !proxyProvidersViewCache.loaded &&
-      !hasAppDataCache(PROXY_PROVIDERS_CACHE_KEY);
+      !hasProxyProvidersCache();
     try {
       if (coldLoad) setLoading(true);
       setLoadError(null);
@@ -146,11 +144,17 @@ const ProxyProviders: React.FC = () => {
 
       const providersRecord = providerMap(result);
       if (providersRecord && typeof providersRecord === 'object') {
-        const providerList = normalizeProviders(providersRecord as Record<string, any>);
-        writeAppDataCache(PROXY_PROVIDERS_CACHE_KEY, providerList);
+        const configuredNames = await getConfiguredProviderNames('proxyProviders');
+        const filteredRecord = filterProviderRecord(
+          providersRecord as Record<string, any>,
+          'proxyProviders',
+          configuredNames,
+        );
+        const providerList = normalizeProviders(filteredRecord);
+        writeProxyProvidersCache( providerList);
         setProviders(providerList);
       } else {
-        writeAppDataCache(PROXY_PROVIDERS_CACHE_KEY, []);
+        writeProxyProvidersCache( []);
         setProviders([]);
       }
     } catch (error) {
@@ -364,7 +368,7 @@ const ProxyProviders: React.FC = () => {
     loading &&
     providers.length === 0 &&
     !proxyProvidersViewCache.loaded &&
-    !hasAppDataCache(PROXY_PROVIDERS_CACHE_KEY)
+    !hasProxyProvidersCache()
   ) {
     return (
       <div className="min-h-[120px]" aria-busy="true" />

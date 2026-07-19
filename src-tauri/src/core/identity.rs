@@ -71,6 +71,37 @@ pub fn managed_core_file_name(core_type: &str, specific_version: Option<&str>) -
     }
 }
 
+/// Product-facing runtime work directory name under app data.
+/// Keep legacy `mihomo` as the actual on-disk directory for compatibility.
+pub fn runtime_work_dir_name() -> &'static str {
+    LEGACY_CORE_BINARY_FAMILY
+}
+
+/// Preferred product log file name. Callers may still fall back to legacy names.
+pub fn product_core_log_file_name() -> String {
+    format!("{CORE_BINARY_FAMILY}.log")
+}
+
+pub fn legacy_core_log_file_name() -> String {
+    format!("{LEGACY_CORE_BINARY_FAMILY}.log")
+}
+
+/// Preferred product binary name for new installs / packaging docs.
+/// On-disk managed downloads still use legacy `mihomo*` names for compatibility.
+pub fn product_core_binary_stem() -> &'static str {
+    CORE_BINARY_FAMILY
+}
+
+/// Display label for UI surfaces that still historically said "Mihomo".
+pub fn product_core_display_name() -> &'static str {
+    CORE_PRODUCT_NAME
+}
+
+/// User-facing phrase for "core service" messages.
+pub fn product_core_service_label() -> &'static str {
+    "内核服务"
+}
+
 pub fn installed_core_identity(name: &str) -> Option<(&'static str, Option<String>)> {
     let lower = name.to_lowercase();
     let base = if cfg!(windows) {
@@ -83,6 +114,20 @@ pub fn installed_core_identity(name: &str) -> Option<(&'static str, Option<Strin
 
     let base_path = Path::new(&base);
     let base = base_path.file_name().and_then(|value| value.to_str())?;
+
+    // Accept product family first, then legacy mihomo family.
+    if base.starts_with(CORE_BINARY_FAMILY) {
+        return match base {
+            CORE_BINARY_FAMILY => Some((CORE_TYPE_STABLE, None)),
+            "flyclash-mihomo-alpha" => Some((CORE_TYPE_ALPHA, None)),
+            "flyclash-mihomo-smart" => Some((CORE_TYPE_SMART, None)),
+            _ => base
+                .strip_prefix("flyclash-mihomo-")
+                .map(str::trim)
+                .filter(|version| !version.is_empty())
+                .map(|version| (CORE_TYPE_SPECIFIC, Some(normalize_core_version(version)))),
+        };
+    }
 
     if !base.starts_with(LEGACY_CORE_BINARY_FAMILY) {
         return None;
@@ -184,5 +229,27 @@ mod tests {
         assert_eq!(identity.product_name, "FlyClash Core");
         assert_eq!(identity.binary_family, "flyclash-mihomo");
         assert_eq!(identity.legacy_binary_family, "mihomo");
+        assert_eq!(runtime_work_dir_name(), "mihomo");
+        assert_eq!(product_core_log_file_name(), "flyclash-mihomo.log");
+        assert_eq!(legacy_core_log_file_name(), "mihomo.log");
+        assert_eq!(product_core_display_name(), "FlyClash Core");
+        assert_eq!(product_core_binary_stem(), "flyclash-mihomo");
+        assert_eq!(product_core_service_label(), "内核服务");
+    }
+
+    #[test]
+    fn installed_core_identity_accepts_product_and_legacy_names() {
+        assert_eq!(
+            installed_core_identity(&format!("flyclash-mihomo{}", executable_ext())),
+            Some((CORE_TYPE_STABLE, None))
+        );
+        assert_eq!(
+            installed_core_identity(&format!("flyclash-mihomo-alpha{}", executable_ext())),
+            Some((CORE_TYPE_ALPHA, None))
+        );
+        assert_eq!(
+            installed_core_identity(&format!("mihomo{}", executable_ext())),
+            Some((CORE_TYPE_STABLE, None))
+        );
     }
 }

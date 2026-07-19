@@ -11,6 +11,7 @@ use crate::{
         request as request_http, request_mihomo_ipc_only,
         request_via_proxy as request_http_via_proxy,
     },
+    profiles::{config_content, read_last_config},
     runtime::active_runtime_controller_endpoint,
     runtime_config::{controller_secret, geodata_config_patch_body, patch_active_geodata_config},
     state::{AppState, TrafficSnapshot},
@@ -79,6 +80,116 @@ fn http_error_message(response: &Value, fallback: &str) -> String {
 fn http_failure(response: &Value, fallback: &str) -> Option<String> {
     (!response.get("ok").and_then(Value::as_bool).unwrap_or(false))
         .then(|| http_error_message(response, fallback))
+}
+
+fn active_provider_names(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    section: &str,
+) -> Option<HashSet<String>> {
+    let active = state
+        .runtime
+        .lock()
+        .expect("runtime mutex poisoned")
+        .core
+        .active_config_owned()
+        .or_else(|| read_last_config(app).ok().flatten())?;
+    let content = config_content(app, &active).ok()?;
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(&content).ok()?;
+    let names = yaml
+        .get(section)
+        .and_then(serde_yaml::Value::as_mapping)
+        .map(|mapping| {
+            mapping
+                .keys()
+                .filter_map(serde_yaml::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(ToString::to_string)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    Some(names)
+}
+
+fn active_proxy_group_names(app: &AppHandle, state: &State<'_, AppState>) -> Option<Vec<String>> {
+    let active = state
+        .runtime
+        .lock()
+        .expect("runtime mutex poisoned")
+        .core
+        .active_config_owned()
+        .or_else(|| read_last_config(app).ok().flatten())?;
+    let content = config_content(app, &active).ok()?;
+    let yaml = serde_yaml::from_str::<serde_yaml::Value>(&content).ok()?;
+    let groups = yaml
+        .get("proxy-groups")
+        .and_then(serde_yaml::Value::as_sequence)
+        .map(|groups| {
+            groups
+                .iter()
+                .filter(|group| {
+                    !group
+                        .get("hidden")
+                        .and_then(serde_yaml::Value::as_bool)
+                        .unwrap_or(false)
+                })
+                .filter_map(|group| group.get("name").and_then(serde_yaml::Value::as_str))
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut ordered = Vec::with_capacity(groups.len());
+    if groups.iter().any(|name| name == "PROXY") {
+        ordered.push("PROXY".to_string());
+    }
+    ordered.extend(
+        groups
+            .iter()
+            .filter(|name| name.as_str() != "PROXY" && name.as_str() != "GLOBAL")
+            .cloned(),
+    );
+    ordered.extend(
+        groups
+            .iter()
+            .filter(|name| name.as_str() == "GLOBAL")
+            .cloned(),
+    );
+    Some(ordered)
+}
+
+fn provider_vehicle_type_allowed(provider: &Value) -> bool {
+    provider
+        .get("vehicleType")
+        .or_else(|| provider.get("vehicle_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(|vehicle_type| {
+            vehicle_type.eq_ignore_ascii_case("http") || vehicle_type.eq_ignore_ascii_case("file")
+        })
+        .unwrap_or(false)
+}
+
+fn filter_provider_payload(mut payload: Value, allowed_names: Option<&HashSet<String>>) -> Value {
+    if let Some(providers) = payload.get_mut("providers").and_then(Value::as_object_mut) {
+        providers.retain(|map_key, provider| {
+            if let Some(allowed_names) = allowed_names {
+                return allowed_names.contains(map_key)
+                    || provider
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .is_some_and(|name| allowed_names.contains(name));
+            }
+
+            provider_vehicle_type_allowed(provider)
+        });
+    }
+
+    payload
 }
 
 pub(crate) async fn controller_probe_payload(app: &AppHandle) -> Value {
@@ -181,12 +292,21 @@ fn proxy_is_group(value: &Value) -> bool {
                 | Some("Fallback")
                 | Some("LoadBalance")
                 | Some("Relay")
+                | Some("Smart")
                 | Some("select")
                 | Some("url-test")
                 | Some("fallback")
                 | Some("load-balance")
                 | Some("relay")
+                | Some("smart")
         )
+}
+
+fn is_builtin_proxy_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "DIRECT" | "REJECT" | "PASS"
+    )
 }
 
 fn resolve_proxy_now(proxies: &Map<String, Value>, name: &str, depth: usize) -> Option<String> {
@@ -223,6 +343,26 @@ fn current_node_from_proxies_response(response: &Value) -> Option<String> {
     }
 
     None
+}
+
+fn current_node_from_proxies_response_ordered(
+    response: &Value,
+    group_order: &[String],
+) -> Option<String> {
+    let data = response.get("data").unwrap_or(response);
+    let proxies = data.get("proxies").and_then(Value::as_object)?;
+    let mut fallback = None;
+
+    for group in group_order {
+        if let Some(node) = resolve_proxy_now(proxies, group, 0) {
+            if !is_builtin_proxy_name(&node) {
+                return Some(node);
+            }
+            fallback.get_or_insert(node);
+        }
+    }
+
+    current_node_from_proxies_response(response).or(fallback)
 }
 
 fn proxy_group_for_compat(name: &str, group: &Value, proxies: &Map<String, Value>) -> Value {
@@ -314,22 +454,26 @@ pub(crate) async fn fetch_connections_info(app: &AppHandle, state: &State<'_, Ap
             .current_node
             .clone()
     };
-    let current_node = match cached_current_node {
-        Some(node) => Some(node),
-        None => {
-            let resolved = request_http(app, Some("/proxies".to_string()), None)
-                .await
-                .ok()
-                .and_then(|value| current_node_from_proxies_response(&value));
-            if let Some(node) = &resolved {
-                state
-                    .runtime
-                    .lock()
-                    .expect("runtime mutex poisoned")
-                    .current_node = Some(node.clone());
-            }
-            resolved
+    let resolved = request_http(app, Some("/proxies".to_string()), None)
+        .await
+        .ok()
+        .and_then(|value| {
+            active_proxy_group_names(app, state)
+                .filter(|groups| !groups.is_empty())
+                .and_then(|groups| current_node_from_proxies_response_ordered(&value, &groups))
+                .or_else(|| current_node_from_proxies_response(&value))
+        });
+    let current_node = match resolved {
+        Some(node) if !is_builtin_proxy_name(&node) => {
+            state
+                .runtime
+                .lock()
+                .expect("runtime mutex poisoned")
+                .current_node = Some(node.clone());
+            Some(node)
         }
+        Some(node) => cached_current_node.or(Some(node)),
+        None => cached_current_node,
     };
     json!({
         "activeConnections": connections.len(),
@@ -487,8 +631,8 @@ async fn dispatch_compat_call(
                         .lock()
                         .expect("runtime mutex poisoned")
                         .current_node = Some(node.clone());
-                    let _ = window.emit("node-changed", payload.clone());
                 }
+                let _ = window.emit("node-changed", payload.clone());
                 Ok(success(payload))
             } else {
                 Ok(
@@ -498,6 +642,7 @@ async fn dispatch_compat_call(
         }
         "notifyNodeChanged" => {
             let node = arg_string(args, 0).unwrap_or_default();
+            let group = arg_string(args, 1).unwrap_or_default();
             state
                 .runtime
                 .lock()
@@ -507,7 +652,10 @@ async fn dispatch_compat_call(
             } else {
                 Some(node.clone())
             };
-            let _ = window.emit("node-changed", json!({ "nodeName": node }));
+            let _ = window.emit(
+                "node-changed",
+                json!({ "nodeName": node, "groupName": group }),
+            );
             Ok(success(json!({})))
         }
         "testNodeDelay" => {
@@ -533,9 +681,10 @@ async fn dispatch_compat_call(
                     "status": response.get("status").cloned().unwrap_or(Value::Null)
                 }));
             }
-            Ok(success(
-                json!({ "data": response.get("data").cloned().unwrap_or(response) }),
-            ))
+            let allowed_names = active_provider_names(app, state, "proxy-providers");
+            let data = response.get("data").cloned().unwrap_or(response);
+            let data = filter_provider_payload(data, allowed_names.as_ref());
+            Ok(success(json!({ "data": data })))
         }
         "updateProxyProvider" | "update-proxy-provider" => {
             let name = arg_string(args, 0).unwrap_or_default();
@@ -560,9 +709,10 @@ async fn dispatch_compat_call(
                     "status": response.get("status").cloned().unwrap_or(Value::Null)
                 }));
             }
-            Ok(success(
-                json!({ "data": response.get("data").cloned().unwrap_or(response) }),
-            ))
+            let allowed_names = active_provider_names(app, state, "rule-providers");
+            let data = response.get("data").cloned().unwrap_or(response);
+            let data = filter_provider_payload(data, allowed_names.as_ref());
+            Ok(success(json!({ "data": data })))
         }
         "updateRuleProvider" | "update-rule-provider" => {
             let name = arg_string(args, 0).unwrap_or_default();
@@ -662,4 +812,85 @@ pub(crate) async fn handle_compat_call(
     }
 
     Some(dispatch_compat_call(app, window, state, method, args).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use serde_json::json;
+
+    use super::filter_provider_payload;
+
+    #[test]
+    fn filters_runtime_proxy_groups_out_of_provider_payload() {
+        let allowed_names = HashSet::from(["AirportA".to_string()]);
+        let payload = json!({
+            "providers": {
+                "AirportA": {
+                    "name": "AirportA",
+                    "type": "Proxy",
+                    "vehicleType": "HTTP"
+                },
+                "Apple": {
+                    "name": "Apple",
+                    "type": "Proxy",
+                    "vehicleType": "Compatible"
+                },
+                "ChatGPT": {
+                    "name": "ChatGPT",
+                    "type": "Proxy",
+                    "vehicleType": "Compatible"
+                }
+            }
+        });
+
+        let filtered = filter_provider_payload(payload, Some(&allowed_names));
+        let providers = filtered
+            .get("providers")
+            .and_then(|value| value.as_object())
+            .expect("providers object");
+
+        assert!(providers.contains_key("AirportA"));
+        assert!(!providers.contains_key("Apple"));
+        assert!(!providers.contains_key("ChatGPT"));
+    }
+
+    #[test]
+    fn filters_provider_payload_by_vehicle_type_without_config_names() {
+        let payload = json!({
+            "providers": {
+                "AirportA": {
+                    "name": "AirportA",
+                    "type": "Proxy",
+                    "vehicleType": "HTTP"
+                },
+                "LocalProvider": {
+                    "name": "LocalProvider",
+                    "type": "Proxy",
+                    "vehicleType": "File"
+                },
+                "Claude": {
+                    "name": "Claude",
+                    "type": "Proxy",
+                    "vehicleType": "Compatible"
+                },
+                "DIRECT": {
+                    "name": "DIRECT",
+                    "type": "Direct"
+                }
+            }
+        });
+
+        let filtered = filter_provider_payload(payload, None);
+        let providers = filtered
+            .get("providers")
+            .and_then(|value| value.as_object())
+            .expect("providers object");
+
+        assert!(providers.contains_key("AirportA"));
+        assert!(providers.contains_key("LocalProvider"));
+        assert!(!providers.contains_key("Claude"));
+        assert!(!providers.contains_key("DIRECT"));
+    }
 }

@@ -1,7 +1,13 @@
 'use client';
 
-import Overrides from '@/components/Overrides';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useTranslation } from 'react-i18next';
+
+const Overrides = dynamic(() => import('@/components/Overrides'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function OverridesPage() {
   const { t } = useTranslation();

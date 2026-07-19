@@ -41,6 +41,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "smoke:tauri-ipc": "node scripts/smoke-tauri-ipc.mjs",
+    "smoke:tauri-compat-status": "node scripts/smoke-tauri-compat-status.mjs",
     "audit:proxy-order": "node scripts/audit-proxy-order-cache.mjs",
     "audit:mihomo-ipc": "node scripts/audit-mihomo-ipc.mjs",
     "audit:tauri-compat": "node scripts/audit-tauri-compat.mjs",

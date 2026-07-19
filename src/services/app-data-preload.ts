@@ -3,13 +3,30 @@
 import {
   APP_DATA_CACHE_KEYS,
   hasAppDataCache,
-  writeAppDataCache,
 } from '@/services/app-data-cache';
+import {
+  writeActiveConfigCache,
+  writeConnectionsCache,
+  writeLogsCache,
+  writeMatchRulesCache,
+  writeOverridesCache,
+  writeProxyModeCache,
+  writeProxyProvidersCache,
+  writeRuleProvidersCache,
+  writeSubscriptionsCache,
+} from '@/services/app-data-hooks';
 import { mihomoClient } from '@/services/mihomo-client';
+import {
+  filterProviderRecord,
+  getConfiguredProviderNames,
+  providerMap,
+} from '@/services/provider-filter';
 
 type PreloadOptions = {
   force?: boolean;
   timeoutMs?: number;
+  idle?: boolean;
+  idleTimeoutMs?: number;
 };
 
 type PreloadTask = {
@@ -42,10 +59,6 @@ const toArray = <T,>(value: unknown): T[] => {
     if (Array.isArray(nested)) return nested as T[];
   }
   return [];
-};
-
-const providerMap = (result: any) => {
-  return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
 };
 
 const normalizeProviderList = (providersRecord: Record<string, any>) => {
@@ -135,6 +148,42 @@ const withTimeout = async (promise: Promise<void>, timeoutMs?: number) => {
   if (timer) clearTimeout(timer);
 };
 
+const waitForBackgroundSlot = async (timeoutMs = 800) => {
+  if (typeof window === 'undefined') return;
+  await new Promise<void>((resolve) => {
+    const requestIdle = (window as any).requestIdleCallback as
+      | ((callback: () => void, options?: { timeout?: number }) => number)
+      | undefined;
+    if (typeof requestIdle === 'function') {
+      requestIdle(resolve, { timeout: timeoutMs });
+    } else {
+      window.setTimeout(resolve, Math.min(timeoutMs, 160));
+    }
+  });
+};
+
+const runTasks = async (
+  tasks: PreloadTask[],
+  options: PreloadOptions,
+  concurrency = 2,
+) => {
+  if (tasks.length === 0) return;
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, tasks.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < tasks.length) {
+      const task = tasks[cursor];
+      cursor += 1;
+      if (options.idle) {
+        await waitForBackgroundSlot(options.idleTimeoutMs);
+      }
+      await runTask(task, options);
+    }
+  });
+
+  await Promise.allSettled(workers);
+};
+
 const preloadSubscriptions: PreloadTask = {
   id: 'subscriptions',
   keys: [APP_DATA_CACHE_KEYS.subscriptions],
@@ -145,7 +194,7 @@ const preloadSubscriptions: PreloadTask = {
     if (isRecord(result) && result.success === false) {
       throw new Error(String(result.error || result.message || 'getSubscriptions failed'));
     }
-    writeAppDataCache(APP_DATA_CACHE_KEYS.subscriptions, toArray(result));
+    writeSubscriptionsCache(toArray(result));
   },
 };
 
@@ -157,7 +206,7 @@ const preloadActiveConfig: PreloadTask = {
     if (!hasElectronMethod(api, 'getActiveConfig')) throw new Error('getActiveConfig unavailable');
     const result = await api.getActiveConfig();
     const activeConfig = typeof result === 'string' && result.trim() ? result : null;
-    writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, activeConfig);
+    writeActiveConfigCache(activeConfig);
   },
 };
 
@@ -167,7 +216,9 @@ const preloadProxyMode: PreloadTask = {
   run: async () => {
     const result = await requestMihomo('/configs');
     const mode = normalizeProxyMode(result);
-    if (mode) writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, mode);
+    if (mode === 'rule' || mode === 'global' || mode === 'direct') {
+      writeProxyModeCache(mode);
+    }
   },
 };
 
@@ -176,7 +227,7 @@ const preloadConnections: PreloadTask = {
   keys: [APP_DATA_CACHE_KEYS.connections],
   run: async () => {
     const result = await requestMihomo('/connections');
-    writeAppDataCache(APP_DATA_CACHE_KEYS.connections, normalizeConnections(result));
+    writeConnectionsCache(normalizeConnections(result));
   },
 };
 
@@ -185,7 +236,7 @@ const preloadRules: PreloadTask = {
   keys: [APP_DATA_CACHE_KEYS.matchRules],
   run: async () => {
     const result = await requestMihomo('/rules');
-    writeAppDataCache(APP_DATA_CACHE_KEYS.matchRules, normalizeRules(result));
+    writeMatchRulesCache(normalizeRules(result));
   },
 };
 
@@ -203,10 +254,15 @@ const preloadProxyProviders: PreloadTask = {
       throw new Error(message);
     }
     const providersRecord = providerMap(result);
+    const configuredNames = await getConfiguredProviderNames('proxyProviders');
     const providers = providersRecord && typeof providersRecord === 'object'
-      ? normalizeProviderList(providersRecord as Record<string, any>)
+      ? normalizeProviderList(filterProviderRecord(
+          providersRecord as Record<string, any>,
+          'proxyProviders',
+          configuredNames,
+        ))
       : [];
-    writeAppDataCache(APP_DATA_CACHE_KEYS.proxyProviders, providers);
+    writeProxyProvidersCache(providers);
   },
 };
 
@@ -224,10 +280,15 @@ const preloadRuleProviders: PreloadTask = {
       throw new Error(message);
     }
     const providersRecord = providerMap(result);
+    const configuredNames = await getConfiguredProviderNames('ruleProviders');
     const providers = providersRecord && typeof providersRecord === 'object'
-      ? Object.values(providersRecord)
+      ? Object.values(filterProviderRecord(
+          providersRecord as Record<string, any>,
+          'ruleProviders',
+          configuredNames,
+        ))
       : [];
-    writeAppDataCache(APP_DATA_CACHE_KEYS.ruleProviders, providers);
+    writeRuleProvidersCache(providers);
   },
 };
 
@@ -241,7 +302,7 @@ const preloadOverrides: PreloadTask = {
     if (isRecord(result) && result.success === false) {
       throw new Error(String(result.error || result.message || 'getOverrides failed'));
     }
-    writeAppDataCache(APP_DATA_CACHE_KEYS.overrides, normalizeOverrides(result));
+    writeOverridesCache(normalizeOverrides(result));
   },
 };
 
@@ -256,7 +317,7 @@ const preloadLogs: PreloadTask = {
       throw new Error(String(result.error || result.message || 'getLogs failed'));
     }
     if (Array.isArray(result)) {
-      writeAppDataCache(APP_DATA_CACHE_KEYS.logs, result);
+      writeLogsCache(result);
     }
   },
 };
@@ -265,16 +326,16 @@ const commonTasks = [
   preloadSubscriptions,
   preloadActiveConfig,
   preloadProxyMode,
-  preloadConnections,
-  preloadRules,
-  preloadProxyProviders,
-  preloadRuleProviders,
-  preloadOverrides,
-  preloadLogs,
+];
+
+const startupTasks = [
+  preloadSubscriptions,
+  preloadActiveConfig,
+  preloadProxyMode,
 ];
 
 const routeTasks: Array<{ match: (path: string) => boolean; tasks: PreloadTask[] }> = [
-  { match: (path) => path === '/', tasks: [preloadSubscriptions, preloadActiveConfig, preloadProxyMode, preloadRules] },
+  { match: (path) => path === '/', tasks: [preloadSubscriptions, preloadActiveConfig, preloadProxyMode] },
   { match: (path) => path.startsWith('/nodes'), tasks: [preloadProxyMode] },
   { match: (path) => path.startsWith('/subscriptions'), tasks: [preloadSubscriptions, preloadActiveConfig] },
   { match: (path) => path.startsWith('/connections'), tasks: [preloadConnections] },
@@ -295,7 +356,8 @@ const routePath = (href: string) => {
 
 export const preloadCommonAppData = async (options: PreloadOptions = {}) => {
   if (typeof window === 'undefined' || !window.electronAPI) return;
-  const promise = Promise.allSettled(commonTasks.map((task) => runTask(task, options))).then(() => undefined);
+  const tasks = options.force ? commonTasks : startupTasks;
+  const promise = runTasks(tasks, options, 1);
   await withTimeout(promise, options.timeoutMs);
 };
 
@@ -305,6 +367,6 @@ export const preloadRouteData = async (href: string, options: PreloadOptions = {
   const matched = routeTasks.find((entry) => entry.match(path));
   if (!matched) return;
 
-  const promise = Promise.allSettled(matched.tasks.map((task) => runTask(task, options))).then(() => undefined);
+  const promise = runTasks(matched.tasks, options, 2);
   await withTimeout(promise, options.timeoutMs);
 };

@@ -9,12 +9,15 @@ import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import { useTranslation } from 'react-i18next';
 import ConfigEditor from '@/components/ConfigEditor';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasSubscriptionsCache,
+  readActiveConfigCache,
+  readSubscriptionsCache,
+  toArrayValue,
+  useActiveConfigCache,
+  useSubscriptionsCache,
+  writeActiveConfigCache,
+  writeSubscriptionsCache,
+} from '@/services/app-data-hooks';
 
 type Subscription = {
   name: string;
@@ -33,15 +36,7 @@ type Subscription = {
   cachedIconPath?: string | null;
 };
 
-const toArray = <T,>(value: unknown): T[] => {
-  if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    const nested = record.data ?? record.items ?? record.subscriptions ?? record.overrides;
-    if (Array.isArray(nested)) return nested as T[];
-  }
-  return [];
-};
+const toArray = <T,>(value: unknown): T[] => toArrayValue<T>(value);
 
 type SaveSubscriptionResultLike =
   | string
@@ -83,7 +78,6 @@ const normalizeSaveSubscriptionResult = (result: SaveSubscriptionResultLike): { 
 };
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
-const SUBSCRIPTIONS_CACHE_KEY = APP_DATA_CACHE_KEYS.subscriptions;
 
 const formatSubscriptionError = (error: unknown, fallback = '操作失败') => {
   const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
@@ -406,9 +400,11 @@ const getTrafficInfo = (subscription: Subscription) => {
 
 export default function SubscriptionManager() {
   const { t } = useTranslation();
-  // 初始化时直接从sessionStorage加载缓存数据，避免闪烁
+  // 初始化时直接从共享缓存加载，避免切页闪烁
+  const cachedSubscriptions = useSubscriptionsCache<Subscription>();
+  const cachedActiveConfig = useActiveConfigCache();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>(() => {
-    const cached = toArray<Subscription>(readAppDataCache<unknown>(SUBSCRIPTIONS_CACHE_KEY));
+    const cached = readSubscriptionsCache<Subscription>();
     if (cached.length > 0) {
       console.log('从共享缓存加载了订阅数据:', cached.length);
       return cached;
@@ -417,7 +413,7 @@ export default function SubscriptionManager() {
   });
   const [isSubscriptionsLoading, setIsSubscriptionsLoading] = useState(() => {
     if (typeof window === 'undefined') return true;
-    return !hasAppDataCache(SUBSCRIPTIONS_CACHE_KEY);
+    return !hasSubscriptionsCache();
   });
   const [subUrl, setSubUrl] = useState('');
   const [subName, setSubName] = useState('');
@@ -436,8 +432,8 @@ export default function SubscriptionManager() {
   const [highlightedSubReason, setHighlightedSubReason] = useState<HighlightReason | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // 新增: 当前活跃的配置文件路径
-  const [activeConfig, setActiveConfig] = useState<string | null>(null);
+  // 当前活跃的配置文件路径：优先共享缓存，避免切页闪烁
+  const [activeConfig, setActiveConfig] = useState<string | null>(() => readActiveConfigCache());
   // 新增: 是否正在切换配置
   const [switchingConfig, setSwitchingConfig] = useState<string | null>(null);
   // 新增: 服务运行状态
@@ -474,13 +470,21 @@ export default function SubscriptionManager() {
   const dragStateRef = useRef<{ dragged: Subscription | null; target: Subscription | null }>({ dragged: null, target: null });
   const { hasProviders, refreshProvidersAvailability } = useProviderAvailability();
 
-  useEffect(() => {
-    return subscribeAppDataCache(SUBSCRIPTIONS_CACHE_KEY, () => {
-      const cached = toArray<Subscription>(readAppDataCache<unknown>(SUBSCRIPTIONS_CACHE_KEY));
-      setSubscriptions(cached);
-      setIsSubscriptionsLoading(false);
-    });
+  const updateActiveConfig = useCallback((value: string | null) => {
+    setActiveConfig(value);
+    writeActiveConfigCache(value);
   }, []);
+
+  useEffect(() => {
+    setSubscriptions(cachedSubscriptions);
+    if (hasSubscriptionsCache()) {
+      setIsSubscriptionsLoading(false);
+    }
+  }, [cachedSubscriptions]);
+
+  useEffect(() => {
+    setActiveConfig(cachedActiveConfig);
+  }, [cachedActiveConfig]);
 
   const highlightSubscriptions = useCallback((paths: Array<string | null | undefined>, reason: HighlightReason) => {
     const uniquePaths = Array.from(
@@ -597,7 +601,7 @@ export default function SubscriptionManager() {
     if (window.electronAPI?.onActiveConfigChanged) {
       unsubscribeActiveConfig = window.electronAPI.onActiveConfigChanged((configPath) => {
         const nextActiveConfig = activeConfigEventPath(configPath);
-        setActiveConfig(nextActiveConfig);
+        updateActiveConfig(nextActiveConfig);
         refreshProvidersAvailability();
         notifyProfileUpdated({
           action: 'active-config-changed',
@@ -666,7 +670,7 @@ export default function SubscriptionManager() {
   const loadActiveConfig = async () => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'getActiveConfig')) {
-      setActiveConfig(null);
+      updateActiveConfig(null);
       setIsServiceRunning(false);
       return;
     }
@@ -674,7 +678,8 @@ export default function SubscriptionManager() {
     try {
       // 获取用户选择的配置（独立于服务运行状态）
       const config = await api.getActiveConfig();
-      setActiveConfig(activeConfigPath(config));
+      const nextActiveConfig = activeConfigPath(config);
+      updateActiveConfig(nextActiveConfig);
 
       // 检查服务实际运行状态
       try {
@@ -730,7 +735,7 @@ export default function SubscriptionManager() {
         const reloadSuccess = compatSuccess(result);
 
         if (reloadSuccess) {
-          setActiveConfig(configPath);
+          updateActiveConfig(configPath);
         } else {
           // 热重载失败，回退到重启方式
           console.warn('热重载失败，尝试重启服务...');
@@ -755,7 +760,7 @@ export default function SubscriptionManager() {
           result = startResult;
 
           if (startSuccess) {
-            setActiveConfig(configPath);
+            updateActiveConfig(configPath);
           }
         }
       } else {
@@ -770,7 +775,7 @@ export default function SubscriptionManager() {
         const preferredSuccess = compatSuccess(result);
 
         if (preferredSuccess) {
-          setActiveConfig(configPath);
+          updateActiveConfig(configPath);
           if (options.startIfStopped) {
             if (!hasElectronMethod(api, 'startMihomo')) {
               result = { success: false, error: '启动内核 API 不可用' };
@@ -878,7 +883,7 @@ export default function SubscriptionManager() {
       return null;
     }
 
-    if (!hasAppDataCache(SUBSCRIPTIONS_CACHE_KEY)) {
+    if (!hasSubscriptionsCache()) {
       setIsSubscriptionsLoading(true);
     }
     try {
@@ -921,7 +926,7 @@ export default function SubscriptionManager() {
 
       // 保存到sessionStorage缓存
       try {
-        writeAppDataCache(SUBSCRIPTIONS_CACHE_KEY, subsWithIcons);
+        writeSubscriptionsCache(subsWithIcons);
       } catch (error) {
         console.error('Failed to cache subscriptions:', error);
       }
@@ -965,7 +970,7 @@ export default function SubscriptionManager() {
     const currentConfig = await getLatestActiveConfig();
 
     if (currentConfig === newPath) {
-      setActiveConfig(newPath);
+      updateActiveConfig(newPath);
       notifyProfileUpdated({
         action: 'subscription-path-changed',
         filePath: newPath,
@@ -992,7 +997,7 @@ export default function SubscriptionManager() {
     try {
       const result = await api.setPreferredConfig(newPath);
       if (compatSuccess(result)) {
-        setActiveConfig(newPath);
+        updateActiveConfig(newPath);
         refreshProvidersAvailability();
         notifyProfileUpdated({
           action: 'subscription-path-changed',
@@ -1112,7 +1117,7 @@ export default function SubscriptionManager() {
     try {
       const result = await api.setPreferredConfig(filePath);
       if (compatSuccess(result)) {
-        setActiveConfig(filePath);
+        updateActiveConfig(filePath);
         refreshProvidersAvailability();
         notifyProfileUpdated({
           action: 'set-preferred-config',
@@ -1715,60 +1720,6 @@ export default function SubscriptionManager() {
   };
 
   const showToast = (title: string, description: string, type: 'success' | 'error') => {
-    if (typeof document !== 'undefined' && !document.getElementById('subscription-toast-viewport')) {
-      const message = description ? `${title}: ${description}` : title;
-      let root = document.getElementById('flyclash-toast-root');
-      if (!root) {
-        root = document.createElement('div');
-        root.id = 'flyclash-toast-root';
-        root.setAttribute('aria-live', 'polite');
-        Object.assign(root.style, {
-          position: 'fixed',
-          top: '16px',
-          right: '16px',
-          zIndex: '2147483647',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px',
-          pointerEvents: 'none',
-          maxWidth: 'min(420px, calc(100vw - 32px))'
-        });
-        document.body.appendChild(root);
-      }
-
-      const toast = document.createElement('div');
-      toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-      toast.textContent = message;
-      Object.assign(toast.style, {
-        boxSizing: 'border-box',
-        width: '100%',
-        padding: '12px 16px',
-        borderRadius: '12px',
-        background: type === 'error' ? '#dc2626' : '#16a34a',
-        color: '#fff',
-        boxShadow: '0 18px 45px rgba(15, 23, 42, 0.22)',
-        fontSize: '14px',
-        fontWeight: '600',
-        lineHeight: '1.45',
-        whiteSpace: 'pre-wrap',
-        overflowWrap: 'anywhere',
-        opacity: '1',
-        transform: 'translateY(0)',
-        transition: 'opacity 160ms ease, transform 160ms ease',
-        pointerEvents: 'auto'
-      });
-      root.appendChild(toast);
-
-      window.setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateY(-6px)';
-        window.setTimeout(() => {
-          toast.remove();
-          if (!root?.hasChildNodes()) root?.remove();
-        }, 180);
-      }, 4000);
-    }
-
     if (toastTimerRef.current !== null) {
       window.clearTimeout(toastTimerRef.current);
     }

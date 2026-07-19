@@ -9,7 +9,7 @@ use std::{
 use serde_json::{json, Value};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use crate::{
     core::{lifecycle as core_lifecycle, manager::RunningMode, service as core_service},
@@ -30,7 +30,7 @@ use crate::{
 type CompatResult = Result<Value, String>;
 
 const WINDOWS_ELEVATED_TASK_NAME: &str = "FlyClash-Elevated";
-const REQUIRED_HELPER_VERSION: &str = "1.0.1";
+const REQUIRED_HELPER_VERSION: &str = "1.0.2";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -292,27 +292,28 @@ fn delete_windows_elevated_task() -> Result<bool, String> {
 }
 
 pub(crate) fn should_start_core_by_service(app: &AppHandle) -> bool {
-    if !cfg!(target_os = "windows") {
-        return false;
-    }
-
-    let mode = setting(app, "tunElevationMode", json!("service"))
-        .ok()
-        .and_then(|value| value.as_str().map(ToString::to_string))
-        .unwrap_or_else(|| "service".to_string());
     let tun_enabled = setting(app, "tunModeEnabled", json!(false))
         .ok()
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-
-    mode == "service" && tun_enabled
+    crate::core::paths::should_start_by_service(
+        cfg!(target_os = "windows"),
+        &windows_tun_elevation_mode(app),
+        tun_enabled,
+    )
 }
 
-fn windows_core_permission_status(app: &AppHandle) -> Value {
+fn windows_tun_elevation_mode(app: &AppHandle) -> String {
     let mode = setting(app, "tunElevationMode", json!("service"))
         .ok()
         .and_then(|value| value.as_str().map(ToString::to_string))
         .unwrap_or_else(|| "service".to_string());
+
+    mode
+}
+
+fn windows_core_permission_status(app: &AppHandle) -> Value {
+    let mode = windows_tun_elevation_mode(app);
     let is_admin = windows_is_admin();
     let has_task = windows_elevated_task_exists();
     let flags = core_service::query_helper_service_flags();
@@ -333,6 +334,126 @@ fn helper_version_current(helper: &core_service::HelperIpcSnapshot) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn ensure_helper_service_current(app: &AppHandle) -> Result<(), String> {
+    if !cfg!(target_os = "windows") {
+        return Err("当前平台不支持 Windows 服务".to_string());
+    }
+
+    let flags = core_service::query_helper_service_flags();
+    if flags.installed {
+        // Start / repair IPC without reinstalling when the service binary is already present.
+        if core_service::ensure_helper_service_ipc_ready().is_ok() {
+            let helper = core_service::helper_ipc_snapshot(true);
+            if helper.ipc_available() && helper_version_current(&helper) {
+                return Ok(());
+            }
+        }
+
+        let flags = core_service::query_helper_service_flags();
+        let helper = core_service::helper_ipc_snapshot(flags.running);
+        if helper.ipc_available() && helper_version_current(&helper) {
+            return Ok(());
+        }
+    }
+
+    let helper_path = find_helper_executable(app)?;
+    if flags.running {
+        let _ = core_service::stop_helper_service();
+    }
+    core_service::install_helper_service(&helper_path, !windows_is_admin())?;
+    core_service::ensure_helper_service_ready()
+}
+
+/// Resume a pending TUN enable request after elevated helper install / restart.
+/// Unlike main Electron (which only logs), this actually re-applies TUN once helper IPC is ready.
+pub(crate) fn schedule_pending_tun_enable(app: &AppHandle) {
+    let pending = setting(app, "pendingTunEnable", json!(false))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !pending {
+        return;
+    }
+
+    // Consume the flag up-front so a crash mid-resume does not loop forever.
+    let _ = set_setting(app, "pendingTunEnable", json!(false));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Wait for autostart / window setup so core and tray are ready.
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+
+        let Some(window) = app.get_webview_window("main") else {
+            eprintln!("[TUN] pendingTunEnable: main window unavailable, aborting resume");
+            return;
+        };
+        let state = app.state::<AppState>();
+
+        if cfg!(target_os = "windows") {
+            match ensure_helper_service_current(&app) {
+                Ok(()) => {
+                    eprintln!("[TUN] pendingTunEnable: helper service is ready");
+                }
+                Err(error) => {
+                    eprintln!("[TUN] pendingTunEnable: helper not ready: {error}");
+                    let _ = set_setting(&app, "tunModeEnabled", json!(false));
+                    let _ = window.emit("tun-status", false);
+                    let _ = window.emit(
+                        "service-restarted",
+                        json!({
+                            "success": false,
+                            "error": format!("TUN 恢复失败: Helper 不可用 ({error})")
+                        }),
+                    );
+                    refresh_tray_menu_after(&app, "pendingTunEnable");
+                    return;
+                }
+            }
+        }
+
+        if let Err(error) = ensure_tun_dns_defaults(&app) {
+            eprintln!("[TUN] pendingTunEnable: ensure_tun_dns_defaults failed: {error}");
+        }
+        if let Err(error) = set_setting(&app, "tunModeEnabled", json!(true)) {
+            eprintln!("[TUN] pendingTunEnable: failed to persist tunModeEnabled: {error}");
+            return;
+        }
+
+        match apply_tun_runtime_change(&app, &window, &state, true, false, true).await {
+            Ok(value) => {
+                let ok = value
+                    .get("success")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                if ok {
+                    eprintln!("[TUN] pendingTunEnable: TUN re-enabled after elevation");
+                    let _ = window.emit("tun-status", true);
+                } else {
+                    let error = value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error");
+                    eprintln!("[TUN] pendingTunEnable: apply failed: {error}");
+                    let _ = window.emit("tun-status", false);
+                }
+            }
+            Err(error) => {
+                eprintln!("[TUN] pendingTunEnable: apply error: {error}");
+                let _ = set_setting(&app, "tunModeEnabled", json!(false));
+                let _ = window.emit("tun-status", false);
+                let _ = window.emit(
+                    "service-restarted",
+                    json!({
+                        "success": false,
+                        "error": format!("TUN 恢复失败: {error}")
+                    }),
+                );
+            }
+        }
+
+        refresh_tray_menu_after(&app, "pendingTunEnable");
+    });
+}
+
 fn install_or_start_windows_tun_service(app: &AppHandle) -> CompatResult {
     let flags = core_service::query_helper_service_flags();
     if flags.running {
@@ -351,6 +472,38 @@ fn install_or_start_windows_tun_service(app: &AppHandle) -> CompatResult {
                 ready,
             )));
         }
+
+        // Service process is alive but IPC is dead: restart the Windows service
+        // instead of reporting a false "already running" success.
+        if !ipc_available {
+            match core_service::repair_helper_service_ipc() {
+                Ok(()) => {
+                    let flags = core_service::query_helper_service_flags();
+                    let helper = core_service::helper_ipc_snapshot(flags.running);
+                    let ready = helper.ipc_available();
+                    return Ok(success(
+                        core_service::helper_service_action_payload_with_repaired(
+                            if ready {
+                                "TUN Helper 服务 IPC 已修复并就绪"
+                            } else {
+                                "TUN Helper 服务已重启，IPC 仍未就绪"
+                            },
+                            helper,
+                            ready,
+                            true,
+                        ),
+                    ));
+                }
+                Err(error) => {
+                    return Ok(json!({
+                        "success": false,
+                        "error": format!("Helper 服务运行中但 IPC 不可用，修复失败: {error}"),
+                        "readiness": "running-no-ipc"
+                    }));
+                }
+            }
+        }
+
         return Ok(success(core_service::helper_service_action_payload(
             "TUN Helper 服务已运行",
             helper,
@@ -418,6 +571,9 @@ pub(crate) fn find_helper_executable(app: &AppHandle) -> Result<PathBuf, String>
     existing_resource_file(
         app,
         &[
+            PathBuf::from("native")
+                .join("helper")
+                .join("flyclash-helper.exe"),
             PathBuf::from("tools").join("flyclash-helper.exe"),
             PathBuf::from("flyclash-helper.exe"),
         ],
@@ -572,7 +728,7 @@ async fn dispatch_compat_call(
                 return Ok(json!({
                     "success": false,
                     "enabled": false,
-                    "error": "Mihomo 服务未运行，无法启用系统代理"
+                    "error": "内核服务未运行，无法启用系统代理"
                 }));
             }
             let port = mihomo_mixed_port(app);
@@ -609,6 +765,26 @@ async fn dispatch_compat_call(
             let previous_enabled = setting(app, "tunModeEnabled", json!(false))?
                 .as_bool()
                 .unwrap_or(false);
+            if !enabled {
+                set_setting(app, "pendingTunEnable", json!(false))?;
+            }
+            if enabled
+                && cfg!(target_os = "windows")
+                && windows_tun_elevation_mode(app) == "service"
+            {
+                if let Err(error) = ensure_helper_service_current(app) {
+                    set_setting(app, "tunModeEnabled", json!(previous_enabled))?;
+                    let _ = window.emit("tun-status", previous_enabled);
+                    refresh_tray_menu_after(app, "toggleTunMode");
+                    return Ok(json!({
+                        "success": false,
+                        "enabled": previous_enabled,
+                        "pending": false,
+                        "restarted": false,
+                        "error": format!("TUN Helper 服务不可用: {error}")
+                    }));
+                }
+            }
             if enabled {
                 ensure_tun_dns_defaults(app)?;
             }

@@ -5,12 +5,11 @@ import { DownloadIcon, MagnifyingGlassIcon, TrashIcon, TargetIcon } from '@radix
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasLogsCache,
+  readLogsCache,
+  subscribeLogsCache,
+  writeLogsCache,
+} from '@/services/app-data-hooks';
 
 type LogLevel = 'error' | 'warning' | 'info' | 'debug';
 
@@ -68,11 +67,9 @@ const normalizeLog = (log: unknown): LogEntry | null => {
   };
 };
 
-const LOGS_CACHE_KEY = APP_DATA_CACHE_KEYS.logs;
-
 const readLogsSessionCache = (): LogEntry[] | null => {
-  const cached = readAppDataCache<unknown>(LOGS_CACHE_KEY);
-  if (!Array.isArray(cached)) return null;
+  const cached = readLogsCache<unknown>();
+  if (!Array.isArray(cached) || (cached.length === 0 && !hasLogsCache())) return null;
   return cached.map(normalizeLog).filter((entry): entry is LogEntry => Boolean(entry)).slice(-MAX_LOGS);
 };
 
@@ -118,7 +115,7 @@ const MihomoLogs: React.FC = () => {
   }, [isLoadingLogs]);
 
   useEffect(() => {
-    return subscribeAppDataCache(LOGS_CACHE_KEY, () => {
+    return subscribeLogsCache( () => {
       const cached = readLogsSessionCache();
       if (!cached) return;
       logsViewCache.logs = cached;
@@ -177,7 +174,7 @@ const MihomoLogs: React.FC = () => {
         const entries = Array.isArray(result)
           ? result.map(normalizeLog).filter((entry): entry is LogEntry => Boolean(entry))
           : [];
-        writeAppDataCache(LOGS_CACHE_KEY, entries.slice(-MAX_LOGS));
+        writeLogsCache( entries.slice(-MAX_LOGS));
         setLogs(entries.slice(-MAX_LOGS));
       } catch (error) {
         console.error('加载 Mihomo 日志失败:', error);
@@ -373,7 +370,7 @@ const MihomoLogs: React.FC = () => {
           {isLoadingLogs &&
           filteredLogs.length === 0 &&
           !logsViewCache.loaded &&
-          !hasAppDataCache(LOGS_CACHE_KEY) ? (
+          !hasLogsCache() ? (
             <div className="h-full" aria-busy="true" />
           ) : filteredLogs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">

@@ -100,6 +100,7 @@ where
     let mut buffer = Vec::new();
     let mut header_end = None;
     let mut content_length = None;
+    let mut transfer_chunked = false;
     let mut status = None;
 
     loop {
@@ -122,6 +123,7 @@ where
                 let header_text = String::from_utf8_lossy(&buffer[..end]).to_string();
                 status = parse_status(&header_text);
                 content_length = parse_content_length(&header_text);
+                transfer_chunked = has_chunked_transfer_encoding(&header_text);
                 header_end = Some(end + 4);
             }
         }
@@ -142,6 +144,8 @@ where
     let mut body = buffer[end..].to_vec();
     if let Some(length) = content_length {
         body.truncate(length);
+    } else if transfer_chunked {
+        body = decode_chunked_body(&body)?;
     }
 
     Ok((status, String::from_utf8_lossy(&body).to_string()))
@@ -168,4 +172,79 @@ fn parse_content_length(headers: &str) -> Option<usize> {
             .then(|| value.trim().parse::<usize>().ok())
             .flatten()
     })
+}
+
+fn has_chunked_transfer_encoding(headers: &str) -> bool {
+    headers.lines().skip(1).any(|line| {
+        let Some((key, value)) = line.split_once(':') else {
+            return false;
+        };
+        key.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("chunked"))
+    })
+}
+
+fn decode_chunked_body(body: &[u8]) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    let mut offset = 0;
+
+    loop {
+        let line_end = find_crlf(body, offset)
+            .ok_or_else(|| "invalid chunked local socket response".to_string())?;
+        let size_line = String::from_utf8_lossy(&body[offset..line_end]);
+        let size_text = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| "invalid chunk size in local socket response".to_string())?;
+        offset = line_end + 2;
+
+        if size == 0 {
+            break;
+        }
+
+        let chunk_end = offset
+            .checked_add(size)
+            .ok_or_else(|| "chunk size overflow in local socket response".to_string())?;
+        if chunk_end > body.len() {
+            return Err("truncated chunked local socket response".to_string());
+        }
+        output.extend_from_slice(&body[offset..chunk_end]);
+        offset = chunk_end;
+
+        if body.get(offset..offset + 2) == Some(b"\r\n") {
+            offset += 2;
+        } else {
+            return Err("invalid chunk delimiter in local socket response".to_string());
+        }
+    }
+
+    Ok(output)
+}
+
+fn find_crlf(buffer: &[u8], start: usize) -> Option<usize> {
+    buffer
+        .get(start..)?
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .map(|position| start + position)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_chunked_body;
+
+    #[test]
+    fn decodes_chunked_http_body() {
+        let body = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        let decoded = decode_chunked_body(body).expect("chunked body");
+        assert_eq!(decoded, b"hello world");
+    }
+
+    #[test]
+    fn decodes_chunk_extensions() {
+        let body = b"7;foo=bar\r\n{\"a\":1}\r\n0\r\n\r\n";
+        let decoded = decode_chunked_body(body).expect("chunked body with extension");
+        assert_eq!(decoded, br#"{"a":1}"#);
+    }
 }

@@ -1,7 +1,13 @@
 'use client';
 
-import MihomoLogs from '@/components/MihomoLogs';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useTranslation } from 'react-i18next';
+
+const MihomoLogs = dynamic(() => import('@/components/MihomoLogs'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function LogsPage() {
   const { t } = useTranslation();

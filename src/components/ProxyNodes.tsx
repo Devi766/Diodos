@@ -21,12 +21,21 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { useTranslation } from 'react-i18next';
 import { useRouter } from 'next/navigation';
 import {
-  APP_DATA_CACHE_KEYS,
-  readAppDataCache,
-  removeAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  clearProxyGroupsCache,
+  normalizeActiveConfig,
+  normalizeProxyMode as normalizeSharedProxyMode,
+  readActiveConfigCache,
+  readDashboardRuntimeCache,
+  readMihomoRunningCache,
+  readProxyGroupsEnvelope,
+  readProxyModeCache,
+  subscribeProxyGroupsCache,
+  writeActiveConfigCache,
+  writeDashboardRuntimeCache,
+  writeMihomoRunningCache,
+  writeProxyGroupsCache,
+  writeProxyModeCache,
+} from '@/services/app-data-hooks';
 import { mihomoClient } from '@/services/mihomo-client';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
@@ -35,7 +44,6 @@ import { EmojiText } from './ui/emoji';
 
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
-const PROXY_GROUPS_CACHE_KEY = APP_DATA_CACHE_KEYS.proxyGroups;
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
 const PROXY_GROUPS_CACHE_VERSION = 2;
 
@@ -58,6 +66,13 @@ type ProxyGroup = {
 };
 
 type ProxyMode = 'rule' | 'global' | 'direct';
+
+type NodeSelectionRequest = {
+  nodeName: string;
+  groupName: string;
+  oldNode?: string;
+  isMainGroup: boolean;
+};
 
 type ConfigProxyGroup = {
   name: string;
@@ -118,28 +133,29 @@ const proxyNodesViewCache: {
 };
 
 const normalizeProxyMode = (value: unknown, fallback: ProxyMode = 'rule'): ProxyMode => {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return normalized === 'global' || normalized === 'direct' || normalized === 'rule'
-    ? normalized
-    : fallback;
+  return (normalizeSharedProxyMode(value, fallback) ?? fallback) as ProxyMode;
 };
 
 const readCachedProxyMode = (fallback: ProxyMode = 'rule'): ProxyMode => {
-  return normalizeProxyMode(readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.proxyMode), fallback);
+  return readProxyModeCache(fallback) ?? fallback;
 };
 
 const filterProxyGroupsForMode = (items: ProxyGroup[], mode: ProxyMode): ProxyGroup[] => {
   if (mode === 'direct') return [];
-  if (mode === 'global') return items.filter(group => group.name === 'GLOBAL');
+  if (mode === 'global') {
+    const globalGroups = items.filter(group => group.name === 'GLOBAL');
+    const otherGroups = items.filter(group => group.name !== 'GLOBAL');
+    return [...globalGroups, ...otherGroups];
+  }
   return items.filter(group => group.name !== 'GLOBAL');
 };
 
 const normalizeCacheIdentity = (value: unknown): string | null => {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+  return normalizeActiveConfig(value);
 };
 
 const readCachedActiveConfig = (): string | null => {
-  return normalizeCacheIdentity(readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.activeConfig));
+  return readActiveConfigCache();
 };
 
 const trustedProxyGroupsCache = (source?: unknown, configPath?: unknown): boolean => {
@@ -150,39 +166,58 @@ const trustedProxyGroupsCache = (source?: unknown, configPath?: unknown): boolea
   return !cachedConfig || cachedConfig === activeConfig;
 };
 
-const unpackProxyGroupsCache = (cached: unknown): { mode?: ProxyMode; groups: ProxyGroup[]; configPath?: string | null; source?: unknown } => {
-  if (Array.isArray(cached)) {
+const unpackProxyGroupsCache = (
+  cached: unknown,
+): {
+  mode?: ProxyMode;
+  groups: ProxyGroup[];
+  configPath?: string | null;
+  source?: unknown;
+} => {
+  // Accept either a raw cache blob or a typed envelope from app-data-hooks.
+  const record =
+    cached && typeof cached === 'object'
+      ? (cached as {
+          mode?: unknown;
+          groups?: unknown;
+          configPath?: unknown;
+          source?: unknown;
+          version?: unknown;
+        })
+      : null;
+
+  if (!record || Array.isArray(cached)) {
     return { groups: [], source: undefined };
   }
 
-  if (cached && typeof cached === 'object') {
-    const record = cached as { mode?: unknown; groups?: unknown; configPath?: unknown; source?: unknown; version?: unknown };
-    if (
-      !trustedProxyGroupsCache(record.source, record.configPath) ||
-      record.version !== PROXY_GROUPS_CACHE_VERSION
-    ) {
-      return {
-        mode: record.mode === undefined || record.mode === null
+  if (
+    !trustedProxyGroupsCache(record.source, record.configPath) ||
+    record.version !== PROXY_GROUPS_CACHE_VERSION
+  ) {
+    return {
+      mode:
+        record.mode === undefined || record.mode === null
           ? undefined
           : normalizeProxyMode(record.mode, 'rule'),
-        groups: [],
-        configPath: normalizeCacheIdentity(record.configPath),
-        source: undefined,
-      };
-    }
-    const mode = record.mode === undefined || record.mode === null
-      ? undefined
-      : normalizeProxyMode(record.mode, 'rule');
-    const groups = Array.isArray(record.groups) ? record.groups as ProxyGroup[] : [];
-    return {
-      mode,
-      groups,
+      groups: [],
       configPath: normalizeCacheIdentity(record.configPath),
-      source: record.source,
+      source: undefined,
     };
   }
 
-  return { groups: [] };
+  const mode =
+    record.mode === undefined || record.mode === null
+      ? undefined
+      : normalizeProxyMode(record.mode, 'rule');
+  const groups = Array.isArray(record.groups)
+    ? (record.groups as ProxyGroup[])
+    : [];
+  return {
+    mode,
+    groups,
+    configPath: normalizeCacheIdentity(record.configPath),
+    source: record.source,
+  };
 };
 
 const clearProxyNodesOrderedCache = () => {
@@ -190,7 +225,7 @@ const clearProxyNodesOrderedCache = () => {
   proxyNodesViewCache.providerNodeOrders = null;
   proxyNodesViewCache.groups = [];
   proxyNodesViewCache.loaded = false;
-  removeAppDataCache(PROXY_GROUPS_CACHE_KEY, { broadcast: false });
+  clearProxyGroupsCache({ broadcast: false });
 };
 
 const proxyGroupsCacheValue = (
@@ -206,14 +241,11 @@ const proxyGroupsCacheValue = (
 });
 
 const readProxyGroupsSessionCache = (): ProxyGroup[] => {
-  const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
-  const unpacked = unpackProxyGroupsCache(cached);
-  return unpacked.groups;
+  return unpackProxyGroupsCache(readProxyGroupsEnvelope<ProxyGroup>()).groups;
 };
 
 const hasTrustedProxyGroupsSessionCache = (): boolean => {
-  const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
-  const unpacked = unpackProxyGroupsCache(cached);
+  const unpacked = unpackProxyGroupsCache(readProxyGroupsEnvelope<ProxyGroup>());
   const mode = unpacked.mode || readCachedProxyMode();
   const visibleGroups = filterProxyGroupsForMode(unpacked.groups, mode);
   return unpacked.source === PROXY_GROUPS_CACHE_SOURCE &&
@@ -221,9 +253,32 @@ const hasTrustedProxyGroupsSessionCache = (): boolean => {
 };
 
 const readCachedMihomoRunning = (): boolean | null => {
-  const saved = readAppDataCache<boolean | string | undefined>(APP_DATA_CACHE_KEYS.mihomoRunning);
-  if (saved === undefined || saved === null) return null;
-  return saved === true || saved === 'true';
+  return readMihomoRunningCache();
+};
+
+const queryRuntimeRunning = async (): Promise<boolean | null> => {
+  if (typeof window === 'undefined') return null;
+  const api = window.electronAPI as any;
+  if (!api) return null;
+
+  try {
+    if (typeof api.coreGetRuntimeState === 'function') {
+      const state = await api.coreGetRuntimeState();
+      if (state && state.success !== false) {
+        if (typeof state.coreRunning === 'boolean') return state.coreRunning;
+        if (typeof state.runningMode === 'string') return state.runningMode !== 'notRunning';
+      }
+    }
+  } catch {}
+
+  try {
+    if (typeof api.isMihomoRunning === 'function') {
+      const running = await api.isMihomoRunning();
+      if (typeof running === 'boolean') return running;
+    }
+  } catch {}
+
+  return null;
 };
 
 const isGroupType = (type?: string | null) => {
@@ -417,53 +472,147 @@ const applyConfigGroupFilters = (nodeNames: string[], configGroup: ConfigProxyGr
   });
 };
 
+const GROUP_COLLAPSE_ANIMATION_MS = 240;
+
 const CollapsibleGroupContent: React.FC<{
   collapsed: boolean;
   children: React.ReactNode;
 }> = ({ collapsed, children }) => {
   const [shouldRender, setShouldRender] = React.useState(!collapsed);
-  const [renderCollapsed, setRenderCollapsed] = React.useState(collapsed);
-  const mountedRef = React.useRef(false);
+  const [isVisible, setIsVisible] = React.useState(!collapsed);
+  const [height, setHeight] = React.useState<number | 'auto'>(collapsed ? 0 : 'auto');
+  const [isAnimating, setIsAnimating] = React.useState(false);
+  const outerRef = React.useRef<HTMLDivElement | null>(null);
+  const innerRef = React.useRef<HTMLDivElement | null>(null);
+  const firstLayoutRef = React.useRef(true);
+  const animationTimerRef = React.useRef<number | null>(null);
+  const animationFrameRefs = React.useRef<number[]>([]);
+  const animatingRef = React.useRef(false);
 
-  useEffect(() => {
-    if (!mountedRef.current) {
-      mountedRef.current = true;
+  const clearAnimation = React.useCallback(() => {
+    for (const frame of animationFrameRefs.current) {
+      window.cancelAnimationFrame(frame);
+    }
+    animationFrameRefs.current = [];
+
+    if (animationTimerRef.current !== null) {
+      window.clearTimeout(animationTimerRef.current);
+      animationTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleFrame = React.useCallback((callback: FrameRequestCallback) => {
+    const frame = window.requestAnimationFrame((time) => {
+      animationFrameRefs.current = animationFrameRefs.current.filter((item) => item !== frame);
+      callback(time);
+    });
+    animationFrameRefs.current.push(frame);
+    return frame;
+  }, []);
+
+  const measureContentHeight = React.useCallback(() => {
+    return innerRef.current?.scrollHeight ?? 0;
+  }, []);
+
+  React.useLayoutEffect(() => {
+    if (firstLayoutRef.current) {
+      firstLayoutRef.current = false;
       setShouldRender(!collapsed);
-      setRenderCollapsed(collapsed);
+      setIsVisible(!collapsed);
+      setHeight(collapsed ? 0 : 'auto');
       return;
     }
 
+    if (!shouldRender) {
+      if (!collapsed) {
+        setShouldRender(true);
+      }
+      return;
+    }
+
+    clearAnimation();
+    animatingRef.current = true;
+    setIsAnimating(true);
+
     if (!collapsed) {
-      setShouldRender(true);
-      setRenderCollapsed(true);
-      let secondFrame: number | null = null;
-      const firstFrame = window.requestAnimationFrame(() => {
-        secondFrame = window.requestAnimationFrame(() => {
-          setRenderCollapsed(false);
+      const currentHeight = outerRef.current?.getBoundingClientRect().height ?? 0;
+      setHeight(currentHeight);
+      setIsVisible(currentHeight > 1);
+
+      scheduleFrame(() => {
+        scheduleFrame(() => {
+          const contentHeight = measureContentHeight();
+          setHeight(contentHeight);
+          setIsVisible(true);
+          animationTimerRef.current = window.setTimeout(() => {
+            animatingRef.current = false;
+            setIsAnimating(false);
+            setHeight('auto');
+          }, GROUP_COLLAPSE_ANIMATION_MS);
         });
       });
 
       return () => {
-        window.cancelAnimationFrame(firstFrame);
-        if (secondFrame !== null) {
-          window.cancelAnimationFrame(secondFrame);
-        }
+        clearAnimation();
       };
     }
 
-    setRenderCollapsed(true);
-    const timer = window.setTimeout(() => {
-      setShouldRender(false);
-    }, 180);
+    const currentHeight = outerRef.current?.getBoundingClientRect().height
+      ?? measureContentHeight()
+      ?? 0;
+    setHeight(currentHeight);
+    setIsVisible(true);
 
-    return () => window.clearTimeout(timer);
-  }, [collapsed]);
+    scheduleFrame(() => {
+      setHeight(0);
+      setIsVisible(false);
+    });
+
+    animationTimerRef.current = window.setTimeout(() => {
+      animatingRef.current = false;
+      setIsAnimating(false);
+    }, GROUP_COLLAPSE_ANIMATION_MS);
+
+    return () => {
+      clearAnimation();
+    };
+  }, [clearAnimation, collapsed, measureContentHeight, scheduleFrame, shouldRender]);
+
+  React.useLayoutEffect(() => {
+    if (!shouldRender || collapsed || typeof ResizeObserver === 'undefined') return;
+    const inner = innerRef.current;
+    if (!inner) return;
+
+    const observer = new ResizeObserver(() => {
+      if (animatingRef.current) {
+        setHeight(measureContentHeight());
+      }
+    });
+    observer.observe(inner);
+
+    return () => observer.disconnect();
+  }, [collapsed, measureContentHeight, shouldRender]);
+
+  React.useEffect(() => {
+    return () => {
+      clearAnimation();
+    };
+  }, [clearAnimation]);
 
   if (!shouldRender) return null;
 
+  const style = height === 'auto' ? undefined : { height: `${height}px` };
+
   return (
-    <div className={`proxy-group-content ${renderCollapsed ? 'is-collapsed' : 'is-expanded'}`}>
-      <div className="proxy-group-content-inner">
+    <div
+      ref={outerRef}
+      aria-hidden={collapsed}
+      className={`proxy-group-content ${isVisible ? 'is-expanded' : 'is-collapsed'} ${
+        isAnimating ? 'is-animating' : ''
+      }`}
+      style={style}
+    >
+      <div ref={innerRef} className="proxy-group-content-inner">
         {children}
       </div>
     </div>
@@ -523,20 +672,20 @@ export default function ProxyNodes() {
   const [testingGroups, setTestingGroups] = useState<Set<string>>(new Set());
   const [favoriteNodes, setFavoriteNodes] = useState<Set<string>>(new Set());
   // 初始化时从sessionStorage加载mihomo运行状态
-  const [mihomoRunning, setMihomoRunning] = useState(() => {
-    if (proxyNodesViewCache.mihomoRunning !== null) {
+  const [mihomoRunning, setMihomoRunning] = useState<boolean | null>(() => {
+    if (proxyNodesViewCache.mihomoRunning === true) {
       return proxyNodesViewCache.mihomoRunning;
     }
 
-    if (typeof window === 'undefined') return false;
+    if (typeof window === 'undefined') return null;
     try {
       const cachedRunning = readCachedMihomoRunning();
-      if (cachedRunning !== null) return cachedRunning;
+      if (cachedRunning === true) return true;
       // 如果有缓存的groups数据，说明之前mihomo是运行的
-      return readProxyGroupsSessionCache().length > 0;
+      return readProxyGroupsSessionCache().length > 0 ? true : null;
     } catch (error) {
       console.error('Failed to load mihomo running state:', error);
-      return false;
+      return null;
     }
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -668,6 +817,8 @@ export default function ProxyNodes() {
   const fetchGenerationRef = useRef(0);
   const layoutModeRef = useRef<LayoutMode>(layoutMode);
   const sortModeRef = useRef<NodesSortMode>(sortMode);
+  const pendingNodeSelectionRef = useRef<NodeSelectionRequest | null>(null);
+  const isProcessingNodeSelectionRef = useRef(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
   const router = useRouter();
   let mihomoAPI = useMihomoAPI();
@@ -697,10 +848,8 @@ export default function ProxyNodes() {
   }, [isLoading]);
 
   useEffect(() => {
-    return subscribeAppDataCache(PROXY_GROUPS_CACHE_KEY, () => {
-      const cached = readAppDataCache<unknown>(PROXY_GROUPS_CACHE_KEY);
-      if (!cached) return;
-      const unpacked = unpackProxyGroupsCache(cached);
+    return subscribeProxyGroupsCache(() => {
+      const unpacked = unpackProxyGroupsCache(readProxyGroupsEnvelope<ProxyGroup>());
       if (unpacked.source !== PROXY_GROUPS_CACHE_SOURCE) return;
       const cachedMode = unpacked.mode || readCachedProxyMode(currentModeRef.current);
       const cachedGroups = unpacked.groups;
@@ -709,12 +858,12 @@ export default function ProxyNodes() {
       if (cachedVisibleGroups.length === 0 && cachedMode !== 'direct' && cachedRunning !== false) return;
       proxyNodesViewCache.groups = cachedGroups;
       proxyNodesViewCache.loaded = true;
-      proxyNodesViewCache.mihomoRunning = cachedRunning ?? cachedVisibleGroups.length > 0;
+      proxyNodesViewCache.mihomoRunning = cachedRunning ?? (cachedVisibleGroups.length > 0 ? true : null);
       proxyNodesViewCache.currentMode = cachedMode;
       currentModeRef.current = cachedMode;
       setGroups(cachedGroups);
       setCurrentMode(cachedMode);
-      setMihomoRunning(cachedRunning ?? cachedGroups.length > 0);
+      setMihomoRunning(cachedRunning ?? (cachedGroups.length > 0 ? true : null));
       setIsLoading(false);
       isInitialLoadRef.current = false;
     });
@@ -1053,7 +1202,10 @@ export default function ProxyNodes() {
               if (isDev) {
                 console.debug('[调试] Mihomo版本检查失败:', versionError);
               }
-              setMihomoRunning(false);
+              const runtimeRunning = await queryRuntimeRunning();
+              if (runtimeRunning !== null) {
+                setMihomoRunning(runtimeRunning);
+              }
             }
           } else {
             if (isDev) {
@@ -1087,8 +1239,9 @@ export default function ProxyNodes() {
   // 保存mihomo运行状态到sessionStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (typeof mihomoRunning !== 'boolean') return;
       try {
-        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, mihomoRunning);
+        writeMihomoRunningCache(mihomoRunning);
       } catch (error) {
         console.error('Failed to cache mihomo running state:', error);
       }
@@ -1126,6 +1279,10 @@ export default function ProxyNodes() {
     const requestId = fetchGenerationRef.current + 1;
     fetchGenerationRef.current = requestId;
     const isLatestRequest = () => fetchGenerationRef.current === requestId;
+    const hasWarmProxyContent = () =>
+      groupsRef.current.length > 0 ||
+      proxyNodesViewCache.groups.length > 0 ||
+      hasTrustedProxyGroupsSessionCache();
 
     if (isInitialLoadRef.current && groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
       setIsLoading(true);
@@ -1133,6 +1290,22 @@ export default function ProxyNodes() {
 
     try {
       // 检查Mihomo是否运行
+      const runtimeRunning = await queryRuntimeRunning();
+      if (!isLatestRequest()) return;
+      if (runtimeRunning === false) {
+        setMihomoRunning(false);
+        writeMihomoRunningCache(false);
+        writeProxyGroupsCache(proxyGroupsCacheValue(currentModeRef.current, []));
+        if (groupsRef.current.length === 0) {
+          setIsLoading(false);
+        }
+        return;
+      }
+      if (runtimeRunning === true) {
+        setMihomoRunning(true);
+        writeMihomoRunningCache(true);
+      }
+
       try {
         // 使用API验证mihomo是否运行
         const versionInfo = await mihomoAPI.version();
@@ -1140,11 +1313,16 @@ export default function ProxyNodes() {
         if (versionInfo) {
           setMihomoRunning(true);
         } else {
+          if (hasWarmProxyContent()) {
+            setMihomoRunning(true);
+            setIsLoading(false);
+            return;
+          }
           if (groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
             setMihomoRunning(false);
           }
-          writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
-          writeAppDataCache(PROXY_GROUPS_CACHE_KEY, proxyGroupsCacheValue(currentModeRef.current, []));
+          writeMihomoRunningCache(false);
+          writeProxyGroupsCache(proxyGroupsCacheValue(currentModeRef.current, []));
           // 只在初始加载时才设置loading为false
           if (groupsRef.current.length === 0) {
             setIsLoading(false);
@@ -1156,11 +1334,21 @@ export default function ProxyNodes() {
         if (isDev) {
           console.debug('Mihomo未运行:', error);
         }
+        if (runtimeRunning === true) {
+          setMihomoRunning(true);
+          setIsLoading(false);
+          return;
+        }
+        if (hasWarmProxyContent()) {
+          setMihomoRunning(true);
+          setIsLoading(false);
+          return;
+        }
         if (groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
           setMihomoRunning(false);
         }
-        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, false);
-        writeAppDataCache(PROXY_GROUPS_CACHE_KEY, proxyGroupsCacheValue(currentModeRef.current, []));
+        writeMihomoRunningCache(false);
+        writeProxyGroupsCache(proxyGroupsCacheValue(currentModeRef.current, []));
         // 只在初始加载时才设置loading为false
         if (groupsRef.current.length === 0) {
           setIsLoading(false);
@@ -1175,7 +1363,7 @@ export default function ProxyNodes() {
         if (!isLatestRequest()) return;
         currentProxyMode = normalizeProxyMode(config.mode, currentModeRef.current);
         setCurrentMode(currentProxyMode);
-        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
+        writeProxyModeCache(currentProxyMode, { broadcast: false });
       } catch (error) {
         if (!isLatestRequest()) return;
         console.error('获取当前模式失败:', error);
@@ -1186,10 +1374,9 @@ export default function ProxyNodes() {
         if (isDev) {
           console.log('直连模式，不加载节点列表');
         }
-        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
-        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
-        writeAppDataCache(
-          PROXY_GROUPS_CACHE_KEY,
+        writeMihomoRunningCache(true);
+        writeProxyModeCache(currentProxyMode, { broadcast: false });
+        writeProxyGroupsCache(
           proxyGroupsCacheValue(currentProxyMode, groupsRef.current, proxyNodesViewCache.configOrder?.configPath),
         );
         setSelectedNode(null);
@@ -1219,7 +1406,7 @@ export default function ProxyNodes() {
             configOrder = result.data;
             proxyNodesViewCache.configOrder = result.data;
             if (result.data.configPath) {
-              writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, result.data.configPath, { broadcast: false });
+              writeActiveConfigCache(result.data.configPath, { broadcast: false });
             }
             if (isDev) {
               console.log('[调试] 成功获取配置文件顺序');
@@ -1305,9 +1492,9 @@ export default function ProxyNodes() {
       
       // 根据当前模式决定如何显示节点
       if (currentProxyMode === 'global') {
-        // 全局模式下，只显示GLOBAL代理组
+        // 全局模式下，GLOBAL置顶，同时继续显示其它代理组
         if (isDev) {
-          console.log(`[调试] 当前为全局模式，只显示GLOBAL代理组`);
+          console.log(`[调试] 当前为全局模式，GLOBAL置顶并显示其它代理组`);
         }
         
         try {
@@ -1383,229 +1570,237 @@ export default function ProxyNodes() {
           }
           showError(`获取GLOBAL代理组失败: ${String(error)}`);
         }
-      } else {
-        // 规则模式下，显示所有代理组，但不包括GLOBAL
+      }
+
+      // 直连模式已在上方提前返回；规则模式下不显示 GLOBAL，全局模式下 GLOBAL 已置顶。
+      if (isDev) {
+        console.log(
+          currentProxyMode === 'global'
+            ? `[调试] 当前为全局模式，继续显示GLOBAL之外的代理组`
+            : `[调试] 当前为规则模式，不显示GLOBAL代理组`,
+        );
+      }
+      // 使用配置文件顺序构建其余代理组
+      const selectorGroups: {[key: string]: any} = {};
+      let groupsOrder: string[] = []; // 记录组的原始顺序
+
+      // 提取所有selector类型的组；GLOBAL由全局模式置顶逻辑单独处理，规则模式也不展示
+      for (const [name, proxy] of Object.entries<any>(data.proxies)) {
+        if (name === 'GLOBAL') {
+          if (isDev) {
+            console.log(
+              currentProxyMode === 'global'
+                ? '[调试] 全局模式下GLOBAL已置顶，跳过重复构建'
+                : '[调试] 规则模式下忽略GLOBAL代理组',
+            );
+          }
+          continue;
+        }
+
+        if ((proxy as any)?.hidden === true) {
+          hiddenGroups.add(name);
+          if (isDev) {
+            console.log(`[调试] 代理组 ${name} 在配置中设置了 hidden:true，跳过展示`);
+          }
+          continue;
+        }
+
+        if (isGroupType(proxy.type)) {
+          selectorGroups[name] = proxy;
+        }
+      }
+
+      // 严格按照配置文件中的顺序排列代理组，完全忽略API返回的顺序
+      if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
+        // 使用配置文件中的组顺序，GLOBAL由全局模式置顶逻辑单独处理
         if (isDev) {
-          console.log(`[调试] 当前为规则模式，不显示GLOBAL代理组`);
+          console.log('[调试] 严格使用配置文件中的代理组顺序');
         }
-        // 规则模式下，显示所有代理组
-        // 使用配置文件顺序构建数据
-        const selectorGroups: {[key: string]: any} = {};
-        let groupsOrder: string[] = []; // 记录组的原始顺序
-        
-        // 提取所有selector类型的组，规则模式下排除GLOBAL组
-        for (const [name, proxy] of Object.entries<any>(data.proxies)) {
-          // 在规则模式下不显示GLOBAL代理组
-          if (name === 'GLOBAL' && currentProxyMode === 'rule') {
-            console.log('[调试] 规则模式下忽略GLOBAL代理组');
-            continue;
-          }
-          
-          if ((proxy as any)?.hidden === true) {
-            hiddenGroups.add(name);
-            if (isDev) {
-              console.log(`[调试] 代理组 ${name} 在配置中设置了 hidden:true，跳过展示`);
-            }
-            continue;
-          }
-          
-          if (isGroupType(proxy.type)) {
-            selectorGroups[name] = proxy;
+        groupsOrder = configOrder.proxyGroups
+          .filter(group => group.hidden !== true)
+          .filter(group => group.name !== 'GLOBAL')
+          .map(group => group.name);
+
+        // 记录顺序详情
+        if (isDev) {
+          console.log(`[调试] 配置文件中的代理组顺序: ${groupsOrder.join(', ')}`);
+        }
+
+        // 检查对比API中的代理组
+        const apiGroups = Object.keys(selectorGroups);
+        if (isDev) {
+          console.log(`[调试] API中的代理组: ${apiGroups.join(', ')}`);
+        }
+
+        // 检查配置文件中有但API中没有的组
+        const missingInApi = groupsOrder.filter(name => !apiGroups.includes(name));
+        if (isDev && missingInApi.length > 0) {
+          console.log(`[调试] 配置文件中有但API中不存在的代理组: ${missingInApi.join(', ')}`);
+        }
+
+        // 检查API中有但配置文件中没有的组
+        const missingInConfig = apiGroups.filter(name => !groupsOrder.includes(name));
+        if (missingInConfig.length > 0) {
+          if (isDev) {
+            console.log(`[调试] API中有但配置文件中不存在的代理组，按配置顺序展示时忽略: ${missingInConfig.join(', ')}`);
           }
         }
-        
-        // 严格按照配置文件中的顺序排列代理组，完全忽略API返回的顺序
-        if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
-          // 使用配置文件中的组顺序，规则模式下过滤掉GLOBAL组
-          if (isDev) {
-            console.log('[调试] 严格使用配置文件中的代理组顺序');
-          }
-          groupsOrder = configOrder.proxyGroups
-            .filter(group => group.hidden !== true)
-            .filter(group => !(group.name === 'GLOBAL' && currentProxyMode === 'rule'))
-            .map(group => group.name);
-          
-          // 记录顺序详情
-          if (isDev) {
-            console.log(`[调试] 配置文件中的代理组顺序: ${groupsOrder.join(', ')}`);
-          }
-          
-          // 检查对比API中的代理组
-          const apiGroups = Object.keys(selectorGroups);
-          if (isDev) {
-            console.log(`[调试] API中的代理组: ${apiGroups.join(', ')}`);
-          }
-          
-          // 检查配置文件中有但API中没有的组
-          const missingInApi = groupsOrder.filter(name => !apiGroups.includes(name));
-          if (isDev && missingInApi.length > 0) {
-            console.log(`[调试] 配置文件中有但API中不存在的代理组: ${missingInApi.join(', ')}`);
-          }
-          
-          // 检查API中有但配置文件中没有的组
-          const missingInConfig = apiGroups.filter(name => !groupsOrder.includes(name));
-          if (missingInConfig.length > 0) {
-            if (isDev) {
-              console.log(`[调试] API中有但配置文件中不存在的代理组，按配置顺序展示时忽略: ${missingInConfig.join(', ')}`);
-            }
-          }
-        } else {
-          if (isDev) {
-            console.log('[调试] 未找到配置文件中的代理组顺序，尝试使用现有的分组顺序');
-          }
+      } else {
+        if (isDev) {
+          console.log('[调试] 未找到配置文件中的代理组顺序，尝试使用现有的分组顺序');
+        }
 
-          // 优先使用上一轮已经展示给用户的分组顺序，避免在配置暂时不可用时顺序跳动
-          if (groupsRef.current.length > 0) {
-            const existingOrder = groupsRef.current.map(g => g.name);
-            const knownSet = new Set(existingOrder);
+        // 优先使用上一轮已经展示给用户的分组顺序，避免在配置暂时不可用时顺序跳动
+        if (groupsRef.current.length > 0) {
+          const existingOrder = groupsRef.current.map(g => g.name);
+          const knownSet = new Set(existingOrder);
 
-            // 先按现有顺序保留仍然存在的分组
-            groupsOrder = existingOrder.filter(name => selectorGroups[name]);
+          // 先按现有顺序保留仍然存在的分组
+          groupsOrder = existingOrder.filter(name => selectorGroups[name]);
 
-            // 再把这次新增的分组追加到末尾
-            for (const name of Object.keys(selectorGroups)) {
-              if (!knownSet.has(name)) {
-                groupsOrder.push(name);
-              }
-            }
-
-            if (isDev) {
-              console.log(`[调试] 使用现有分组顺序回退: ${groupsOrder.join(', ')}`);
-            }
-          } else {
-            // 如果连现有分组都没有（首次加载），才退回使用API返回的顺序
-            if (isDev) {
-              console.log('[调试] 没有现有分组顺序，使用API返回的顺序');
-            }
-            for (const name of Object.keys(selectorGroups)) {
+          // 再把这次新增的分组追加到末尾
+          for (const name of Object.keys(selectorGroups)) {
+            if (!knownSet.has(name)) {
               groupsOrder.push(name);
             }
           }
-        }
-        
-        // 按 hidden 标记最终过滤一次，防止回退顺序中包含已隐藏组
-        groupsOrder = groupsOrder.filter(name => !hiddenGroups.has(name));
-        if (isDev) {
-          console.log(`将按照以下顺序构建代理组数据: ${groupsOrder.join(', ')}`);
-        }
-        
-        // 处理并构建所有代理组数据，严格按照groupsOrder的顺序
-        for (const groupName of groupsOrder) {
-          // 跳过API中不存在的组
-          if (!selectorGroups[groupName]) {
-            if (isDev) {
-              console.log(`跳过API中不存在的组: ${groupName}`);
-            }
-            continue;
-          }
 
-          if (hiddenGroups.has(groupName)) {
-            if (isDev) {
-              console.log(`[调试] 代理组 ${groupName} 设置了 hidden:true，跳过展示`);
-            }
-            continue;
-          }
-          
           if (isDev) {
-            console.log(`构建代理组: ${groupName}`);
+            console.log(`[调试] 使用现有分组顺序回退: ${groupsOrder.join(', ')}`);
           }
-          const proxy = selectorGroups[groupName];
-          const configGroup = configOrder?.proxyGroups?.find((g) => g.name === groupName);
-          if (proxy.all && Array.isArray(proxy.all)) {
-            let nodesOrder = orderedRuntimeNodes(
-              proxy.all,
-              undefined,
-              null,
-              undefined,
-              groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
-            );
-
-            if (configGroup) {
-              if (isDev) {
-                console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
-              }
-
-              const apiNodeNames = proxy.all || [];
-              const configNodeNames = [
-                ...(configGroup.proxies || []),
-                ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
-                ...(configGroup.includeAll ? configNodeOrder : []),
-                ...(configGroup.includeAllProviders && providerNodeOrders
-                  ? Object.values(providerNodeOrders).flat()
-                  : []),
-              ];
-
-              const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
-              if (isDev && missingInApi.length > 0) {
-                console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
-              }
-
-              const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
-              if (isDev && missingInConfig.length > 0) {
-                console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
-              }
-
-              nodesOrder = orderedRuntimeNodes(
-                apiNodeNames,
-                configGroup,
-                providerNodeOrders,
-                configNodeOrder,
-                groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
-              );
-
-              if (isDev) {
-                console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
-              }
-            } else {
-              if (isDev) {
-                console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
-              }
-            }
-
-            const nodes = nodesOrder
-              .map((nodeName: string): ProxyNode | null => {
-                const node = data.proxies[nodeName];
-                if (!node) {
-                  console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
-                  return null;
-                }
-                const isGroup = isGroupType(node.type);
-
-                return {
-                  name: nodeName,
-                  type: node.type,
-                  server: isGroup ? '代理组' : ((node as any)?.server || ''),
-                  port: isGroup ? 0 : ((node as any)?.port || 0),
-                  delay: node.history && node.history.length > 0 ? node.history[0].delay : undefined,
-                  isGroup: isGroup,
-                };
-              })
-              .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
-
-            const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
-
-            // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
-            let groupIcon = groupConfigIcon;
-            try {
-              const result = await window.electronAPI?.proxyIcon?.getGroupIcon(groupName, groupConfigIcon);
-              if (result?.success && result.iconPath) {
-                groupIcon = result.iconPath;
-              }
-            } catch (error) {
-              console.error(`[ProxyNodes] 获取${groupName}组图标失败:`, error);
-            }
-
-            groupsData.push({
-              name: groupName,
-              type: proxy.type,
-              nodes,
-              now: proxy.now,
-              icon: groupIcon,
-            });
+        } else {
+          // 如果连现有分组都没有（首次加载），才退回使用API返回的顺序
+          if (isDev) {
+            console.log('[调试] 没有现有分组顺序，使用API返回的顺序');
+          }
+          for (const name of Object.keys(selectorGroups)) {
+            groupsOrder.push(name);
           }
         }
       }
-      
+
+      // 按 hidden 标记最终过滤一次，防止回退顺序中包含已隐藏组
+      groupsOrder = groupsOrder.filter(name => !hiddenGroups.has(name));
+      if (isDev) {
+        console.log(`将按照以下顺序构建代理组数据: ${groupsOrder.join(', ')}`);
+      }
+
+      // 处理并构建所有代理组数据，严格按照groupsOrder的顺序
+      for (const groupName of groupsOrder) {
+        // 跳过API中不存在的组
+        if (!selectorGroups[groupName]) {
+          if (isDev) {
+            console.log(`跳过API中不存在的组: ${groupName}`);
+          }
+          continue;
+        }
+
+        if (hiddenGroups.has(groupName)) {
+          if (isDev) {
+            console.log(`[调试] 代理组 ${groupName} 设置了 hidden:true，跳过展示`);
+          }
+          continue;
+        }
+
+        if (isDev) {
+          console.log(`构建代理组: ${groupName}`);
+        }
+        const proxy = selectorGroups[groupName];
+        const configGroup = configOrder?.proxyGroups?.find((g) => g.name === groupName);
+        if (proxy.all && Array.isArray(proxy.all)) {
+          let nodesOrder = orderedRuntimeNodes(
+            proxy.all,
+            undefined,
+            null,
+            undefined,
+            groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
+          );
+
+          if (configGroup) {
+            if (isDev) {
+              console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
+            }
+
+            const apiNodeNames = proxy.all || [];
+            const configNodeNames = [
+              ...(configGroup.proxies || []),
+              ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
+              ...(configGroup.includeAll ? configNodeOrder : []),
+              ...(configGroup.includeAllProviders && providerNodeOrders
+                ? Object.values(providerNodeOrders).flat()
+                : []),
+            ];
+
+            const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
+            if (isDev && missingInApi.length > 0) {
+              console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
+            }
+
+            const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
+            if (isDev && missingInConfig.length > 0) {
+              console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
+            }
+
+            nodesOrder = orderedRuntimeNodes(
+              apiNodeNames,
+              configGroup,
+              providerNodeOrders,
+              configNodeOrder,
+              groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
+            );
+
+            if (isDev) {
+              console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
+            }
+          } else {
+            if (isDev) {
+              console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
+            }
+          }
+
+          const nodes = nodesOrder
+            .map((nodeName: string): ProxyNode | null => {
+              const node = data.proxies[nodeName];
+              if (!node) {
+                console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
+                return null;
+              }
+              const isGroup = isGroupType(node.type);
+
+              return {
+                name: nodeName,
+                type: node.type,
+                server: isGroup ? '代理组' : ((node as any)?.server || ''),
+                port: isGroup ? 0 : ((node as any)?.port || 0),
+                delay: node.history && node.history.length > 0 ? node.history[0].delay : undefined,
+                isGroup: isGroup,
+              };
+            })
+            .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
+
+          const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
+
+          // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
+          let groupIcon = groupConfigIcon;
+          try {
+            const result = await window.electronAPI?.proxyIcon?.getGroupIcon(groupName, groupConfigIcon);
+            if (result?.success && result.iconPath) {
+              groupIcon = result.iconPath;
+            }
+          } catch (error) {
+            console.error(`[ProxyNodes] 获取${groupName}组图标失败:`, error);
+          }
+
+          groupsData.push({
+            name: groupName,
+            type: proxy.type,
+            nodes,
+            now: proxy.now,
+            icon: groupIcon,
+          });
+        }
+      }
+
       // 从localStorage读取收藏节点
       try {
         const savedFavorites = localStorage.getItem('favoriteNodes');
@@ -1632,10 +1827,9 @@ export default function ProxyNodes() {
       if (!isLatestRequest()) return;
       const nextGroupsData = mergeProxyGroupsWithPrevious(groupsData, groupsRef.current, configOrder);
       try {
-        writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning, true);
-        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, currentProxyMode, { broadcast: false });
-        writeAppDataCache(
-          PROXY_GROUPS_CACHE_KEY,
+        writeMihomoRunningCache(true);
+        writeProxyModeCache(currentProxyMode, { broadcast: false });
+        writeProxyGroupsCache(
           proxyGroupsCacheValue(currentProxyMode, nextGroupsData, configOrder?.configPath),
         );
       } catch (error) {
@@ -1690,7 +1884,7 @@ export default function ProxyNodes() {
 
     const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.((configPath: unknown) => {
       if (typeof configPath === 'string' && configPath.trim()) {
-        writeAppDataCache(APP_DATA_CACHE_KEYS.activeConfig, configPath.trim(), { broadcast: false });
+        writeActiveConfigCache(configPath.trim(), { broadcast: false });
       }
       clearProxyNodesOrderedCache();
       refreshCurrentProxyTree();
@@ -1760,7 +1954,7 @@ export default function ProxyNodes() {
 
   // 测试节点延迟
   const handleTestNode = async (nodeName: string, options?: { silent?: boolean }) => {
-    if (!mihomoRunning) {
+    if (mihomoRunning === false) {
       showError(t('nodes.testFailed'));
       return;
     }
@@ -1835,7 +2029,7 @@ export default function ProxyNodes() {
 
   // 测试代理组延迟（优先使用 Mihomo 组延迟接口）
   const handleTestGroup = async (groupName: string) => {
-    if (!mihomoRunning) {
+    if (mihomoRunning === false) {
       showError(t('nodes.testFailed'));
       return;
     }
@@ -1893,7 +2087,7 @@ export default function ProxyNodes() {
 
   // 使用useCallback包装handleBatchTest函数，避免循环依赖
   const handleBatchTest = useCallback(async (groupName: string) => {
-    if (!mihomoRunning) {
+    if (mihomoRunning === false) {
       showError(t('nodes.testFailed'));
       return;
     }
@@ -2158,15 +2352,19 @@ export default function ProxyNodes() {
         <div
           className={`relative rounded-lg overflow-hidden transition-colors cursor-pointer p-3 border ${
             isSelected
-              ? 'border-blue-300 dark:border-blue-500 bg-blue-100/90 dark:bg-blue-500/15'
-              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a]'
+              ? 'border-primary/40 bg-primary/15 text-foreground dark:border-primary/45 dark:bg-primary/20'
+              : 'border-slate-200/80 dark:border-transparent bg-white dark:bg-[#242424] hover:border-slate-300/90 dark:hover:bg-[#272727]'
           }`}
           onClick={() => handleNodeSelect(node.name, group.name)}
         >
           <div className="flex flex-col space-y-1">
             <div className="flex items-center justify-between">
               <h3
-                className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate max-w-[85%] group"
+                className={`font-medium text-sm truncate max-w-[85%] group ${
+                  isSelected
+                    ? 'text-foreground'
+                    : 'text-gray-900 dark:text-gray-100'
+                }`}
                 title={node.name}
               >
                 <EmojiText
@@ -2350,7 +2548,7 @@ export default function ProxyNodes() {
     try {
       // 更新UI状态
       setCurrentMode(nextMode);
-      writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, nextMode, { broadcast: false });
+      writeProxyModeCache(nextMode, { broadcast: false });
       
       // 更新Mihomo配置
       await mihomoAPI.patchConfigs({ mode: nextMode });
@@ -2387,7 +2585,7 @@ export default function ProxyNodes() {
         const config = await mihomoAPI.configs();
         const restoredMode = normalizeProxyMode(config.mode, currentModeRef.current);
         setCurrentMode(restoredMode);
-        writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, restoredMode, { broadcast: false });
+        writeProxyModeCache(restoredMode, { broadcast: false });
       } catch {}
     }
   };
@@ -2444,9 +2642,99 @@ export default function ProxyNodes() {
     };
   }, []);
 
-  // 选择节点 - 优化后的逻辑
+  const applyNodeSelectionSideEffects = useCallback(async (request: NodeSelectionRequest) => {
+    try {
+      const group = groupsRef.current.find(item => item.name === request.groupName);
+      const selectedNodeInfo = group?.nodes.find(node => node.name === request.nodeName);
+      if (!selectedNodeInfo?.isGroup) {
+        const cachedDashboardRuntime = readDashboardRuntimeCache();
+        writeDashboardRuntimeCache({
+          ...cachedDashboardRuntime,
+          currentNode: request.nodeName,
+          updatedAt: Date.now(),
+        });
+      }
+    } catch {}
+
+    try {
+      await window.electronAPI?.notifyNodeChanged?.(request.nodeName, request.groupName);
+    } catch {}
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('profile-updated', {
+        detail: {
+          source: 'proxy-nodes',
+          action: 'node-changed',
+          nodeName: request.nodeName,
+          groupName: request.groupName,
+        },
+      }));
+    }
+  }, []);
+
+  const flushNodeSelectionQueue = useCallback(async () => {
+    if (isProcessingNodeSelectionRef.current) return;
+    isProcessingNodeSelectionRef.current = true;
+
+    try {
+      while (true) {
+        const request = pendingNodeSelectionRef.current;
+        if (!request) break;
+        pendingNodeSelectionRef.current = null;
+
+        try {
+          if (isDev) {
+            console.log(`[调试] IPC 切换节点: ${request.groupName} -> ${request.nodeName}`);
+          }
+
+          await mihomoClient.selectNodeForGroup(request.groupName, request.nodeName);
+
+          // Ref reassignment above narrows .current to null for TS; re-read via typed alias.
+          const newerRequest = pendingNodeSelectionRef.current as NodeSelectionRequest | null;
+          const hasNewerSameGroupRequest = newerRequest?.groupName === request.groupName;
+          if (!hasNewerSameGroupRequest) {
+            await applyNodeSelectionSideEffects(request);
+          }
+        } catch (error) {
+          const newerRequest = pendingNodeSelectionRef.current as NodeSelectionRequest | null;
+          const hasNewerSameGroupRequest = newerRequest?.groupName === request.groupName;
+          if (hasNewerSameGroupRequest) {
+            if (isDev) {
+              console.warn(
+                `[调试] 忽略已过期的节点切换失败: ${request.groupName} -> ${request.nodeName}`,
+                error,
+              );
+            }
+            continue;
+          }
+
+          if (isDev) {
+            console.error('[调试] 切换节点失败:', error);
+          }
+          showError(formatNodesError(error, t('nodes.switchNodeFailed', { node: request.nodeName })));
+
+          setGroups(prev => prev.map(g =>
+            g.name === request.groupName && g.now === request.nodeName
+              ? { ...g, now: request.oldNode }
+              : g
+          ));
+
+          if (request.isMainGroup) {
+            setSelectedNode(request.oldNode ?? null);
+          }
+        }
+      }
+    } finally {
+      isProcessingNodeSelectionRef.current = false;
+      if (pendingNodeSelectionRef.current) {
+        void flushNodeSelectionQueue();
+      }
+    }
+  }, [applyNodeSelectionSideEffects, formatNodesError, showError, t]);
+
+  // 选择节点 - 使用最后一次选择优先的队列，避免连续点击时旧请求覆盖新状态
   const handleNodeSelect = async (nodeName: string, groupName: string) => {
-    if (!mihomoRunning) {
+    if (mihomoRunning === false) {
       showError(t('nodes.switchFailed'));
       return;
     }
@@ -2478,52 +2766,14 @@ export default function ProxyNodes() {
     if (isMainGroup) {
       setSelectedNode(nodeName);
     }
-    
-    try {
-      if (isDev) {
-        console.log(`[调试] IPC 切换节点: ${groupName} -> ${nodeName}`);
-      }
 
-      await mihomoClient.selectNodeForGroup(groupName, nodeName);
-
-      const verifyData: any = await mihomoClient.getProxyByName(groupName);
-      if (verifyData?.now !== nodeName) {
-        throw new Error(t('nodes.verifySwitchMismatch', { expected: nodeName, actual: verifyData?.now || t('nodes.unknown') }));
-      }
-
-      if (isMainGroup) {
-        try {
-          await window.electronAPI?.notifyNodeChanged?.(nodeName);
-        } catch {}
-      }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('profile-updated', {
-          detail: {
-            source: 'proxy-nodes',
-            action: 'node-changed',
-            nodeName,
-            groupName,
-          },
-        }));
-      }
-      showSuccess(t('nodes.switchSuccess', { node: nodeName, group: groupName }));
-    } catch (error) {
-      if (isDev) {
-        console.error('[调试] 切换节点失败:', error);
-      }
-      showError(formatNodesError(error, t('nodes.switchNodeFailed', { node: nodeName })));
-      
-      // 恢复原来的选中状态
-      setGroups(prev => prev.map(g => 
-        g.name === groupName 
-          ? {...g, now: oldNode}
-          : g
-      ));
-      
-      if (isMainGroup && oldNode) {
-        setSelectedNode(oldNode);
-      }
-    }
+    pendingNodeSelectionRef.current = {
+      nodeName,
+      groupName,
+      oldNode,
+      isMainGroup,
+    };
+    void flushNodeSelectionQueue();
   };
 
   // 处理收藏节点
@@ -2572,7 +2822,7 @@ export default function ProxyNodes() {
     return <div className="min-h-[260px]" aria-busy="true" />;
   }
 
-  if (!mihomoRunning) {
+  if (mihomoRunning === false) {
     return (
       <div className="py-12 text-center">
         <div className="mx-auto flex max-w-md flex-col items-center gap-4">
@@ -2815,7 +3065,7 @@ export default function ProxyNodes() {
                 return (
                   <div
                     key={`${group.name}-${group.type}`}
-                    className="group-panel rounded-2xl bg-white px-4 py-2 shadow-sm transition-colors dark:bg-[#2a2a2a] overflow-hidden"
+                    className="group-panel rounded-2xl bg-white px-4 py-2 shadow-sm transition-colors dark:bg-[#2a2a2a] dark:shadow-none overflow-hidden"
                   >
                     <div className="group-header flex w-full items-center justify-between rounded-xl py-1.5">
                       <button
@@ -2835,20 +3085,26 @@ export default function ProxyNodes() {
                       </button>
 
                       <div className="flex items-center gap-2 pr-3">
-                        {!isCollapsed && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isCollapsed) {
                               handleTestGroup(group.name);
-                            }}
-                            disabled={isTestingGroup}
-                            className="inline-flex items-center justify-center text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                            title={t('nodes.testAllNodes')}
-                          >
-                            <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
-                          </button>
-                        )}
+                            }
+                          }}
+                          disabled={isCollapsed || isTestingGroup}
+                          aria-hidden={isCollapsed}
+                          tabIndex={isCollapsed ? -1 : 0}
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition-[opacity,transform,color,background-color] duration-200 ease-out hover:bg-slate-100 hover:text-gray-700 disabled:cursor-not-allowed dark:text-gray-400 dark:hover:bg-slate-800 dark:hover:text-gray-200 ${
+                            isCollapsed
+                              ? 'pointer-events-none scale-95 opacity-0'
+                              : 'scale-100 opacity-100 disabled:opacity-50'
+                          }`}
+                          title={t('nodes.testAllNodes')}
+                        >
+                          <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
+                        </button>
                         <button
                           type="button"
                           onClick={() => toggleGroupCollapse(collapseKey)}
@@ -2856,7 +3112,7 @@ export default function ProxyNodes() {
                           title={isCollapsed ? t('nodes.expand') : t('nodes.collapse')}
                         >
                           <ChevronRightIcon
-                            className={`h-5 w-5 transition-transform duration-200 ${
+                            className={`h-5 w-5 transition-transform duration-300 ease-out ${
                               isCollapsed ? '' : 'rotate-90'
                             }`}
                           />
@@ -2864,23 +3120,21 @@ export default function ProxyNodes() {
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-100 dark:border-slate-800/50">
-                      <CollapsibleGroupContent collapsed={isCollapsed}>
-                        <div className="pt-3">
-                          <GroupNodes
-                            group={group}
-                            collapsedGroups={collapsedGroups}
-                            handleTestNode={handleTestNode}
-                            handleNodeSelect={handleNodeSelect}
-                            handleToggleFavorite={handleToggleFavorite}
-                            testingNodes={testingNodes}
-                            favoriteNodes={favoriteNodes}
-                            layoutMode={layoutMode}
-                            sortMode={sortMode}
-                          />
-                        </div>
-                      </CollapsibleGroupContent>
-                    </div>
+                    <CollapsibleGroupContent collapsed={isCollapsed}>
+                      <div className="pt-2">
+                        <GroupNodes
+                          group={group}
+                          collapsedGroups={collapsedGroups}
+                          handleTestNode={handleTestNode}
+                          handleNodeSelect={handleNodeSelect}
+                          handleToggleFavorite={handleToggleFavorite}
+                          testingNodes={testingNodes}
+                          favoriteNodes={favoriteNodes}
+                          layoutMode={layoutMode}
+                          sortMode={sortMode}
+                        />
+                      </div>
+                    </CollapsibleGroupContent>
                   </div>
                 );
               })}
@@ -2986,24 +3240,36 @@ export default function ProxyNodes() {
         }
 
         :global(.proxy-group-content) {
-          display: grid;
-          grid-template-rows: 1fr;
-          opacity: 1;
           overflow: hidden;
-          transition: grid-template-rows 160ms ease-out, opacity 120ms ease-out;
+          opacity: 1;
+          transform: translateY(0);
+          transform-origin: top;
+          visibility: visible;
+          transition:
+            height 240ms cubic-bezier(0.2, 0, 0, 1),
+            opacity 160ms ease-out,
+            transform 240ms cubic-bezier(0.2, 0, 0, 1);
           contain: layout paint;
-          will-change: grid-template-rows, opacity;
+          will-change: height, opacity, transform;
         }
 
         :global(.proxy-group-content.is-collapsed) {
-          grid-template-rows: 0fr;
           opacity: 0;
+          transform: translateY(-4px);
+          visibility: hidden;
           pointer-events: none;
+        }
+
+        :global(.proxy-group-content.is-collapsed.is-animating) {
+          visibility: visible;
         }
 
         :global(.proxy-group-content-inner) {
           min-height: 0;
-          overflow: hidden;
+        }
+
+        :global(.proxy-group-content.is-animating .proxy-group-content-inner) {
+          pointer-events: none;
         }
 
         @media (prefers-reduced-motion: reduce) {

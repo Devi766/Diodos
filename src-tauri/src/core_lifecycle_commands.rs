@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
-use crate::core::{lifecycle as core_lifecycle, manager::RunningMode, service as core_service};
+use crate::core::{lifecycle as core_lifecycle, manager::RunningMode};
 use crate::core_commands::{
     emit_core_error, emit_core_progress, find_mihomo_executable, service_compatible_core_path,
 };
@@ -45,6 +45,110 @@ async fn wait_for_mihomo(app: &AppHandle) -> bool {
     false
 }
 
+/// Resolve and validate everything needed to start the core, without launching it.
+///
+/// AppHandle-bound IO is injected via `CoreStartPrepDeps`; pure path decisions live
+/// in `core::lifecycle` / `core::paths`. Concrete binary discovery and service-path
+/// copy logic are pure helpers; this adapter only supplies AppHandle-backed inputs.
+struct AppCoreStartPrepDeps<'a> {
+    app: &'a AppHandle,
+}
+
+impl core_lifecycle::CoreStartPrepDeps for AppCoreStartPrepDeps<'_> {
+    fn resolve_config_path(
+        &self,
+        raw: &str,
+    ) -> Result<String, core_lifecycle::CoreStartPrepError> {
+        match core_lifecycle::start_config_path_decision(raw) {
+            Some(path) => normalize_config_reference(self.app, path)
+                .map_err(core_lifecycle::CoreStartPrepError::message),
+            None => match startup_mihomo_config(self.app) {
+                Ok(Some(path)) => Ok(path),
+                Ok(None) => Err(core_lifecycle::CoreStartPrepError::message(
+                    "没有可用的配置文件，且最小配置创建失败",
+                )),
+                Err(err) => Err(core_lifecycle::CoreStartPrepError::message(err)),
+            },
+        }
+    }
+
+    fn ensure_config_readable(
+        &self,
+        config_path: &str,
+    ) -> Result<(), core_lifecycle::CoreStartPrepError> {
+        config_content(self.app, config_path)
+            .map(|_| ())
+            .map_err(|err| {
+                core_lifecycle::CoreStartPrepError::message(format!(
+                    "配置文件不存在或无法解密: {err}"
+                ))
+            })
+    }
+
+    fn find_core_executable(
+        &self,
+    ) -> Result<std::path::PathBuf, core_lifecycle::CoreStartPrepError> {
+        find_mihomo_executable(self.app).map_err(core_lifecycle::CoreStartPrepError::message)
+    }
+
+    fn prepare_runtime_config(
+        &self,
+        config_path: &str,
+        executable: &std::path::Path,
+    ) -> Result<std::path::PathBuf, core_lifecycle::CoreStartPrepError> {
+        match prepare_runtime_config(self.app, config_path, executable) {
+            Ok(path) => Ok(path),
+            Err(error) => Err(core_lifecycle::CoreStartPrepError::runtime_config(
+                runtime_config_error_response(&error, None),
+            )),
+        }
+    }
+
+    fn work_dir(&self) -> Result<std::path::PathBuf, core_lifecycle::CoreStartPrepError> {
+        mihomo_dir(self.app).map_err(core_lifecycle::CoreStartPrepError::message)
+    }
+
+    fn should_use_service_mode(&self) -> bool {
+        crate::tun_service::should_start_core_by_service(self.app)
+    }
+
+    fn service_compatible_executable(
+        &self,
+        executable: &std::path::Path,
+    ) -> Result<std::path::PathBuf, core_lifecycle::CoreStartPrepError> {
+        service_compatible_core_path(self.app, executable)
+            .map_err(core_lifecycle::CoreStartPrepError::message)
+    }
+}
+
+fn prepare_core_start_context(
+    app: &AppHandle,
+    config_path: &str,
+) -> Result<core_lifecycle::CoreStartContext, CompatResult> {
+    let deps = AppCoreStartPrepDeps { app };
+    match core_lifecycle::prepare_core_start_context_with_deps(&deps, config_path) {
+        Ok(context) => Ok(context),
+        Err(core_lifecycle::CoreStartPrepError::RuntimeConfig(value)) => Err(Ok(value)),
+        Err(core_lifecycle::CoreStartPrepError::Message(message)) => {
+            // Prefer structured failure payload for "no config" so UI can treat it
+            // like other start failures.
+            if message.contains("没有可用的配置文件") {
+                Err(Ok(
+                    core_lifecycle::start_failure_completion(message).response
+                ))
+            } else {
+                Err(Err(message))
+            }
+        }
+    }
+}
+
+fn persist_started_config(app: &AppHandle, config_path: &str) -> Result<(), String> {
+    save_last_config(app, config_path)?;
+    emit_active_config_changed(app, Some(config_path));
+    Ok(())
+}
+
 pub(crate) async fn stop_mihomo_process(
     app: &AppHandle,
     state: &State<'_, AppState>,
@@ -84,24 +188,14 @@ pub(crate) async fn start_mihomo(
     state: &State<'_, AppState>,
     config_path: &str,
 ) -> CompatResult {
-    let config_path = if config_path.trim().is_empty() {
-        startup_mihomo_config(app)?
-            .ok_or_else(|| "没有可用的配置文件，且最小配置创建失败".to_string())?
-    } else {
-        normalize_config_reference(app, config_path)?
+    let prepared = match prepare_core_start_context(app, config_path) {
+        Ok(prepared) => prepared,
+        Err(result) => return result,
     };
-    let _ = config_content(app, &config_path)
-        .map_err(|err| format!("配置文件不存在或无法解密: {err}"))?;
-
-    let mihomo = find_mihomo_executable(app)?;
-    let runtime_config = match prepare_runtime_config(app, &config_path, &mihomo) {
-        Ok(path) => path,
-        Err(error) => {
-            return Ok(runtime_config_error_response(&error, None));
-        }
-    };
-    let work_dir = mihomo_dir(app)?;
-    let log_path = work_dir.join("mihomo.log");
+    let config_path = prepared.config_path.clone();
+    let runtime_config = prepared.paths.runtime_config.clone();
+    let work_dir = prepared.paths.work_dir.clone();
+    let log_path = prepared.paths.log_path.clone();
 
     if let Err(error) = stop_mihomo_process(app, state).await {
         return Ok(
@@ -109,9 +203,8 @@ pub(crate) async fn start_mihomo(
         );
     }
 
-    if crate::tun_service::should_start_core_by_service(app) {
-        let service_mihomo = service_compatible_core_path(app, &mihomo)?;
-        if let Err(error) = core_service::ensure_helper_service_ready() {
+    if matches!(prepared.start_path, core_lifecycle::CoreStartPath::Service) {
+        if let Err(error) = crate::tun_service::ensure_helper_service_current(app) {
             return Ok(core_lifecycle::start_failure_completion(format!(
                 "TUN 服务模式已启用，但 Helper 服务不可用: {error}"
             ))
@@ -120,74 +213,54 @@ pub(crate) async fn start_mihomo(
 
         set_runtime_running_mode(app, RunningMode::Service);
         match core_lifecycle::start_service_core(
-            &service_mihomo,
+            prepared.launch_executable(),
             &work_dir,
             &runtime_config,
             &log_path,
         ) {
             Ok(launch) => {
                 let controller_endpoint = launch.controller_endpoint;
-                if let Err(error) = sync_mihomo_plugin_endpoint(app, &controller_endpoint).await {
-                    let start_failure = core_lifecycle::start_failure_completion(format!(
-                        "同步 Mihomo IPC 控制通道失败: {error}"
-                    ));
-                    set_runtime_running_mode(app, RunningMode::NotRunning);
-                    {
-                        let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                        core_lifecycle::abort_service_launch(&mut runtime.core);
-                    }
-                    let _ = app.emit(
-                        "mihomo-start-failed",
-                        json!({ "error": start_failure.error.clone().unwrap_or_default() }),
-                    );
-                    return Ok(start_failure.response);
-                }
-                {
-                    let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                    core_lifecycle::begin_service_launch(
-                        &mut runtime.core,
-                        controller_endpoint.clone(),
-                    );
-                }
+                let plugin_sync = sync_mihomo_plugin_endpoint(app, &controller_endpoint).await;
+                let controller_ready = if plugin_sync.is_ok() {
+                    wait_for_mihomo(app).await
+                } else {
+                    false
+                };
                 let service_start = {
-                    let controller_ready = wait_for_mihomo(app).await;
                     let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                    core_lifecycle::complete_service_launch_with_response(
+                    core_lifecycle::service_start_after_spawn(
                         &mut runtime.core,
-                        controller_endpoint.clone(),
+                        controller_endpoint,
                         config_path.clone(),
+                        plugin_sync.is_ok(),
                         controller_ready,
+                        plugin_sync.err().map(|err| err.to_string()),
                     )
                 };
 
                 if service_start.started {
-                    save_last_config(app, &config_path)?;
-                    emit_active_config_changed(app, Some(&config_path));
+                    persist_started_config(app, &config_path)?;
                     return Ok(service_start.response);
                 }
 
+                set_runtime_running_mode(app, RunningMode::NotRunning);
                 let error = service_start
                     .error
                     .clone()
                     .unwrap_or_else(|| "Helper 服务启动内核失败".to_string());
-                let _ = core_lifecycle::stop_service_core();
-                set_runtime_running_mode(app, RunningMode::NotRunning);
-                {
-                    let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                    core_lifecycle::abort_service_launch(&mut runtime.core);
-                }
                 let _ = app.emit("mihomo-start-failed", json!({ "error": error }));
                 return Ok(service_start.response);
             }
             Err(error) => {
-                let start_failure = core_lifecycle::start_failure_completion(format!(
-                    "通过 Helper 服务启动内核失败: {error}"
-                ));
-                set_runtime_running_mode(app, RunningMode::NotRunning);
-                {
+                let start_failure = {
                     let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                    core_lifecycle::abort_service_launch(&mut runtime.core);
-                }
+                    core_lifecycle::fail_service_launch(
+                        &mut runtime.core,
+                        format!("通过 Helper 服务启动内核失败: {error}"),
+                        false,
+                    )
+                };
+                set_runtime_running_mode(app, RunningMode::NotRunning);
                 let _ = app.emit(
                     "mihomo-start-failed",
                     json!({ "error": start_failure.error.clone().unwrap_or_default() }),
@@ -197,63 +270,57 @@ pub(crate) async fn start_mihomo(
         }
     }
 
-    let sidecar =
-        match core_lifecycle::start_sidecar_core(&mihomo, &work_dir, &runtime_config, &log_path) {
-            Ok(sidecar) => sidecar,
-            Err(error) => {
-                let start_failure =
-                    core_lifecycle::start_failure_completion(format!("启动内核失败: {error}"));
-                let _ = app.emit(
-                    "mihomo-start-failed",
-                    json!({ "error": start_failure.error.clone().unwrap_or_default() }),
-                );
-                return Ok(start_failure.response);
-            }
-        };
+    let sidecar = match core_lifecycle::start_sidecar_core(
+        prepared.launch_executable(),
+        &work_dir,
+        &runtime_config,
+        &log_path,
+    ) {
+        Ok(sidecar) => sidecar,
+        Err(error) => {
+            let start_failure =
+                core_lifecycle::start_failure_completion(format!("启动内核失败: {error}"));
+            let _ = app.emit(
+                "mihomo-start-failed",
+                json!({ "error": start_failure.error.clone().unwrap_or_default() }),
+            );
+            return Ok(start_failure.response);
+        }
+    };
 
     let sidecar_controller_endpoint = sidecar.controller_endpoint.clone();
-    if let Err(error) = sync_mihomo_plugin_endpoint(app, &sidecar_controller_endpoint).await {
-        let start_failure = core_lifecycle::start_failure_completion(format!(
-            "同步 Mihomo IPC 控制通道失败: {error}"
-        ));
-        set_runtime_running_mode(app, RunningMode::NotRunning);
-        let _ = app.emit(
-            "mihomo-start-failed",
-            json!({ "error": start_failure.error.clone().unwrap_or_default() }),
-        );
-        return Ok(start_failure.response);
-    }
+    let plugin_sync = sync_mihomo_plugin_endpoint(app, &sidecar_controller_endpoint).await;
+    let controller_ready = if plugin_sync.is_ok() {
+        wait_for_mihomo(app).await
+    } else {
+        false
+    };
 
-    {
-        let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-        core_lifecycle::begin_sidecar_launch(&mut runtime.core, sidecar);
+    if plugin_sync.is_ok() {
+        set_runtime_running_mode(app, RunningMode::Sidecar);
     }
-    set_runtime_running_mode(app, RunningMode::Sidecar);
 
     let sidecar_start = {
-        let controller_ready = wait_for_mihomo(app).await;
         let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-        core_lifecycle::complete_sidecar_launch_with_response(
+        core_lifecycle::sidecar_start_after_spawn(
             &mut runtime.core,
+            sidecar,
             config_path.clone(),
+            plugin_sync.is_ok(),
             controller_ready,
+            plugin_sync.err().map(|err| err.to_string()),
         )
     };
 
     if sidecar_start.started {
-        save_last_config(app, &config_path)?;
-        emit_active_config_changed(app, Some(&config_path));
+        persist_started_config(app, &config_path)?;
         Ok(sidecar_start.response)
     } else {
+        set_runtime_running_mode(app, RunningMode::NotRunning);
         let error = sidecar_start
             .error
             .clone()
             .unwrap_or_else(|| "内核启动失败".to_string());
-        {
-            let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-            core_lifecycle::abort_sidecar_launch(&mut runtime.core);
-        }
-        set_runtime_running_mode(app, RunningMode::NotRunning);
         let _ = app.emit("mihomo-start-failed", json!({ "error": error }));
         Ok(sidecar_start.response)
     }
@@ -283,13 +350,13 @@ pub(crate) fn schedule_mihomo_autostart(app: &AppHandle) {
 
         let state = app.state::<AppState>();
         if is_mihomo_running(&app) {
+            let preferred = read_last_config(&app).ok().flatten();
             let config_path = state
                 .runtime
                 .lock()
                 .expect("runtime mutex poisoned")
                 .core
-                .active_config_owned()
-                .or_else(|| read_last_config(&app).ok().flatten());
+                .prefer_runtime_or_preferred(preferred);
             let _ = app.emit(
                 "mihomo-autostart",
                 json!({ "success": true, "existing": true, "configPath": config_path }),
@@ -325,7 +392,7 @@ pub(crate) fn schedule_mihomo_autostart(app: &AppHandle) {
                     let error = result
                         .get("error")
                         .and_then(Value::as_str)
-                        .unwrap_or("Mihomo 自动启动失败");
+                        .unwrap_or("内核自动启动失败");
                     eprintln!("[mihomo-autostart] start failed: {error}");
                     json!({
                         "success": false,
@@ -366,7 +433,7 @@ pub(crate) async fn reload_mihomo_config(
     if !is_mihomo_running(app) {
         return Ok(json!({
             "success": false,
-            "error": "Mihomo 服务未运行，无法热重载配置"
+            "error": "内核服务未运行，无法热重载配置"
         }));
     }
 
@@ -414,13 +481,13 @@ pub(crate) async fn refresh_active_config_after_override(
         });
     }
 
+    let preferred = read_last_config(app).ok().flatten();
     let active = state
         .runtime
         .lock()
         .expect("runtime mutex poisoned")
         .core
-        .active_config_owned()
-        .or_else(|| read_last_config(app).ok().flatten());
+        .prefer_runtime_or_preferred(preferred);
 
     let Some(config_path) = active else {
         return json!({
@@ -465,13 +532,13 @@ pub(crate) async fn restart_active_config_after_core_switch(
         });
     }
 
+    let preferred = read_last_config(app).ok().flatten();
     let active = state
         .runtime
         .lock()
         .expect("runtime mutex poisoned")
         .core
-        .active_config_owned()
-        .or_else(|| read_last_config(app).ok().flatten());
+        .prefer_runtime_or_preferred(preferred);
 
     let Some(config_path) = active else {
         return json!({
@@ -533,13 +600,13 @@ pub(crate) async fn apply_saved_config(
     state: &State<'_, AppState>,
     section: &str,
 ) -> CompatResult {
+    let preferred = read_last_config(app)?;
     let active = state
         .runtime
         .lock()
         .expect("runtime mutex poisoned")
         .core
-        .active_config_owned()
-        .or(read_last_config(app)?);
+        .prefer_runtime_or_preferred(preferred);
     let Some(config_path) = active else {
         return Ok(success(json!({
             "restarted": false,
@@ -550,7 +617,7 @@ pub(crate) async fn apply_saved_config(
     if !is_mihomo_running(app) {
         return Ok(success(json!({
             "restarted": false,
-            "message": format!("{section} config saved, start Mihomo to apply it")
+            "message": format!("{section} config saved, start core to apply it")
         })));
     }
 
@@ -596,13 +663,13 @@ pub(crate) async fn apply_tun_runtime_change(
     previous_enabled: bool,
     rollback_on_failure: bool,
 ) -> CompatResult {
+    let preferred = read_last_config(app)?;
     let active = state
         .runtime
         .lock()
         .expect("runtime mutex poisoned")
         .core
-        .active_config_owned()
-        .or(read_last_config(app)?);
+        .prefer_runtime_or_preferred(preferred);
 
     if active.is_none() || !is_mihomo_running(app) {
         let _ = window.emit("tun-status", enabled);
@@ -611,9 +678,9 @@ pub(crate) async fn apply_tun_runtime_change(
             "pending": true,
             "restarted": false,
             "message": if enabled {
-                "TUN 配置已保存，将在下次启动 Mihomo 时生效"
+                "TUN 配置已保存，将在下次启动内核时生效"
             } else {
-                "TUN 已关闭，将在下次启动 Mihomo 时生效"
+                "TUN 已关闭，将在下次启动内核时生效"
             }
         })));
     }
@@ -634,9 +701,9 @@ pub(crate) async fn apply_tun_runtime_change(
                 "pending": false,
                 "restarted": true,
                 "message": if enabled {
-                    "TUN 模式已启用，Mihomo 已重启"
+                    "TUN 模式已启用，内核已重启"
                 } else {
-                    "TUN 模式已关闭，Mihomo 已重启"
+                    "TUN 模式已关闭，内核已重启"
                 }
             })))
         }

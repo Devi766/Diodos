@@ -3,12 +3,16 @@ import { CheckIcon, ReloadIcon, UpdateIcon } from '@radix-ui/react-icons';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
 import {
-  APP_DATA_CACHE_KEYS,
-  hasAppDataCache,
-  readAppDataCache,
-  subscribeAppDataCache,
-  writeAppDataCache,
-} from '@/services/app-data-cache';
+  hasRuleProvidersCache,
+  readRuleProvidersCache,
+  subscribeRuleProvidersCache,
+  writeRuleProvidersCache,
+} from '@/services/app-data-hooks';
+import {
+  filterProviderRecord,
+  getConfiguredProviderNames,
+  providerMap,
+} from '@/services/provider-filter';
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
@@ -18,10 +22,6 @@ const hasElectronMethod = <K extends string>(api: unknown, method: K): api is Re
   } catch {
     return false;
   }
-};
-
-const providerMap = (result: any) => {
-  return result?.data?.providers ?? result?.providers ?? result?.data?.data?.providers;
 };
 
 const notifyProfileUpdated = () => {
@@ -48,11 +48,9 @@ const ruleProvidersViewCache: {
   loaded: false,
 };
 
-const RULE_PROVIDERS_CACHE_KEY = APP_DATA_CACHE_KEYS.ruleProviders;
-
 const readRuleProvidersSessionCache = (): RuleProvider[] | null => {
-  const cached = readAppDataCache<unknown>(RULE_PROVIDERS_CACHE_KEY);
-  return Array.isArray(cached) ? cached as RuleProvider[] : null;
+  const cached = readRuleProvidersCache<RuleProvider>();
+  return cached.length > 0 || hasRuleProvidersCache() ? cached : null;
 };
 
 const hydrateRuleProvidersFromSession = () => {
@@ -93,7 +91,7 @@ const RuleProviders: React.FC = () => {
   }, [loading]);
 
   useEffect(() => {
-    return subscribeAppDataCache(RULE_PROVIDERS_CACHE_KEY, () => {
+    return subscribeRuleProvidersCache( () => {
       const cached = readRuleProvidersSessionCache();
       if (!cached) return;
       ruleProvidersViewCache.providers = cached;
@@ -107,7 +105,7 @@ const RuleProviders: React.FC = () => {
     const coldLoad =
       providersRef.current.length === 0 &&
       !ruleProvidersViewCache.loaded &&
-      !hasAppDataCache(RULE_PROVIDERS_CACHE_KEY);
+      !hasRuleProvidersCache();
     try {
       if (coldLoad) setLoading(true);
       setLoadError(null);
@@ -123,11 +121,17 @@ const RuleProviders: React.FC = () => {
 
       const providersRecord = providerMap(result);
       if (providersRecord && typeof providersRecord === 'object') {
-        const providerList = Object.values(providersRecord) as RuleProvider[];
-        writeAppDataCache(RULE_PROVIDERS_CACHE_KEY, providerList);
+        const configuredNames = await getConfiguredProviderNames('ruleProviders');
+        const filteredRecord = filterProviderRecord(
+          providersRecord as Record<string, any>,
+          'ruleProviders',
+          configuredNames,
+        );
+        const providerList = Object.values(filteredRecord) as RuleProvider[];
+        writeRuleProvidersCache( providerList);
         setProviders(providerList);
       } else {
-        writeAppDataCache(RULE_PROVIDERS_CACHE_KEY, []);
+        writeRuleProvidersCache( []);
         setProviders([]);
       }
     } catch (error) {
@@ -318,7 +322,7 @@ const RuleProviders: React.FC = () => {
     loading &&
     providers.length === 0 &&
     !ruleProvidersViewCache.loaded &&
-    !hasAppDataCache(RULE_PROVIDERS_CACHE_KEY)
+    !hasRuleProvidersCache()
   ) {
     return (
       <div className="min-h-[120px]" aria-busy="true" />

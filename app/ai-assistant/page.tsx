@@ -1,7 +1,13 @@
 'use client';
 
-import AiAssistant from '@/components/ai/AiAssistant';
+import dynamic from 'next/dynamic';
+import RouteContentFallback from '@/components/RouteContentFallback';
 import { useTranslation } from 'react-i18next';
+
+const AiAssistant = dynamic(() => import('@/components/ai/AiAssistant'), {
+  ssr: false,
+  loading: () => <RouteContentFallback />,
+});
 
 export default function AiAssistantPage() {
   const { t } = useTranslation();
