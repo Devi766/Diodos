@@ -489,6 +489,110 @@ fn check_linux_core_permission(app: &AppHandle) -> CompatResult {
     })))
 }
 
+fn revoke_linux_core_permission(app: &AppHandle) -> CompatResult {
+    if !cfg!(target_os = "linux") {
+        return Ok(json!({
+            "success": false,
+            "error": "当前平台不支持 Linux 内核授权撤销"
+        }));
+    }
+
+    let kernel = match find_mihomo_executable(app) {
+        Ok(path) if path.is_file() => path,
+        _ => {
+            set_setting(app, "tunElevateTask", json!(false))?;
+            return Ok(success(json!({
+                "deleted": false,
+                "message": "未找到内核文件"
+            })));
+        }
+    };
+    let path = kernel.to_string_lossy().to_string();
+
+    // Prefer dropping capabilities; fall back to clearing setuid bit.
+    let setcap = Command::new("pkexec")
+        .args(["setcap", "-r", &path])
+        .output();
+    let ok = match setcap {
+        Ok(output) if output.status.success() => true,
+        _ => Command::new("pkexec")
+            .args(["chmod", "a-s", &path])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false),
+    };
+
+    if !ok {
+        return Ok(json!({
+            "success": false,
+            "error": "撤销授权失败，请重试"
+        }));
+    }
+
+    set_setting(app, "tunElevateTask", json!(false))?;
+    Ok(success(json!({
+        "deleted": true,
+        "message": "已撤销 Linux TUN 内核授权",
+        "path": kernel
+    })))
+}
+
+/// Windows TUN enable permission check that mirrors Electron tun-manager.
+/// Returns Ok(()) when the selected elevation mode can run TUN, otherwise an
+/// error message suitable for UI display.
+fn ensure_windows_tun_enable_permission(app: &AppHandle) -> Result<(), String> {
+    if !cfg!(target_os = "windows") {
+        return Ok(());
+    }
+
+    let mode = windows_tun_elevation_mode(app);
+    let is_admin = windows_is_admin();
+    let has_task = windows_elevated_task_exists();
+    let flags = core_service::query_helper_service_flags();
+    let helper = core_service::helper_ipc_snapshot(flags.running);
+    let service_ready = flags.running && helper.ipc_available();
+
+    if mode == "service" {
+        if service_ready || is_admin {
+            // Prefer a fully ready helper service; repair/install if needed.
+            if !service_ready {
+                ensure_helper_service_current(app)?;
+            }
+            return Ok(());
+        }
+        if !flags.installed {
+            return Err(
+                "TUN 服务未安装，请在 TUN 设置页面安装服务，或以管理员身份运行 FlyClash"
+                    .to_string(),
+            );
+        }
+        if flags.installed && !flags.running {
+            return Err(
+                "TUN 服务未运行，请在 TUN 设置页面启动服务，或以管理员身份运行 FlyClash"
+                    .to_string(),
+            );
+        }
+        if flags.running && !helper.ipc_available() {
+            // Try one repair pass before failing.
+            match core_service::ensure_helper_service_ipc_ready() {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    return Err(format!(
+                        "Helper 服务运行中但 IPC 不可用，请在 TUN 设置中点击“修复 IPC” ({error})"
+                    ));
+                }
+            }
+        }
+        return Err("TUN 模式缺少必要权限，请先完成授权".to_string());
+    }
+
+    // Task mode: elevated scheduled task or already-admin process.
+    if is_admin || has_task {
+        return Ok(());
+    }
+    Err("TUN 计划任务未创建，请先在 TUN 设置中授权（将请求管理员权限）".to_string())
+}
+
 fn powershell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -816,24 +920,44 @@ pub(crate) fn schedule_pending_tun_enable(app: &AppHandle) {
         let state = app.state::<AppState>();
 
         if cfg!(target_os = "windows") {
-            match ensure_helper_service_current(&app) {
-                Ok(()) => {
-                    eprintln!("[TUN] pendingTunEnable: helper service is ready");
+            let mode = windows_tun_elevation_mode(&app);
+            if mode == "service" {
+                match ensure_helper_service_current(&app) {
+                    Ok(()) => {
+                        eprintln!("[TUN] pendingTunEnable: helper service is ready");
+                    }
+                    Err(error) => {
+                        eprintln!("[TUN] pendingTunEnable: helper not ready: {error}");
+                        let _ = set_setting(&app, "tunModeEnabled", json!(false));
+                        let _ = window.emit("tun-status", false);
+                        let _ = window.emit(
+                            "service-restarted",
+                            json!({
+                                "success": false,
+                                "error": format!("TUN 恢复失败: Helper 不可用 ({error})")
+                            }),
+                        );
+                        refresh_tray_menu_after(&app, "pendingTunEnable");
+                        return;
+                    }
                 }
-                Err(error) => {
-                    eprintln!("[TUN] pendingTunEnable: helper not ready: {error}");
+            } else {
+                // Task mode: elevated task / admin process is enough; do not require helper.
+                if !windows_is_admin() && !windows_elevated_task_exists() {
+                    eprintln!("[TUN] pendingTunEnable: task mode has no elevate task/admin");
                     let _ = set_setting(&app, "tunModeEnabled", json!(false));
                     let _ = window.emit("tun-status", false);
                     let _ = window.emit(
                         "service-restarted",
                         json!({
                             "success": false,
-                            "error": format!("TUN 恢复失败: Helper 不可用 ({error})")
+                            "error": "TUN 恢复失败: 计划任务不可用，请重新授权"
                         }),
                     );
                     refresh_tray_menu_after(&app, "pendingTunEnable");
                     return;
                 }
+                eprintln!("[TUN] pendingTunEnable: task mode elevation is available");
             }
         }
 
@@ -1094,6 +1218,8 @@ async fn dispatch_compat_call(
                 Ok(success(json!({ "deleted": deleted })))
             } else if cfg!(target_os = "macos") {
                 revoke_macos_core_permission(app)
+            } else if cfg!(target_os = "linux") {
+                revoke_linux_core_permission(app)
             } else {
                 set_setting(app, "tunElevateTask", json!(false))?;
                 Ok(success(json!({})))
@@ -1136,12 +1262,45 @@ async fn dispatch_compat_call(
             if !cfg!(target_os = "windows") {
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
-                match core_service::ensure_helper_service_ready() {
-                    Ok(_) => Ok(success(json!({
-                        "message": "service started",
-                        "status": service_status()
-                    }))),
-                    Err(error) => Ok(json!({ "success": false, "error": error })),
+                // Use IPC-aware ensure so "running but pipe dead" is repaired
+                // (UI "修复 IPC" reuses this method).
+                match core_service::ensure_helper_service_ipc_ready() {
+                    Ok(outcome) => {
+                        let repaired = matches!(
+                            outcome,
+                            core_service::HelperEnsureOutcome::RepairedIpc
+                        );
+                        let message = match outcome {
+                            core_service::HelperEnsureOutcome::AlreadyReady => {
+                                "service already ready"
+                            }
+                            core_service::HelperEnsureOutcome::Started => "service started",
+                            core_service::HelperEnsureOutcome::RepairedIpc => {
+                                "service IPC repaired"
+                            }
+                        };
+                        Ok(success(json!({
+                            "message": message,
+                            "status": service_status(),
+                            "repaired": repaired,
+                            "serviceReady": true
+                        })))
+                    }
+                    Err(error) => {
+                        // Fallback: try full reinstall/update path used by TUN enable.
+                        match ensure_helper_service_current(app) {
+                            Ok(()) => Ok(success(json!({
+                                "message": "service started",
+                                "status": service_status(),
+                                "repaired": true,
+                                "serviceReady": true
+                            }))),
+                            Err(fallback_error) => Ok(json!({
+                                "success": false,
+                                "error": format!("{error}; {fallback_error}")
+                            })),
+                        }
+                    }
                 }
             }
         }
@@ -1208,20 +1367,21 @@ async fn dispatch_compat_call(
             if !enabled {
                 set_setting(app, "pendingTunEnable", json!(false))?;
             }
-            if enabled
-                && cfg!(target_os = "windows")
-                && windows_tun_elevation_mode(app) == "service"
-            {
-                if let Err(error) = ensure_helper_service_current(app) {
+            if enabled && cfg!(target_os = "windows") {
+                // Mirror Electron: hard-check service/task elevation before enable.
+                if let Err(error) = ensure_windows_tun_enable_permission(app) {
                     set_setting(app, "tunModeEnabled", json!(previous_enabled))?;
                     let _ = window.emit("tun-status", previous_enabled);
                     refresh_tray_menu_after(app, "toggleTunMode");
+                    let mode = windows_tun_elevation_mode(app);
                     return Ok(json!({
                         "success": false,
                         "enabled": previous_enabled,
                         "pending": false,
                         "restarted": false,
-                        "error": format!("TUN Helper 服务不可用: {error}")
+                        "needsAuth": true,
+                        "mode": mode,
+                        "error": error
                     }));
                 }
             }

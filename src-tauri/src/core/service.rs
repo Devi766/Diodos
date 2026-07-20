@@ -1246,9 +1246,10 @@ mod tests {
 
     #[test]
     fn helper_install_elevated_command_uses_runas_install() {
-        let command = helper_install_elevated_command(Path::new(
-            r"C:\Program Files\FlyClash\flyclash-helper.exe",
-        ));
+        let command = helper_elevated_command(
+            Path::new(r"C:\Program Files\FlyClash\flyclash-helper.exe"),
+            "-install",
+        );
 
         assert!(command.contains(
             "Start-Process -FilePath 'C:\\Program Files\\FlyClash\\flyclash-helper.exe'"
@@ -1256,5 +1257,17 @@ mod tests {
         assert!(command.contains("-ArgumentList '-install'"));
         assert!(command.contains("-Verb RunAs"));
         assert!(command.contains("-Wait"));
+    }
+
+    #[test]
+    fn looks_like_access_denied_matches_sc_openservice_code_5() {
+        assert!(looks_like_access_denied(
+            "[SC] OpenService FAILED 5:\nAccess is denied."
+        ));
+        assert!(looks_like_access_denied(
+            "[SC] OpenService 失败 5:\n拒绝访问。"
+        ));
+        assert!(looks_like_access_denied("Access is denied."));
+        assert!(!looks_like_access_denied("The specified service does not exist"));
     }
 }
