@@ -9,9 +9,18 @@ export const PLATFORM_BODY_CLASSES = [
 export const normalizeRuntimePlatform = (value: unknown): RuntimePlatform => {
   if (typeof value !== 'string') return 'unknown';
 
-  const platform = value.toLowerCase();
-  if (platform.includes('win')) return 'win32';
+  const platform = value.toLowerCase().trim();
+  if (!platform) return 'unknown';
+
+  // Exact Electron/Node values first.
+  if (platform === 'darwin' || platform === 'mac' || platform === 'macos') return 'darwin';
+  if (platform === 'win32' || platform === 'windows' || platform === 'win') return 'win32';
+  if (platform === 'linux') return 'linux';
+
+  // Substring fallbacks for navigator.userAgent / userAgentData.
+  // IMPORTANT: check darwin/mac BEFORE win — "darwin".includes("win") is true.
   if (platform.includes('darwin') || platform.includes('mac')) return 'darwin';
+  if (platform.includes('win')) return 'win32';
   if (platform.includes('linux')) return 'linux';
 
   return 'unknown';

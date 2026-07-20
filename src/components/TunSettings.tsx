@@ -136,7 +136,7 @@ const TunSettings: React.FC = () => {
   const [toastTitle, setToastTitle] = useState('');
   const [toastDescription, setToastDescription] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
-  const [platform, setPlatform] = useState<string>('');
+  const [platform, setPlatform] = useState<string>(() => getBrowserPlatform());
 
   // Windows 服务模式相关状态
   const [elevationMode, setElevationMode] = useState<'service' | 'task'>('service');

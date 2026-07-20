@@ -15,7 +15,7 @@ import {
 } from "@/utils/platform";
 import '@/i18n';
 
-const TAURI_COMPAT_VERSION = "20260720-1";
+const TAURI_COMPAT_VERSION = "20260720-2";
 
 export default function RootLayout({
   children,

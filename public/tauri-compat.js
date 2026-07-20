@@ -153,6 +153,11 @@
 
   function browserPlatform() {
     if (typeof process !== "undefined" && process && typeof process.platform === "string") {
+      // Normalize so accidental "Darwin" etc. still map correctly.
+      const raw = String(process.platform).toLowerCase();
+      if (raw === "darwin" || raw.includes("darwin") || raw.includes("mac")) return "darwin";
+      if (raw === "win32" || raw.includes("win")) return "win32";
+      if (raw === "linux" || raw.includes("linux")) return "linux";
       return process.platform;
     }
     const platform = (
@@ -161,8 +166,9 @@
       navigator.userAgent ||
       ""
     ).toLowerCase();
+    // IMPORTANT: check mac/darwin BEFORE win — "darwin".includes("win") is true.
+    if (platform.includes("darwin") || platform.includes("mac")) return "darwin";
     if (platform.includes("win")) return "win32";
-    if (platform.includes("mac")) return "darwin";
     if (platform.includes("linux")) return "linux";
     return "browser";
   }

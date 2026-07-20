@@ -17,7 +17,7 @@ const resolveMaximizedState = (state: any) => {
 export default function TitleBar() {
   const [electron, setElectron] = useState(resolveElectron);
   const [isMaximized, setIsMaximized] = useState(false);
-  const [isMacOS, setIsMacOS] = useState(false);
+  const [isMacOS, setIsMacOS] = useState(() => getBrowserPlatform() === 'darwin');
 
   useEffect(() => {
     let disposed = false;
