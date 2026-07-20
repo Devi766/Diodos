@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "FlyClash",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "identifier": "com.flyclash.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",

@@ -38,6 +38,21 @@ const notifyThemeColorUpdated = (color: string) => {
   window.dispatchEvent(new CustomEvent('theme-color-updated', { detail: { color } }));
 };
 
+const openExternalUrl = async (url: string) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const api = window.electronAPI;
+    if (hasElectronMethod(api, 'openExternal')) {
+      await api.openExternal(url);
+      return;
+    }
+  } catch (error) {
+    console.error('openExternal failed:', error);
+  }
+  // Fallback for browser/dev without Tauri bridge.
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+
 export default function Settings() {
   const { t, i18n } = useTranslation();
   const [startWithSystem, setStartWithSystem] = useState(false);
@@ -1778,27 +1793,29 @@ export default function Settings() {
                     {t('settings.aboutDescription')}
                   </p>
                   <p className="text-sm text-gray-700 dark:text-gray-200">
-                   {t('settings.aboutFeatures')}
+                    {t('settings.aboutFeatures')}
                   </p>
                 </div>
-                
+
                 <div className="flex flex-wrap gap-3 w-full max-w-lg justify-center">
-                  <a
+                  <button
+                    type="button"
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-gray-200 to-gray-300 hover:from-gray-300 hover:to-gray-400 dark:from-gray-700 dark:to-gray-800 dark:hover:from-gray-600 dark:hover:to-gray-700 text-gray-800 dark:text-gray-200 rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
-                    href="https://t.me/flyclash_chat"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    onClick={() => {
+                      void openExternalUrl('https://t.me/flyclash_chat');
+                    }}
                   >
                     {t('settings.clashProject')}
-                  </a>
-                  <a
+                  </button>
+                  <button
+                    type="button"
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
-                    href="https://github.com/GtxFury/FlyClash"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    onClick={() => {
+                      void openExternalUrl('https://github.com/GtxFury/FlyClash');
+                    }}
                   >
                     {t('settings.flyclashProject')}
-                  </a>
+                  </button>
                   <Button
                     onClick={handleManualUpdateCheck}
                     disabled={isCheckingUpdate}

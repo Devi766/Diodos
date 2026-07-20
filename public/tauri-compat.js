@@ -339,7 +339,7 @@
       debugLog: (...args) => console.debug("[FlyClash Tauri]", ...args),
       getAuthToken: null,
       getAppVersion: async (...args) =>
-        callWithDefault("getAppVersion", args, "0.2.9", (result) => typeof result === "string"),
+        callWithDefault("getAppVersion", args, "0.3.0", (result) => typeof result === "string"),
       getPlatform: async (...args) =>
         callWithDefault("getPlatform", args, browserPlatform(), (result) => typeof result === "string"),
       getSubscriptions: async (...args) =>

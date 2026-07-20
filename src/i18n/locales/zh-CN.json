@@ -779,6 +779,7 @@
     "saveAllConfigs": "保存所有配置",
     "saving": "保存中...",
     "aboutDescription": "FlyClash 是一个基于 Clash 内核的现代化代理客户端，拥有美观的界面和强大的功能。",
+    "aboutFeatures": "支持订阅管理、节点测速、TUN 模式、系统代理、规则覆写、备份恢复等完整功能。",
     "clashProject": "Telegram 群组",
     "flyclashProject": "FlyClash 项目",
     "versionLabel": "版本",
