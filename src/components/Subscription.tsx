@@ -2139,17 +2139,6 @@ export default function SubscriptionManager() {
                         >
                           {isLoading && addSubmitMode === 'save' ? t('subscriptions.processing') : t('subscriptions.add')}
                         </button>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
-                          disabled={isLoading}
-                          onClick={(event) => addSubscription(event, true)}
-                        >
-                          <PlayIcon className="h-4 w-4" />
-                          {isLoading && addSubmitMode === 'activate'
-                            ? t('subscriptions.addAndActivating')
-                            : t('subscriptions.addAndActivate')}
-                        </button>
                       </div>
                     </div>
                   </form>

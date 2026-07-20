@@ -973,7 +973,8 @@ fn loopback_sid_valid(sid: &str) -> bool {
         && upper.len() >= 12
 }
 
-fn loopback_display_names() -> HashMap<String, String> {
+fn loopback_display_meta() -> HashMap<String, (String, Option<String>)> {
+    // key -> (displayName, iconPath)
     let script = r#"
 $ErrorActionPreference = 'SilentlyContinue'
 $results = @{}
@@ -981,7 +982,9 @@ try {
   Get-StartApps | ForEach-Object {
     if ($_.AppID -and $_.Name -and $_.AppID -like '*!*') {
       $pfn = ($_.AppID -split '!')[0]
-      if ($pfn) { $results[$pfn] = $_.Name }
+      if ($pfn) {
+        $results[$pfn] = @{ name = $_.Name; icon = $null }
+      }
     }
   }
 } catch {}
@@ -989,12 +992,39 @@ try {
   Get-AppxPackage | ForEach-Object {
     $pkgName = $_.Name
     $pfn = $_.PackageFamilyName
-    if ($pfn -and $results.ContainsKey($pfn)) {
+    $install = $_.InstallLocation
+    $icon = $null
+    if ($install) {
+      $candidates = @(
+        (Join-Path $install 'Assets\StoreLogo.png'),
+        (Join-Path $install 'Assets\StoreLogo.scale-100.png'),
+        (Join-Path $install 'Assets\StoreLogo.scale-200.png'),
+        (Join-Path $install 'Assets\Square44x44Logo.png'),
+        (Join-Path $install 'Assets\Square44x44Logo.scale-100.png'),
+        (Join-Path $install 'Assets\Square44x44Logo.scale-200.png'),
+        (Join-Path $install 'Assets\Square150x150Logo.png'),
+        (Join-Path $install 'logo.png'),
+        (Join-Path $install 'Logo.png')
+      )
+      foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { $icon = $c; break }
+      }
+      if (-not $icon) {
+        $found = Get-ChildItem -LiteralPath $install -Recurse -Include *StoreLogo*.png,*Square44x44Logo*.png -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { $icon = $found.FullName }
+      }
+    }
+    if ($pfn) {
+      if ($results.ContainsKey($pfn)) {
+        if ($icon) { $results[$pfn].icon = $icon }
+      } else {
+        $results[$pfn] = @{ name = $pkgName; icon = $icon }
+      }
       $results[$pkgName] = $results[$pfn]
     }
   }
 } catch {}
-$results | ConvertTo-Json -Compress -Depth 1
+$results | ConvertTo-Json -Compress -Depth 3
 "#;
 
     let Ok(output) = run_powershell_script(script) else {
@@ -1009,13 +1039,53 @@ $results | ConvertTo-Json -Compress -Depth 1
             object
                 .iter()
                 .filter_map(|(key, value)| {
-                    value
-                        .as_str()
-                        .map(|display| (key.to_ascii_lowercase(), display.to_string()))
+                    let key = key.to_ascii_lowercase();
+                    if let Some(name) = value.as_str() {
+                        return Some((key, (name.to_string(), None)));
+                    }
+                    let object = value.as_object()?;
+                    let name = object
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let icon = object
+                        .get("icon")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string);
+                    Some((key, (name, icon)))
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn loopback_icon_data_url(path: &str) -> Option<String> {
+    let path = PathBuf::from(path);
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = fs::read(&path).ok()?;
+    if bytes.is_empty() || bytes.len() > 512 * 1024 {
+        return None;
+    }
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/png",
+    };
+    Some(format!(
+        "data:{mime};base64,{}",
+        general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 fn loopback_apps(app: &AppHandle) -> CompatResult {
@@ -1059,7 +1129,11 @@ fn loopback_apps(app: &AppHandle) -> CompatResult {
         }
         apps = by_sid.into_values().collect();
 
-        let display_names = loopback_display_names();
+        let display_meta = loopback_display_meta();
+        let display_names = display_meta
+            .iter()
+            .map(|(key, (name, _))| (key.clone(), name.clone()))
+            .collect::<HashMap<_, _>>();
         crate::win_loopback::enrich_display_names(&mut apps, &display_names);
         for app_item in &mut apps {
             if let Some(object) = app_item.as_object_mut() {
@@ -1077,6 +1151,33 @@ fn loopback_apps(app: &AppHandle) -> CompatResult {
                         .unwrap_or("Unknown App")
                         .to_string();
                     object.insert("displayName".to_string(), Value::String(fallback));
+                }
+
+                let container_name = object
+                    .get("appContainerName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let package_family_name = object
+                    .get("packageFamilyName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let icon_path = display_meta
+                    .get(&package_family_name)
+                    .or_else(|| display_meta.get(&container_name))
+                    .and_then(|(_, icon)| icon.as_ref())
+                    .cloned()
+                    .or_else(|| {
+                        package_family_name
+                            .rsplit_once('_')
+                            .and_then(|(prefix, _)| display_meta.get(prefix))
+                            .and_then(|(_, icon)| icon.clone())
+                    });
+                if let Some(icon_path) = icon_path {
+                    if let Some(icon_data) = loopback_icon_data_url(&icon_path) {
+                        object.insert("iconDataUrl".to_string(), Value::String(icon_data));
+                    }
                 }
             }
         }
@@ -1144,20 +1245,33 @@ fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
         return Ok(success(json!({ "count": 0 })));
     }
 
-    for sid in &sids {
-        if !loopback_sid_valid(sid) {
-            return Ok(json!({
-                "success": false,
-                "error": format!("Invalid SID format: {sid}")
-            }));
+    // Keep only SIDs that currently exist in AppContainers. Stale SIDs often
+    // cause NetworkIsolationSetAppContainerConfig to fail with error 5.
+    #[cfg(windows)]
+    let known = crate::win_loopback::all_container_sids().unwrap_or_default();
+    #[cfg(not(windows))]
+    let known: Vec<String> = Vec::new();
+    let known_upper = known
+        .iter()
+        .map(|sid| sid.to_ascii_uppercase())
+        .collect::<std::collections::HashSet<_>>();
+
+    let mut filtered = Vec::new();
+    for sid in sids {
+        let trimmed = sid.trim();
+        if !loopback_sid_valid(trimmed) {
+            continue;
+        }
+        if known_upper.is_empty() || known_upper.contains(&trimmed.to_ascii_uppercase()) {
+            filtered.push(trimmed.to_string());
         }
     }
 
     #[cfg(windows)]
     {
-        match crate::win_loopback::set_config(&sids) {
+        match crate::win_loopback::set_config(&filtered) {
             Ok(count) => {
-                set_setting(app, "loopbackExemptSids", json!(sids))?;
+                set_setting(app, "loopbackExemptSids", json!(filtered))?;
                 Ok(success(json!({ "count": count })))
             }
             Err(error) => Ok(json!({ "success": false, "error": error })),

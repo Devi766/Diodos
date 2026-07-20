@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Search,
   Shield,
@@ -8,9 +8,9 @@ import {
   ShieldX,
   Loader2,
   AlertCircle,
-  Save,
   RefreshCw,
   Filter,
+  AppWindow,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
-import { useThemeColor } from '@/hooks/useThemeColor';
 
 interface LoopbackAppItem {
   appContainerName: string;
@@ -27,6 +26,7 @@ interface LoopbackAppItem {
   sid: string;
   workingDir: string;
   isExempt: boolean;
+  iconDataUrl?: string | null;
 }
 
 type LoopbackApi = NonNullable<NonNullable<Window['electronAPI']>['loopback']>;
@@ -51,16 +51,14 @@ const hasLoopbackMethod = <K extends string>(
 
 export default function LoopbackManager() {
   const { t } = useTranslation();
-  const themeColor = useThemeColor();
   const [apps, setApps] = useState<LoopbackAppItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingSid, setSavingSid] = useState<string | null>(null);
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [exemptOnly, setExemptOnly] = useState(false);
-  const [exemptChanges, setExemptChanges] = useState<Map<string, boolean>>(new Map());
-
-  const hasChanges = exemptChanges.size > 0;
+  const appsRef = useRef<LoopbackAppItem[]>([]);
 
   const friendlyError = useCallback(
     (error: unknown, fallback: string) => {
@@ -87,8 +85,9 @@ export default function LoopbackManager() {
 
       const result = await api.getApps();
       if (result.success && result.apps) {
-        setApps(result.apps);
-        setExemptChanges(new Map());
+        const next = result.apps as LoopbackAppItem[];
+        appsRef.current = next;
+        setApps(next);
       } else {
         const message = friendlyError(result.error, t('tools.loopback.loadError'));
         setError(message);
@@ -108,39 +107,72 @@ export default function LoopbackManager() {
     loadApps();
   }, [loadApps]);
 
-  const toggleExemption = useCallback(
-    (sid: string, currentExempt: boolean) => {
-      setExemptChanges((prev) => {
-        const next = new Map(prev);
-        const originalApp = apps.find((a) => a.sid === sid);
-        const originalExempt = originalApp?.isExempt ?? false;
-        const newExempt = !currentExempt;
+  const persistExemptions = useCallback(
+    async (nextApps: LoopbackAppItem[], successMessage?: string) => {
+      const api = getLoopbackApi();
+      if (!hasLoopbackMethod(api, 'saveConfig')) {
+        toast.error(t('tools.loopback.apiUnavailable'));
+        return false;
+      }
 
-        if (newExempt === originalExempt) {
-          next.delete(sid);
-        } else {
-          next.set(sid, newExempt);
+      const exemptSids = nextApps.filter((app) => app.isExempt).map((app) => app.sid);
+      try {
+        const result = await api.saveConfig(exemptSids);
+        if (result.success) {
+          appsRef.current = nextApps;
+          setApps(nextApps);
+          if (successMessage) {
+            toast.success(successMessage);
+          }
+          return true;
         }
-        return next;
-      });
+
+        toast.error(
+          t('tools.loopback.saveError', {
+            error: friendlyError(result.error, t('tools.loopback.loadError')),
+          })
+        );
+        return false;
+      } catch (err: unknown) {
+        toast.error(
+          t('tools.loopback.saveError', {
+            error: friendlyError(err, t('tools.loopback.loadError')),
+          })
+        );
+        return false;
+      }
     },
-    [apps]
+    [friendlyError, t]
   );
 
-  const getEffectiveExempt = useCallback(
-    (app: LoopbackAppItem): boolean => {
-      if (exemptChanges.has(app.sid)) {
-        return exemptChanges.get(app.sid)!;
+  const toggleExemption = useCallback(
+    async (sid: string) => {
+      if (savingSid || bulkSaving) return;
+      const current = appsRef.current;
+      const target = current.find((app) => app.sid === sid);
+      if (!target) return;
+
+      const nextApps = current.map((app) =>
+        app.sid === sid ? { ...app, isExempt: !app.isExempt } : app
+      );
+      // Optimistic UI update.
+      setApps(nextApps);
+      setSavingSid(sid);
+      const ok = await persistExemptions(nextApps);
+      if (!ok) {
+        // Roll back on failure.
+        setApps(current);
+        appsRef.current = current;
       }
-      return app.isExempt;
+      setSavingSid(null);
     },
-    [exemptChanges]
+    [bulkSaving, persistExemptions, savingSid]
   );
 
   const filteredApps = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return apps.filter((app) => {
-      if (exemptOnly && !getEffectiveExempt(app)) {
+      if (exemptOnly && !app.isExempt) {
         return false;
       }
       if (!query) return true;
@@ -150,90 +182,62 @@ export default function LoopbackManager() {
         app.appContainerName.toLowerCase().includes(query)
       );
     });
-  }, [apps, searchQuery, exemptOnly, getEffectiveExempt]);
+  }, [apps, searchQuery, exemptOnly]);
 
   const stats = useMemo(() => {
     let exemptCount = 0;
     for (const app of apps) {
-      if (getEffectiveExempt(app)) {
-        exemptCount++;
-      }
+      if (app.isExempt) exemptCount++;
     }
     return { total: apps.length, exempt: exemptCount };
-  }, [apps, getEffectiveExempt]);
+  }, [apps]);
 
-  const selectAll = useCallback(() => {
-    setExemptChanges((prev) => {
-      const next = new Map(prev);
-      for (const app of filteredApps) {
-        if (!app.isExempt) {
-          next.set(app.sid, true);
-        } else {
-          next.delete(app.sid);
-        }
-      }
-      return next;
-    });
-  }, [filteredApps]);
-
-  const deselectAll = useCallback(() => {
-    setExemptChanges((prev) => {
-      const next = new Map(prev);
-      for (const app of filteredApps) {
-        if (app.isExempt) {
-          next.set(app.sid, false);
-        } else {
-          next.delete(app.sid);
-        }
-      }
-      return next;
-    });
-  }, [filteredApps]);
-
-  const saveConfig = useCallback(async () => {
-    const api = getLoopbackApi();
-    if (!hasLoopbackMethod(api, 'saveConfig')) {
-      toast.error(t('tools.loopback.apiUnavailable'));
-      return;
+  const selectAllVisible = useCallback(async () => {
+    if (bulkSaving || savingSid) return;
+    const visible = new Set(filteredApps.map((app) => app.sid));
+    const current = appsRef.current;
+    const nextApps = current.map((app) =>
+      visible.has(app.sid) ? { ...app, isExempt: true } : app
+    );
+    setApps(nextApps);
+    setBulkSaving(true);
+    const ok = await persistExemptions(nextApps);
+    if (!ok) {
+      setApps(current);
+      appsRef.current = current;
     }
+    setBulkSaving(false);
+  }, [bulkSaving, filteredApps, persistExemptions, savingSid]);
 
-    setSaving(true);
-    try {
-      const exemptSids: string[] = [];
-      for (const app of apps) {
-        if (getEffectiveExempt(app)) {
-          exemptSids.push(app.sid);
-        }
-      }
-
-      const result = await api.saveConfig(exemptSids);
-      if (result.success) {
-        toast.success(
-          t('tools.loopback.saveSuccess', {
-            count: exemptSids.length,
-          })
-        );
-        await loadApps();
-      } else {
-        toast.error(
-          t('tools.loopback.saveError', {
-            error: friendlyError(result.error, t('tools.loopback.loadError')),
-          })
-        );
-      }
-    } catch (err: unknown) {
-      console.error('Failed to save loopback exemption config:', err);
-      const message = friendlyError(err, t('tools.loopback.loadError'));
-      toast.error(t('tools.loopback.saveError', { error: message }));
-    } finally {
-      setSaving(false);
+  const deselectAllVisible = useCallback(async () => {
+    if (bulkSaving || savingSid) return;
+    const visible = new Set(filteredApps.map((app) => app.sid));
+    const current = appsRef.current;
+    const nextApps = current.map((app) =>
+      visible.has(app.sid) ? { ...app, isExempt: false } : app
+    );
+    setApps(nextApps);
+    setBulkSaving(true);
+    const ok = await persistExemptions(nextApps);
+    if (!ok) {
+      setApps(current);
+      appsRef.current = current;
     }
-  }, [apps, friendlyError, getEffectiveExempt, loadApps, t]);
+    setBulkSaving(false);
+  }, [bulkSaving, filteredApps, persistExemptions, savingSid]);
 
   const applyBulk = useCallback(
     async (mode: 'all' | 'none') => {
+      if (bulkSaving || savingSid) return;
+      const confirmed = window.confirm(
+        mode === 'all'
+          ? t('tools.loopback.confirmExemptAll')
+          : t('tools.loopback.confirmClearAll')
+      );
+      if (!confirmed) return;
+
       const api = getLoopbackApi();
-      const method =
+      const bulkMethod =
         mode === 'all'
           ? hasLoopbackMethod(api, 'exemptAll')
             ? api.exemptAll
@@ -242,79 +246,49 @@ export default function LoopbackManager() {
             ? api.clearAll
             : null;
 
-      if (!method) {
-        // Fallback to saveConfig with computed SID list when bulk APIs are missing.
-        if (!hasLoopbackMethod(api, 'saveConfig')) {
-          toast.error(t('tools.loopback.apiUnavailable'));
-          return;
-        }
-        const sids = mode === 'all' ? apps.map((app) => app.sid) : [];
-        setSaving(true);
-        try {
-          const result = await api.saveConfig(sids);
-          if (result.success) {
+      setBulkSaving(true);
+      try {
+        if (bulkMethod) {
+          const result = await bulkMethod();
+          if (result?.success) {
             toast.success(
               mode === 'all'
-                ? t('tools.loopback.exemptAllSuccess', { count: sids.length })
+                ? t('tools.loopback.exemptAllSuccess', {
+                    count: result.count ?? appsRef.current.length,
+                  })
                 : t('tools.loopback.clearAllSuccess')
             );
             await loadApps();
           } else {
             toast.error(
               t('tools.loopback.saveError', {
-                error: friendlyError(result.error, t('tools.loopback.loadError')),
+                error: friendlyError(result?.error, t('tools.loopback.loadError')),
               })
             );
           }
-        } catch (err: unknown) {
-          toast.error(
-            t('tools.loopback.saveError', {
-              error: friendlyError(err, t('tools.loopback.loadError')),
-            })
-          );
-        } finally {
-          setSaving(false);
-        }
-        return;
-      }
-
-      const confirmed = window.confirm(
-        mode === 'all'
-          ? t('tools.loopback.confirmExemptAll')
-          : t('tools.loopback.confirmClearAll')
-      );
-      if (!confirmed) return;
-
-      setSaving(true);
-      try {
-        const result = await method();
-        if (result?.success) {
-          toast.success(
+        } else {
+          const current = appsRef.current;
+          const nextApps = current.map((app) => ({
+            ...app,
+            isExempt: mode === 'all',
+          }));
+          setApps(nextApps);
+          const ok = await persistExemptions(
+            nextApps,
             mode === 'all'
-              ? t('tools.loopback.exemptAllSuccess', {
-                  count: result.count ?? apps.length,
-                })
+              ? t('tools.loopback.exemptAllSuccess', { count: nextApps.length })
               : t('tools.loopback.clearAllSuccess')
           );
-          await loadApps();
-        } else {
-          toast.error(
-            t('tools.loopback.saveError', {
-              error: friendlyError(result?.error, t('tools.loopback.loadError')),
-            })
-          );
+          if (!ok) {
+            setApps(current);
+            appsRef.current = current;
+          }
         }
-      } catch (err: unknown) {
-        toast.error(
-          t('tools.loopback.saveError', {
-            error: friendlyError(err, t('tools.loopback.loadError')),
-          })
-        );
       } finally {
-        setSaving(false);
+        setBulkSaving(false);
       }
     },
-    [apps, friendlyError, loadApps, t]
+    [bulkSaving, friendlyError, loadApps, persistExemptions, savingSid, t]
   );
 
   if (loading) {
@@ -358,9 +332,10 @@ export default function LoopbackManager() {
               exempt: stats.exempt,
             })}
           </span>
-          {hasChanges && (
-            <span className="ml-1 text-xs font-medium text-primary">
-              ({exemptChanges.size} {t('tools.loopback.modified')})
+          {(savingSid || bulkSaving) && (
+            <span className="inline-flex items-center gap-1 text-xs text-primary">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('tools.loopback.saving')}
             </span>
           )}
         </div>
@@ -369,7 +344,7 @@ export default function LoopbackManager() {
             variant="outline"
             size="sm"
             onClick={() => applyBulk('all')}
-            disabled={saving || apps.length === 0}
+            disabled={bulkSaving || !!savingSid || apps.length === 0}
             className="h-7 px-2.5 text-xs"
           >
             {t('tools.loopback.exemptAll')}
@@ -378,7 +353,7 @@ export default function LoopbackManager() {
             variant="outline"
             size="sm"
             onClick={() => applyBulk('none')}
-            disabled={saving || stats.exempt === 0}
+            disabled={bulkSaving || !!savingSid || stats.exempt === 0}
             className="h-7 px-2.5 text-xs"
           >
             {t('tools.loopback.clearAll')}
@@ -396,7 +371,8 @@ export default function LoopbackManager() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={selectAll}
+            onClick={selectAllVisible}
+            disabled={bulkSaving || !!savingSid}
             className="h-7 px-2.5 text-xs"
           >
             {t('tools.loopback.selectAll')}
@@ -404,7 +380,8 @@ export default function LoopbackManager() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={deselectAll}
+            onClick={deselectAllVisible}
+            disabled={bulkSaving || !!savingSid}
             className="h-7 px-2.5 text-xs"
           >
             {t('tools.loopback.deselectAll')}
@@ -413,6 +390,7 @@ export default function LoopbackManager() {
             variant="ghost"
             size="sm"
             onClick={loadApps}
+            disabled={bulkSaving || !!savingSid}
             className="h-7 w-7 p-0 text-xs"
             title={t('tools.loopback.retry')}
           >
@@ -449,26 +427,43 @@ export default function LoopbackManager() {
             </div>
           ) : (
             filteredApps.map((app) => {
-              const isExempt = getEffectiveExempt(app);
-              const isChanged = exemptChanges.has(app.sid);
+              const isSaving = savingSid === app.sid;
               return (
                 <div
                   key={app.sid}
                   className={cn(
                     'flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
                     'hover:bg-accent/50',
-                    isChanged && 'bg-primary/5'
+                    isSaving && 'opacity-70'
                   )}
-                  onClick={() => toggleExemption(app.sid, isExempt)}
+                  onClick={() => {
+                    void toggleExemption(app.sid);
+                  }}
                 >
                   <Checkbox
-                    checked={isExempt}
-                    onCheckedChange={() => toggleExemption(app.sid, isExempt)}
+                    checked={app.isExempt}
+                    disabled={isSaving || bulkSaving}
+                    onCheckedChange={() => {
+                      void toggleExemption(app.sid);
+                    }}
                     className="flex-shrink-0"
                   />
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/60">
+                    {app.iconDataUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={app.iconDataUrl}
+                        alt=""
+                        className="h-full w-full object-contain"
+                        draggable={false}
+                      />
+                    ) : (
+                      <AppWindow className="h-4 w-4 text-muted-foreground/70" />
+                    )}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      {isExempt ? (
+                      {app.isExempt ? (
                         <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
                       ) : (
                         <ShieldX className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/30" />
@@ -476,47 +471,20 @@ export default function LoopbackManager() {
                       <span className="truncate text-sm font-medium">
                         {app.displayName}
                       </span>
+                      {isSaving && (
+                        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                      )}
                     </div>
                     <p className="mt-0.5 truncate pl-5 text-xs text-muted-foreground/60">
                       {app.packageFamilyName}
                     </p>
                   </div>
-                  {isChanged && (
-                    <span className="flex-shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
-                      {t('tools.loopback.modified')}
-                    </span>
-                  )}
                 </div>
               );
             })
           )}
         </div>
       </div>
-
-      <button
-        onClick={saveConfig}
-        disabled={saving || !hasChanges}
-        className="h-10 w-full flex-shrink-0 relative inline-flex items-center justify-center overflow-hidden whitespace-nowrap rounded-xl px-5 text-sm font-medium text-white transition-all hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
-        style={{
-          backgroundColor: themeColor,
-          boxShadow: `0 16px 36px -18px ${themeColor}70`,
-        }}
-      >
-        {saving ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            {t('tools.loopback.saving')}
-          </>
-        ) : (
-          <>
-            <Save className="mr-2 h-4 w-4" />
-            {t('tools.loopback.save')}
-            {hasChanges && (
-              <span className="ml-1.5 text-xs opacity-80">({exemptChanges.size})</span>
-            )}
-          </>
-        )}
-      </button>
     </div>
   );
 }

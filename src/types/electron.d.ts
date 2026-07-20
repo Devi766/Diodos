@@ -715,6 +715,8 @@ interface LoopbackApp {
   sid: string;
   workingDir: string;
   isExempt: boolean;
+  iconDataUrl?: string | null;
+  packageFullName?: string;
 }
 
 // UWP 回环豁免查询结果

@@ -622,10 +622,32 @@ pub(crate) async fn download_core(
 ) -> CompatResult {
     let release = if let Some(version) = version.clone() {
         let (owner, repo, _) = core_repo(core_type);
-        github_json(&format!(
-            "https://api.github.com/repos/{owner}/{repo}/releases/tags/{version}"
-        ))
-        .await?
+        let raw = version.trim().trim_start_matches(['v', 'V']);
+        // GitHub release tags for stable mihomo are "vX.Y.Z". UI versions are stored
+        // without the leading "v", so always request with "v" prefix first.
+        let candidates = [
+            format!("v{raw}"),
+            raw.to_string(),
+            version.trim().to_string(),
+        ];
+        let mut last_error = None;
+        let mut found = None;
+        for tag in candidates {
+            if tag.trim().is_empty() {
+                continue;
+            }
+            let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}");
+            match github_json(&url).await {
+                Ok(release) => {
+                    found = Some(release);
+                    break;
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        found.ok_or_else(|| {
+            last_error.unwrap_or_else(|| format!("未找到内核版本 {version}"))
+        })?
     } else {
         latest_release(core_type).await?
     };

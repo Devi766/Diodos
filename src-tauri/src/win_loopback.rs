@@ -286,7 +286,23 @@ pub fn enum_app_containers() -> Result<Vec<Value>, String> {
 
 pub fn set_config(sids: &[String]) -> Result<usize, String> {
     let api = load_firewall_api()?;
-    if sids.is_empty() {
+
+    // Deduplicate and normalize SIDs first. Passing invalid/duplicated SIDs can
+    // make NetworkIsolationSetAppContainerConfig return ERROR_ACCESS_DENIED (5).
+    let mut unique: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+    for sid in sids {
+        let trimmed = sid.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_ascii_uppercase();
+        if seen.insert(key) {
+            unique.push(trimmed.to_string());
+        }
+    }
+
+    if unique.is_empty() {
         let status = unsafe { (api.set_app_container_config)(0, ptr::null()) };
         if status != ERROR_SUCCESS {
             return Err(format!("SetAppContainerConfig failed: {status}"));
@@ -294,23 +310,21 @@ pub fn set_config(sids: &[String]) -> Result<usize, String> {
         return Ok(0);
     }
 
-    let mut wide_sids: Vec<Vec<u16>> = sids.iter().map(|sid| to_wide_null(sid)).collect();
-    let mut allocated: Vec<PSID> = Vec::with_capacity(sids.len());
-    let mut entries: Vec<SidAndAttributes> = Vec::with_capacity(sids.len());
+    // Keep wide SID buffers alive for the duration of ConvertStringSidToSidW.
+    let mut wide_sids: Vec<Vec<u16>> = unique.iter().map(|sid| to_wide_null(sid)).collect();
+    let mut allocated: Vec<PSID> = Vec::with_capacity(unique.len());
+    let mut entries: Vec<SidAndAttributes> = Vec::with_capacity(unique.len());
 
-    for wide in &mut wide_sids {
+    for (index, wide) in wide_sids.iter_mut().enumerate() {
         let mut sid: PSID = ptr::null_mut();
         let ok = unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut sid) };
         if ok == 0 || sid.is_null() {
-            for allocated_sid in allocated {
+            for allocated_sid in &allocated {
                 unsafe {
-                    let _ = LocalFree(allocated_sid as HANDLE);
+                    let _ = LocalFree(*allocated_sid as HANDLE);
                 }
             }
-            return Err(format!(
-                "Invalid SID: {}",
-                String::from_utf16_lossy(&wide[..wide.len().saturating_sub(1)])
-            ));
+            return Err(format!("Invalid SID: {}", unique[index]));
         }
         allocated.push(sid);
         entries.push(SidAndAttributes {
@@ -319,7 +333,9 @@ pub fn set_config(sids: &[String]) -> Result<usize, String> {
         });
     }
 
-    let status = unsafe { (api.set_app_container_config)(entries.len() as DWORD, entries.as_ptr()) };
+    let status = unsafe {
+        (api.set_app_container_config)(entries.len() as DWORD, entries.as_ptr())
+    };
 
     for allocated_sid in allocated {
         unsafe {
@@ -328,6 +344,13 @@ pub fn set_config(sids: &[String]) -> Result<usize, String> {
     }
 
     if status != ERROR_SUCCESS {
+        // Error 5 is ERROR_ACCESS_DENIED. Surface a clearer message.
+        if status == 5 {
+            return Err(
+                "SetAppContainerConfig failed: 5 (拒绝访问，可能包含无效 SID 或权限不足)"
+                    .to_string(),
+            );
+        }
         return Err(format!("SetAppContainerConfig failed: {status}"));
     }
     Ok(entries.len())
