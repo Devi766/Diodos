@@ -32,6 +32,8 @@ mod telemetry;
 mod tray;
 mod tun_service;
 #[cfg(windows)]
+mod win_loopback;
+#[cfg(windows)]
 mod win_sysproxy;
 
 fn main() {

@@ -129,13 +129,29 @@ pub(crate) fn normalize_core_version(value: &str) -> String {
 }
 
 fn core_version_from_output(output: &str) -> Option<String> {
-    Regex::new(r"(?i)Mihomo.*?\sv([0-9A-Za-z.\-]+)")
-        .ok()
-        .and_then(|regex| {
+    // Stable:  "Mihomo Meta v1.19.12 ..."
+    // Alpha:   "Mihomo Meta alpha-59ffb63 windows amd64 ..."
+    // Smart:   "Mihomo Meta smart-xxxx ..." / "Mihomo Meta v1.x-smart ..."
+    let patterns = [
+        r"(?i)Mihomo(?:\s+Meta)?\s+v([0-9A-Za-z.\-]+)",
+        r"(?i)Mihomo(?:\s+Meta)?\s+(alpha-[0-9A-Za-z.\-]+)",
+        r"(?i)Mihomo(?:\s+Meta)?\s+(smart-[0-9A-Za-z.\-]+)",
+        r"(?i)\bv([0-9]+\.[0-9A-Za-z.\-]+)\b",
+    ];
+
+    for pattern in patterns {
+        if let Some(version) = Regex::new(pattern).ok().and_then(|regex| {
             regex
                 .captures(output)
                 .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
-        })
+        }) {
+            let normalized = normalize_core_version(&version);
+            if !normalized.is_empty() {
+                return Some(normalized);
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn core_binary_version(path: &Path) -> Option<String> {
@@ -143,9 +159,20 @@ pub(crate) fn core_binary_version(path: &Path) -> Option<String> {
         return None;
     }
 
-    crate::tun_service::command_output(&path.to_string_lossy(), &["-v"])
-        .ok()
-        .and_then(|output| core_version_from_output(&output))
+    let mut command = std::process::Command::new(path);
+    command.arg("-v");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command.output().ok()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    core_version_from_output(&combined)
 }
 
 fn installed_core_identity(name: &str) -> Option<(&'static str, Option<String>)> {
@@ -1047,4 +1074,37 @@ pub(crate) async fn handle_compat_call(
     }
 
     Some(dispatch_compat_call(app, window, state, method, args).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::core_version_from_output;
+
+    #[test]
+    fn parses_stable_version_output() {
+        let output = "Mihomo Meta v1.19.12 windows amd64 with go1.24.1";
+        assert_eq!(
+            core_version_from_output(output).as_deref(),
+            Some("1.19.12")
+        );
+    }
+
+    #[test]
+    fn parses_alpha_version_output() {
+        let output =
+            "Mihomo Meta alpha-59ffb63 windows amd64 with go1.26.4 Tue Jun 23 11:08:27 UTC 2026\nUse tags: with_gvisor";
+        assert_eq!(
+            core_version_from_output(output).as_deref(),
+            Some("alpha-59ffb63")
+        );
+    }
+
+    #[test]
+    fn parses_smart_version_output() {
+        let output = "Mihomo Meta smart-abc123 windows amd64";
+        assert_eq!(
+            core_version_from_output(output).as_deref(),
+            Some("smart-abc123")
+        );
+    }
 }

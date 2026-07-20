@@ -578,7 +578,7 @@
     "loopback": {
       "title": "UWP 回环管理",
       "description": "管理 UWP 应用的网络回环豁免",
-      "detail": "为 UWP / 微软商店应用启用网络回环，使其能连接本地代理。内置管理器无需管理员；也可打开经典 EnableLoopback 工具。",
+      "detail": "为 UWP / 微软商店应用启用网络回环，使其能连接本地代理。",
       "open": "打开管理器",
       "dialogTitle": "UWP 回环豁免管理",
       "dialogDescription": "选择需要启用回环豁免的 UWP 应用，使其能够通过本地代理上网",
@@ -600,14 +600,14 @@
       "saving": "正在保存...",
       "saveSuccess": "已成功保存，共豁免 {{count}} 个应用",
       "saveError": "保存失败: {{error}}",
-      "hint": "NetworkIsolation API 通常无需管理员权限。若内置列表异常，可打开经典 EnableLoopback 工具。",
-      "openExternalTool": "打开 EnableLoopback",
-      "openExternalToolHint": "与 Clash Party 相同的经典工具（可能触发 UAC）",
-      "openExternalToolSuccess": "已启动 EnableLoopback 工具",
-      "openExternalToolError": "启动 EnableLoopback 失败: {{error}}",
-      "toolUnavailable": "未找到 EnableLoopback.exe",
       "exemptOnly": "仅显示已豁免",
-      "showAll": "显示全部"
+      "showAll": "显示全部",
+      "exemptAll": "全部豁免",
+      "clearAll": "全部清除",
+      "exemptAllSuccess": "已全部豁免，共 {{count}} 个应用",
+      "clearAllSuccess": "已清除全部回环豁免",
+      "confirmExemptAll": "确定豁免全部 UWP 应用？",
+      "confirmClearAll": "确定清除全部回环豁免？"
     },
     "speedtest": {
       "title": "网络测速",

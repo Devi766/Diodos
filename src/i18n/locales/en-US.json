@@ -578,7 +578,7 @@
     "loopback": {
       "title": "UWP Loopback Manager",
       "description": "Manage UWP app network loopback exemptions",
-      "detail": "Enable loopback for UWP / Microsoft Store apps so they can reach the local proxy. Built-in manager needs no admin; classic EnableLoopback tool is also available.",
+      "detail": "Enable loopback for UWP / Microsoft Store apps so they can reach the local proxy.",
       "open": "Open Manager",
       "dialogTitle": "UWP Loopback Exemption Manager",
       "dialogDescription": "Select UWP apps to exempt from loopback restrictions, allowing them to use local proxy",
@@ -600,14 +600,14 @@
       "saving": "Saving...",
       "saveSuccess": "Saved successfully, {{count}} apps exempted",
       "saveError": "Save failed: {{error}}",
-      "hint": "NetworkIsolation APIs usually work without admin. If the built-in list fails, open the classic EnableLoopback tool.",
-      "openExternalTool": "Open EnableLoopback",
-      "openExternalToolHint": "Classic tool (same as Clash Party; may trigger UAC)",
-      "openExternalToolSuccess": "EnableLoopback tool launched",
-      "openExternalToolError": "Failed to launch EnableLoopback: {{error}}",
-      "toolUnavailable": "EnableLoopback.exe not found",
       "exemptOnly": "Exempted only",
-      "showAll": "Show all"
+      "showAll": "Show all",
+      "exemptAll": "Exempt All",
+      "clearAll": "Clear All",
+      "exemptAllSuccess": "Exempted all apps ({{count}})",
+      "clearAllSuccess": "Cleared all loopback exemptions",
+      "confirmExemptAll": "Exempt all UWP apps?",
+      "confirmClearAll": "Clear all loopback exemptions?"
     },
     "speedtest": {
       "title": "Network Speed Test",

@@ -18,7 +18,6 @@ use tauri::{
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 
-use crate::resources::existing_resource_file;
 use crate::storage::{set_setting, setting};
 
 type CompatResult = Result<Value, String>;
@@ -962,13 +961,16 @@ fn run_powershell_script(script: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn loopback_api_call(method_call: &str) -> Result<String, String> {
-    let csharp = include_str!("../../electron/loopback-helper.cs");
-    let script = format!(
-        "$ErrorActionPreference = 'Stop'\nAdd-Type -TypeDefinition @'\n{}\n'@\n{}",
-        csharp, method_call
-    );
-    run_powershell_script(&script)
+fn loopback_sid_valid(sid: &str) -> bool {
+    let upper = sid.trim();
+    if !upper.to_ascii_uppercase().starts_with("S-1-15-2-") {
+        return false;
+    }
+    upper
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        && upper.contains('-')
+        && upper.len() >= 12
 }
 
 fn loopback_display_names() -> HashMap<String, String> {
@@ -1016,309 +1018,124 @@ $results | ConvertTo-Json -Compress -Depth 1
         .unwrap_or_default()
 }
 
-fn loopback_resolve_display_name(app: &mut Value, names: &HashMap<String, String>) {
-    let container_name = app
-        .get("appContainerName")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let package_family_name = app
-        .get("packageFamilyName")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    let mut resolved = names
-        .get(&package_family_name)
-        .or_else(|| names.get(&container_name))
-        .cloned();
-
-    if resolved.is_none() {
-        if let Some((prefix, _)) = package_family_name.rsplit_once('_') {
-            resolved = names.get(prefix).cloned();
-        }
-    }
-
-    if resolved.is_none() && !container_name.is_empty() {
-        resolved = names.iter().find_map(|(key, value)| {
-            (key.starts_with(&container_name) || container_name.starts_with(key))
-                .then(|| value.clone())
-        });
-    }
-
-    if let Some(resolved) = resolved {
-        if let Some(object) = app.as_object_mut() {
-            object.insert("displayName".to_string(), Value::String(resolved));
-        }
-    }
-}
-
-fn loopback_sid_valid(sid: &str) -> bool {
-    // AppContainer SIDs look like S-1-15-2-<digits>...
-    let upper = sid.trim();
-    if !upper.to_ascii_uppercase().starts_with("S-1-15-2-") {
-        return false;
-    }
-    upper
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
-        && upper.contains('-')
-        && upper.len() >= 12
-}
-
-fn find_enable_loopback_tool(app: &AppHandle) -> Option<PathBuf> {
-    existing_resource_file(
-        app,
-        &[
-            PathBuf::from("extra")
-                .join("files")
-                .join("EnableLoopback.exe"),
-            PathBuf::from("files").join("EnableLoopback.exe"),
-            PathBuf::from("tools").join("EnableLoopback.exe"),
-            PathBuf::from("EnableLoopback.exe"),
-            PathBuf::from("extra")
-                .join("files")
-                .join("enableLoopback.exe"),
-            PathBuf::from("files").join("enableLoopback.exe"),
-            PathBuf::from("tools").join("enableLoopback.exe"),
-            PathBuf::from("enableLoopback.exe"),
-        ],
-    )
-}
-
-fn windows_process_is_elevated() -> bool {
-    if !cfg!(target_os = "windows") {
-        return false;
-    }
-    // Mirror helper service check used elsewhere; best-effort via whoami /groups.
-    let mut command = Command::new("whoami");
-    command.arg("/groups");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
-    let Ok(output) = command.output() else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    let text = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-    .to_ascii_lowercase();
-    text.contains("s-1-5-32-544") && text.contains("enabled")
-}
-
-/// Open the classic EnableLoopback utility (Clash Party / Verge style fallback).
-/// Elevates with UAC when the current process is not admin.
-fn open_enable_loopback_tool(app: &AppHandle) -> CompatResult {
-    if !cfg!(target_os = "windows") {
-        return Ok(json!({
-            "success": false,
-            "error": "EnableLoopback 仅支持 Windows"
-        }));
-    }
-
-    let Some(tool_path) = find_enable_loopback_tool(app) else {
-        return Ok(json!({
-            "success": false,
-            "error": "未找到 EnableLoopback.exe，请确认 extra/files 或应用资源目录中已打包该工具"
-        }));
-    };
-
-    let elevated = windows_process_is_elevated();
-    if elevated {
-        // GUI tool must keep its window — do not set CREATE_NO_WINDOW here.
-        Command::new(&tool_path)
-            .spawn()
-            .map_err(|err| format!("启动 EnableLoopback 失败: {err}"))?;
-        return Ok(success(json!({
-            "launched": true,
-            "elevated": true,
-            "path": tool_path.to_string_lossy()
-        })));
-    }
-
-    // Not elevated: relaunch tool with RunAs, matching Clash Party openUWPTool().
-    let escaped = tool_path.to_string_lossy().replace('\'', "''");
-    let ps = format!(
-        "Start-Process -FilePath '{escaped}' -Verb RunAs"
-    );
-    let mut command = Command::new("powershell.exe");
-    command
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(ps);
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
-    let output = command
-        .output()
-        .map_err(|err| format!("提权启动 EnableLoopback 失败: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        return Ok(json!({
-            "success": false,
-            "error": if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else {
-                "用户取消了 UAC 提权或启动失败".to_string()
-            }
-        }));
-    }
-
-    Ok(success(json!({
-        "launched": true,
-        "elevated": false,
-        "path": tool_path.to_string_lossy()
-    })))
-}
-
 fn loopback_apps(app: &AppHandle) -> CompatResult {
     if !cfg!(target_os = "windows") {
         return Ok(success(json!({
             "apps": [],
             "isAdmin": false,
-            "toolAvailable": false,
             "total": 0,
             "exempt": 0
         })));
     }
 
-    let tool_available = find_enable_loopback_tool(app).is_some();
-    let output = match loopback_api_call("[NetworkIsolationHelper]::EnumAppContainers()") {
-        Ok(output) => output,
-        Err(error) => {
-            return Ok(json!({
-                "success": false,
-                "error": error,
-                "apps": [],
-                "isAdmin": true,
-                "toolAvailable": tool_available
-            }))
-        }
-    };
-    if output.is_empty() || output == "null" {
-        return Ok(success(json!({
-            "apps": [],
-            "isAdmin": true,
-            "toolAvailable": tool_available,
-            "total": 0,
-            "exempt": 0
-        })));
-    }
-
-    let parsed = match serde_json::from_str::<Value>(&output) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            return Ok(json!({
-                "success": false,
-                "error": format!("解析 Loopback 应用列表失败: {error}"),
-                "apps": [],
-                "isAdmin": true,
-                "toolAvailable": tool_available
-            }))
-        }
-    };
-    if let Some(error) = parsed.get("error").and_then(Value::as_str) {
-        return Ok(json!({
-            "success": false,
-            "error": error,
-            "apps": [],
-            "isAdmin": true,
-            "toolAvailable": tool_available
-        }));
-    }
-
-    let mut apps = match parsed {
-        Value::Array(items) => items,
-        other => vec![other],
-    };
-
-    // Drop invalid entries and dedupe by SID (last wins).
-    let mut by_sid: HashMap<String, Value> = HashMap::new();
-    for item in apps.drain(..) {
-        let Some(sid) = item
-            .get("sid")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty() && loopback_sid_valid(value))
-            .map(ToString::to_string)
-        else {
-            continue;
+    #[cfg(windows)]
+    {
+        let mut apps = match crate::win_loopback::enum_app_containers() {
+            Ok(apps) => apps,
+            Err(error) => {
+                return Ok(json!({
+                    "success": false,
+                    "error": error,
+                    "apps": [],
+                    "isAdmin": true,
+                    "total": 0,
+                    "exempt": 0
+                }))
+            }
         };
-        by_sid.insert(sid.to_ascii_uppercase(), item);
-    }
-    apps = by_sid.into_values().collect();
 
-    let display_names = loopback_display_names();
-    for app in &mut apps {
-        loopback_resolve_display_name(app, &display_names);
-        // Prefer a non-empty displayName fallback.
-        if let Some(object) = app.as_object_mut() {
-            let display = object
-                .get("displayName")
+        let mut by_sid: HashMap<String, Value> = HashMap::new();
+        for item in apps.drain(..) {
+            let Some(sid) = item
+                .get("sid")
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string);
-            if display.is_none() {
-                let fallback = object
-                    .get("packageFamilyName")
+                .filter(|value| !value.is_empty() && loopback_sid_valid(value))
+                .map(ToString::to_string)
+            else {
+                continue;
+            };
+            by_sid.insert(sid.to_ascii_uppercase(), item);
+        }
+        apps = by_sid.into_values().collect();
+
+        let display_names = loopback_display_names();
+        crate::win_loopback::enrich_display_names(&mut apps, &display_names);
+        for app_item in &mut apps {
+            if let Some(object) = app_item.as_object_mut() {
+                let display = object
+                    .get("displayName")
                     .and_then(Value::as_str)
-                    .or_else(|| object.get("appContainerName").and_then(Value::as_str))
-                    .unwrap_or("Unknown App")
-                    .to_string();
-                object.insert("displayName".to_string(), Value::String(fallback));
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string);
+                if display.is_none() {
+                    let fallback = object
+                        .get("packageFamilyName")
+                        .and_then(Value::as_str)
+                        .or_else(|| object.get("appContainerName").and_then(Value::as_str))
+                        .unwrap_or("Unknown App")
+                        .to_string();
+                    object.insert("displayName".to_string(), Value::String(fallback));
+                }
             }
         }
-    }
-    apps.sort_by(|left, right| {
-        let left_exempt = left
-            .get("isExempt")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let right_exempt = right
-            .get("isExempt")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        right_exempt.cmp(&left_exempt).then_with(|| {
-            let left_name = left
-                .get("displayName")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let right_name = right
-                .get("displayName")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            left_name
-                .to_ascii_lowercase()
-                .cmp(&right_name.to_ascii_lowercase())
-        })
-    });
 
-    let exempt_sids = apps
-        .iter()
-        .filter(|item| {
-            item.get("isExempt")
+        apps.sort_by(|left, right| {
+            let left_exempt = left
+                .get("isExempt")
                 .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .filter_map(|item| item.get("sid").and_then(Value::as_str))
-        .collect::<Vec<_>>();
-    let total = apps.len();
-    let exempt = exempt_sids.len();
-    set_setting(app, "loopbackExemptSids", json!(exempt_sids))?;
+                .unwrap_or(false);
+            let right_exempt = right
+                .get("isExempt")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            right_exempt.cmp(&left_exempt).then_with(|| {
+                let left_name = left
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let right_name = right
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                left_name
+                    .to_ascii_lowercase()
+                    .cmp(&right_name.to_ascii_lowercase())
+            })
+        });
 
-    Ok(success(json!({
-        "apps": apps,
-        "isAdmin": true,
-        "toolAvailable": tool_available,
-        "total": total,
-        "exempt": exempt
-    })))
+        let exempt_sids = apps
+            .iter()
+            .filter(|item| {
+                item.get("isExempt")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .filter_map(|item| item.get("sid").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        let total = apps.len();
+        let exempt = exempt_sids.len();
+        set_setting(app, "loopbackExemptSids", json!(exempt_sids))?;
+
+        return Ok(success(json!({
+            "apps": apps,
+            "isAdmin": true,
+            "total": total,
+            "exempt": exempt
+        })));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Ok(success(json!({
+            "apps": [],
+            "isAdmin": false,
+            "total": 0,
+            "exempt": 0
+        })))
+    }
 }
 
 fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
@@ -1336,35 +1153,44 @@ fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
         }
     }
 
-    let sid_list = sids
-        .iter()
-        .map(|sid| format!("\"{}\"", sid.replace('"', "")))
-        .collect::<Vec<_>>()
-        .join(",");
-    let method_call = format!("$sids = @({sid_list})\n[NetworkIsolationHelper]::SetConfig($sids)");
-    let output = match loopback_api_call(&method_call) {
-        Ok(output) => output,
-        Err(error) => return Ok(json!({ "success": false, "error": error })),
-    };
-    let result = match serde_json::from_str::<Value>(&output) {
-        Ok(result) => result,
-        Err(error) => {
-            return Ok(json!({
-                "success": false,
-                "error": format!("解析 Loopback 保存结果失败: {error}")
-            }))
-        }
-    };
-
-    if result
-        .get("success")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    #[cfg(windows)]
     {
-        set_setting(app, "loopbackExemptSids", json!(sids))?;
+        match crate::win_loopback::set_config(&sids) {
+            Ok(count) => {
+                set_setting(app, "loopbackExemptSids", json!(sids))?;
+                Ok(success(json!({ "count": count })))
+            }
+            Err(error) => Ok(json!({ "success": false, "error": error })),
+        }
     }
 
-    Ok(result)
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Ok(success(json!({ "count": 0 })))
+    }
+}
+
+fn loopback_exempt_all(app: &AppHandle) -> CompatResult {
+    #[cfg(windows)]
+    {
+        match crate::win_loopback::all_container_sids() {
+            Ok(sids) => loopback_set(app, sids),
+            Err(error) => Ok(json!({ "success": false, "error": error })),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Ok(json!({
+            "success": false,
+            "error": "Loopback 仅支持 Windows"
+        }))
+    }
+}
+
+fn loopback_clear_all(app: &AppHandle) -> CompatResult {
+    loopback_set(app, Vec::new())
 }
 
 fn loopback_current_exempt_sids(app: &AppHandle) -> Result<Vec<String>, String> {
@@ -1803,13 +1629,8 @@ async fn dispatch_compat_call(
                 .collect();
             loopback_set(app, sids)
         }
-        "loopback.openTool"
-        | "loopback:open-tool"
-        | "loopback.launchEnableLoopback"
-        | "openEnableLoopback" => open_enable_loopback_tool(app),
-        "loopback.toolAvailable" | "loopback:tool-available" => Ok(success(json!({
-            "available": find_enable_loopback_tool(app).is_some()
-        }))),
+        "loopback.exemptAll" | "loopback:exempt-all" => loopback_exempt_all(app),
+        "loopback.clearAll" | "loopback:clear-all" => loopback_clear_all(app),
         _ => Err(format!("Unsupported loopback method: {method}")),
     }
 }

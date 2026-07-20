@@ -10,7 +10,6 @@ import {
   AlertCircle,
   Save,
   RefreshCw,
-  ExternalLink,
   Filter,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -56,12 +55,9 @@ export default function LoopbackManager() {
   const [apps, setApps] = useState<LoopbackAppItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [openingTool, setOpeningTool] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [toolAvailable, setToolAvailable] = useState(false);
   const [exemptOnly, setExemptOnly] = useState(false);
-  // 跟踪用户修改的豁免状态（SID -> boolean）
   const [exemptChanges, setExemptChanges] = useState<Map<string, boolean>>(new Map());
 
   const hasChanges = exemptChanges.size > 0;
@@ -93,23 +89,10 @@ export default function LoopbackManager() {
       if (result.success && result.apps) {
         setApps(result.apps);
         setExemptChanges(new Map());
-        if (typeof result.toolAvailable === 'boolean') {
-          setToolAvailable(result.toolAvailable);
-        } else if (hasLoopbackMethod(api, 'toolAvailable')) {
-          try {
-            const tool = await api.toolAvailable();
-            setToolAvailable(!!tool?.available);
-          } catch {
-            setToolAvailable(false);
-          }
-        }
       } else {
         const message = friendlyError(result.error, t('tools.loopback.loadError'));
         setError(message);
         toast.error(message);
-        if (typeof result.toolAvailable === 'boolean') {
-          setToolAvailable(result.toolAvailable);
-        }
       }
     } catch (err: unknown) {
       console.error('Failed to load UWP app list:', err);
@@ -183,8 +166,7 @@ export default function LoopbackManager() {
     setExemptChanges((prev) => {
       const next = new Map(prev);
       for (const app of filteredApps) {
-        const originalExempt = app.isExempt;
-        if (!originalExempt) {
+        if (!app.isExempt) {
           next.set(app.sid, true);
         } else {
           next.delete(app.sid);
@@ -198,8 +180,7 @@ export default function LoopbackManager() {
     setExemptChanges((prev) => {
       const next = new Map(prev);
       for (const app of filteredApps) {
-        const originalExempt = app.isExempt;
-        if (originalExempt) {
+        if (app.isExempt) {
           next.set(app.sid, false);
         } else {
           next.delete(app.sid);
@@ -249,43 +230,97 @@ export default function LoopbackManager() {
     }
   }, [apps, friendlyError, getEffectiveExempt, loadApps, t]);
 
-  const openExternalTool = useCallback(async () => {
-    const api = getLoopbackApi();
-    const open =
-      (hasLoopbackMethod(api, 'openTool') && api.openTool) ||
-      (hasLoopbackMethod(api, 'launchEnableLoopback') && api.launchEnableLoopback);
-    if (!open) {
-      toast.error(t('tools.loopback.toolUnavailable'));
-      return;
-    }
+  const applyBulk = useCallback(
+    async (mode: 'all' | 'none') => {
+      const api = getLoopbackApi();
+      const method =
+        mode === 'all'
+          ? hasLoopbackMethod(api, 'exemptAll')
+            ? api.exemptAll
+            : null
+          : hasLoopbackMethod(api, 'clearAll')
+            ? api.clearAll
+            : null;
 
-    setOpeningTool(true);
-    try {
-      const result = await open();
-      if (result?.success) {
-        toast.success(t('tools.loopback.openExternalToolSuccess'));
-      } else {
+      if (!method) {
+        // Fallback to saveConfig with computed SID list when bulk APIs are missing.
+        if (!hasLoopbackMethod(api, 'saveConfig')) {
+          toast.error(t('tools.loopback.apiUnavailable'));
+          return;
+        }
+        const sids = mode === 'all' ? apps.map((app) => app.sid) : [];
+        setSaving(true);
+        try {
+          const result = await api.saveConfig(sids);
+          if (result.success) {
+            toast.success(
+              mode === 'all'
+                ? t('tools.loopback.exemptAllSuccess', { count: sids.length })
+                : t('tools.loopback.clearAllSuccess')
+            );
+            await loadApps();
+          } else {
+            toast.error(
+              t('tools.loopback.saveError', {
+                error: friendlyError(result.error, t('tools.loopback.loadError')),
+              })
+            );
+          }
+        } catch (err: unknown) {
+          toast.error(
+            t('tools.loopback.saveError', {
+              error: friendlyError(err, t('tools.loopback.loadError')),
+            })
+          );
+        } finally {
+          setSaving(false);
+        }
+        return;
+      }
+
+      const confirmed = window.confirm(
+        mode === 'all'
+          ? t('tools.loopback.confirmExemptAll')
+          : t('tools.loopback.confirmClearAll')
+      );
+      if (!confirmed) return;
+
+      setSaving(true);
+      try {
+        const result = await method();
+        if (result?.success) {
+          toast.success(
+            mode === 'all'
+              ? t('tools.loopback.exemptAllSuccess', {
+                  count: result.count ?? apps.length,
+                })
+              : t('tools.loopback.clearAllSuccess')
+          );
+          await loadApps();
+        } else {
+          toast.error(
+            t('tools.loopback.saveError', {
+              error: friendlyError(result?.error, t('tools.loopback.loadError')),
+            })
+          );
+        }
+      } catch (err: unknown) {
         toast.error(
-          t('tools.loopback.openExternalToolError', {
-            error: friendlyError(result?.error, t('tools.enableLoopback.error')),
+          t('tools.loopback.saveError', {
+            error: friendlyError(err, t('tools.loopback.loadError')),
           })
         );
+      } finally {
+        setSaving(false);
       }
-    } catch (err: unknown) {
-      toast.error(
-        t('tools.loopback.openExternalToolError', {
-          error: friendlyError(err, t('tools.enableLoopback.error')),
-        })
-      );
-    } finally {
-      setOpeningTool(false);
-    }
-  }, [friendlyError, t]);
+    },
+    [apps, friendlyError, loadApps, t]
+  );
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="flex h-full min-h-[240px] flex-col items-center justify-center space-y-3 py-10">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm text-muted-foreground">{t('tools.loopback.loading')}</p>
       </div>
     );
@@ -293,55 +328,30 @@ export default function LoopbackManager() {
 
   if (error) {
     return (
-      <div className="space-y-4 py-2">
+      <div className="flex h-full min-h-[240px] flex-col justify-center space-y-4 py-2">
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
           <div className="flex items-start gap-2.5">
-            <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-destructive" />
             <div>
               <h4 className="font-medium text-destructive">
                 {t('tools.loopback.errorTitle')}
               </h4>
-              <p className="text-sm text-destructive/80 mt-1">{error}</p>
-              <p className="text-xs text-muted-foreground mt-2">{t('tools.loopback.hint')}</p>
+              <p className="mt-1 text-sm text-destructive/80">{error}</p>
             </div>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={loadApps} variant="default" className="flex-1">
-            {t('tools.loopback.retry')}
-          </Button>
-          <Button
-            onClick={openExternalTool}
-            variant="outline"
-            className="flex-1"
-            disabled={openingTool}
-            title={t('tools.loopback.openExternalToolHint')}
-          >
-            {openingTool ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <ExternalLink className="w-4 h-4 mr-2" />
-            )}
-            {t('tools.loopback.openExternalTool')}
-          </Button>
-        </div>
+        <Button onClick={loadApps} variant="default" className="w-full">
+          {t('tools.loopback.retry')}
+        </Button>
       </div>
     );
   }
 
   return (
-    <div
-      className="flex flex-col gap-3 h-full"
-      style={{ WebkitFontSmoothing: 'antialiased', backfaceVisibility: 'hidden' }}
-    >
-      <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        {t('tools.loopback.hint')}
-      </div>
-
-      {/* 统计信息栏 + 操作按钮 */}
-      <div className="flex items-center justify-between flex-shrink-0 gap-2 flex-wrap">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Shield className="w-4 h-4" />
+          <Shield className="h-4 w-4" />
           <span>
             {t('tools.loopback.stats', {
               total: stats.total,
@@ -349,27 +359,45 @@ export default function LoopbackManager() {
             })}
           </span>
           {hasChanges && (
-            <span className="text-xs text-primary font-medium ml-1">
+            <span className="ml-1 text-xs font-medium text-primary">
               ({exemptChanges.size} {t('tools.loopback.modified')})
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => applyBulk('all')}
+            disabled={saving || apps.length === 0}
+            className="h-7 px-2.5 text-xs"
+          >
+            {t('tools.loopback.exemptAll')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => applyBulk('none')}
+            disabled={saving || stats.exempt === 0}
+            className="h-7 px-2.5 text-xs"
+          >
+            {t('tools.loopback.clearAll')}
+          </Button>
           <Button
             variant={exemptOnly ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setExemptOnly((v) => !v)}
-            className="text-xs h-7 px-2.5"
+            onClick={() => setExemptOnly((value) => !value)}
+            className="h-7 px-2.5 text-xs"
             title={exemptOnly ? t('tools.loopback.showAll') : t('tools.loopback.exemptOnly')}
           >
-            <Filter className="w-3.5 h-3.5 mr-1" />
+            <Filter className="mr-1 h-3.5 w-3.5" />
             {exemptOnly ? t('tools.loopback.showAll') : t('tools.loopback.exemptOnly')}
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={selectAll}
-            className="text-xs h-7 px-2.5"
+            className="h-7 px-2.5 text-xs"
           >
             {t('tools.loopback.selectAll')}
           </Button>
@@ -377,7 +405,7 @@ export default function LoopbackManager() {
             variant="ghost"
             size="sm"
             onClick={deselectAll}
-            className="text-xs h-7 px-2.5"
+            className="h-7 px-2.5 text-xs"
           >
             {t('tools.loopback.deselectAll')}
           </Button>
@@ -385,37 +413,21 @@ export default function LoopbackManager() {
             variant="ghost"
             size="sm"
             onClick={loadApps}
-            className="text-xs h-7 w-7 p-0"
+            className="h-7 w-7 p-0 text-xs"
             title={t('tools.loopback.retry')}
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={openExternalTool}
-            disabled={openingTool}
-            className="text-xs h-7 px-2.5"
-            title={t('tools.loopback.openExternalToolHint')}
-          >
-            {openingTool ? (
-              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-            ) : (
-              <ExternalLink className="w-3.5 h-3.5 mr-1" />
-            )}
-            {t('tools.loopback.openExternalTool')}
+            <RefreshCw className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
 
-      {/* 搜索栏 */}
       <div className="relative flex-shrink-0">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder={t('tools.loopback.searchPlaceholder')}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-9 h-9"
+          className="h-9 pl-9"
         />
         {(searchQuery.trim() || exemptOnly) && (
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -424,32 +436,16 @@ export default function LoopbackManager() {
         )}
       </div>
 
-      {/* 应用列表 */}
-      <div
-        className="overflow-y-auto max-h-[380px] rounded-xl custom-scrollbar"
-        style={{ WebkitFontSmoothing: 'antialiased' }}
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl custom-scrollbar">
         <div className="flex flex-col p-1">
           {filteredApps.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Search className="w-8 h-8 mb-2 opacity-40" />
+              <Search className="mb-2 h-8 w-8 opacity-40" />
               <p className="text-sm">
                 {apps.length === 0
                   ? t('tools.loopback.empty')
                   : t('tools.loopback.noResults')}
               </p>
-              {toolAvailable && (
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="mt-2"
-                  onClick={openExternalTool}
-                  disabled={openingTool}
-                >
-                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                  {t('tools.loopback.openExternalTool')}
-                </Button>
-              )}
             </div>
           ) : (
             filteredApps.map((app) => {
@@ -459,7 +455,7 @@ export default function LoopbackManager() {
                 <div
                   key={app.sid}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors rounded-lg',
+                    'flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
                     'hover:bg-accent/50',
                     isChanged && 'bg-primary/5'
                   )}
@@ -470,23 +466,23 @@ export default function LoopbackManager() {
                     onCheckedChange={() => toggleExemption(app.sid, isExempt)}
                     className="flex-shrink-0"
                   />
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       {isExempt ? (
-                        <ShieldCheck className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+                        <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
                       ) : (
-                        <ShieldX className="w-3.5 h-3.5 text-muted-foreground/30 flex-shrink-0" />
+                        <ShieldX className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/30" />
                       )}
-                      <span className="text-sm font-medium truncate">
+                      <span className="truncate text-sm font-medium">
                         {app.displayName}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground/60 truncate mt-0.5 pl-5">
+                    <p className="mt-0.5 truncate pl-5 text-xs text-muted-foreground/60">
                       {app.packageFamilyName}
                     </p>
                   </div>
                   {isChanged && (
-                    <span className="text-[11px] text-primary font-medium flex-shrink-0 px-1.5 py-0.5 rounded-md bg-primary/10">
+                    <span className="flex-shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
                       {t('tools.loopback.modified')}
                     </span>
                   )}
@@ -497,32 +493,23 @@ export default function LoopbackManager() {
         </div>
       </div>
 
-      {/* 保存按钮 */}
       <button
         onClick={saveConfig}
         disabled={saving || !hasChanges}
-        className="w-full flex-shrink-0 relative inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-60 overflow-hidden text-white h-10 px-5 hover:brightness-110"
+        className="h-10 w-full flex-shrink-0 relative inline-flex items-center justify-center overflow-hidden whitespace-nowrap rounded-xl px-5 text-sm font-medium text-white transition-all hover:brightness-110 disabled:pointer-events-none disabled:opacity-60"
         style={{
           backgroundColor: themeColor,
           boxShadow: `0 16px 36px -18px ${themeColor}70`,
         }}
-        onMouseEnter={(e) => {
-          if (!e.currentTarget.disabled) {
-            e.currentTarget.style.boxShadow = `0 20px 44px -16px ${themeColor}90`;
-          }
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.boxShadow = `0 16px 36px -18px ${themeColor}70`;
-        }}
       >
         {saving ? (
           <>
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             {t('tools.loopback.saving')}
           </>
         ) : (
           <>
-            <Save className="w-4 h-4 mr-2" />
+            <Save className="mr-2 h-4 w-4" />
             {t('tools.loopback.save')}
             {hasChanges && (
               <span className="ml-1.5 text-xs opacity-80">({exemptChanges.size})</span>

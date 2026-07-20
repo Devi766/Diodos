@@ -918,17 +918,17 @@ export default function ToolsPage() {
 
       {/* UWP 回环豁免管理对话框 */}
       <Dialog open={loopbackDialogOpen} onOpenChange={setLoopbackDialogOpen}>
-        <DialogContent className="sm:max-w-[680px] max-h-[85vh] flex flex-col overflow-hidden p-0">
-          <DialogHeader className="px-6 pt-6 pb-2 flex-shrink-0">
+        <DialogContent className="flex max-h-[85vh] w-[min(680px,calc(100vw-2rem))] flex-col overflow-hidden p-0 sm:max-w-[680px]">
+          <DialogHeader className="flex-shrink-0 px-6 pb-2 pt-6">
             <DialogTitle className="flex items-center gap-2">
-              <NetworkIcon className="w-5 h-5" /> {t('tools.loopback.dialogTitle')}
+              <NetworkIcon className="h-5 w-5" /> {t('tools.loopback.dialogTitle')}
             </DialogTitle>
             <DialogDescription>
               {t('tools.loopback.dialogDescription')}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="px-6 pb-6 flex-1 min-h-0 overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-hidden px-6 pb-6">
             <LoopbackManager />
           </div>
         </DialogContent>
