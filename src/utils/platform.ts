@@ -47,16 +47,27 @@ export const getRuntimePlatform = async (): Promise<RuntimePlatform> => {
 export const applyPlatformBodyClass = (platform: RuntimePlatform) => {
   if (typeof document === 'undefined') return;
 
-  document.body.classList.remove(...PLATFORM_BODY_CLASSES);
+  const roots = [document.documentElement, document.body].filter(Boolean);
+  for (const root of roots) {
+    root.classList.remove(...PLATFORM_BODY_CLASSES);
+  }
 
+  let platformClass: (typeof PLATFORM_BODY_CLASSES)[number] | null = null;
   if (platform === 'win32') {
-    document.body.classList.add('platform-windows');
+    platformClass = 'platform-windows';
   } else if (platform === 'darwin') {
-    document.body.classList.add('platform-darwin');
+    platformClass = 'platform-darwin';
   } else if (platform === 'linux') {
-    document.body.classList.add('platform-linux');
+    platformClass = 'platform-linux';
+  }
+
+  if (platformClass) {
+    for (const root of roots) {
+      root.classList.add(platformClass);
+    }
   }
 
   document.body.dataset.platform = platform;
+  document.documentElement.dataset.platform = platform;
 };
 

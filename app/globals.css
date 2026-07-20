@@ -127,6 +127,11 @@
     background: transparent !important;
   }
 
+  html.platform-darwin,
+  html.platform-darwin body {
+    background: transparent !important;
+  }
+
   /* macOS solid 模式使用纯色背景 */
   body.platform-darwin.appearance-solid {
     background: #e5e7eb !important;
@@ -136,26 +141,149 @@
     background: #1a1a1a !important;
   }
 
-  /* macOS 下的弹框和下拉菜单使用半透明背景以支持毛玻璃效果 */
+  /*
+   * macOS glass tokens: dark mode defaults elsewhere force opaque panels which
+   * completely hide NSVisualEffectView. Keep surfaces translucent so the
+   * system under-window vibrancy can show through (Electron parity).
+   */
   body.platform-darwin:not(.appearance-solid) {
-    --popover: 0 0% 100% / 0.75;
+    --background: 214 40% 96% / 0;
+    --card: 0 0% 100% / 0.52;
+    --popover: 0 0% 100% / 0.68;
+    --secondary: 214 59% 94% / 0.42;
+    --muted: 216 33% 92% / 0.35;
+    --accent: 212 75% 88% / 0.42;
+    --border: 210 25% 88% / 0.38;
+    --input: 210 25% 88% / 0.32;
+    --glass-surface: 0 0% 100% / 0.42;
+    --glass-border: 210 30% 88% / 0.34;
+    --glass-shadow: 217 61% 25% / 0.12;
+    --glass-highlight: 0 0% 100% / 0.38;
+    --sidebar-surface: 210 28% 96% / 0.38;
+    --sidebar-border: 210 32% 86% / 0.3;
+    --control-surface: 0 0% 100% / 0.4;
+    --panel-hover: 212 80% 96% / 0.55;
+    --glass-blur: 28px;
   }
 
-  body.platform-darwin:not(.appearance-solid).theme-dark {
-    --popover: 0 0% 14% / 0.65;
-    --card: 0 0% 16% / 0.75;
+  body.platform-darwin:not(.appearance-solid).theme-dark,
+  body.platform-darwin:not(.appearance-solid).dark,
+  html.dark body.platform-darwin:not(.appearance-solid) {
+    --background: 222 37% 7% / 0;
+    --card: 0 0% 16% / 0.42;
+    --popover: 0 0% 14% / 0.55;
+    --secondary: 0 0% 20% / 0.38;
+    --muted: 0 0% 22% / 0.32;
+    --accent: 204 45% 28% / 0.36;
+    --border: 0 0% 100% / 0.12;
+    --input: 0 0% 24% / 0.3;
+    --glass-surface: 0 0% 12% / 0.36;
+    --glass-border: 0 0% 100% / 0.1;
+    --glass-shadow: 220 75% 6% / 0.35;
+    --glass-highlight: 0 0% 100% / 0.08;
+    --sidebar-surface: 0 0% 10% / 0.34;
+    --sidebar-border: 0 0% 100% / 0.1;
+    --control-surface: 0 0% 14% / 0.36;
+    --panel-hover: 210 70% 50% / 0.18;
+    --glass-blur: 36px;
   }
 
-  /* macOS 深色模式下的卡片和菜单背景使用半透明 */
-  body.platform-darwin:not(.appearance-solid).theme-dark .dark\:bg-\[\#2a2a2a\] {
-    background-color: rgb(1 1 1 / 18%) !important;
+  /* macOS overlay titlebar: leave room for traffic lights and avoid double spacing */
+  body.platform-darwin .platform-shell {
+    /* traffic lights + brand row; keep content under the overlay chrome */
+    padding-top: 2.5rem !important;
+  }
+
+  body.platform-darwin .shell-brand {
+    /* Align brand with traffic lights (y≈18) instead of stacking extra top padding */
+    padding-top: 0.15rem !important;
+    min-height: 2rem;
+  }
+
+  body.platform-darwin .glass-titlebar {
+    height: 2.5rem;
+    background: transparent !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    pointer-events: none; /* let page controls receive clicks under the drag strip */
+  }
+
+  body.platform-darwin .glass-titlebar[data-tauri-drag-region] {
+    pointer-events: auto;
+  }
+
+  /* Keep content clear of traffic lights when sidebar is collapsed */
+  body.platform-darwin aside .shell-brand {
+    min-height: 2rem;
+    padding-left: 0.25rem;
+  }
+
+  /* Sidebar brand logo should not look oversized next to traffic lights */
+  body.platform-darwin .shell-brand img {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  /* macOS 深色模式下的硬编码深色面改为半透明，避免挡住 vibrancy */
+  body.platform-darwin:not(.appearance-solid).theme-dark .dark\:bg-\[\#2a2a2a\],
+  body.platform-darwin:not(.appearance-solid).theme-dark .dark\:bg-\[\#1f1f1f\],
+  body.platform-darwin:not(.appearance-solid).theme-dark .dark\:bg-\[\#1a1a1a\] {
+    background-color: rgb(20 20 20 / 34%) !important;
+  }
+
+  body.platform-darwin:not(.appearance-solid) .bg-white,
+  body.platform-darwin:not(.appearance-solid) .bg-background {
+    background-color: transparent !important;
   }
 
   /* macOS 下为弹框和下拉菜单添加高斯模糊 */
   body.platform-darwin:not(.appearance-solid) [role="dialog"],
-  body.platform-darwin:not(.appearance-solid) [role="menu"] {
+  body.platform-darwin:not(.appearance-solid) [role="menu"],
+  body.platform-darwin:not(.appearance-solid) [data-radix-popper-content-wrapper] {
     backdrop-filter: blur(40px) saturate(180%);
     -webkit-backdrop-filter: blur(40px) saturate(180%);
+  }
+
+  /* 面板 / 侧栏在 macOS 上走系统毛玻璃，而不是再叠一层重 blur */
+  body.platform-darwin:not(.appearance-solid) .glass-panel,
+  body.platform-darwin:not(.appearance-solid) .glass-sidebar,
+  body.platform-darwin:not(.appearance-solid) .glass-content-plane,
+  body.platform-darwin:not(.appearance-solid) .glass-app-shell,
+  body.platform-darwin:not(.appearance-solid) .card-surface {
+    backdrop-filter: saturate(160%);
+    -webkit-backdrop-filter: saturate(160%);
+  }
+
+  body.platform-darwin:not(.appearance-solid) .glass-sidebar {
+    border-radius: 22px;
+  }
+
+  body.platform-darwin:not(.appearance-solid) .glass-panel,
+  body.platform-darwin:not(.appearance-solid) .glass-content-plane {
+    border-radius: 20px;
+  }
+
+  body.platform-darwin:not(.appearance-solid) .glass-app-shell {
+    border-radius: 28px;
+  }
+
+  /*
+   * Windows keeps opaque-ish glass tokens for mica/acrylic; macOS plain pages
+   * previously had no content shell at all. Keep Windows content plane light
+   * enough not to look like a solid white slab when glass-content-plane is on.
+   */
+  body.platform-windows:not(.appearance-solid) .glass-content-plane {
+    background: hsl(var(--glass-surface));
+    border-color: hsl(var(--glass-border));
+  }
+
+  body.platform-darwin.appearance-solid .glass-content-plane,
+  body.platform-darwin.appearance-solid .glass-sidebar,
+  body.platform-darwin.appearance-solid .glass-panel {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   /* 其他非 Windows 平台使用渐变背景 */

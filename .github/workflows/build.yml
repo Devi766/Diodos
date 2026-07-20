@@ -126,7 +126,7 @@ jobs:
 
       - name: Build Tauri bundle
         if: runner.os != 'macOS'
-        run: npm run tauri -- build --bundles ${{ matrix.bundles }}
+        run: npm run tauri:build -- --bundles ${{ matrix.bundles }}
 
       - name: Build Tauri bundle
         if: runner.os == 'macOS'
@@ -138,7 +138,7 @@ jobs:
             TARGET_ARGS=(--target "${{ matrix.rust_target }}")
           fi
 
-          if npm run tauri -- build --bundles "${{ matrix.bundles }}" "${TARGET_ARGS[@]}"; then
+          if npm run tauri:build -- --bundles "${{ matrix.bundles }}" "${TARGET_ARGS[@]}"; then
             exit 0
           fi
 

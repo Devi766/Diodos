@@ -33,6 +33,7 @@ import {
 } from '@/utils/update-check';
 import { preloadRouteData } from '@/services/app-data-preload';
 import { preloadRouteModule } from '@/services/route-preload';
+import { getBrowserPlatform, getRuntimePlatform } from '@/utils/platform';
 
 type CompatWarningDetail = {
   method?: string;
@@ -49,7 +50,7 @@ declare global {
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.2.9';
+const FALLBACK_APP_VERSION = '0.3.0';
 const ENABLE_IDLE_ROUTE_MODULE_PRELOAD = false;
 
 const normalizeVersionLabel = (value: unknown): string => {
@@ -78,6 +79,7 @@ export default function Layout({ children }: LayoutProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [isMacShell, setIsMacShell] = useState(() => getBrowserPlatform() === 'darwin');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
       return false;
@@ -154,6 +156,19 @@ export default function Layout({ children }: LayoutProps) {
   // 避免 SSR hydration 不匹配
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    setIsMacShell(getBrowserPlatform() === 'darwin');
+    void getRuntimePlatform().then((platform) => {
+      if (!disposed) {
+        setIsMacShell(platform === 'darwin');
+      }
+    });
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1205,17 +1220,18 @@ export default function Layout({ children }: LayoutProps) {
       <div className="relative h-screen overflow-hidden bg-transparent">
         <TitleBar />
 
-        <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
+        <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5 platform-shell">
         {/* Sidebar - Desktop */}
         <aside
           className={classNames(
             'hidden md:flex h-full flex-col shrink-0 px-0 transition-[width] duration-300 ease-out',
+            isMacShell && 'glass-sidebar',
             sidebarCollapsed ? 'w-[70px]' : 'w-[220px]'
           )}
         >
           <div
             className={classNames(
-              'flex items-center px-3 pt-6 pb-4 transition-all duration-300',
+              'flex items-center px-3 pb-4 transition-all duration-300 shell-brand',
               sidebarCollapsed ? 'justify-center' : 'gap-3'
             )}
           >
@@ -1313,8 +1329,16 @@ export default function Layout({ children }: LayoutProps) {
           <div
             className={classNames(
               'flex flex-1 flex-col min-w-0',
-              isFullHeight ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar'
+              isFullHeight ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar',
+              // Non-plain pages keep the shared glass content shell (main parity).
+              // On macOS plain pages also get a translucent rounded plane so the
+              // system under-window vibrancy can show through consistently.
+              {
+                'glass-panel card-surface rounded-2xl': !isPlainView,
+                'glass-content-plane': isMacShell && isPlainView,
+              }
             )}
+            data-hoverable={!isPlainView ? 'false' : undefined}
           >
             <main className={classNames('relative flex-1 min-w-0', isFullHeight && 'h-full overflow-hidden')}>
               <div

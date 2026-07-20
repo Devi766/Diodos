@@ -261,6 +261,23 @@ pub fn run() {
                     .unwrap_or_else(|| "dynamic".to_string());
                 let _ = apply_appearance_mode_for_app(app.handle(), &window, &mode);
 
+                // Re-apply after the webview paints. macOS vibrancy can be lost if
+                // applied too early, and theme class changes may arrive a tick later.
+                let refresh_app = app.handle().clone();
+                let refresh_mode = mode.clone();
+                tauri::async_runtime::spawn(async move {
+                    for delay_ms in [40_u64, 160, 480] {
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        if let Some(window) = refresh_app.get_webview_window("main") {
+                            let mode = setting(&refresh_app, "appearanceMode", json!(refresh_mode.clone()))
+                                .ok()
+                                .and_then(|value| value.as_str().map(ToString::to_string))
+                                .unwrap_or_else(|| refresh_mode.clone());
+                            let _ = apply_appearance_mode_for_app(&refresh_app, &window, &mode);
+                        }
+                    }
+                });
+
                 let close_app = app.handle().clone();
                 window.on_window_event(move |event| match event {
                     WindowEvent::CloseRequested { api, .. } => {
@@ -282,9 +299,24 @@ pub fn run() {
                             schedule_auto_lightweight_timer(&close_app, delay);
                         }
                     }
-                    WindowEvent::Resized(_) => {
+                    WindowEvent::Resized(_) | WindowEvent::Focused(true) => {
                         if let Some(window) = close_app.get_webview_window("main") {
                             emit_window_state(&window);
+                            // Keep vibrancy alive after focus/resize (macOS can drop it).
+                            let mode = setting(&close_app, "appearanceMode", json!("dynamic"))
+                                .ok()
+                                .and_then(|value| value.as_str().map(ToString::to_string))
+                                .unwrap_or_else(|| "dynamic".to_string());
+                            let _ = apply_appearance_mode_for_app(&close_app, &window, &mode);
+                        }
+                    }
+                    WindowEvent::ThemeChanged(_) => {
+                        if let Some(window) = close_app.get_webview_window("main") {
+                            let mode = setting(&close_app, "appearanceMode", json!("dynamic"))
+                                .ok()
+                                .and_then(|value| value.as_str().map(ToString::to_string))
+                                .unwrap_or_else(|| "dynamic".to_string());
+                            let _ = apply_appearance_mode_for_app(&close_app, &window, &mode);
                         }
                     }
                     _ => {}

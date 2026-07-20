@@ -1063,6 +1063,7 @@
     "tunPermissionDescMac": "在 macOS 上，TUN 模式需要授予内核 root 权限。点击下方按钮并输入管理员密码。",
     "tunPermissionDescLinux": "在 Linux 上，TUN 模式需要授予内核 root 权限。",
     "grantPermission": "授予 TUN 模式权限",
+    "revokePermission": "撤销授权",
     "windowsAdminRequired": "Windows 平台需要以管理员身份运行应用才能使用 TUN 模式",
     "autoDns": "自动设置 DNS",
     "autoDnsDesc": "macOS 需要自动设置 DNS 以确保 TUN 模式正常工作",

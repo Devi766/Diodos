@@ -610,7 +610,29 @@ const TunSettings: React.FC = () => {
               )}
             </div>
 
-
+            {(isMac || isLinux) && (
+              <div className="flex items-center gap-2 shrink-0">
+                {permissionStatus === 'granted' ? (
+                  <button
+                    type="button"
+                    className="py-1.5 px-3 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a] transition-colors disabled:opacity-50"
+                    onClick={handleRevokePermissions}
+                    disabled={loading}
+                  >
+                    {loading ? t('tunSettings.saving') : t('tunSettings.revokePermission')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="py-1.5 px-3 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white shadow-sm transition-colors disabled:opacity-50"
+                    onClick={handleGrantPermissions}
+                    disabled={loading}
+                  >
+                    {loading ? t('tunSettings.saving') : t('tunSettings.grantPermission')}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

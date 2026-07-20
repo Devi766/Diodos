@@ -1064,6 +1064,7 @@
     "tunPermissionDescMac": "On macOS, TUN mode requires granting root permission to the kernel. Click the button below and enter your administrator password.",
     "tunPermissionDescLinux": "On Linux, TUN mode requires granting root permission to the kernel.",
     "grantPermission": "Grant TUN Mode Permission",
+    "revokePermission": "Revoke Permission",
     "windowsAdminRequired": "Windows requires running the app as administrator to use TUN mode",
     "autoDns": "Auto DNS",
     "autoDnsDesc": "macOS requires auto DNS setup to ensure TUN mode works properly",

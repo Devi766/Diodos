@@ -96,6 +96,12 @@ pub(crate) fn default_mihomo_executable(app: &AppHandle) -> Result<PathBuf, Stri
 }
 
 pub(crate) fn find_mihomo_executable(app: &AppHandle) -> Result<PathBuf, String> {
+    // macOS TUN requires the setuid root kernel under /Library/Application Support/Flycast.
+    // Prefer it once authorized so runtime start actually uses the elevated binary.
+    if let Some(path) = crate::tun_service::macos_authorized_kernel_path() {
+        return Ok(path);
+    }
+
     let custom = custom_kernel_path(app)?.map(PathBuf::from);
     let selected = core_path(app, None, None)?;
     // Prefer custom/selected when present; fall back to default discovery so the

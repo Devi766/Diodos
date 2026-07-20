@@ -96,12 +96,15 @@ export default function TitleBar() {
     } catch {}
   }, [electron]);
 
-  // macOS 上隐藏窗口控制按钮（使用原生红绿灯按钮）
+  // macOS: keep a compact drag region for overlay titlebar / traffic lights.
+  // Native traffic lights are shown by Tauri (titleBarStyle=Overlay via tauri.macos.conf.json).
   if (isMacOS) {
     return (
       <div
-        className="glass-titlebar fixed top-0 left-0 right-0 z-50 flex h-12 items-center justify-end px-2"
+        className="glass-titlebar fixed top-0 left-0 right-0 z-50 h-10"
+        data-tauri-drag-region
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        aria-hidden
       />
     );
   }

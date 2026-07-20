@@ -16,6 +16,8 @@ use tauri::{
     window::{Color, Effect, EffectsBuilder},
     AppHandle, Emitter, Manager, Theme, WebviewWindow,
 };
+#[cfg(target_os = "macos")]
+use tauri::window::EffectState;
 use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::storage::{set_setting, setting};
@@ -449,6 +451,67 @@ fn apply_effectful_appearance(
     }
 }
 
+/// Electron `applyMacOSBackdrop`: always `under-window` vibrancy for non-solid modes.
+///
+/// Also applies a macOS-only corner radius so the window chrome matches the
+/// system rounded look instead of a hard rectangle over vibrancy.
+#[cfg(target_os = "macos")]
+fn apply_macos_vibrancy(window: &WebviewWindow, is_dark: bool) -> Result<(), String> {
+    // Clear any previous material first (Electron calls setVibrancy(null)).
+    let _ = window.set_effects(None);
+    window
+        .set_background_color(Some(Color(0, 0, 0, 0)))
+        .map_err(|err| err.to_string())?;
+
+    // Prefer UnderWindowBackground (maps to NSVisualEffectMaterial::UnderWindowBackground).
+    // Fall back through a few materials that still look like system glass.
+    // radius ≈ modern macOS window corner; state Active keeps material visible when unfocused.
+    let candidates = [
+        ("under-window", Effect::UnderWindowBackground),
+        ("under-page", Effect::UnderPageBackground),
+        ("sidebar", Effect::Sidebar),
+        ("header-view", Effect::HeaderView),
+        ("popover", Effect::Popover),
+        ("hud-window", Effect::HudWindow),
+        ("menu", Effect::Menu),
+        ("content-background", Effect::ContentBackground),
+    ];
+
+    for (label, effect) in candidates {
+        let effects = EffectsBuilder::new()
+            .effect(effect)
+            .state(EffectState::Active)
+            .radius(16.0)
+            .build();
+        match window.set_effects(effects) {
+            Ok(()) => {
+                eprintln!("[appearance] macOS vibrancy applied: {label} (radius=16, active)");
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("[appearance] macOS vibrancy {label} unavailable: {error}");
+            }
+        }
+    }
+
+    // Match Electron fallback tint when vibrancy is unavailable.
+    // dark  => #e60f172a, light => #fcffffff
+    let fallback = if is_dark {
+        Color(15, 23, 42, 0xe6)
+    } else {
+        Color(255, 255, 255, 0xfc)
+    };
+    eprintln!("[appearance] macOS vibrancy failed, using translucent solid fallback");
+    window
+        .set_background_color(Some(fallback))
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_macos_vibrancy(_window: &WebviewWindow, _is_dark: bool) -> Result<(), String> {
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub(crate) fn apply_appearance_mode(window: &WebviewWindow, mode: &str) -> Result<(), String> {
     apply_appearance_mode_for_theme(window, mode, None)
@@ -482,46 +545,69 @@ fn apply_appearance_mode_for_theme(
         Color(255, 255, 255, 0x99)
     };
 
-    match mode {
-        "solid" => apply_solid_appearance(window, is_dark),
-        "acrylic" => apply_effectful_appearance(
-            window,
-            EffectsBuilder::new()
-                .effect(Effect::Acrylic)
-                .color(acrylic_color),
-            "acrylic",
-            is_dark,
-        ),
-        "custom" => {
-            // Custom mode paints its own image from the frontend. Keep the window
-            // transparent, but never leave a previous mica/acrylic effect active.
-            let _ = window.set_effects(None);
-            window
-                .set_background_color(Some(Color(0, 0, 0, 0)))
-                .map_err(|err| err.to_string())
+    // macOS vibrancy: match Electron `setVibrancy('under-window')`.
+    // Requires macos-private-api. Keep the webview fully transparent so the
+    // system material can show through the glass UI layers.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.set_shadow(true);
+        return match mode {
+            "solid" => apply_solid_appearance(window, is_dark),
+            "custom" => {
+                let _ = window.set_effects(None);
+                window
+                    .set_background_color(Some(Color(0, 0, 0, 0)))
+                    .map_err(|err| err.to_string())
+            }
+            // dynamic / acrylic share the same under-window vibrancy on macOS
+            // (Electron does not distinguish them for NSVisualEffectView).
+            _ => apply_macos_vibrancy(window, is_dark),
+        };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        match mode {
+            "solid" => apply_solid_appearance(window, is_dark),
+            "acrylic" => apply_effectful_appearance(
+                window,
+                EffectsBuilder::new()
+                    .effect(Effect::Acrylic)
+                    .color(acrylic_color),
+                "acrylic",
+                is_dark,
+            ),
+            "custom" => {
+                // Custom mode paints its own image from the frontend. Keep the window
+                // transparent, but never leave a previous mica/acrylic effect active.
+                let _ = window.set_effects(None);
+                window
+                    .set_background_color(Some(Color(0, 0, 0, 0)))
+                    .map_err(|err| err.to_string())
+            }
+            // Force dark/light material variants. Generic Tabbed/Mica follow the OS theme
+            // and are the root cause of "dark UI on light window background".
+            _ if is_dark => apply_effectful_appearance(
+                window,
+                EffectsBuilder::new().effects([
+                    Effect::TabbedDark,
+                    Effect::MicaDark,
+                    Effect::Blur,
+                ]),
+                "dynamic-dark",
+                true,
+            ),
+            _ => apply_effectful_appearance(
+                window,
+                EffectsBuilder::new().effects([
+                    Effect::TabbedLight,
+                    Effect::MicaLight,
+                    Effect::Blur,
+                ]),
+                "dynamic-light",
+                false,
+            ),
         }
-        // Force dark/light material variants. Generic Tabbed/Mica follow the OS theme
-        // and are the root cause of "dark UI on light window background".
-        _ if is_dark => apply_effectful_appearance(
-            window,
-            EffectsBuilder::new().effects([
-                Effect::TabbedDark,
-                Effect::MicaDark,
-                Effect::Blur,
-            ]),
-            "dynamic-dark",
-            true,
-        ),
-        _ => apply_effectful_appearance(
-            window,
-            EffectsBuilder::new().effects([
-                Effect::TabbedLight,
-                Effect::MicaLight,
-                Effect::Blur,
-            ]),
-            "dynamic-light",
-            false,
-        ),
     }
 }
 
