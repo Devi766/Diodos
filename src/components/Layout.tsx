@@ -156,17 +156,44 @@ export default function Layout({ children }: LayoutProps) {
     setMounted(true);
   }, []);
 
+  // Transparent/acrylic WebView2 can stay blank until the first interaction.
+  // Force layout/paint passes on mount and when the window regains focus.
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const triggerResize = () => {
-      window.dispatchEvent(new Event('resize'));
+    const triggerPaint = () => {
+      try {
+        const root = document.documentElement;
+        root.style.transform = 'translateZ(0)';
+        void document.body?.offsetHeight;
+        window.dispatchEvent(new Event('resize'));
+        requestAnimationFrame(() => {
+          root.style.transform = '';
+          window.dispatchEvent(new Event('resize'));
+        });
+      } catch {
+        window.dispatchEvent(new Event('resize'));
+      }
     };
 
-    const timers = [80, 220, 520].map((delay) => window.setTimeout(triggerResize, delay));
+    const timers = [0, 80, 220, 520, 1200].map((delay) =>
+      window.setTimeout(triggerPaint, delay)
+    );
+
+    const onFocus = () => triggerPaint();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        triggerPaint();
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       timers.forEach((id) => window.clearTimeout(id));
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 

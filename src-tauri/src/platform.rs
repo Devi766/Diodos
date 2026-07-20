@@ -52,6 +52,34 @@ pub(crate) fn apply_windows_window_icons(window: &WebviewWindow) {
 #[cfg(not(windows))]
 pub(crate) fn apply_windows_window_icons(_window: &WebviewWindow) {}
 
+/// Force the first WebView2 paint after transparent/acrylic window setup.
+///
+/// On some Windows builds the main content stays blank until the user clicks
+/// (input/focus triggers a composition pass). Nudging show/focus + a layout
+/// reflow after startup makes the dashboard appear without interaction.
+pub(crate) fn kick_window_paint(window: &WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    // Tiny reflow: WebView2 often composites the first transparent frame only
+    // after a resize/focus/input event.
+    let _ = window.eval(
+        r#"(function () {
+  try {
+    var root = document.documentElement;
+    root.style.transform = 'translateZ(0)';
+    void document.body && document.body.offsetHeight;
+    window.dispatchEvent(new Event('resize'));
+    requestAnimationFrame(function () {
+      root.style.transform = '';
+      window.dispatchEvent(new Event('resize'));
+      try { window.dispatchEvent(new Event('focus')); } catch (e) {}
+    });
+  } catch (e) {}
+})();"#,
+    );
+}
+
 #[cfg(windows)]
 unsafe fn set_win_icons_from_resource(hwnd: isize) {
     type HINSTANCE = isize;

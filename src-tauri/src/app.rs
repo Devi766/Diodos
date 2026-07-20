@@ -11,8 +11,8 @@ use crate::core_lifecycle_commands::{
 };
 use crate::platform::{
     apply_appearance_mode_for_app, apply_windows_window_icons, emit_window_state,
-    handle_compat_call as handle_platform_compat_call, schedule_auto_lightweight_timer,
-    set_system_proxy, show_main_window,
+    handle_compat_call as handle_platform_compat_call, kick_window_paint,
+    schedule_auto_lightweight_timer, set_system_proxy, show_main_window,
 };
 use crate::runtime_config::mihomo_mixed_port;
 use crate::state::AppState;
@@ -264,12 +264,17 @@ pub fn run() {
                 // and default_window_icon only reads ICO entry[0]. Apply both sizes
                 // from the embedded multi-frame ICO so the taskbar stays sharp.
                 apply_windows_window_icons(&window);
+                // Transparent + acrylic windows on WebView2 sometimes stay blank
+                // until the first user click. Force an initial paint/layout pass.
+                kick_window_paint(&window);
 
                 let mode = setting(app.handle(), "appearanceMode", json!("dynamic"))
                     .ok()
                     .and_then(|value| value.as_str().map(ToString::to_string))
                     .unwrap_or_else(|| "dynamic".to_string());
                 let _ = apply_appearance_mode_for_app(app.handle(), &window, &mode);
+                // Appearance may reset transparency; paint again after effects.
+                kick_window_paint(&window);
 
                 // Re-apply after the webview paints. macOS vibrancy can be lost if
                 // applied too early, and theme class changes may arrive a tick later.
@@ -277,7 +282,7 @@ pub fn run() {
                 let refresh_app = app.handle().clone();
                 let refresh_mode = mode.clone();
                 tauri::async_runtime::spawn(async move {
-                    for delay_ms in [40_u64, 160, 480] {
+                    for delay_ms in [40_u64, 160, 480, 1200] {
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         if let Some(window) = refresh_app.get_webview_window("main") {
                             apply_windows_window_icons(&window);
@@ -286,6 +291,7 @@ pub fn run() {
                                 .and_then(|value| value.as_str().map(ToString::to_string))
                                 .unwrap_or_else(|| refresh_mode.clone());
                             let _ = apply_appearance_mode_for_app(&refresh_app, &window, &mode);
+                            kick_window_paint(&window);
                         }
                     }
                 });
@@ -320,6 +326,9 @@ pub fn run() {
                                 .and_then(|value| value.as_str().map(ToString::to_string))
                                 .unwrap_or_else(|| "dynamic".to_string());
                             let _ = apply_appearance_mode_for_app(&close_app, &window, &mode);
+                            // First focus often arrives before WebView2 has composed;
+                            // kick paint so the dashboard is not blank until a click.
+                            kick_window_paint(&window);
                         }
                     }
                     WindowEvent::ThemeChanged(_) => {

@@ -1113,6 +1113,7 @@ async fn dispatch_compat_call(
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
                 let helper = find_helper_executable(app)?;
+                // elevate=false first; install_helper_service auto-elevates on access denied.
                 match core_service::install_helper_service(&helper, false) {
                     Ok(_) => Ok(success(json!({ "message": "service installed" }))),
                     Err(error) => Ok(json!({ "success": false, "error": error })),
@@ -1124,6 +1125,7 @@ async fn dispatch_compat_call(
                 Ok(json!({ "success": false, "error": "当前平台不支持 Windows 服务" }))
             } else {
                 let helper = find_helper_executable(app)?;
+                // Uninstall requires SCM admin rights; helper path elevates via UAC.
                 match core_service::uninstall_helper_service(&helper) {
                     Ok(_) => Ok(success(json!({ "message": "service uninstalled" }))),
                     Err(error) => Ok(json!({ "success": false, "error": error })),

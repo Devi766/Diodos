@@ -76,7 +76,16 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     command.creation_flags(CREATE_NO_WINDOW);
     let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // sc.exe often prints "Access is denied." on stdout with a non-zero exit.
+        return Err(if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("{program} exited with status {}", output.status)
+        });
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -85,11 +94,68 @@ fn powershell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-fn helper_install_elevated_command(helper_path: &Path) -> String {
+fn helper_elevated_command(helper_path: &Path, arg: &str) -> String {
     format!(
-        "Start-Process -FilePath {} -ArgumentList '-install' -Verb RunAs -Wait",
-        powershell_quote(&helper_path.to_string_lossy())
+        "$p = Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -Wait -PassThru -WindowStyle Hidden; if ($null -eq $p) {{ exit 1223 }}; exit $p.ExitCode",
+        powershell_quote(&helper_path.to_string_lossy()),
+        powershell_quote(arg)
     )
+}
+
+fn run_powershell(command: &str) -> Result<String, String> {
+    command_output(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ],
+    )
+}
+
+fn looks_like_access_denied(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("access is denied")
+        || lower.contains("access denied")
+        || lower.contains("拒绝访问")
+        || lower.contains("error 5")
+        || lower.contains("(5)")
+        || lower.contains(" 5\n")
+        || lower.contains("service manager")
+        || lower.contains("1223")
+}
+
+fn elevate_helper_arg(helper_path: &Path, arg: &str) -> Result<(), String> {
+    let command = helper_elevated_command(helper_path, arg);
+    match run_powershell(&command) {
+        Ok(_) => Ok(()),
+        Err(error) if error.contains("1223") || error.is_empty() => {
+            Err("已取消管理员授权，无法修改 Helper 服务".to_string())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn elevate_sc_args(args: &[&str]) -> Result<String, String> {
+    // sc.exe needs admin for stop/start/delete against SCM.
+    let joined = args
+        .iter()
+        .map(|arg| powershell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    let command = format!(
+        "$p = Start-Process -FilePath 'sc.exe' -ArgumentList @({joined}) -Verb RunAs -Wait -PassThru -WindowStyle Hidden; if ($null -eq $p) {{ exit 1223 }}; exit $p.ExitCode"
+    );
+    match run_powershell(&command) {
+        Ok(output) => Ok(output),
+        Err(error) if error.contains("1223") || error.is_empty() => {
+            Err("已取消管理员授权，无法控制系统服务".to_string())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn install_helper_service(helper_path: &Path, elevated: bool) -> Result<(), String> {
@@ -98,22 +164,16 @@ pub fn install_helper_service(helper_path: &Path, elevated: bool) -> Result<(), 
     }
 
     if elevated {
-        let command = helper_install_elevated_command(helper_path);
-        command_output(
-            "powershell.exe",
-            &[
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &command,
-            ],
-        )?;
-    } else {
-        command_output(&helper_path.to_string_lossy(), &["-install"])?;
+        return elevate_helper_arg(helper_path, "-install");
     }
 
-    Ok(())
+    match command_output(&helper_path.to_string_lossy(), &["-install"]) {
+        Ok(_) => Ok(()),
+        Err(error) if looks_like_access_denied(&error) => {
+            elevate_helper_arg(helper_path, "-install")
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn uninstall_helper_service(helper_path: &Path) -> Result<(), String> {
@@ -121,8 +181,25 @@ pub fn uninstall_helper_service(helper_path: &Path) -> Result<(), String> {
         return Err("当前平台不支持 Windows Helper 服务".to_string());
     }
 
-    command_output(&helper_path.to_string_lossy(), &["-uninstall"])?;
-    Ok(())
+    // Prefer elevated uninstall first: SCM delete always needs admin, and a
+    // non-elevated attempt just produces a confusing Access Denied toast.
+    match elevate_helper_arg(helper_path, "-uninstall") {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            // Fall back to direct call in case the helper is already elevated /
+            // UAC auto-elevates the binary via manifest.
+            match command_output(&helper_path.to_string_lossy(), &["-uninstall"]) {
+                Ok(_) => Ok(()),
+                Err(direct_error) => {
+                    if looks_like_access_denied(&direct_error) {
+                        Err(error)
+                    } else {
+                        Err(direct_error)
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn helper_service_running_from_query(text: &str) -> bool {
@@ -157,7 +234,13 @@ pub fn ensure_helper_service_ready() -> Result<(), String> {
     }
 
     if !flags.running {
-        command_output("sc", &["start", HELPER_SERVICE_NAME])?;
+        match command_output("sc", &["start", HELPER_SERVICE_NAME]) {
+            Ok(_) => {}
+            Err(error) if looks_like_access_denied(&error) => {
+                elevate_sc_args(&["start", HELPER_SERVICE_NAME])?;
+            }
+            Err(error) => return Err(error),
+        }
     }
 
     for _ in 0..30 {
@@ -272,7 +355,13 @@ pub fn stop_helper_service() -> Result<String, String> {
         return Err("当前平台不支持 Windows Helper 服务".to_string());
     }
 
-    command_output("sc", &["stop", HELPER_SERVICE_NAME])
+    match command_output("sc", &["stop", HELPER_SERVICE_NAME]) {
+        Ok(output) => Ok(output),
+        Err(error) if looks_like_access_denied(&error) => {
+            elevate_sc_args(&["stop", HELPER_SERVICE_NAME])
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
