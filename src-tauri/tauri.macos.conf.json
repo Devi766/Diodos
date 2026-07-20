@@ -1,10 +1,19 @@
 {
+  "productName": "FlyClash",
   "app": {
     "macOSPrivateApi": true,
     "windows": [
       {
+        "title": "FlyClash",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 980,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
         "decorations": true,
         "transparent": true,
+        "backgroundColor": [0, 0, 0, 0],
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": {

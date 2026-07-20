@@ -10,7 +10,7 @@ use crate::core_lifecycle_commands::{
     refresh_active_config_after_override, schedule_mihomo_autostart, stop_mihomo_process,
 };
 use crate::platform::{
-    apply_appearance_mode_for_app, emit_window_state,
+    apply_appearance_mode_for_app, apply_windows_window_icons, emit_window_state,
     handle_compat_call as handle_platform_compat_call, schedule_auto_lightweight_timer,
     set_system_proxy, show_main_window,
 };
@@ -255,6 +255,16 @@ pub fn run() {
             });
 
             if let Some(window) = app.get_webview_window("main") {
+                // Force product branding even if a platform config overlay
+                // replaces the windows[] array without a title (Windows would
+                // otherwise fall back to the generic "Tauri App" shell name).
+                let _ = window.set_title("FlyClash");
+
+                // Windows taskbar uses ICON_BIG; Tauri set_icon only sets ICON_SMALL
+                // and default_window_icon only reads ICO entry[0]. Apply both sizes
+                // from the embedded multi-frame ICO so the taskbar stays sharp.
+                apply_windows_window_icons(&window);
+
                 let mode = setting(app.handle(), "appearanceMode", json!("dynamic"))
                     .ok()
                     .and_then(|value| value.as_str().map(ToString::to_string))
@@ -263,12 +273,14 @@ pub fn run() {
 
                 // Re-apply after the webview paints. macOS vibrancy can be lost if
                 // applied too early, and theme class changes may arrive a tick later.
+                // Also re-apply Windows icons once the HWND is fully ready.
                 let refresh_app = app.handle().clone();
                 let refresh_mode = mode.clone();
                 tauri::async_runtime::spawn(async move {
                     for delay_ms in [40_u64, 160, 480] {
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         if let Some(window) = refresh_app.get_webview_window("main") {
+                            apply_windows_window_icons(&window);
                             let mode = setting(&refresh_app, "appearanceMode", json!(refresh_mode.clone()))
                                 .ok()
                                 .and_then(|value| value.as_str().map(ToString::to_string))

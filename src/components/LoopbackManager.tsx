@@ -59,6 +59,10 @@ export default function LoopbackManager() {
   const [error, setError] = useState<string | null>(null);
   const [exemptOnly, setExemptOnly] = useState(false);
   const appsRef = useRef<LoopbackAppItem[]>([]);
+  // Serialize writes so row/checkbox double-fire or rapid clicks can't race
+  // NetworkIsolationSetAppContainerConfig (which returns ERROR_ACCESS_DENIED).
+  const persistChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const persistLockedRef = useRef(false);
 
   const friendlyError = useCallback(
     (error: unknown, fallback: string) => {
@@ -115,39 +119,60 @@ export default function LoopbackManager() {
         return false;
       }
 
-      const exemptSids = nextApps.filter((app) => app.isExempt).map((app) => app.sid);
-      try {
-        const result = await api.saveConfig(exemptSids);
-        if (result.success) {
-          appsRef.current = nextApps;
-          setApps(nextApps);
-          if (successMessage) {
-            toast.success(successMessage);
-          }
-          return true;
-        }
+      const run = async () => {
+        // Always persist from the latest desired state at execution time so a
+        // queued write doesn't overwrite a newer toggle with a stale SID set.
+        const snapshot = appsRef.current;
+        const exemptSids = snapshot
+          .filter((app) => app.isExempt)
+          .map((app) => app.sid)
+          .filter((sid) => typeof sid === 'string' && sid.trim().length > 0);
 
-        toast.error(
-          t('tools.loopback.saveError', {
-            error: friendlyError(result.error, t('tools.loopback.loadError')),
-          })
-        );
-        return false;
-      } catch (err: unknown) {
-        toast.error(
-          t('tools.loopback.saveError', {
-            error: friendlyError(err, t('tools.loopback.loadError')),
-          })
-        );
-        return false;
-      }
+        try {
+          const result = await api.saveConfig(exemptSids);
+          if (result.success) {
+            if (successMessage) {
+              toast.success(successMessage);
+            }
+            return true;
+          }
+
+          const rawError = friendlyError(result.error, t('tools.loopback.loadError'));
+          const needsElevation =
+            result.needsElevation === true ||
+            /拒绝访问|ACCESS_DENIED|failed:\s*5|管理员|UAC|提权/i.test(rawError);
+          toast.error(
+            t('tools.loopback.saveError', {
+              error: needsElevation
+                ? t('tools.loopback.needsElevation', { error: rawError })
+                : rawError,
+            })
+          );
+          return false;
+        } catch (err: unknown) {
+          toast.error(
+            t('tools.loopback.saveError', {
+              error: friendlyError(err, t('tools.loopback.loadError')),
+            })
+          );
+          return false;
+        }
+      };
+
+      // Chain saves; never run two SetAppContainerConfig calls in parallel.
+      const pending = persistChainRef.current.then(run, run);
+      persistChainRef.current = pending.then(
+        () => undefined,
+        () => undefined
+      );
+      return pending;
     },
     [friendlyError, t]
   );
 
   const toggleExemption = useCallback(
     async (sid: string) => {
-      if (savingSid || bulkSaving) return;
+      if (persistLockedRef.current || bulkSaving) return;
       const current = appsRef.current;
       const target = current.find((app) => app.sid === sid);
       if (!target) return;
@@ -155,9 +180,11 @@ export default function LoopbackManager() {
       const nextApps = current.map((app) =>
         app.sid === sid ? { ...app, isExempt: !app.isExempt } : app
       );
-      // Optimistic UI update.
+      // Optimistic UI update — also keep ref in sync so queued saves use it.
+      appsRef.current = nextApps;
       setApps(nextApps);
       setSavingSid(sid);
+      persistLockedRef.current = true;
       const ok = await persistExemptions(nextApps);
       if (!ok) {
         // Roll back on failure.
@@ -165,8 +192,9 @@ export default function LoopbackManager() {
         appsRef.current = current;
       }
       setSavingSid(null);
+      persistLockedRef.current = false;
     },
-    [bulkSaving, persistExemptions, savingSid]
+    [bulkSaving, persistExemptions]
   );
 
   const filteredApps = useMemo(() => {
@@ -193,42 +221,48 @@ export default function LoopbackManager() {
   }, [apps]);
 
   const selectAllVisible = useCallback(async () => {
-    if (bulkSaving || savingSid) return;
+    if (bulkSaving || persistLockedRef.current) return;
     const visible = new Set(filteredApps.map((app) => app.sid));
     const current = appsRef.current;
     const nextApps = current.map((app) =>
       visible.has(app.sid) ? { ...app, isExempt: true } : app
     );
+    appsRef.current = nextApps;
     setApps(nextApps);
     setBulkSaving(true);
+    persistLockedRef.current = true;
     const ok = await persistExemptions(nextApps);
     if (!ok) {
       setApps(current);
       appsRef.current = current;
     }
     setBulkSaving(false);
-  }, [bulkSaving, filteredApps, persistExemptions, savingSid]);
+    persistLockedRef.current = false;
+  }, [bulkSaving, filteredApps, persistExemptions]);
 
   const deselectAllVisible = useCallback(async () => {
-    if (bulkSaving || savingSid) return;
+    if (bulkSaving || persistLockedRef.current) return;
     const visible = new Set(filteredApps.map((app) => app.sid));
     const current = appsRef.current;
     const nextApps = current.map((app) =>
       visible.has(app.sid) ? { ...app, isExempt: false } : app
     );
+    appsRef.current = nextApps;
     setApps(nextApps);
     setBulkSaving(true);
+    persistLockedRef.current = true;
     const ok = await persistExemptions(nextApps);
     if (!ok) {
       setApps(current);
       appsRef.current = current;
     }
     setBulkSaving(false);
-  }, [bulkSaving, filteredApps, persistExemptions, savingSid]);
+    persistLockedRef.current = false;
+  }, [bulkSaving, filteredApps, persistExemptions]);
 
   const applyBulk = useCallback(
     async (mode: 'all' | 'none') => {
-      if (bulkSaving || savingSid) return;
+      if (bulkSaving || persistLockedRef.current) return;
       const confirmed = window.confirm(
         mode === 'all'
           ? t('tools.loopback.confirmExemptAll')
@@ -247,6 +281,7 @@ export default function LoopbackManager() {
             : null;
 
       setBulkSaving(true);
+      persistLockedRef.current = true;
       try {
         if (bulkMethod) {
           const result = await bulkMethod();
@@ -272,6 +307,7 @@ export default function LoopbackManager() {
             ...app,
             isExempt: mode === 'all',
           }));
+          appsRef.current = nextApps;
           setApps(nextApps);
           const ok = await persistExemptions(
             nextApps,
@@ -286,9 +322,10 @@ export default function LoopbackManager() {
         }
       } finally {
         setBulkSaving(false);
+        persistLockedRef.current = false;
       }
     },
-    [bulkSaving, friendlyError, loadApps, persistExemptions, savingSid, t]
+    [bulkSaving, friendlyError, loadApps, persistExemptions, t]
   );
 
   if (loading) {
@@ -322,7 +359,7 @@ export default function LoopbackManager() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Shield className="h-4 w-4" />
@@ -414,7 +451,7 @@ export default function LoopbackManager() {
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-xl custom-scrollbar">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl custom-scrollbar">
         <div className="flex flex-col p-1">
           {filteredApps.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -443,6 +480,11 @@ export default function LoopbackManager() {
                   <Checkbox
                     checked={app.isExempt}
                     disabled={isSaving || bulkSaving}
+                    // Prevent row onClick + checkbox onCheckedChange double toggle,
+                    // which races two SetAppContainerConfig calls and returns 拒绝访问.
+                    onClick={(event) => {
+                      event.stopPropagation();
+                    }}
                     onCheckedChange={() => {
                       void toggleExemption(app.sid);
                     }}
@@ -454,11 +496,11 @@ export default function LoopbackManager() {
                       <img
                         src={app.iconDataUrl}
                         alt=""
-                        className="h-full w-full object-contain"
+                        className="h-5 w-5 object-contain"
                         draggable={false}
                       />
                     ) : (
-                      <AppWindow className="h-4 w-4 text-muted-foreground/70" />
+                      <AppWindow className="h-5 w-5 text-muted-foreground/70" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">

@@ -31,7 +31,6 @@
     "configEditor": "Config Editor",
     "aiAssistant": "AI Assistant"
   },
-
   "layout": {
     "desktopClient": "Desktop Client",
     "coreAutostartFailed": "Core autostart failed: {{error}}",
@@ -57,7 +56,6 @@
       "unknownError": "Unknown error"
     }
   },
-
   "dashboard": {
     "title": "Dashboard",
     "subtitle": "Monitor core status and quickly adjust common switches",
@@ -607,7 +605,8 @@
       "exemptAllSuccess": "Exempted all apps ({{count}})",
       "clearAllSuccess": "Cleared all loopback exemptions",
       "confirmExemptAll": "Exempt all UWP apps?",
-      "confirmClearAll": "Clear all loopback exemptions?"
+      "confirmClearAll": "Clear all loopback exemptions?",
+      "needsElevation": "Administrator permission required. Accept the UAC prompt to continue: {{error}}"
     },
     "speedtest": {
       "title": "Network Speed Test",
@@ -810,7 +809,6 @@
     "apiUnavailable": "System settings API is unavailable",
     "unknownError": "Unknown error"
   },
-
   "core": {
     "currentCore": "Current Kernel",
     "type": "Type",
@@ -903,7 +901,6 @@
     "resourceMissing": "Missing",
     "resourceMissingFiles": "Missing files: {{files}}"
   },
-
   "toast": {
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings",
@@ -1194,7 +1191,6 @@
     "deleteSuccess": "Backup deleted successfully",
     "deleteFailed": "Failed to delete backup"
   },
-
   "configEditor": {
     "title": "Config Editor",
     "subtitle": "Visually edit kernel parameters, DNS, sniffer and Hosts configuration",
@@ -1353,7 +1349,6 @@
     "unknownError": "Unknown error",
     "iconSettings": "Icon Settings"
   },
-
   "ai": {
     "title": "AI Assistant",
     "subtitle": "Smart proxy management assistant for status queries, node switching, and config editing",

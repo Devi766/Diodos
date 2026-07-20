@@ -8,6 +8,24 @@ repository = "https://github.com/GtxFury/FlyClash"
 edition = "2021"
 build = "build.rs"
 
+# Windows PE version resources (taskbar/process/file properties).
+# Without these, some shells fall back to generic Tauri branding.
+[package.metadata.winres]
+ProductName = "FlyClash"
+FileDescription = "FlyClash"
+CompanyName = "FlyClash"
+LegalCopyright = "Copyright © FlyClash"
+OriginalFilename = "FlyClash.exe"
+InternalName = "FlyClash"
+
+[package.metadata.tauri-winres]
+ProductName = "FlyClash"
+FileDescription = "FlyClash"
+CompanyName = "FlyClash"
+LegalCopyright = "Copyright © FlyClash"
+OriginalFilename = "FlyClash.exe"
+InternalName = "FlyClash"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -26,7 +44,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 sha2 = "0.10"
-tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
 tauri-plugin-deep-link = "2.4.9"
 tauri-plugin-mihomo = { git = "https://github.com/clash-verge-rev/tauri-plugin-mihomo", rev = "ff75ee3edd61923e6c76a7f3cf3c3fbd0f8e22c0" }
 tauri-plugin-single-instance = "2.4.2"

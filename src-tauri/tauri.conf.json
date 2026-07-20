@@ -1,6 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "FlyClash",
+  "mainBinaryName": "FlyClash",
   "version": "0.3.0",
   "identifier": "com.flyclash.desktop",
   "build": {
@@ -14,6 +15,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "FlyClash",
         "width": 1180,
         "height": 780,
@@ -47,6 +49,7 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
+    "publisher": "FlyClash",
     "resources": [
       "../extra",
       "../tools"

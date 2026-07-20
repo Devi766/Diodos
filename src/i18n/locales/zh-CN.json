@@ -31,7 +31,6 @@
     "configEditor": "配置编辑",
     "aiAssistant": "AI 助手"
   },
-
   "layout": {
     "desktopClient": "桌面客户端",
     "coreAutostartFailed": "核心自动启动失败: {{error}}",
@@ -57,7 +56,6 @@
       "unknownError": "未知错误"
     }
   },
-
   "dashboard": {
     "title": "仪表盘",
     "subtitle": "查看内核运行情况并快速调整常用开关",
@@ -607,7 +605,8 @@
       "exemptAllSuccess": "已全部豁免，共 {{count}} 个应用",
       "clearAllSuccess": "已清除全部回环豁免",
       "confirmExemptAll": "确定豁免全部 UWP 应用？",
-      "confirmClearAll": "确定清除全部回环豁免？"
+      "confirmClearAll": "确定清除全部回环豁免？",
+      "needsElevation": "需要管理员权限。请在弹出的 UAC 对话框中选择“是”：{{error}}"
     },
     "speedtest": {
       "title": "网络测速",
@@ -810,7 +809,6 @@
     "apiUnavailable": "系统设置 API 不可用",
     "unknownError": "未知错误"
   },
-
   "core": {
     "currentCore": "当前内核",
     "type": "类型",
@@ -1191,7 +1189,6 @@
     "deleteSuccess": "备份已删除",
     "deleteFailed": "删除备份失败"
   },
-
   "configEditor": {
     "title": "配置编辑",
     "subtitle": "可视化编辑内核运行参数、DNS、域名嗅探和 Hosts 配置",
@@ -1350,7 +1347,6 @@
     "unknownError": "未知错误",
     "iconSettings": "图标设置"
   },
-
   "ai": {
     "title": "AI 助手",
     "subtitle": "智能代理管理助手，帮你查询状态、切换节点、编辑配置",

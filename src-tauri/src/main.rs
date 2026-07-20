@@ -37,5 +37,14 @@ mod win_loopback;
 mod win_sysproxy;
 
 fn main() {
+    // Elevated helper path for UWP loopback writes (UAC). Must run before UI boot.
+    #[cfg(windows)]
+    {
+        let args = std::env::args().collect::<Vec<_>>();
+        if win_loopback::maybe_run_elevated_cli(&args) {
+            return;
+        }
+    }
+
     app::run();
 }

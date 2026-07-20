@@ -24,6 +24,98 @@ use crate::storage::{set_setting, setting};
 
 type CompatResult = Result<Value, String>;
 
+/// Apply sharp taskbar + titlebar icons on Windows.
+///
+/// Why this exists:
+/// - Tauri embeds `icon.ico` but `default_window_icon` only decodes ICO entry[0]
+/// - `WebviewWindow::set_icon` only sets ICON_SMALL (not ICON_BIG / taskbar)
+/// - If entry[0] is 16px, Windows upscales it for the taskbar → blurry icon
+///
+/// Fix: load 32px (small) + 256px (big) frames from the embedded ICO resource
+/// via LoadImageW and set both ICON_SMALL and ICON_BIG with WM_SETICON.
+#[cfg(windows)]
+pub(crate) fn apply_windows_window_icons(window: &WebviewWindow) {
+    // Also feed Tauri's set_icon a sharp 32px RGBA so any path that only uses
+    // ICON_SMALL still looks good.
+    const TRAY_32: &[u8] = include_bytes!("../icons/tray-icon-32.png");
+    if let Ok(icon) = tauri::image::Image::from_bytes(TRAY_32) {
+        let _ = window.set_icon(icon);
+    }
+
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            set_win_icons_from_resource(hwnd.0 as isize);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn apply_windows_window_icons(_window: &WebviewWindow) {}
+
+#[cfg(windows)]
+unsafe fn set_win_icons_from_resource(hwnd: isize) {
+    type HINSTANCE = isize;
+    type HICON = isize;
+    type HWND = isize;
+    type BOOL = i32;
+    type UINT = u32;
+    type HANDLE = isize;
+    type LRESULT = isize;
+    type WPARAM = usize;
+    type LPARAM = isize;
+
+    const IMAGE_ICON: UINT = 1;
+    const LR_DEFAULTCOLOR: UINT = 0x0000;
+    const LR_SHARED: UINT = 0x8000;
+    const WM_SETICON: UINT = 0x0080;
+    const ICON_SMALL: WPARAM = 0;
+    const ICON_BIG: WPARAM = 1;
+    // Tauri winres embeds the app icon as resource id 32512 (IDI_ICON).
+    const IDI_APPICON: usize = 32512;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn LoadImageW(
+            h_inst: HINSTANCE,
+            name: *const u16,
+            type_: UINT,
+            cx: i32,
+            cy: i32,
+            fu_load: UINT,
+        ) -> HANDLE;
+        fn SendMessageW(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT;
+        fn DestroyIcon(hicon: HICON) -> BOOL;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleW(lp_module_name: *const u16) -> HINSTANCE;
+    }
+
+    let module = GetModuleHandleW(std::ptr::null());
+    if module == 0 {
+        return;
+    }
+
+    // MAKEINTRESOURCEW(id) = id as pointer
+    let res_name = IDI_APPICON as *const u16;
+
+    // ICON_SMALL: 32x32 is the common taskbar size at 100% DPI.
+    let small = LoadImageW(module, res_name, IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR | LR_SHARED);
+    // ICON_BIG: 256 for high-DPI taskbar / alt-tab.
+    let big = LoadImageW(module, res_name, IMAGE_ICON, 256, 256, LR_DEFAULTCOLOR | LR_SHARED);
+
+    if small != 0 {
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small as LPARAM);
+    }
+    if big != 0 {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, big as LPARAM);
+    }
+
+    // With LR_SHARED, DestroyIcon is not required (and may be unsafe).
+    let _ = DestroyIcon;
+}
+
 const DEFAULT_PROXY_BYPASS: &str = "localhost;127.*;192.168.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;<local>";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -1331,24 +1423,18 @@ fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
         return Ok(success(json!({ "count": 0 })));
     }
 
-    // Keep only SIDs that currently exist in AppContainers. Stale SIDs often
-    // cause NetworkIsolationSetAppContainerConfig to fail with error 5.
-    #[cfg(windows)]
-    let known = crate::win_loopback::all_container_sids().unwrap_or_default();
-    #[cfg(not(windows))]
-    let known: Vec<String> = Vec::new();
-    let known_upper = known
-        .iter()
-        .map(|sid| sid.to_ascii_uppercase())
-        .collect::<std::collections::HashSet<_>>();
-
+    // Pre-filter to valid AppContainer SIDs. set_config also re-filters against
+    // the live container list and serializes writes, but doing it here keeps the
+    // persisted setting list clean.
     let mut filtered = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for sid in sids {
         let trimmed = sid.trim();
         if !loopback_sid_valid(trimmed) {
             continue;
         }
-        if known_upper.is_empty() || known_upper.contains(&trimmed.to_ascii_uppercase()) {
+        let key = trimmed.to_ascii_uppercase();
+        if seen.insert(key) {
             filtered.push(trimmed.to_string());
         }
     }
@@ -1358,9 +1444,16 @@ fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
         match crate::win_loopback::set_config(&filtered) {
             Ok(count) => {
                 set_setting(app, "loopbackExemptSids", json!(filtered))?;
-                Ok(success(json!({ "count": count })))
+                Ok(success(json!({
+                    "count": count,
+                    "elevated": crate::win_loopback::is_process_elevated()
+                })))
             }
-            Err(error) => Ok(json!({ "success": false, "error": error })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "error": error,
+                "needsElevation": !crate::win_loopback::is_process_elevated()
+            })),
         }
     }
 

@@ -1290,9 +1290,22 @@ fn tray_switch_node(app: &AppHandle, encoded_pair: &str) {
     });
 }
 
+fn tray_icon_image() -> Option<tauri::image::Image<'static>> {
+    // Prefer a dedicated tight 32/64 tray asset. Falling back to the window icon
+    // often looks soft because the master is Apple-padded for large sizes.
+    // Requires the `image-png` feature on the tauri crate.
+    const TRAY_32: &[u8] = include_bytes!("../icons/tray-icon-32.png");
+    const TRAY_64: &[u8] = include_bytes!("../icons/tray-icon.png");
+
+    tauri::image::Image::from_bytes(TRAY_64)
+        .or_else(|_| tauri::image::Image::from_bytes(TRAY_32))
+        .ok()
+        .map(|image| image.to_owned())
+}
+
 pub(crate) fn setup_tray(app: &AppHandle) -> Result<(), String> {
     let (menu, tooltip) = build_tray_menu(app)?;
-    let icon = app.default_window_icon().cloned();
+    let icon = tray_icon_image().or_else(|| app.default_window_icon().cloned());
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(tooltip)

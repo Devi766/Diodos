@@ -1,12 +1,27 @@
 {
+  "productName": "FlyClash",
+  "mainBinaryName": "FlyClash",
   "app": {
     "windows": [
       {
+        "title": "FlyClash",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 980,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
         "decorations": false,
         "transparent": true,
+        "backgroundColor": [0, 0, 0, 0],
         "titleBarStyle": "Visible",
         "hiddenTitle": false
       }
     ]
+  },
+  "bundle": {
+    "publisher": "FlyClash",
+    "shortDescription": "FlyClash Desktop",
+    "longDescription": "FlyClash is a desktop proxy client powered by FlyClash Core (mihomo-compatible)."
   }
 }

@@ -2,9 +2,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
+use std::fs;
 use std::os::windows::ffi::OsStrExt;
+use std::path::PathBuf;
+use std::process::Command;
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
@@ -70,6 +75,14 @@ type FnNetworkIsolationFreeAppContainers =
 extern "system" {
     fn ConvertSidToStringSidW(sid: PSID, string_sid: *mut PWSTR) -> BOOL;
     fn ConvertStringSidToSidW(string_sid: PCWSTR, sid: *mut PSID) -> BOOL;
+    fn OpenProcessToken(process: HANDLE, desired: DWORD, token: *mut HANDLE) -> BOOL;
+    fn GetTokenInformation(
+        token: HANDLE,
+        class: DWORD,
+        info: *mut core::ffi::c_void,
+        length: DWORD,
+        returned: *mut DWORD,
+    ) -> BOOL;
 }
 
 #[link(name = "kernel32")]
@@ -79,6 +92,8 @@ extern "system" {
     fn HeapFree(h_heap: HANDLE, dw_flags: DWORD, lp_mem: *mut core::ffi::c_void) -> BOOL;
     fn LoadLibraryW(lp_lib_file_name: PCWSTR) -> HMODULE;
     fn GetProcAddress(h_module: HMODULE, lp_proc_name: *const u8) -> *const core::ffi::c_void;
+    fn GetCurrentProcess() -> HANDLE;
+    fn CloseHandle(h_object: HANDLE) -> BOOL;
 }
 
 #[link(name = "shlwapi")]
@@ -89,6 +104,37 @@ extern "system" {
         cch_out_buf: u32,
         ppv_reserved: *mut core::ffi::c_void,
     ) -> HRESULT;
+}
+
+const TOKEN_QUERY: DWORD = 0x0008;
+const TOKEN_ELEVATION: DWORD = 20;
+
+#[repr(C)]
+struct TokenElevation {
+    token_is_elevated: DWORD,
+}
+
+/// True when the current process already runs elevated (High/System integrity).
+pub fn is_process_elevated() -> bool {
+    unsafe {
+        let mut token: HANDLE = 0;
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation = TokenElevation {
+            token_is_elevated: 0,
+        };
+        let mut returned: DWORD = 0;
+        let ok = GetTokenInformation(
+            token,
+            TOKEN_ELEVATION,
+            (&mut elevation as *mut TokenElevation).cast(),
+            std::mem::size_of::<TokenElevation>() as DWORD,
+            &mut returned,
+        );
+        let _ = CloseHandle(token);
+        ok != 0 && elevation.token_is_elevated != 0
+    }
 }
 
 struct FirewallApi {
@@ -284,53 +330,301 @@ pub fn enum_app_containers() -> Result<Vec<Value>, String> {
     }
 }
 
-pub fn set_config(sids: &[String]) -> Result<usize, String> {
-    let api = load_firewall_api()?;
+fn set_config_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
-    // Deduplicate and normalize SIDs first. Passing invalid/duplicated SIDs can
-    // make NetworkIsolationSetAppContainerConfig return ERROR_ACCESS_DENIED (5).
+fn is_app_container_sid(sid: &str) -> bool {
+    let trimmed = sid.trim();
+    if !trimmed.to_ascii_uppercase().starts_with("S-1-15-2-") {
+        return false;
+    }
+    trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || ch == '-' || ch == 'S' || ch == 's')
+        && trimmed.len() >= 12
+}
+
+fn normalize_sids(sids: &[String]) -> Vec<String> {
+    let known = all_container_sids().unwrap_or_default();
+    let known_upper: HashSet<String> = known
+        .iter()
+        .map(|sid| sid.trim().to_ascii_uppercase())
+        .filter(|sid| !sid.is_empty())
+        .collect();
+
     let mut unique: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     for sid in sids {
         let trimmed = sid.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || !is_app_container_sid(trimmed) {
             continue;
         }
         let key = trimmed.to_ascii_uppercase();
+        if !known_upper.is_empty() && !known_upper.contains(&key) {
+            continue;
+        }
         if seen.insert(key) {
             unique.push(trimmed.to_string());
         }
     }
+    unique
+}
 
-    if unique.is_empty() {
+/// Public entry used by the UI. On access-denied (common for Medium integrity
+/// processes on modern Windows), automatically re-launches this binary elevated
+/// via UAC and applies the same SID list.
+pub fn set_config(sids: &[String]) -> Result<usize, String> {
+    let unique = normalize_sids(sids);
+    match set_config_direct(&unique) {
+        Ok(count) => Ok(count),
+        Err(error)
+            if error.contains("failed: 5")
+                || error.contains("拒绝访问")
+                || error.contains("ACCESS_DENIED") =>
+        {
+            if is_process_elevated() {
+                return Err(error);
+            }
+            // Elevate once and retry. User will see a UAC prompt.
+            set_config_elevated(&unique).map_err(|elev_error| {
+                if elev_error.contains("取消") || elev_error.contains("cancel") {
+                    elev_error
+                } else {
+                    format!("{error}；提权重试失败: {elev_error}")
+                }
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Apply loopback config in the *current* process (no UAC). Used by the elevated
+/// helper child and by tests.
+pub fn set_config_direct(sids: &[String]) -> Result<usize, String> {
+    // Serialize writes — concurrent SetAppContainerConfig calls often fail with
+    // ERROR_ACCESS_DENIED (5) even when each SID list is individually valid.
+    let _guard = set_config_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let api = load_firewall_api()?;
+    let unique = {
+        // Caller may already have normalized; do a light dedupe again.
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for sid in sids {
+            let trimmed = sid.trim();
+            if trimmed.is_empty() || !is_app_container_sid(trimmed) {
+                continue;
+            }
+            if seen.insert(trimmed.to_ascii_uppercase()) {
+                out.push(trimmed.to_string());
+            }
+        }
+        out
+    };
+
+    set_config_unlocked(api, &unique)
+}
+
+fn set_config_elevated(sids: &[String]) -> Result<usize, String> {
+    let exe = std::env::current_exe().map_err(|err| format!("无法定位程序路径: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir();
+    let request_path = dir.join(format!("flyclash-loopback-req-{stamp}.json"));
+    let result_path = dir.join(format!("flyclash-loopback-res-{stamp}.json"));
+
+    let payload = json!({
+        "sids": sids,
+        "resultPath": result_path.to_string_lossy(),
+    });
+    fs::write(
+        &request_path,
+        serde_json::to_vec_pretty(&payload).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| format!("写入提权请求失败: {err}"))?;
+
+    // Clean any stale result.
+    let _ = fs::remove_file(&result_path);
+
+    // Use PowerShell Start-Process -Verb RunAs for reliable UAC elevation.
+    // Hand-rolled ShellExecuteExW structs are easy to mis-align on x64.
+    let exe_str = exe.to_string_lossy().replace('\'', "''");
+    let req_str = request_path.to_string_lossy().replace('\'', "''");
+    let ps = format!(
+        "$p = Start-Process -FilePath '{exe_str}' -ArgumentList @('--flyclash-loopback-set','{req_str}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden; if ($null -eq $p) {{ exit 1223 }}; exit $p.ExitCode"
+    );
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &ps,
+        ])
+        .output()
+        .map_err(|err| format!("启动 UAC 提权失败: {err}"))?;
+
+    let status = output.status.code().unwrap_or(1);
+    // 1223 = ERROR_CANCELLED (UAC denied)
+    if status == 1223 {
+        let _ = fs::remove_file(&request_path);
+        return Err("已取消管理员授权，无法修改 UWP 回环豁免".to_string());
+    }
+
+    // Child writes the result file before exiting. Poll briefly.
+    let deadline = SystemTime::now() + Duration::from_secs(5);
+    while SystemTime::now() < deadline {
+        if result_path.is_file() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(40));
+    }
+
+    let raw = fs::read_to_string(&result_path).map_err(|_| {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if status == 0 {
+            if stderr.is_empty() {
+                "提权进程未返回结果（可能 UAC 被取消）".to_string()
+            } else {
+                format!("提权进程未返回结果: {stderr}")
+            }
+        } else if stderr.is_empty() {
+            format!("提权进程失败 (exit={status})")
+        } else {
+            format!("提权进程失败 (exit={status}): {stderr}")
+        }
+    })?;
+    let _ = fs::remove_file(&request_path);
+    let _ = fs::remove_file(&result_path);
+
+    let value: Value =
+        serde_json::from_str(&raw).map_err(|err| format!("解析提权结果失败: {err}"))?;
+    if value
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        Ok(value
+            .get("count")
+            .and_then(Value::as_u64)
+            .unwrap_or(sids.len() as u64) as usize)
+    } else {
+        Err(value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("提权写入回环配置失败")
+            .to_string())
+    }
+}
+
+/// CLI helper entry for elevated writes.
+/// Returns true when argv requested the helper (caller should exit).
+pub fn maybe_run_elevated_cli(args: &[String]) -> bool {
+    let Some(flag_pos) = args.iter().position(|arg| arg == "--flyclash-loopback-set") else {
+        return false;
+    };
+    let request = args
+        .get(flag_pos + 1)
+        .map(PathBuf::from)
+        .unwrap_or_default();
+
+    let result = (|| -> Result<Value, String> {
+        let raw = fs::read_to_string(&request).map_err(|err| format!("读取请求失败: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&raw).map_err(|err| format!("解析请求失败: {err}"))?;
+        let sids = value
+            .get("sids")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        let result_path = value
+            .get("resultPath")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| request.with_extension("result.json"));
+
+        let count = set_config_direct(&sids)?;
+        let body = json!({ "success": true, "count": count });
+        fs::write(
+            &result_path,
+            serde_json::to_vec_pretty(&body).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| format!("写入结果失败: {err}"))?;
+        Ok(body)
+    })();
+
+    if let Err(error) = result {
+        // Best-effort write an error result next to the request.
+        let fallback = request.with_extension("result.json");
+        let body = json!({ "success": false, "error": error });
+        let _ = fs::write(fallback, serde_json::to_vec_pretty(&body).unwrap_or_default());
+        // Also try resultPath from file if readable.
+        if let Ok(raw) = fs::read_to_string(&request) {
+            if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+                if let Some(path) = value.get("resultPath").and_then(Value::as_str) {
+                    let _ = fs::write(path, serde_json::to_vec_pretty(&body).unwrap_or_default());
+                }
+            }
+        }
+        // Non-zero exit for the parent waiter.
+        std::process::exit(2);
+    }
+
+    true
+}
+
+fn set_config_unlocked(api: &FirewallApi, sids: &[String]) -> Result<usize, String> {
+    if sids.is_empty() {
         let status = unsafe { (api.set_app_container_config)(0, ptr::null()) };
         if status != ERROR_SUCCESS {
+            if status == 5 {
+                return Err(
+                    "SetAppContainerConfig failed: 5 (拒绝访问，需要管理员权限写入回环配置)"
+                        .to_string(),
+                );
+            }
             return Err(format!("SetAppContainerConfig failed: {status}"));
         }
         return Ok(0);
     }
 
-    // Keep wide SID buffers alive for the duration of ConvertStringSidToSidW.
-    let mut wide_sids: Vec<Vec<u16>> = unique.iter().map(|sid| to_wide_null(sid)).collect();
-    let mut allocated: Vec<PSID> = Vec::with_capacity(unique.len());
-    let mut entries: Vec<SidAndAttributes> = Vec::with_capacity(unique.len());
+    let mut wide_sids: Vec<Vec<u16>> = sids.iter().map(|sid| to_wide_null(sid)).collect();
+    let mut allocated: Vec<PSID> = Vec::with_capacity(sids.len());
+    let mut entries: Vec<SidAndAttributes> = Vec::with_capacity(sids.len());
+    let mut valid: Vec<String> = Vec::with_capacity(sids.len());
 
     for (index, wide) in wide_sids.iter_mut().enumerate() {
         let mut sid: PSID = ptr::null_mut();
         let ok = unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut sid) };
         if ok == 0 || sid.is_null() {
-            for allocated_sid in &allocated {
-                unsafe {
-                    let _ = LocalFree(*allocated_sid as HANDLE);
-                }
-            }
-            return Err(format!("Invalid SID: {}", unique[index]));
+            continue;
         }
         allocated.push(sid);
         entries.push(SidAndAttributes {
             sid,
             attributes: 0,
         });
+        valid.push(sids[index].clone());
+    }
+
+    if entries.is_empty() {
+        for allocated_sid in allocated {
+            unsafe {
+                let _ = LocalFree(allocated_sid as HANDLE);
+            }
+        }
+        return set_config_unlocked(api, &[]);
     }
 
     let status = unsafe {
@@ -343,17 +637,56 @@ pub fn set_config(sids: &[String]) -> Result<usize, String> {
         }
     }
 
+    // When elevated, some stale SIDs still return 5. Binary-prune and keep survivors.
+    if status == 5 && valid.len() > 1 {
+        let surviving = prune_rejected_sids(api, &valid)?;
+        return Ok(surviving.len());
+    }
+
     if status != ERROR_SUCCESS {
-        // Error 5 is ERROR_ACCESS_DENIED. Surface a clearer message.
         if status == 5 {
             return Err(
-                "SetAppContainerConfig failed: 5 (拒绝访问，可能包含无效 SID 或权限不足)"
+                "SetAppContainerConfig failed: 5 (拒绝访问，需要管理员权限写入回环配置)"
                     .to_string(),
             );
         }
         return Err(format!("SetAppContainerConfig failed: {status}"));
     }
     Ok(entries.len())
+}
+
+/// Binary-search which SIDs Windows accepts. Used only as a fallback when a
+/// full batch fails with ERROR_ACCESS_DENIED.
+fn prune_rejected_sids(api: &FirewallApi, sids: &[String]) -> Result<Vec<String>, String> {
+    if sids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if sids.len() == 1 {
+        return match set_config_unlocked(api, sids) {
+            Ok(_) => Ok(sids.to_vec()),
+            Err(_) => Ok(Vec::new()),
+        };
+    }
+
+    let mid = sids.len() / 2;
+    let left = &sids[..mid];
+    let right = &sids[mid..];
+
+    let mut kept = Vec::new();
+    if set_config_unlocked(api, left).is_ok() {
+        kept.extend(left.iter().cloned());
+    } else {
+        kept.extend(prune_rejected_sids(api, left)?);
+    }
+    if set_config_unlocked(api, right).is_ok() {
+        kept.extend(right.iter().cloned());
+    } else {
+        kept.extend(prune_rejected_sids(api, right)?);
+    }
+
+    // Re-apply the combined surviving set so the OS ends with the full keep list.
+    set_config_unlocked(api, &kept)?;
+    Ok(kept)
 }
 
 pub fn all_container_sids() -> Result<Vec<String>, String> {

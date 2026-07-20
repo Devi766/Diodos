@@ -918,7 +918,7 @@ export default function ToolsPage() {
 
       {/* UWP 回环豁免管理对话框 */}
       <Dialog open={loopbackDialogOpen} onOpenChange={setLoopbackDialogOpen}>
-        <DialogContent className="flex max-h-[85vh] w-[min(680px,calc(100vw-2rem))] flex-col overflow-hidden p-0 sm:max-w-[680px]">
+        <DialogContent className="flex h-[min(85vh,720px)] w-[min(680px,calc(100vw-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[680px]">
           <DialogHeader className="flex-shrink-0 px-6 pb-2 pt-6">
             <DialogTitle className="flex items-center gap-2">
               <NetworkIcon className="h-5 w-5" /> {t('tools.loopback.dialogTitle')}
@@ -928,7 +928,8 @@ export default function ToolsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 overflow-hidden px-6 pb-6">
+          {/* Explicit height chain so the list can scroll inside max dialog height */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6">
             <LoopbackManager />
           </div>
         </DialogContent>
