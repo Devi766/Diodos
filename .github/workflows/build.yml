@@ -307,18 +307,17 @@ jobs:
         with:
           tag: tarui-latest
           commit: ${{ github.sha }}
-          name: FlyClash ${{ steps.pkg.outputs.version }} · tarui latest
+          name: FlyClash v${{ steps.pkg.outputs.version }} 测试版 (tarui)
           body: |
-            ## FlyClash ${{ steps.pkg.outputs.version }} (tarui 滚动构建)
+            ## FlyClash v${{ steps.pkg.outputs.version }} 测试版
 
-            自动构建自分支 `tarui`，提交 `${{ github.sha }}`。
+            tarui 开发通道滚动构建。
 
-            > 这是开发通道预发布包，正式版本请使用 `v*` 标签发布（例如 `v${{ steps.pkg.outputs.version }}`）。
-
-            ### 下载说明
-            - Windows: `FlyClash_${{ steps.pkg.outputs.version }}_windows-x64-installer.exe` / portable zip
-            - macOS: `FlyClash_${{ steps.pkg.outputs.version }}_macos-arm64.dmg` / `macos-x64.dmg`（失败时可能为 `.app.zip`）
-            - Linux: `FlyClash_${{ steps.pkg.outputs.version }}_linux-x64.deb` / AppImage
+            ### 相对 main 的主要变化
+            - 桌面框架由 Electron 迁移至 Tauri
+            - 安装包体积显著减小
+            - 支持 Windows / macOS / Linux 多平台产物
+            - 测试版，功能可能不稳定，欢迎反馈
           artifacts: release-assets/*
           artifactErrorsFailBuild: true
           allowUpdates: true
@@ -336,47 +335,24 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-          PKG_VERSION="${{ steps.pkg.outputs.version }}"
-          PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_SHA}^" 2>/dev/null || true)"
 
           {
-            echo "## FlyClash Desktop ${TAG}"
+            echo "## FlyClash v${VERSION} 测试版"
             echo
-            echo "正式版本发布 · Package \`${PKG_VERSION}\` · Commit \`${GITHUB_SHA:0:7}\`"
+            echo "相对 main（Electron）切到 tarui（Tauri）的主要变化："
             echo
-            echo "### 更新日志"
-            if [ -n "${PREV}" ] && [ "${PREV}" != "${TAG}" ]; then
-              echo
-              echo "_自 ${PREV} 以来的提交：_"
-              echo
-              git log --pretty=format:'- %s' "${PREV}..${GITHUB_SHA}"
-              echo
-            else
-              echo
-              echo "- 详见下方自动生成的 GitHub Release Notes"
-              echo
-            fi
+            echo "- 桌面框架由 **Electron 迁移至 Tauri**"
+            echo "- **安装包体积显著减小**（示例：Windows 安装包约 145MB → 33MB，macOS DMG 约 170MB → 46MB）"
+            echo "- 提供 Windows / macOS / Linux 多平台安装包"
+            echo "- 保留订阅管理、代理组、系统代理、TUN、连接统计等核心能力"
+            echo "- macOS TUN 授权与界面适配；Windows 原生系统代理 / Helper 服务"
             echo
-            echo "### 下载说明"
-            echo
-            echo "| 平台 | 文件 |"
-            echo "| --- | --- |"
-            echo "| Windows x64 安装包 | \`FlyClash_${VERSION}_windows-x64-installer.exe\` |"
-            echo "| Windows x64 便携版 | \`FlyClash_${VERSION}_windows-x64-portable.zip\` |"
-            echo "| macOS Apple Silicon | \`FlyClash_${VERSION}_macos-arm64.dmg\` |"
-            echo "| macOS Intel | \`FlyClash_${VERSION}_macos-x64.dmg\` |"
-            echo "| Linux x64 DEB | \`FlyClash_${VERSION}_linux-x64.deb\` |"
-            echo "| Linux x64 AppImage | \`FlyClash_${VERSION}_linux-x64.AppImage\` |"
-            echo
-            echo "### 说明"
-            echo
-            echo "- macOS 若 DMG 打包失败，可能提供 \`.app.zip\` 作为回退产物"
-            echo "- 首次启用 TUN 需要系统授权（Windows Helper 服务 / macOS 内核 setuid）"
+            echo "> 当前为测试版，可能存在兼容性问题，欢迎到 Issues / 交流群反馈。"
             echo
           } > release-notes.md
 
           {
-            echo "name=FlyClash Desktop ${TAG}"
+            echo "name=FlyClash v${VERSION} 测试版"
             echo "body<<EOF"
             cat release-notes.md
             echo "EOF"
@@ -396,7 +372,7 @@ jobs:
           artifactErrorsFailBuild: true
           allowUpdates: true
           replacesArtifacts: true
-          generateReleaseNotes: true
-          prerelease: false
+          generateReleaseNotes: false
+          prerelease: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
