@@ -270,6 +270,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -282,6 +284,14 @@ jobs:
         run: |
           find release-assets -maxdepth 1 -type f -print | sort
           test "$(find release-assets -maxdepth 1 -type f | wc -l)" -gt 0
+
+      - name: Resolve package version
+        id: pkg
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare tarui rolling release tag
         if: github.ref == 'refs/heads/tarui'
@@ -297,16 +307,18 @@ jobs:
         with:
           tag: tarui-latest
           commit: ${{ github.sha }}
-          name: FlyClash tarui latest
+          name: FlyClash ${{ steps.pkg.outputs.version }} · tarui latest
           body: |
-            Automated tarui build for `${{ github.sha }}`.
+            ## FlyClash ${{ steps.pkg.outputs.version }} (tarui 滚动构建)
 
-            Windows assets:
-            - `FlyClash_*_windows-x64-installer.exe`: installer
-            - `FlyClash_*_windows-x64-portable.zip`: portable package
-            macOS assets:
-            - `FlyClash_*_macos-x64.dmg`: disk image when DMG bundling succeeds
-            - `FlyClash_*_macos-x64.app.zip`: zipped app fallback when DMG bundling is unavailable on the runner
+            自动构建自分支 `tarui`，提交 `${{ github.sha }}`。
+
+            > 这是开发通道预发布包，正式版本请使用 `v*` 标签发布（例如 `v${{ steps.pkg.outputs.version }}`）。
+
+            ### 下载说明
+            - Windows: `FlyClash_${{ steps.pkg.outputs.version }}_windows-x64-installer.exe` / portable zip
+            - macOS: `FlyClash_${{ steps.pkg.outputs.version }}_macos-arm64.dmg` / `macos-x64.dmg`（失败时可能为 `.app.zip`）
+            - Linux: `FlyClash_${{ steps.pkg.outputs.version }}_linux-x64.deb` / AppImage
           artifacts: release-assets/*
           artifactErrorsFailBuild: true
           allowUpdates: true
@@ -316,14 +328,75 @@ jobs:
           makeLatest: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build versioned release notes
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_SHA}^" 2>/dev/null || true)"
+
+          {
+            echo "## FlyClash Desktop ${TAG}"
+            echo
+            echo "正式版本发布 · Package \`${PKG_VERSION}\` · Commit \`${GITHUB_SHA:0:7}\`"
+            echo
+            echo "### 更新日志"
+            if [ -n "${PREV}" ] && [ "${PREV}" != "${TAG}" ]; then
+              echo
+              echo "_自 ${PREV} 以来的提交：_"
+              echo
+              git log --pretty=format:'- %s' "${PREV}..${GITHUB_SHA}"
+              echo
+            else
+              echo
+              echo "- 详见下方自动生成的 GitHub Release Notes"
+              echo
+            fi
+            echo
+            echo "### 下载说明"
+            echo
+            echo "| 平台 | 文件 |"
+            echo "| --- | --- |"
+            echo "| Windows x64 安装包 | \`FlyClash_${VERSION}_windows-x64-installer.exe\` |"
+            echo "| Windows x64 便携版 | \`FlyClash_${VERSION}_windows-x64-portable.zip\` |"
+            echo "| macOS Apple Silicon | \`FlyClash_${VERSION}_macos-arm64.dmg\` |"
+            echo "| macOS Intel | \`FlyClash_${VERSION}_macos-x64.dmg\` |"
+            echo "| Linux x64 DEB | \`FlyClash_${VERSION}_linux-x64.deb\` |"
+            echo "| Linux x64 AppImage | \`FlyClash_${VERSION}_linux-x64.AppImage\` |"
+            echo
+            echo "### 说明"
+            echo
+            echo "- macOS 若 DMG 打包失败，可能提供 \`.app.zip\` 作为回退产物"
+            echo "- 首次启用 TUN 需要系统授权（Windows Helper 服务 / macOS 内核 setuid）"
+            echo
+          } > release-notes.md
+
+          {
+            echo "name=FlyClash Desktop ${TAG}"
+            echo "body<<EOF"
+            cat release-notes.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "----- release notes -----"
+          cat release-notes.md
+
       - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
+          name: ${{ steps.notes.outputs.name }}
+          body: ${{ steps.notes.outputs.body }}
           artifacts: release-assets/*
           artifactErrorsFailBuild: true
           allowUpdates: true
           replacesArtifacts: true
           generateReleaseNotes: true
+          prerelease: false
+          makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
