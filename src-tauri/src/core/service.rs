@@ -6,9 +6,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(any(target_os = "windows", test))]
 use std::{env, fs, path::PathBuf};
 use std::{path::Path, process::Command, thread, time::Duration};
 
@@ -69,6 +67,73 @@ impl HelperServiceFlags {
     }
 }
 
+/// Decode Windows console bytes. sc.exe / helper often emit GBK (code page 936)
+/// on Chinese systems; treating that as UTF-8 produces mojibake and breaks
+/// access-denied detection.
+#[cfg(target_os = "windows")]
+fn decode_windows_bytes(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    if std::str::from_utf8(bytes).is_ok() {
+        return String::from_utf8_lossy(bytes).trim().to_string();
+    }
+    decode_windows_bytes_winapi(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn decode_windows_bytes_winapi(bytes: &[u8]) -> String {
+    type DWORD = u32;
+    // CP_ACP = 0 uses the system ANSI code page (GBK on zh-CN).
+    const CP_ACP: DWORD = 0;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MultiByteToWideChar(
+            code_page: DWORD,
+            dw_flags: DWORD,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+
+    unsafe {
+        let needed = MultiByteToWideChar(
+            CP_ACP,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            std::ptr::null_mut(),
+            0,
+        );
+        if needed <= 0 {
+            return String::from_utf8_lossy(bytes).trim().to_string();
+        }
+        let mut wide = vec![0u16; needed as usize];
+        let written = MultiByteToWideChar(
+            CP_ACP,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            wide.as_mut_ptr(),
+            needed,
+        );
+        if written <= 0 {
+            return String::from_utf8_lossy(bytes).trim().to_string();
+        }
+        String::from_utf16_lossy(&wide[..written as usize])
+            .trim()
+            .to_string()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn decode_windows_bytes(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim().to_string()
+}
+
 fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new(program);
     command.args(args);
@@ -76,9 +141,9 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     command.creation_flags(CREATE_NO_WINDOW);
     let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        // sc.exe often prints "Access is denied." on stdout with a non-zero exit.
+        let stderr = decode_windows_bytes(&output.stderr);
+        let stdout = decode_windows_bytes(&output.stdout);
+        // sc.exe often prints "Access is denied." / Chinese 拒绝访问 on stdout.
         return Err(if !stderr.is_empty() {
             stderr
         } else if !stdout.is_empty() {
@@ -87,7 +152,7 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
             format!("{program} exited with status {}", output.status)
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(decode_windows_bytes(&output.stdout))
 }
 
 fn powershell_quote(value: &str) -> String {
@@ -118,21 +183,44 @@ fn run_powershell(command: &str) -> Result<String, String> {
 
 fn looks_like_access_denied(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
-    lower.contains("access is denied")
+    if lower.contains("access is denied")
         || lower.contains("access denied")
-        || lower.contains("拒绝访问")
-        || lower.contains("error 5")
-        || lower.contains("(5)")
-        || lower.contains(" 5\n")
         || lower.contains("service manager")
+        || lower.contains("error 5")
+        || lower.contains("error: 5")
+        || lower.contains("failed 5")
+        || lower.contains("failed: 5")
+        || lower.contains("(5)")
         || lower.contains("1223")
+    {
+        return true;
+    }
+    if error.contains("拒绝访问") {
+        return true;
+    }
+    // sc.exe: "[SC] OpenService FAILED 5:" / "[SC] OpenService 失败 5:"
+    // Match any OpenService/OpenSCManager failure mentioning code 5.
+    if (error.contains("OpenService")
+        || error.contains("OpenSCManager")
+        || lower.contains("openservice")
+        || lower.contains("openscmanager")
+        || lower.contains("[sc]"))
+        && (error.contains('5'))
+    {
+        return true;
+    }
+    // Mojibake fallback for GBK mis-decoded as UTF-8 (拒绝/失败).
+    if error.contains('\u{fffd}') && error.contains('5') {
+        return true;
+    }
+    false
 }
 
 fn elevate_helper_arg(helper_path: &Path, arg: &str) -> Result<(), String> {
     let command = helper_elevated_command(helper_path, arg);
     match run_powershell(&command) {
         Ok(_) => Ok(()),
-        Err(error) if error.contains("1223") || error.is_empty() => {
+        Err(error) if error.contains("1223") || error.trim().is_empty() => {
             Err("已取消管理员授权，无法修改 Helper 服务".to_string())
         }
         Err(error) => Err(error),
@@ -141,20 +229,83 @@ fn elevate_helper_arg(helper_path: &Path, arg: &str) -> Result<(), String> {
 
 fn elevate_sc_args(args: &[&str]) -> Result<String, String> {
     // sc.exe needs admin for stop/start/delete against SCM.
-    let joined = args
+    // IMPORTANT: Do NOT use -RedirectStandardOutput with -Verb RunAs.
+    // Elevated Start-Process cannot redirect handles across the UAC boundary
+    // and fails silently / without a prompt on many systems.
+    //
+    // Write a tiny .cmd that runs sc and captures exit code; elevate the cmd.
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let dir = env::temp_dir();
+    let bat_path = dir.join(format!("flyclash-sc-{stamp}.cmd"));
+    let out_path = dir.join(format!("flyclash-sc-{stamp}.out"));
+    let code_path = dir.join(format!("flyclash-sc-{stamp}.code"));
+
+    let sc_args = args
         .iter()
-        .map(|arg| powershell_quote(arg))
+        .map(|arg| {
+            if arg.chars().any(|ch| ch.is_whitespace()) {
+                format!("\"{arg}\"")
+            } else {
+                (*arg).to_string()
+            }
+        })
         .collect::<Vec<_>>()
-        .join(",");
-    let command = format!(
-        "$p = Start-Process -FilePath 'sc.exe' -ArgumentList @({joined}) -Verb RunAs -Wait -PassThru -WindowStyle Hidden; if ($null -eq $p) {{ exit 1223 }}; exit $p.ExitCode"
+        .join(" ");
+    let bat = format!(
+        "@echo off\r\n\
+         sc.exe {sc_args} > \"{out}\" 2>&1\r\n\
+         echo %ERRORLEVEL% > \"{code}\"\r\n",
+        out = out_path.to_string_lossy(),
+        code = code_path.to_string_lossy(),
     );
-    match run_powershell(&command) {
-        Ok(output) => Ok(output),
-        Err(error) if error.contains("1223") || error.is_empty() => {
+    fs::write(&bat_path, bat).map_err(|err| format!("写入提权脚本失败: {err}"))?;
+    let _ = fs::remove_file(&out_path);
+    let _ = fs::remove_file(&code_path);
+
+    let bat_quoted = powershell_quote(&bat_path.to_string_lossy());
+    let command = format!(
+        "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', {bat_quoted}) -Verb RunAs -Wait -PassThru -WindowStyle Hidden; \
+         if ($null -eq $p) {{ exit 1223 }}; \
+         exit $p.ExitCode"
+    );
+
+    let launch = run_powershell(&command);
+    let output_text = fs::read(&out_path)
+        .map(|bytes| decode_windows_bytes(&bytes))
+        .unwrap_or_default();
+    let exit_code = fs::read_to_string(&code_path)
+        .ok()
+        .and_then(|text| text.trim().parse::<i32>().ok());
+    let _ = fs::remove_file(&bat_path);
+    let _ = fs::remove_file(&out_path);
+    let _ = fs::remove_file(&code_path);
+
+    match launch {
+        Ok(_) => {
+            if let Some(code) = exit_code {
+                if code == 0 {
+                    return Ok(output_text);
+                }
+                if !output_text.is_empty() {
+                    return Err(output_text);
+                }
+                return Err(format!("sc.exe exit {code}"));
+            }
+            Ok(output_text)
+        }
+        Err(error) if error.contains("1223") || error.trim().is_empty() => {
             Err("已取消管理员授权，无法控制系统服务".to_string())
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            if !output_text.is_empty() {
+                Err(output_text)
+            } else {
+                Err(error)
+            }
+        }
     }
 }
 
@@ -355,12 +506,24 @@ pub fn stop_helper_service() -> Result<String, String> {
         return Err("当前平台不支持 Windows Helper 服务".to_string());
     }
 
-    match command_output("sc", &["stop", HELPER_SERVICE_NAME]) {
+    // Stopping a Windows service always needs SCM admin rights for non-elevated
+    // UI processes. Prefer UAC elevation first so users always get a prompt
+    // instead of a garbled "[SC] OpenService FAILED 5" toast.
+    match elevate_sc_args(&["stop", HELPER_SERVICE_NAME]) {
         Ok(output) => Ok(output),
-        Err(error) if looks_like_access_denied(&error) => {
-            elevate_sc_args(&["stop", HELPER_SERVICE_NAME])
+        Err(elev_error) => {
+            // Fall back to direct sc for already-elevated hosts / auto-elevate.
+            match command_output("sc", &["stop", HELPER_SERVICE_NAME]) {
+                Ok(output) => Ok(output),
+                Err(direct_error) => {
+                    if looks_like_access_denied(&direct_error) {
+                        Err(elev_error)
+                    } else {
+                        Err(format!("{direct_error}；提权: {elev_error}"))
+                    }
+                }
+            }
         }
-        Err(error) => Err(error),
     }
 }
 
