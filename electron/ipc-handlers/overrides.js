@@ -128,21 +128,41 @@ class OverrideManager {
   async updateItem(id, updates) {
     const config = await this.loadConfig();
     const index = config.items.findIndex(item => item.id === id);
-    
+
     if (index === -1) {
       throw new Error('覆写项不存在');
     }
 
     const item = config.items[index];
-    
+
     if (updates.name !== undefined) item.name = updates.name;
     if (updates.url !== undefined) item.url = updates.url;
     if (updates.enabled !== undefined) item.enabled = updates.enabled;
     if (updates.global !== undefined) item.global = updates.global;
-    
+
     item.updatedAt = new Date().toISOString();
-    
     config.items[index] = item;
+
+    // 全局覆写互斥：同一时间只允许一个全局项，且只允许一个已启用的全局项
+    if (item.global === true) {
+      for (const other of config.items) {
+        if (other.id === id) continue;
+        if (other.global) {
+          other.global = false;
+          other.updatedAt = new Date().toISOString();
+        }
+      }
+    }
+    if (item.global === true && item.enabled === true) {
+      for (const other of config.items) {
+        if (other.id === id) continue;
+        if (other.global && other.enabled) {
+          other.enabled = false;
+          other.updatedAt = new Date().toISOString();
+        }
+      }
+    }
+
     await this.saveConfig(config);
 
     try {
@@ -414,7 +434,12 @@ async function applyOverrides(manager, config, configFilePath) {
 
     const enabledItems = items.filter(item => item.enabled);
     const itemMap = new Map(enabledItems.map(item => [item.id, item]));
-    const globalQueue = enabledItems.filter(item => item.global).map(item => item.id);
+    // 全局覆写只取一个已启用项（按列表顺序优先）
+    const enabledGlobals = enabledItems.filter(item => item.global);
+    if (enabledGlobals.length > 1) {
+      console.warn(`[applyOverrides] 检测到 ${enabledGlobals.length} 个已启用全局覆写，仅应用第一个:`, enabledGlobals.map(i => i.name));
+    }
+    const globalQueue = enabledGlobals.slice(0, 1).map(item => item.id);
 
     console.log(`找到 ${globalQueue.length} 个已启用的全局覆写:`, globalQueue.map(id => itemMap.get(id)?.name));
 

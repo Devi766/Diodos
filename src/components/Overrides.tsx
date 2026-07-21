@@ -554,9 +554,19 @@ export default function Overrides() {
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
-    const previousEnabled = items.find((item) => item.id === id)?.enabled;
+    const target = items.find((item) => item.id === id);
+    const previousItems = items;
+    const isGlobal = !!target?.global;
+
+    // 全局覆写互斥：开启一个全局覆写时，自动关闭其他已启用的全局覆写
     setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, enabled } : item)),
+      prev.map((item) => {
+        if (item.id === id) return { ...item, enabled };
+        if (enabled && isGlobal && item.global && item.enabled) {
+          return { ...item, enabled: false };
+        }
+        return item;
+      }),
     );
 
     try {
@@ -566,23 +576,25 @@ export default function Overrides() {
 
       const result = await window.electronAPI.updateOverride(id, { enabled });
       ensureActionSuccess(result, t('overrides.unknownError'));
+
+      // 后端会同步关闭其他全局项，刷新列表保证 UI 一致
+      if (enabled && isGlobal) {
+        await fetchItems();
+      }
+
       notifyProfileUpdated();
       showToast(
         t('common.success'),
         formatActionSuccess(
-          enabled ? t('overrides.enabledSuccess') : t('overrides.disabledSuccess'),
+          enabled
+            ? (isGlobal ? t('overrides.enabledGlobalExclusive') : t('overrides.enabledSuccess'))
+            : t('overrides.disabledSuccess'),
           result,
         ),
         'success',
       );
     } catch (error: any) {
-      if (typeof previousEnabled === 'boolean') {
-        setItems((prev) =>
-          prev.map((item) =>
-            item.id === id ? { ...item, enabled: previousEnabled } : item,
-          ),
-        );
-      }
+      setItems(previousItems);
       console.error('切换覆写状态失败:', error);
       const message = t('overrides.toggleError', { error: errorToMessage(error) });
       setErrorMessage(message);
@@ -1000,9 +1012,18 @@ export default function Overrides() {
                 }
               }
 
-              setItems(prev => prev.map(item =>
-                item.id === updatedItem.id ? updatedItem : item
-              ));
+              setItems(prev => prev.map(item => {
+                if (item.id === updatedItem.id) return updatedItem;
+                // 设为全局时，其他项取消全局标记（后端也会同步）
+                if (updatedItem.global && item.global) {
+                  return { ...item, global: false };
+                }
+                return item;
+              }));
+              // 若当前项是全局且启用，刷新列表确保互斥状态一致
+              if (updatedItem.global && updatedItem.enabled) {
+                await fetchItems();
+              }
               setEditingItem(null);
               notifyProfileUpdated();
               showToast(t('common.success'), formatActionSuccess(t('overrides.saveSuccess'), result), 'success');

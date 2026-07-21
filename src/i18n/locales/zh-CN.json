@@ -472,6 +472,7 @@
     "importSuccess": "覆写已导入",
     "importError": "导入失败: {{error}}",
     "enabledSuccess": "覆写已启用",
+    "enabledGlobalExclusive": "全局覆写已启用（其他全局覆写已自动关闭）",
     "disabledSuccess": "覆写已停用",
     "toggleError": "操作失败: {{error}}",
     "updateSuccess": "更新成功",

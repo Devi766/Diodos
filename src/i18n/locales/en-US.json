@@ -472,6 +472,7 @@
     "importSuccess": "Override imported",
     "importError": "Import failed: {{error}}",
     "enabledSuccess": "Override enabled",
+    "enabledGlobalExclusive": "Global override enabled (other global overrides were turned off)",
     "disabledSuccess": "Override disabled",
     "toggleError": "Operation failed: {{error}}",
     "updateSuccess": "Update successful",
