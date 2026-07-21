@@ -575,13 +575,14 @@ function mergeConfigs(target = {}, patch = {}) {
   for (const rawKey of Object.keys(patch)) {
     const value = patch[rawKey];
 
-    if (isPlainObject(value)) {
-      if (rawKey.endsWith('!')) {
-        const key = unwrapKey(rawKey.slice(0, -1));
-        result[key] = value;
-        continue;
-      }
+    // Force-replace (clash-party `key!`) for both objects and arrays.
+    if (rawKey.endsWith('!')) {
+      const key = unwrapKey(rawKey.slice(0, -1));
+      result[key] = value;
+      continue;
+    }
 
+    if (isPlainObject(value)) {
       const key = unwrapKey(rawKey);
       const base = isPlainObject(result[key]) ? result[key] : {};
       result[key] = mergeConfigs(base, value);
@@ -603,12 +604,13 @@ function mergeConfigs(target = {}, patch = {}) {
         continue;
       }
 
+      // Plain array keys fully replace (proxy-groups / rules / proxies).
       const key = unwrapKey(rawKey);
       result[key] = value;
       continue;
     }
 
-    result[rawKey] = value;
+    result[unwrapKey(rawKey)] = value;
   }
 
   return result;

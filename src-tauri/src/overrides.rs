@@ -276,12 +276,14 @@ fn merge_yaml_override(target: &Value, patch: &Value) -> Value {
     };
 
     for (raw_key, value) in patch_object {
-        if value.is_object() {
-            if let Some(key) = raw_key.strip_suffix('!') {
-                result.insert(unwrap_override_key(key), value.clone());
-                continue;
-            }
+        // Force-replace (clash-party `key!`) works for objects and arrays.
+        // Common for scripts/YAML that fully replace `proxy-groups`.
+        if let Some(key) = raw_key.strip_suffix('!') {
+            result.insert(unwrap_override_key(key), value.clone());
+            continue;
+        }
 
+        if value.is_object() {
             let key = unwrap_override_key(raw_key);
             let base = result
                 .get(&key)
@@ -315,11 +317,12 @@ fn merge_yaml_override(target: &Value, patch: &Value) -> Value {
                 continue;
             }
 
+            // Plain array keys fully replace (e.g. proxy-groups / rules / proxies).
             result.insert(unwrap_override_key(raw_key), value.clone());
             continue;
         }
 
-        result.insert(raw_key.clone(), value.clone());
+        result.insert(unwrap_override_key(raw_key), value.clone());
     }
 
     Value::Object(result)
@@ -704,5 +707,82 @@ function main(config) {
                 .map(Vec::len),
             Some(1)
         );
+    }
+
+    #[test]
+    fn yaml_override_replaces_proxy_groups_array() {
+        let config = json!({
+            "proxy-groups": [
+                { "name": "ORIGINAL", "type": "select", "proxies": ["a"] }
+            ]
+        });
+        let patch = json!({
+            "proxy-groups": [
+                { "name": "OVERRIDDEN", "type": "url-test", "proxies": ["b"] }
+            ]
+        });
+
+        let result = merge_yaml_override(&config, &patch);
+        let groups = result
+            .get("proxy-groups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].get("name").and_then(Value::as_str),
+            Some("OVERRIDDEN")
+        );
+    }
+
+    #[test]
+    fn yaml_override_force_replace_with_bang_suffix() {
+        let config = json!({
+            "proxy-groups": [
+                { "name": "ORIGINAL", "type": "select", "proxies": ["a"] }
+            ]
+        });
+        let patch = json!({
+            "proxy-groups!": [
+                { "name": "FORCED", "type": "select", "proxies": ["c"] }
+            ]
+        });
+
+        let result = merge_yaml_override(&config, &patch);
+        let groups = result
+            .get("proxy-groups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].get("name").and_then(Value::as_str),
+            Some("FORCED")
+        );
+    }
+
+    #[test]
+    fn js_override_can_replace_proxy_groups() {
+        let config = json!({
+            "proxy-groups": [
+                { "name": "ORIGINAL", "type": "select", "proxies": ["a"] }
+            ]
+        });
+        let script = r#"
+function main(config) {
+  config['proxy-groups'] = [
+    { name: 'SCRIPT', type: 'url-test', proxies: ['b'] }
+  ];
+  return config;
+}
+"#;
+        let result = run_js_override(&config, script, "replace-groups").unwrap();
+        let groups = result
+            .get("proxy-groups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].get("name").and_then(Value::as_str), Some("SCRIPT"));
     }
 }

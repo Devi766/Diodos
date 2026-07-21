@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 3;
+const PROXY_GROUPS_CACHE_VERSION = 4;
 
 // 定义类型
 type ProxyNode = {
@@ -360,30 +360,28 @@ const mergeProxyGroupsWithPrevious = (
   previousGroups: ProxyGroup[],
   configOrder?: ConfigOrder | null,
 ): ProxyGroup[] => {
-  if (previousGroups.length === 0) return nextGroups;
-
-  const byName = new Map<string, ProxyGroup>();
-  for (const group of previousGroups) {
-    byName.set(group.name, group);
-  }
-  for (const group of nextGroups) {
-    byName.set(group.name, group);
+  // Runtime snapshot is the source of truth for membership. Never resurrect
+  // groups that disappeared after script/yaml overrides (clash-party behavior).
+  if (nextGroups.length === 0) return nextGroups;
+  if (previousGroups.length === 0 && !(configOrder?.proxyGroups?.length)) {
+    return nextGroups;
   }
 
+  const nextByName = new Map(nextGroups.map((group) => [group.name, group]));
   const hiddenGroups = new Set(
     (configOrder?.proxyGroups || [])
-      .filter(group => group.hidden === true)
-      .map(group => group.name),
+      .filter((group) => group.hidden === true)
+      .map((group) => group.name),
   );
   const orderedNames = (configOrder?.proxyGroups || [])
-    .filter(group => group.hidden !== true)
-    .map(group => group.name);
+    .filter((group) => group.hidden !== true)
+    .map((group) => group.name);
 
   const merged: ProxyGroup[] = [];
   const seen = new Set<string>();
   const append = (name: string) => {
     if (seen.has(name) || hiddenGroups.has(name)) return;
-    const group = byName.get(name);
+    const group = nextByName.get(name);
     if (!group) return;
     seen.add(name);
     merged.push(group);
@@ -391,7 +389,6 @@ const mergeProxyGroupsWithPrevious = (
 
   for (const name of orderedNames) append(name);
   for (const group of nextGroups) append(group.name);
-  for (const group of previousGroups) append(group.name);
 
   return merged;
 };
@@ -1617,11 +1614,13 @@ export default function ProxyNodes() {
         }
       }
 
-      // Prefer config-file order (like clash-party), but always keep API groups that
-      // are missing from the parsed order (url-test / smart / load-balance / overrides).
+      // clash-party style: when runtime config order is available (already includes
+      // overrides), only show groups listed there. Do not re-append API-only groups,
+      // otherwise script overrides that replace proxy-groups will still show the
+      // original subscription groups that remain briefly/stale in /proxies.
       if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
         if (isDev) {
-          console.log('[调试] 使用配置文件中的代理组顺序，并补齐 API 中的其它组');
+          console.log('[调试] 使用覆写后的配置顺序展示代理组（不补齐 API 独有组）');
         }
         groupsOrder = configOrder.proxyGroups
           .filter(group => group.hidden !== true)
@@ -1639,19 +1638,15 @@ export default function ProxyNodes() {
 
         const missingInApi = groupsOrder.filter(name => !apiGroups.includes(name));
         if (isDev && missingInApi.length > 0) {
-          console.log(`[调试] 配置文件中有但API中不存在的代理组: ${missingInApi.join(', ')}`);
+          console.log(`[调试] 配置中有但API中不存在的代理组(已跳过): ${missingInApi.join(', ')}`);
         }
 
-        // Append runtime groups not present in the config order instead of dropping them.
-        // This is the main reason url-test / smart / load-balance groups disappeared when
-        // getConfigOrder filtered types or only had partial group metadata.
         const known = new Set(groupsOrder);
         const missingInConfig = apiGroups.filter(name => !known.has(name));
-        if (missingInConfig.length > 0) {
-          groupsOrder = [...groupsOrder, ...missingInConfig];
-          if (isDev) {
-            console.log(`[调试] 补齐 API 中有但配置顺序缺失的代理组: ${missingInConfig.join(', ')}`);
-          }
+        if (isDev && missingInConfig.length > 0) {
+          console.log(
+            `[调试] API 中有但配置顺序不存在的代理组(按 clash-party 忽略，避免覆写后残留原组): ${missingInConfig.join(', ')}`,
+          );
         }
       } else {
         if (isDev) {

@@ -459,20 +459,18 @@ module.exports = function initTrayManager(context) {
                 }
               }
 
-              // 按配置文件顺序排列
+              // Use overridden runtime config order only. Do not re-append API-only groups,
+              // otherwise script overrides that replace proxy-groups still show original groups.
               let groupsOrder = [];
               if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
                 groupsOrder = configOrder.proxyGroups
                   .filter(group => {
+                    if (group.hidden === true) return false;
                     if (currentMode === 'global' && group.name !== 'GLOBAL') return false;
                     if (currentMode === 'rule' && group.name === 'GLOBAL') return false;
                     return true;
                   })
                   .map(group => group.name);
-
-                // 添加 API 中有但配置文件中没有的组
-                const missingInConfig = Object.keys(selectorGroups).filter(name => !groupsOrder.includes(name));
-                groupsOrder.push(...missingInConfig);
               } else {
                 groupsOrder = Object.keys(selectorGroups);
               }
