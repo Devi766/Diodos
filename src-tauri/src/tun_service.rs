@@ -32,7 +32,7 @@ use crate::{
 type CompatResult = Result<Value, String>;
 
 const WINDOWS_ELEVATED_TASK_NAME: &str = "FlyClash-Elevated";
-const REQUIRED_HELPER_VERSION: &str = "1.0.2";
+const REQUIRED_HELPER_VERSION: &str = "1.0.3";
 /// Keep the system kernel path compatible with the Electron main branch.
 const MACOS_SYSTEM_KERNEL_DIR: &str = "/Library/Application Support/Flycast";
 const MACOS_SYSTEM_KERNEL_NAME: &str = "mihomo";
@@ -872,22 +872,32 @@ pub(crate) fn ensure_helper_service_current(app: &AppHandle) -> Result<(), Strin
 
     let flags = core_service::query_helper_service_flags();
     if flags.installed {
-        // Start / repair IPC without reinstalling when the service binary is already present.
-        if core_service::ensure_helper_service_ipc_ready().is_ok() {
-            let helper = core_service::helper_ipc_snapshot(true);
-            if helper.ipc_available() && helper_version_current(&helper) {
-                return Ok(());
+        // Prefer start/repair over reinstall. Windows SCM delete is async, so
+        // install-while-exists often races into "service already exists".
+        match core_service::ensure_helper_service_ipc_ready() {
+            Ok(_) => {
+                let helper = core_service::helper_ipc_snapshot(true);
+                if helper.ipc_available() && helper_version_current(&helper) {
+                    return Ok(());
+                }
+                // Service is reachable but binary is outdated. Fall through to
+                // reinstall/update path so the installed path/version is refreshed.
             }
-        }
-
-        let flags = core_service::query_helper_service_flags();
-        let helper = core_service::helper_ipc_snapshot(flags.running);
-        if helper.ipc_available() && helper_version_current(&helper) {
-            return Ok(());
+            Err(error) => {
+                // Still installed: try one more snapshot before reinstall.
+                let current = core_service::query_helper_service_flags();
+                let helper = core_service::helper_ipc_snapshot(current.running);
+                if helper.ipc_available() && helper_version_current(&helper) {
+                    return Ok(());
+                }
+                eprintln!("[TUN] helper installed but not ready before reinstall: {error}");
+            }
         }
     }
 
     let helper_path = find_helper_executable(app)?;
+    // installService itself now updates an existing service instead of hard-failing
+    // on "already exists". Keep stop best-effort only.
     if flags.running {
         let _ = core_service::stop_helper_service();
     }

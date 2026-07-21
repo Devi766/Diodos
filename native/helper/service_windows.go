@@ -6,11 +6,87 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
+
+func isServiceAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	if err == windows.ERROR_SERVICE_EXISTS {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "service already exists") ||
+		strings.Contains(msg, "指定的服务已存在")
+}
+
+func isServiceMarkedForDelete(err error) bool {
+	if err == nil {
+		return false
+	}
+	if err == windows.ERROR_SERVICE_MARKED_FOR_DELETE {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "marked for deletion") ||
+		strings.Contains(msg, "marked for delete") ||
+		strings.Contains(msg, "标记为删除")
+}
+
+func waitForServiceState(s *mgr.Service, want svc.State, attempts int, delay time.Duration) error {
+	var last error
+	for i := 0; i < attempts; i++ {
+		status, err := s.Query()
+		if err != nil {
+			last = err
+		} else if status.State == want {
+			return nil
+		}
+		time.Sleep(delay)
+	}
+	if last != nil {
+		return last
+	}
+	return fmt.Errorf("service did not reach state %v", want)
+}
+
+func waitUntilServiceGone(m *mgr.Mgr, attempts int, delay time.Duration) error {
+	for i := 0; i < attempts; i++ {
+		s, err := m.OpenService(serviceName)
+		if err != nil {
+			// Open failed => service no longer registered.
+			return nil
+		}
+		s.Close()
+		time.Sleep(delay)
+	}
+	return fmt.Errorf("service %s is still present after uninstall", serviceName)
+}
+
+func stopAndDeleteService(s *mgr.Service) error {
+	// Best-effort stop first. Delete can succeed while service is still stopping,
+	// but that leaves a "marked for deletion" tombstone until process exits.
+	status, err := s.Query()
+	if err == nil && status.State != svc.Stopped {
+		_, _ = s.Control(svc.Stop)
+		_ = waitForServiceState(s, svc.Stopped, 30, 200*time.Millisecond)
+	}
+
+	if err := s.Delete(); err != nil {
+		if isServiceMarkedForDelete(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete service: %v", err)
+	}
+	return nil
+}
 
 func installService() error {
 	exePath, err := os.Executable()
@@ -28,35 +104,110 @@ func installService() error {
 	}
 	defer m.Disconnect()
 
-	// 检查服务是否已存在
-	s, err := m.OpenService(serviceName)
-	if err == nil {
-		s.Close()
-		// 服务已存在，先卸载
-		if err := uninstallService(); err != nil {
-			return fmt.Errorf("failed to uninstall existing service: %v", err)
+	// If the service already exists, prefer update/start over uninstall+recreate.
+	// Windows service deletion is asynchronous; recreate often races with
+	// "The specified service already exists."
+	if existing, err := m.OpenService(serviceName); err == nil {
+		defer existing.Close()
+
+		cfg, cfgErr := existing.Config()
+		if cfgErr != nil {
+			return fmt.Errorf("failed to read existing service config: %v", cfgErr)
 		}
-		time.Sleep(time.Second)
+		cfg.BinaryPathName = exePath
+		cfg.DisplayName = serviceDisplay
+		cfg.Description = serviceDesc
+		cfg.StartType = mgr.StartAutomatic
+		if err := existing.UpdateConfig(cfg); err != nil {
+			return fmt.Errorf("failed to update existing service: %v", err)
+		}
+
+		status, queryErr := existing.Query()
+		if queryErr == nil && status.State == svc.Running {
+			// Restart so the new binary/path takes effect.
+			_, _ = existing.Control(svc.Stop)
+			_ = waitForServiceState(existing, svc.Stopped, 30, 200*time.Millisecond)
+		}
+		if err := existing.Start(); err != nil {
+			// Start can return "already running" depending on race; treat as success
+			// if the service ends up RUNNING.
+			if status, qerr := existing.Query(); qerr == nil && status.State == svc.Running {
+				return nil
+			}
+			return fmt.Errorf("failed to start existing service: %v", err)
+		}
+		return nil
 	}
 
-	// 创建服务
+	// Create service when it does not exist.
 	config := mgr.Config{
 		DisplayName: serviceDisplay,
 		Description: serviceDesc,
-		StartType:   mgr.StartAutomatic, // 自动启动
+		StartType:   mgr.StartAutomatic,
 	}
 
-	s, err = m.CreateService(serviceName, exePath, config)
-	if err != nil {
-		return fmt.Errorf("failed to create service: %v", err)
+	var s *mgr.Service
+	var createErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		s, createErr = m.CreateService(serviceName, exePath, config)
+		if createErr == nil {
+			break
+		}
+
+		if isServiceAlreadyExists(createErr) || isServiceMarkedForDelete(createErr) {
+			// Existing/tombstoned service: wait and prefer update path.
+			time.Sleep(400 * time.Millisecond)
+			if existing, openErr := m.OpenService(serviceName); openErr == nil {
+				cfg, cfgErr := existing.Config()
+				if cfgErr != nil {
+					existing.Close()
+					return fmt.Errorf("failed to read existing service config: %v", cfgErr)
+				}
+				cfg.BinaryPathName = exePath
+				cfg.DisplayName = serviceDisplay
+				cfg.Description = serviceDesc
+				cfg.StartType = mgr.StartAutomatic
+				if err := existing.UpdateConfig(cfg); err != nil {
+					existing.Close()
+					return fmt.Errorf("failed to update existing service: %v", err)
+				}
+				status, queryErr := existing.Query()
+				if queryErr == nil && status.State != svc.Running {
+					if err := existing.Start(); err != nil {
+						existing.Close()
+						return fmt.Errorf("failed to start existing service: %v", err)
+					}
+				} else if queryErr == nil && status.State == svc.Running {
+					// Restart to pick up binary path changes.
+					_, _ = existing.Control(svc.Stop)
+					_ = waitForServiceState(existing, svc.Stopped, 30, 200*time.Millisecond)
+					if err := existing.Start(); err != nil {
+						if status, qerr := existing.Query(); qerr == nil && status.State == svc.Running {
+							existing.Close()
+							return nil
+						}
+						existing.Close()
+						return fmt.Errorf("failed to restart existing service: %v", err)
+					}
+				}
+				existing.Close()
+				return nil
+			}
+			continue
+		}
+		return fmt.Errorf("failed to create service: %v", createErr)
+	}
+	if createErr != nil {
+		return fmt.Errorf("failed to create service: %v", createErr)
 	}
 	defer s.Close()
 
-	// 启动服务
 	if err := s.Start(); err != nil {
+		if status, qerr := s.Query(); qerr == nil && status.State == svc.Running {
+			return nil
+		}
 		return fmt.Errorf("failed to start service: %v", err)
 	}
-
 	return nil
 }
 
@@ -69,29 +220,21 @@ func uninstallService() error {
 
 	s, err := m.OpenService(serviceName)
 	if err != nil {
-		// 服务不存在
+		// Service does not exist.
 		return nil
 	}
-	defer s.Close()
 
-	// 先停止服务
-	status, err := s.Query()
-	if err == nil && status.State != svc.Stopped {
-		s.Control(svc.Stop)
-		// 等待服务停止
-		for i := 0; i < 10; i++ {
-			status, err = s.Query()
-			if err != nil || status.State == svc.Stopped {
-				break
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
+	deleteErr := stopAndDeleteService(s)
+	s.Close()
+	if deleteErr != nil {
+		return deleteErr
 	}
 
-	// 删除服务
-	if err := s.Delete(); err != nil {
-		return fmt.Errorf("failed to delete service: %v", err)
+	// SCM delete is asynchronous. Wait until OpenService fails so subsequent
+	// installs don't race with "already exists".
+	if err := waitUntilServiceGone(m, 40, 150*time.Millisecond); err != nil {
+		// Not fatal if already marked for deletion; report for visibility.
+		return err
 	}
-
 	return nil
 }
