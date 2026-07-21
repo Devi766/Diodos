@@ -76,6 +76,7 @@ Get-CimInstance Win32_Process |
       ($_.CommandLine -and (
         $_.CommandLine -match 'work-config\.yaml' -or
         $_.CommandLine -match 'pipe\\flycast-mihomo' -or
+        $_.CommandLine -match 'pipe\\flycast-mihomo-service' -or
         $_.CommandLine -match 'pipe\\FlyClash\\mihomo' -or
         $_.CommandLine -match 'com\.flyclash\.desktop\\mihomo' -or
         $_.CommandLine -match 'AppData\\Roaming\\com\.flyclash\.desktop\\cores'
