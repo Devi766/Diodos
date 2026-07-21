@@ -560,6 +560,13 @@
       openFile: async (...args) => call("openFile", args),
       openFileLocation: async (...args) => call("openFileLocation", args),
       openFileInDefaultApp: async (...args) => call("openFileInDefaultApp", args),
+      readLocalTextFile: async (...args) =>
+        callWithDefault(
+          "readLocalTextFile",
+          args,
+          { success: false, error: "readLocalTextFile unavailable" },
+          (result) => result && typeof result === "object"
+        ),
       requestMihomoAPI: async (...args) => {
         const result = await call("requestMihomoAPI", args);
         if (result && result.success === false && result.error === "Tauri runtime is not available") {

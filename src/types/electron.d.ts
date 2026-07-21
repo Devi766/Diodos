@@ -532,6 +532,7 @@ export interface ElectronAPI {
   onSpeedtestOutput: (callback: (outputData: SpeedtestOutput) => void) => (() => void);
 
   openFileInDefaultApp: (filePath: string) => Promise<{
+  readLocalTextFile?: (filePath: string) => Promise<{ success: boolean; path?: string; fileName?: string; name?: string; content?: string; error?: string; value?: { path?: string; fileName?: string; name?: string; content?: string } }>;
     success: boolean,
     error?: string
   }>;

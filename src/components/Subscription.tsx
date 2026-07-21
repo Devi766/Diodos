@@ -886,7 +886,8 @@ export default function SubscriptionManager() {
       return null;
     }
 
-    if (!hasSubscriptionsCache()) {
+    // Keep showing previous list while refreshing to avoid empty-state flash.
+    if (!hasSubscriptionsCache() && subscriptions.length === 0) {
       setIsSubscriptionsLoading(true);
     }
     try {
@@ -1738,227 +1739,274 @@ export default function SubscriptionManager() {
     }, 20);
   };
 
-  // 拖放文件相关处理函数
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // 只在拖拽文件时设置isDragging
-    if (e.dataTransfer.types.includes('Files')) {
-    setIsDragging(true);
-    }
+  const isYamlFileName = useCallback((name: string) => {
+    const lower = name.toLowerCase();
+    return lower.endsWith('.yaml') || lower.endsWith('.yml');
   }, []);
 
-  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // 只在拖拽文件时设置isDragging
-    if (e.dataTransfer.types.includes('Files')) {
-    setIsDragging(true);
+  const finalizeImportedSubscriptions = useCallback(async (importedPaths: string[]) => {
+    const lastImportedPath = importedPaths[importedPaths.length - 1] || null;
+    if (!lastImportedPath) return;
+
+    const reloadedSubscriptions = await loadSubscriptions();
+    if (!reloadedSubscriptions) {
+      showToast(t('common.error'), t('subscriptions.importSavedRefreshFailed'), 'error');
+      return;
     }
-  }, []);
 
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // 检查是否离开了主容器
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX;
-    const y = e.clientY;
-    
-    // 如果鼠标位置在容器外部，则设置isDragging为false
-    if (
-      x < rect.left ||
-      x >= rect.right ||
-      y < rect.top ||
-      y >= rect.bottom
-    ) {
-      setIsDragging(false);
+    const highlightedPaths = importedPaths.map(
+      (path) => findSubscriptionByPath(reloadedSubscriptions, path)?.path || path,
+    );
+    const importedSubscription = findSubscriptionByPath(reloadedSubscriptions, lastImportedPath);
+    const importedPath = importedSubscription?.path || lastImportedPath;
+    if (importedSubscription) {
+      setSelectedSub(importedSubscription);
     }
-  }, []);
+    const activated = await revealSavedSubscription(importedPath, 'imported', highlightedPaths);
+    showToast(
+      t('common.success'),
+      activated
+        ? t('subscriptions.importSuccessActivated')
+        : t('subscriptions.importSuccess', { count: importedPaths.length }),
+      'success',
+    );
+  }, [t]);
 
-  // 文件拖放处理函数
-  const handleFileDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
+  const importYamlFiles = useCallback(async (files: File[]) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'saveSubscription')) {
       showToast('错误', '订阅 API 不可用', 'error');
       return;
     }
-    
-    // 如果是卡片拖拽，不处理文件
-    if (isDraggingCard) return;
 
-    // 获取拖拽的文件
-    const files = Array.from(e.dataTransfer.files);
-    
-    if (files.length === 0) return;
-
-    // 检查是否为YAML文件
-    const validFiles = files.filter(file => 
-      file.name.endsWith('.yaml') || 
-      file.name.endsWith('.yml') || 
-      file.type === 'application/x-yaml' ||
-      file.type === 'text/yaml'
+    const validFiles = files.filter(
+      (file) =>
+        isYamlFileName(file.name) ||
+        file.type === 'application/x-yaml' ||
+        file.type === 'text/yaml',
     );
-
     if (validFiles.length === 0) {
       showToast('错误', '请上传有效的YAML配置文件', 'error');
       return;
     }
 
     const importedPaths: string[] = [];
-    let importedCount = 0;
-
     setIsLoading(true);
     try {
-      // 处理每个有效文件
       for (const file of validFiles) {
         try {
-          // 读取文件内容
           const content = await readFileAsText(file);
           if (!content.trim()) {
             showToast('错误', `导入配置文件 ${file.name} 失败: 文件内容为空`, 'error');
             continue;
           }
-
-          // 保存为订阅
-          const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
-            `local:${file.name}`, // 使用本地标识符
-            content,
-            file.name.replace(/\.(ya?ml)$/, ''), // 使用文件名作为默认名称
-            {
-              lastUpdated: new Date().toISOString()
-            }
-          ));
-
+          const saveResult = normalizeSaveSubscriptionResult(
+            await api.saveSubscription(
+              `local:${file.name}`,
+              content,
+              file.name.replace(/\.(ya?ml)$/i, ''),
+              { lastUpdated: new Date().toISOString() },
+            ),
+          );
           if (saveResult.success && saveResult.filePath) {
             importedPaths.push(saveResult.filePath);
-            importedCount += 1;
           } else {
-            showToast('错误', `导入配置文件 ${file.name} 失败: ${saveResult.error || '保存订阅失败'}`, 'error');
+            showToast(
+              '错误',
+              `导入配置文件 ${file.name} 失败: ${saveResult.error || '保存订阅失败'}`,
+              'error',
+            );
           }
         } catch (error) {
           console.error('导入配置文件失败:', error);
-          showToast('错误', `导入配置文件 ${file.name} 失败: ${formatSubscriptionError(error)}`, 'error');
-        }
-      }
-
-      const lastImportedPath = importedPaths[importedPaths.length - 1] || null;
-      if (lastImportedPath) {
-        const reloadedSubscriptions = await loadSubscriptions();
-        if (reloadedSubscriptions) {
-          const highlightedPaths = importedPaths.map((path) => findSubscriptionByPath(reloadedSubscriptions, path)?.path || path);
-          const importedSubscription = findSubscriptionByPath(reloadedSubscriptions, lastImportedPath);
-          const importedPath = importedSubscription?.path || lastImportedPath;
-          if (importedSubscription) {
-            setSelectedSub(importedSubscription);
-          }
-          const activated = await revealSavedSubscription(importedPath, 'imported', highlightedPaths);
           showToast(
-            t('common.success'),
-            activated
-              ? t('subscriptions.importSuccessActivated')
-              : t('subscriptions.importSuccess', { count: importedCount }),
-            'success'
+            '错误',
+            `导入配置文件 ${file.name} 失败: ${formatSubscriptionError(error)}`,
+            'error',
           );
-        } else {
-          showToast(t('common.error'), t('subscriptions.importSavedRefreshFailed'), 'error');
         }
       }
+      await finalizeImportedSubscriptions(importedPaths);
     } finally {
       setIsLoading(false);
     }
-  }, [isDraggingCard]);
+  }, [finalizeImportedSubscriptions, isYamlFileName]);
 
-  // 处理文件选择
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const importYamlPaths = useCallback(async (paths: string[]) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'saveSubscription')) {
       showToast('错误', '订阅 API 不可用', 'error');
       return;
     }
-    
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+    if (!hasElectronMethod(api, 'readLocalTextFile')) {
+      showToast('错误', '当前环境不支持拖拽导入本地文件', 'error');
+      return;
+    }
+
+    const validPaths = paths.filter((path) => isYamlFileName(path));
+    if (validPaths.length === 0) {
+      showToast('错误', '请上传有效的YAML配置文件', 'error');
+      return;
+    }
 
     const importedPaths: string[] = [];
-    let importedCount = 0;
-
     setIsLoading(true);
     try {
-      for (const file of files) {
+      for (const filePath of validPaths) {
         try {
-          // 读取文件内容
-          const content = await readFileAsText(file);
-          if (!content.trim()) {
-            showToast('错误', `导入配置文件 ${file.name} 失败: 文件内容为空`, 'error');
+          const result = await api.readLocalTextFile!(filePath);
+          const payload =
+            result && typeof result === 'object'
+              ? ((result as any).value && typeof (result as any).value === 'object'
+                  ? (result as any).value
+                  : result)
+              : null;
+          const success = !!(result as any)?.success;
+          const content = typeof payload?.content === 'string' ? payload.content : '';
+          const fileName =
+            (typeof payload?.fileName === 'string' && payload.fileName) ||
+            filePath.split(/[\\/]/).pop() ||
+            'config.yaml';
+          const displayName =
+            (typeof payload?.name === 'string' && payload.name) ||
+            fileName.replace(/\.(ya?ml)$/i, '');
+
+          if (!success || !content.trim()) {
+            showToast(
+              '错误',
+              `导入配置文件 ${fileName} 失败: ${(result as any)?.error || '读取文件失败'}`,
+              'error',
+            );
             continue;
           }
 
-          // 保存为订阅
-          const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
-            `local:${file.name}`,
-            content,
-            file.name.replace(/\.(ya?ml)$/, ''),
-            {
-              lastUpdated: new Date().toISOString()
-            }
-          ));
-
+          const saveResult = normalizeSaveSubscriptionResult(
+            await api.saveSubscription(
+              `local:${fileName}`,
+              content,
+              displayName,
+              { lastUpdated: new Date().toISOString() },
+            ),
+          );
           if (saveResult.success && saveResult.filePath) {
             importedPaths.push(saveResult.filePath);
-            importedCount += 1;
           } else {
-            showToast('错误', `导入配置文件 ${file.name} 失败: ${saveResult.error || '保存订阅失败'}`, 'error');
+            showToast(
+              '错误',
+              `导入配置文件 ${fileName} 失败: ${saveResult.error || '保存订阅失败'}`,
+              'error',
+            );
           }
         } catch (error) {
           console.error('导入配置文件失败:', error);
-          showToast('错误', `导入配置文件 ${file.name} 失败: ${formatSubscriptionError(error)}`, 'error');
-        }
-      }
-
-      // 清空文件输入，允许再次选择相同的文件
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-
-      const lastImportedPath = importedPaths[importedPaths.length - 1] || null;
-      if (lastImportedPath) {
-        const reloadedSubscriptions = await loadSubscriptions();
-        if (reloadedSubscriptions) {
-          const highlightedPaths = importedPaths.map((path) => findSubscriptionByPath(reloadedSubscriptions, path)?.path || path);
-          const importedSubscription = findSubscriptionByPath(reloadedSubscriptions, lastImportedPath);
-          const importedPath = importedSubscription?.path || lastImportedPath;
-          if (importedSubscription) {
-            setSelectedSub(importedSubscription);
-          }
-          const activated = await revealSavedSubscription(importedPath, 'imported', highlightedPaths);
           showToast(
-            t('common.success'),
-            activated
-              ? t('subscriptions.importSuccessActivated')
-              : t('subscriptions.importSuccess', { count: importedCount }),
-            'success'
+            '错误',
+            `导入配置文件失败: ${formatSubscriptionError(error)}`,
+            'error',
           );
-        } else {
-          showToast(t('common.error'), t('subscriptions.importSavedRefreshFailed'), 'error');
         }
       }
+      await finalizeImportedSubscriptions(importedPaths);
     } finally {
       setIsLoading(false);
+    }
+  }, [finalizeImportedSubscriptions, isYamlFileName]);
+
+  // HTML5 drag handlers (fallback when native drag-drop is unavailable).
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleFileDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isDraggingCard) return;
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length === 0) return;
+    await importYamlFiles(files);
+  }, [importYamlFiles, isDraggingCard]);
+
+  // Tauri native drag-drop (preferred on desktop).
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    const setup = async () => {
+      try {
+        const mod = await import('@tauri-apps/api/webviewWindow');
+        if (disposed || typeof mod.getCurrentWebviewWindow !== 'function') return;
+        const webview = mod.getCurrentWebviewWindow();
+        unlisten = await webview.onDragDropEvent((event) => {
+          if (disposed) return;
+          const payload = event?.payload as
+            | { type?: string; paths?: string[] }
+            | undefined;
+          if (!payload?.type) return;
+          if (payload.type === 'enter' || payload.type === 'over') {
+            if (!isDraggingCard) setIsDragging(true);
+            return;
+          }
+          if (payload.type === 'leave') {
+            setIsDragging(false);
+            return;
+          }
+          if (payload.type === 'drop') {
+            setIsDragging(false);
+            if (isDraggingCard) return;
+            const paths = Array.isArray(payload.paths) ? payload.paths : [];
+            if (paths.length > 0) {
+              void importYamlPaths(paths);
+            }
+          }
+        });
+      } catch (error) {
+        console.warn('[subscriptions] Tauri drag-drop unavailable:', error);
+      }
+    };
+
+    void setup();
+    return () => {
+      disposed = true;
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, [importYamlPaths, isDraggingCard]);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    try {
+      await importYamlFiles(files);
+    } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     }
   };
 
-  // 将文件读取为文本
   const readFileAsText = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();

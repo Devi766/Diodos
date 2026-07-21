@@ -23,8 +23,67 @@ fn arg_string(args: &[Value], index: usize) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn is_yaml_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            let lower = ext.to_ascii_lowercase();
+            lower == "yaml" || lower == "yml"
+        })
+        .unwrap_or(false)
+}
+
+fn read_local_text_file(path: &str) -> CompatResult {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(json!({ "success": false, "error": "缺少文件路径" }));
+    }
+    let file_path = std::path::PathBuf::from(trimmed);
+    if !file_path.is_absolute() {
+        return Ok(json!({ "success": false, "error": "仅支持绝对路径文件" }));
+    }
+    if !file_path.exists() {
+        return Ok(json!({ "success": false, "error": "文件不存在" }));
+    }
+    if !file_path.is_file() {
+        return Ok(json!({ "success": false, "error": "路径不是文件" }));
+    }
+    if !is_yaml_path(&file_path) {
+        return Ok(json!({ "success": false, "error": "仅支持 YAML 配置文件" }));
+    }
+
+    let content = std::fs::read_to_string(&file_path).map_err(|err| err.to_string())?;
+    if content.trim().is_empty() {
+        return Ok(json!({ "success": false, "error": "文件内容为空" }));
+    }
+
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config.yaml")
+        .to_string();
+    let stem = file_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config")
+        .to_string();
+
+    Ok(success(json!({
+        "path": file_path.to_string_lossy(),
+        "fileName": file_name,
+        "name": stem,
+        "content": content
+    })))
+}
+
 fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> CompatResult {
     match method {
+        "readLocalTextFile" => {
+            let Some(path) = arg_string(args, 0) else {
+                return Ok(json!({ "success": false, "error": "缺少文件路径" }));
+            };
+            read_local_text_file(&path)
+        }
         "openExternal" | "openFile" | "openFileInDefaultApp" => {
             let Some(target) = arg_string(args, 0)
                 .map(|value| value.trim().to_string())
@@ -82,6 +141,7 @@ pub(crate) async fn handle_compat_call(
             | "openFileLocation"
             | "openToolsApp"
             | "open-tools-app"
+            | "readLocalTextFile"
     ) {
         return None;
     }
