@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 6;
+const PROXY_GROUPS_CACHE_VERSION = 7;
 
 // 定义类型
 type ProxyNode = {
@@ -1257,25 +1257,43 @@ export default function ProxyNodes() {
   }, [groups, currentMode]);
 
   const filteredGroups = React.useMemo(() => {
-    return modeGroups.map(group => {
-      const filteredNodes = group.nodes.filter(node =>
-        node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        node.server.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      return { ...group, nodes: filteredNodes };
-    }).filter(group => group.nodes.length > 0);
+    const term = searchTerm.trim().toLowerCase();
+    return modeGroups
+      .map((group) => {
+        if (!term) return group;
+        const filteredNodes = group.nodes.filter(
+          (node) =>
+            node.name.toLowerCase().includes(term) ||
+            node.server.toLowerCase().includes(term),
+        );
+        // Keep the group shell when its name matches the search even if no node
+        // names match (include-all country groups can temporarily be empty).
+        if (filteredNodes.length === 0 && !group.name.toLowerCase().includes(term)) {
+          return { ...group, nodes: [] as ProxyNode[] };
+        }
+        return { ...group, nodes: filteredNodes };
+      })
+      .filter((group) => {
+        if (!term) return true;
+        return group.nodes.length > 0 || group.name.toLowerCase().includes(term);
+      });
   }, [modeGroups, searchTerm]);
 
   // 收藏的节点过滤
   const favoriteFilteredGroups = React.useMemo(() => {
-    return modeGroups.map(group => {
-      const favoriteNodesList = group.nodes.filter(node =>
-        (favoriteNodes.has(node.name)) &&
-        (node.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-         node.server.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
-      return { ...group, nodes: favoriteNodesList };
-    }).filter(group => group.nodes.length > 0);
+    const term = searchTerm.trim().toLowerCase();
+    return modeGroups
+      .map((group) => {
+        const favoriteNodesList = group.nodes.filter(
+          (node) =>
+            favoriteNodes.has(node.name) &&
+            (!term ||
+              node.name.toLowerCase().includes(term) ||
+              node.server.toLowerCase().includes(term)),
+        );
+        return { ...group, nodes: favoriteNodesList };
+      })
+      .filter((group) => group.nodes.length > 0);
   }, [modeGroups, favoriteNodes, searchTerm]);
 
   // 获取节点列表
@@ -1616,9 +1634,23 @@ export default function ProxyNodes() {
 
       // Prefer runtime API groups as membership source of truth.
       // Config order is only used for ordering / hidden flags.
+      // Also include config groups that may not yet appear in /proxies
+      // (provider-backed include-all groups during first load).
       const apiGroupNames = Object.keys(selectorGroups).filter(
         (name) => name !== 'GLOBAL' && !hiddenGroups.has(name),
       );
+      const configOnlyGroupNames = (configOrder?.proxyGroups || [])
+        .filter((group) => group.hidden !== true)
+        .map((group) => group.name)
+        .filter(
+          (name) =>
+            name !== 'GLOBAL' &&
+            !hiddenGroups.has(name) &&
+            !selectorGroups[name] &&
+            isGroupType(
+              configOrder?.proxyGroups?.find((group) => group.name === name)?.type || 'select',
+            ),
+        );
 
       if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
         if (isDev) {
@@ -1628,10 +1660,16 @@ export default function ProxyNodes() {
           .filter((group) => group.hidden !== true)
           .filter((group) => group.name !== 'GLOBAL')
           .map((group) => group.name)
-          .filter((name) => !!selectorGroups[name]);
+          .filter(
+            (name) =>
+              !!selectorGroups[name] ||
+              configOnlyGroupNames.includes(name),
+          );
 
         const preferredSet = new Set(preferred);
-        const remaining = apiGroupNames.filter((name) => !preferredSet.has(name));
+        const remaining = [...apiGroupNames, ...configOnlyGroupNames].filter(
+          (name) => !preferredSet.has(name),
+        );
         groupsOrder = [...preferred, ...remaining];
 
         if (isDev) {
@@ -1650,10 +1688,14 @@ export default function ProxyNodes() {
           const knownSet = new Set(existingOrder);
 
           // 先按现有顺序保留仍然存在的分组
-          groupsOrder = existingOrder.filter(name => selectorGroups[name] && !hiddenGroups.has(name));
+          groupsOrder = existingOrder.filter(
+            (name) =>
+              !hiddenGroups.has(name) &&
+              (!!selectorGroups[name] || configOnlyGroupNames.includes(name)),
+          );
 
           // 再把这次新增的分组追加到末尾
-          for (const name of apiGroupNames) {
+          for (const name of [...apiGroupNames, ...configOnlyGroupNames]) {
             if (!knownSet.has(name)) {
               groupsOrder.push(name);
             }
@@ -1667,7 +1709,7 @@ export default function ProxyNodes() {
           if (isDev) {
             console.log('[调试] 没有现有分组顺序，使用API返回的顺序');
           }
-          groupsOrder = [...apiGroupNames];
+          groupsOrder = [...apiGroupNames, ...configOnlyGroupNames];
         }
       }
 
@@ -1679,10 +1721,10 @@ export default function ProxyNodes() {
 
       // 处理并构建所有代理组数据，严格按照groupsOrder的顺序
       for (const groupName of groupsOrder) {
-        // 跳过API中不存在的组
-        if (!selectorGroups[groupName]) {
+        // 跳过既不在 API 也不在配置中的组
+        if (!selectorGroups[groupName] && !configOrder?.proxyGroups?.some((g) => g.name === groupName)) {
           if (isDev) {
-            console.log(`跳过API中不存在的组: ${groupName}`);
+            console.log(`跳过不存在的组: ${groupName}`);
           }
           continue;
         }
@@ -1699,98 +1741,98 @@ export default function ProxyNodes() {
         }
         const proxy = selectorGroups[groupName];
         const configGroup = configOrder?.proxyGroups?.find((g) => g.name === groupName);
-        if (proxy.all && Array.isArray(proxy.all)) {
-          let nodesOrder = orderedRuntimeNodes(
-            proxy.all,
-            undefined,
-            null,
-            undefined,
+        // Always create the group shell, even when `all` is empty.
+        // include-all / provider-backed country groups may temporarily have no
+        // members until provider health-check finishes, but they must stay visible.
+        const runtimeAll = Array.isArray(proxy?.all) ? (proxy.all as string[]) : [];
+        let nodesOrder = orderedRuntimeNodes(
+          runtimeAll,
+          undefined,
+          null,
+          undefined,
+          groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
+        );
+
+        if (configGroup) {
+          if (isDev) {
+            console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
+          }
+
+          const apiNodeNames = runtimeAll;
+          const configNodeNames = [
+            ...(configGroup.proxies || []),
+            ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
+            ...(configGroup.includeAll ? configNodeOrder : []),
+            ...(configGroup.includeAllProviders && providerNodeOrders
+              ? Object.values(providerNodeOrders).flat()
+              : []),
+          ];
+
+          const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
+          if (isDev && missingInApi.length > 0) {
+            console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
+          }
+
+          const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
+          if (isDev && missingInConfig.length > 0) {
+            console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
+          }
+
+          nodesOrder = orderedRuntimeNodes(
+            apiNodeNames,
+            configGroup,
+            providerNodeOrders,
+            configNodeOrder,
             groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
           );
 
-          if (configGroup) {
-            if (isDev) {
-              console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
-            }
-
-            const apiNodeNames = proxy.all || [];
-            const configNodeNames = [
-              ...(configGroup.proxies || []),
-              ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
-              ...(configGroup.includeAll ? configNodeOrder : []),
-              ...(configGroup.includeAllProviders && providerNodeOrders
-                ? Object.values(providerNodeOrders).flat()
-                : []),
-            ];
-
-            const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
-            if (isDev && missingInApi.length > 0) {
-              console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
-            }
-
-            const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
-            if (isDev && missingInConfig.length > 0) {
-              console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
-            }
-
-            nodesOrder = orderedRuntimeNodes(
-              apiNodeNames,
-              configGroup,
-              providerNodeOrders,
-              configNodeOrder,
-              groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
-            );
-
-            if (isDev) {
-              console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
-            }
-          } else {
-            if (isDev) {
-              console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
-            }
+          if (isDev) {
+            console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
           }
-
-          const nodes = nodesOrder
-            .map((nodeName: string): ProxyNode | null => {
-              const node = data.proxies[nodeName];
-              if (!node) {
-                console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
-                return null;
-              }
-              const isGroup = isGroupType(node.type);
-
-              return {
-                name: nodeName,
-                type: node.type,
-                server: isGroup ? '代理组' : ((node as any)?.server || ''),
-                port: isGroup ? 0 : ((node as any)?.port || 0),
-                delay: node.history && node.history.length > 0 ? node.history[0].delay : undefined,
-                isGroup: isGroup,
-              };
-            })
-            .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
-
-          const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
-
-          // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
-          let groupIcon = groupConfigIcon;
-          try {
-            const result = await window.electronAPI?.proxyIcon?.getGroupIcon(groupName, groupConfigIcon);
-            if (result?.success && result.iconPath) {
-              groupIcon = result.iconPath;
-            }
-          } catch (error) {
-            console.error(`[ProxyNodes] 获取${groupName}组图标失败:`, error);
-          }
-
-          groupsData.push({
-            name: groupName,
-            type: proxy.type,
-            nodes,
-            now: proxy.now,
-            icon: groupIcon,
-          });
+        } else if (isDev) {
+          console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
         }
+
+        const nodes = nodesOrder
+          .map((nodeName: string): ProxyNode | null => {
+            const node = data.proxies[nodeName];
+            if (!node) {
+              console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
+              return null;
+            }
+            const isGroup = isGroupType(node.type);
+
+            return {
+              name: nodeName,
+              type: node.type,
+              server: isGroup ? '代理组' : ((node as any)?.server || ''),
+              port: isGroup ? 0 : ((node as any)?.port || 0),
+              delay: node.history && node.history.length > 0 ? node.history[0].delay : undefined,
+              isGroup: isGroup,
+            };
+          })
+          .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
+
+        const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
+
+        // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
+        let groupIcon = groupConfigIcon;
+        try {
+          const result = await window.electronAPI?.proxyIcon?.getGroupIcon(groupName, groupConfigIcon);
+          if (result?.success && result.iconPath) {
+            groupIcon = result.iconPath;
+          }
+        } catch (error) {
+          console.error(`[ProxyNodes] 获取${groupName}组图标失败:`, error);
+        }
+
+        groupsData.push({
+          name: groupName,
+          type: proxy?.type || configGroup?.type || 'Selector',
+          nodes,
+          now: proxy?.now,
+          icon: groupIcon,
+        });
       }
 
       // 从localStorage读取收藏节点
