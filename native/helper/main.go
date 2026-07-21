@@ -605,18 +605,39 @@ func startCore(payload *StartCorePayload) error {
 		coreMutex.Unlock()
 	}()
 
-	// 等待确认启动成功
-	time.Sleep(200 * time.Millisecond)
+	// 等待确认启动成功：provider-heavy 配置初始化可能超过 200ms。
+	// 这里只确认进程没秒退，controller 就绪仍由主程序轮询。
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		coreMutex.Lock()
+		running := coreRunning
+		pid := corePID
+		coreMutex.Unlock()
+		if !running {
+			return fmt.Errorf("core process exited immediately")
+		}
+		if pid > 0 {
+			time.Sleep(150 * time.Millisecond)
+			coreMutex.Lock()
+			running = coreRunning
+			pid = corePID
+			coreMutex.Unlock()
+			if running && pid > 0 {
+				log.Printf("Core started with PID: %d", pid)
+				return nil
+			}
+			return fmt.Errorf("core process exited immediately")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	coreMutex.Lock()
 	running := coreRunning
 	pid := corePID
 	coreMutex.Unlock()
-
 	if !running {
 		return fmt.Errorf("core process exited immediately")
 	}
-
 	log.Printf("Core started with PID: %d", pid)
 	return nil
 }

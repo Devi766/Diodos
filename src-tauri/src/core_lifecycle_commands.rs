@@ -32,7 +32,9 @@ fn success(value: Value) -> Value {
 }
 
 async fn wait_for_mihomo(app: &AppHandle) -> bool {
-    for _ in 0..30 {
+    // Provider-heavy configs (include-all + health-check + rule providers) can
+    // take longer than a few seconds before /version answers.
+    for _ in 0..80 {
         if crate::mihomo_transport::request(app, Some("/version".to_string()), None)
             .await
             .map(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
@@ -40,9 +42,89 @@ async fn wait_for_mihomo(app: &AppHandle) -> bool {
         {
             return true;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
     false
+}
+
+#[cfg(target_os = "windows")]
+fn kill_leftover_core_processes_windows() {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let script = r#"
+$ErrorActionPreference='SilentlyContinue'
+$names = @('mihomo.exe','mihomo-smart.exe','mihomo-alpha.exe','mihomo-meta.exe','FlyClash-Core.exe','flyclash-core.exe')
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.Name -and (
+      ($names -contains $_.Name) -or
+      ($_.CommandLine -and (
+        $_.CommandLine -match 'work-config\.yaml' -or
+        $_.CommandLine -match 'pipe\\flycast-mihomo' -or
+        $_.CommandLine -match 'pipe\\FlyClash\\mihomo' -or
+        $_.CommandLine -match 'com\.flyclash\.desktop\\mihomo' -or
+        $_.CommandLine -match 'AppData\\Roaming\\com\.flyclash\.desktop\\cores'
+      ))
+    )
+  } |
+  ForEach-Object {
+    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+  }
+"#;
+    let _ = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
+fn free_local_mixed_port(port: u16) {
+    if port == 0 {
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let script = format!(
+            r#"
+$ErrorActionPreference='SilentlyContinue'
+Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object {{
+    $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+    if ($proc -and ($proc.ProcessName -match 'mihomo|flyclash-core|FlyClash-Core')) {{
+      Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }}
+  }}
+"#
+        );
+        let _ = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = port;
+    }
 }
 
 /// Resolve and validate everything needed to start the core, without launching it.
@@ -225,6 +307,16 @@ pub(crate) async fn start_mihomo(
         return Ok(
             core_lifecycle::start_failure_completion(format!("停止现有内核失败: {error}")).response,
         );
+    }
+
+    // Extra hard cleanup for dual-process races:
+    // helper-managed core + leftover sidecar/user core can both hold 7890 / pipes.
+    #[cfg(target_os = "windows")]
+    {
+        kill_leftover_core_processes_windows();
+        free_local_mixed_port(7890);
+        // Give SCM / process table a brief moment after forced kills.
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
     if matches!(prepared.start_path, core_lifecycle::CoreStartPath::Service) {
