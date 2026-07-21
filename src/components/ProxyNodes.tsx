@@ -224,6 +224,7 @@ const clearProxyNodesOrderedCache = () => {
   proxyNodesViewCache.configOrder = null;
   proxyNodesViewCache.providerNodeOrders = null;
   proxyNodesViewCache.groups = [];
+  proxyNodesViewCache.selectedNode = null;
   proxyNodesViewCache.loaded = false;
   clearProxyGroupsCache({ broadcast: false });
 };
@@ -1469,8 +1470,6 @@ export default function ProxyNodes() {
         return;
       }
 
-      // Fetch runtime proxies FIRST so the page can render even if config-order
-      // (which used to re-run override scripts) is slow or fails.
       const proxiesData = await mihomoAPI.proxies();
       if (!isLatestRequest()) return;
       if (!proxiesData || !proxiesData.proxies) {
@@ -1478,8 +1477,6 @@ export default function ProxyNodes() {
       }
       const data = proxiesData;
 
-      // Optional config order for stable group ordering / icons / hidden flags.
-      // Never block node display on this call.
       let configOrder = proxyNodesViewCache.configOrder ?? undefined;
       if (window.electronAPI) {
         try {
@@ -1953,9 +1950,24 @@ export default function ProxyNodes() {
     const refreshCurrentProxyTree = (event?: Event) => {
       const detail = event instanceof CustomEvent ? event.detail : null;
       const isNodeSelectionEvent = detail?.source === 'proxy-nodes' && detail?.action === 'node-changed';
+      const isProfileSwitch =
+        detail?.action === 'switch-config' ||
+        detail?.action === 'switch-config-ready' ||
+        detail?.action === 'edit-subscription' ||
+        detail?.action === 'reload-active-config';
+
       if (!isNodeSelectionEvent) {
         clearProxyNodesOrderedCache();
       }
+
+      if (isProfileSwitch) {
+        setGroups([]);
+        setSelectedNode(null);
+        setIsLoading(true);
+        isInitialLoadRef.current = true;
+        groupsRef.current = [];
+      }
+
       setErrorMessage(null);
       scheduleSoftRefresh();
     };
@@ -1976,7 +1988,13 @@ export default function ProxyNodes() {
         writeActiveConfigCache(configPath.trim(), { broadcast: false });
       }
       clearProxyNodesOrderedCache();
-      refreshCurrentProxyTree();
+      setGroups([]);
+      setSelectedNode(null);
+      setIsLoading(true);
+      isInitialLoadRef.current = true;
+      groupsRef.current = [];
+      setErrorMessage(null);
+      scheduleSoftRefresh();
     });
     const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
       clearProxyNodesOrderedCache();

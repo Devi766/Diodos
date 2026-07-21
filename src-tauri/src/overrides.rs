@@ -179,7 +179,6 @@ fn save_override_item(app: &AppHandle, item: &Value, content: Option<&str>) -> R
         )
         .map_err(|err| err.to_string())?;
 
-    // Metadata always changes item list (enabled/global/updatedAt/order fields).
     if let Ok(mut guard) = override_items_cache().lock() {
         *guard = None;
     }
@@ -188,7 +187,6 @@ fn save_override_item(app: &AppHandle, item: &Value, content: Option<&str>) -> R
             guard.insert(id.to_string(), content.to_string());
         }
     }
-    // enabled/content changes invalidate the prepared work-config fingerprint.
     crate::runtime_config::invalidate_runtime_work_config_cache();
     Ok(())
 }
@@ -324,8 +322,6 @@ pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, Stri
     Ok(content)
 }
 
-/// Stable fingerprint of enabled overrides that affect a given profile.
-/// Used by the hot-reload work-config cache to skip rebuilds when nothing changed.
 pub(crate) fn override_fingerprint_for_config(
     app: &AppHandle,
     config_path: &str,
@@ -374,7 +370,6 @@ pub(crate) fn override_fingerprint_for_config(
         match override_content(app, &id) {
             Ok(content) => {
                 content.len().hash(&mut hasher);
-                // Hash a cheap sample + full content for correctness.
                 content.hash(&mut hasher);
             }
             Err(_) => {

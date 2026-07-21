@@ -440,6 +440,8 @@ export default function SubscriptionManager() {
   const [switchingConfig, setSwitchingConfig] = useState<string | null>(null);
   // 新增: 服务运行状态
   const [isServiceRunning, setIsServiceRunning] = useState<boolean>(false);
+  const switchSeqRef = useRef(0);
+  const switchTargetRef = useRef<string | null>(null);
   
   // 拖拽相关状态
   const [draggedItem, setDraggedItem] = useState<Subscription | null>(null);
@@ -712,69 +714,64 @@ export default function SubscriptionManager() {
       return false;
     }
 
-    // 如果当前配置已经是这个，不需要切换
-    if (activeConfig === configPath) {
+    if (activeConfig === configPath && switchTargetRef.current !== configPath) {
       if (!options.suppressSuccessToast) {
         showToast('提示', '该配置文件已经处于激活状态', 'success');
       }
       return true;
     }
 
-    // Optimistic UI: highlight immediately, roll back if backend fails.
+    const seq = ++switchSeqRef.current;
+    switchTargetRef.current = configPath;
     const previousConfig = activeConfig;
     setSwitchingConfig(configPath);
     updateActiveConfig(configPath);
 
-    try{
-      let result;
+    const isStale = () =>
+      seq !== switchSeqRef.current || switchTargetRef.current !== configPath;
+
+    try {
+      let result: CompatResultLike | undefined;
       let failureNotified = false;
 
-      // 检查服务是否正在运行
       if (isServiceRunning) {
         if (!hasElectronMethod(api, 'reloadMihomoConfig')) {
-          updateActiveConfig(previousConfig);
+          if (!isStale()) updateActiveConfig(previousConfig);
           showToast('错误', '配置热重载 API 不可用', 'error');
           return false;
         }
 
-        // 如果服务正在运行，使用热重载
-        console.log('使用热重载切换配置...');
         result = await api.reloadMihomoConfig(configPath);
+        if (isStale()) return false;
 
-        const reloadSuccess = compatSuccess(result);
-
-        if (!reloadSuccess) {
-          // 热重载失败，回退到重启方式
-          console.warn('热重载失败，尝试重启服务...');
+        if (!compatSuccess(result)) {
           if (!hasElectronMethod(api, 'stopMihomo') || !hasElectronMethod(api, 'startMihomo')) {
-            updateActiveConfig(previousConfig);
+            if (!isStale()) updateActiveConfig(previousConfig);
             showToast('错误', `配置热重载失败: ${compatError(result, '切换配置文件失败')}`, 'error');
             return false;
           }
 
           const stopResult = await api.stopMihomo();
-          const stopSuccess = compatSuccess(stopResult);
-
-          if (!stopSuccess) {
-            updateActiveConfig(previousConfig);
+          if (isStale()) return false;
+          if (!compatSuccess(stopResult)) {
+            if (!isStale()) updateActiveConfig(previousConfig);
             showToast('错误', `停止当前服务失败，无法切换配置: ${compatError(stopResult, '停止当前服务失败')}`, 'error');
             return false;
           }
 
-          await new Promise(resolve => setTimeout(resolve, 300));
-          const startResult = await api.startMihomo(configPath);
-          result = startResult;
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          if (isStale()) return false;
+          result = await api.startMihomo(configPath);
         }
       } else {
         if (!hasElectronMethod(api, 'setPreferredConfig')) {
-          updateActiveConfig(previousConfig);
+          if (!isStale()) updateActiveConfig(previousConfig);
           showToast('错误', '设置首选配置 API 不可用', 'error');
           return false;
         }
 
-        // 服务未运行，只设置为首选配置，不自动启动服务
-        console.log('服务未运行，设置为首选配置...');
         result = await api.setPreferredConfig(configPath);
+        if (isStale()) return false;
         const preferredSuccess = compatSuccess(result);
 
         if (preferredSuccess) {
@@ -785,9 +782,9 @@ export default function SubscriptionManager() {
               failureNotified = true;
             } else {
               const startResult = await api.startMihomo(configPath);
-              const startSuccess = compatSuccess(startResult);
+              if (isStale()) return false;
               result = startResult;
-              if (startSuccess) {
+              if (compatSuccess(startResult)) {
                 setIsServiceRunning(true);
                 if (!options.suppressSuccessToast) {
                   showToast(t('common.success'), t('subscriptions.activateAndStartSuccess'), 'success');
@@ -796,9 +793,9 @@ export default function SubscriptionManager() {
                 showToast(
                   t('common.error'),
                   t('subscriptions.activateStartFailed', {
-                    error: compatError(startResult, t('subscriptions.startMihomoFailed'))
+                    error: compatError(startResult, t('subscriptions.startMihomoFailed')),
                   }),
-                  'error'
+                  'error',
                 );
                 failureNotified = true;
               }
@@ -812,10 +809,19 @@ export default function SubscriptionManager() {
         }
       }
 
+      if (isStale()) return false;
       const finalSuccess = compatSuccess(result);
 
       if (finalSuccess) {
-        // 通知代理页面刷新
+        if (isServiceRunning || options.startIfStopped) {
+          try {
+            const { mihomoClient } = await import('@/services/mihomo-client');
+            await mihomoClient.closeAllConnections();
+          } catch {
+            // ignore
+          }
+        }
+
         notifyProfileUpdated({
           action: 'switch-config',
           filePath: configPath,
@@ -823,17 +829,25 @@ export default function SubscriptionManager() {
           runtimeReload: runtimeReloadFromResult(result),
         });
 
-        // 服务运行时尽快刷新节点，不再硬等 2 秒
         if (isServiceRunning || options.startIfStopped) {
           const refreshProxies = async (attempt = 0) => {
+            if (isStale()) return;
             try {
               if (!hasElectronMethod(api, 'getProxies')) return;
               const proxies = await api.getProxies();
-              if (proxies && proxies.groups) {
+              if (isStale()) return;
+              const groups = Array.isArray((proxies as any)?.groups)
+                ? (proxies as any).groups
+                : Array.isArray((proxies as any)?.proxies)
+                  ? Object.values((proxies as any).proxies)
+                  : [];
+              const hasTree = groups.length > 0 || (proxies && (proxies as any).proxies);
+
+              if (hasTree) {
                 const selectedNodeName =
-                  typeof proxies.selected === 'string' && proxies.selected
-                    ? proxies.selected
-                    : (proxies.groups as any[])
+                  typeof (proxies as any)?.selected === 'string' && (proxies as any).selected
+                    ? (proxies as any).selected
+                    : (Array.isArray((proxies as any)?.groups) ? (proxies as any).groups : [])
                         .map((group: any) => group?.now)
                         .find((name: unknown) => typeof name === 'string' && name.length > 0);
 
@@ -852,17 +866,25 @@ export default function SubscriptionManager() {
               console.error('获取节点信息失败:', error);
             }
 
-            if (attempt < 4) {
+            if (attempt < 8) {
               window.setTimeout(() => {
                 void refreshProxies(attempt + 1);
-              }, 150 * (attempt + 1));
+              }, 200 * (attempt + 1));
+            } else if (!isStale()) {
+              notifyProfileUpdated({
+                action: 'switch-config-ready',
+                filePath: configPath,
+                activeConfig: configPath,
+              });
             }
           };
 
-          void refreshProxies();
+          window.setTimeout(() => {
+            void refreshProxies();
+          }, 50);
         }
       } else {
-        updateActiveConfig(previousConfig);
+        if (!isStale()) updateActiveConfig(previousConfig);
         if (!failureNotified) {
           showToast('错误', `切换配置文件失败: ${compatError(result, '切换配置文件失败')}`, 'error');
         }
@@ -870,14 +892,15 @@ export default function SubscriptionManager() {
 
       return finalSuccess;
     } catch (error) {
-      updateActiveConfig(previousConfig);
+      if (!isStale()) updateActiveConfig(previousConfig);
       console.error('切换配置文件失败:', error);
       showToast('错误', `切换配置文件失败: ${formatSubscriptionError(error)}`, 'error');
       return false;
     } finally {
-      setSwitchingConfig(null);
-      // Don't force-loadActiveConfig here: optimistic path already wrote cache;
-      // backend emits active-config-changed on success.
+      if (!isStale()) {
+        setSwitchingConfig(null);
+        switchTargetRef.current = null;
+      }
     }
   };
 
@@ -1050,7 +1073,6 @@ export default function SubscriptionManager() {
     const api = window.electronAPI;
     const currentConfig = await getLatestActiveConfig();
 
-    // Compare with path normalization so Windows separators / casing don't skip reload.
     if (
       normalizeSubscriptionPath(currentConfig) !== normalizeSubscriptionPath(filePath)
     ) {
@@ -1694,9 +1716,6 @@ export default function SubscriptionManager() {
       const finalPath = result?.newPath || editingSub.path;
       const previousPath = editingSub.path;
 
-      // Persist override assignment only. Skip backend hot-reload here so the
-      // dialog is not blocked by heavy scripts (e.g. mihomo-smart.js). We do a
-      // single reload in the background after the dialog closes.
       const overridesResult = await api.setSubscriptionOverrides(
         finalPath,
         editingOverrides,
@@ -1706,7 +1725,6 @@ export default function SubscriptionManager() {
         throw new Error(formatSubscriptionError((overridesResult as { error?: string }).error, '保存覆写设置失败'));
       }
 
-      // 保存自动更新间隔 - 使用后端返回的正确路径
       const intervalResult = await api.setSubscriptionUpdateInterval(
         finalPath,
         editingUpdateInterval
@@ -1715,7 +1733,6 @@ export default function SubscriptionManager() {
         throw new Error(formatSubscriptionError(intervalResult.error, '保存自动更新间隔失败'));
       }
 
-      // Close dialog as soon as metadata is persisted. Runtime work continues below.
       setIsEditDialogOpen(false);
       setIsLoading(false);
       showToast(t('common.success'), t('subscriptions.editSuccess'), 'success');

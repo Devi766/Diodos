@@ -578,8 +578,16 @@ pub(crate) async fn reload_mihomo_config(
         }));
     }
 
-    // Hot-reload skips full `mihomo -t` validation so profile/override switches
-    // stay close to Clash Verge latency. Core start still validates.
+    let previous_active = {
+        let preferred = read_last_config(app).ok().flatten();
+        state
+            .runtime
+            .lock()
+            .expect("runtime mutex poisoned")
+            .core
+            .prefer_runtime_or_preferred(preferred)
+    };
+
     let runtime_config = match prepare_runtime_config_for_reload(app, &config_path) {
         Ok(path) => path,
         Err(error) => {
@@ -606,6 +614,13 @@ pub(crate) async fn reload_mihomo_config(
     if reload_completion.applied {
         save_last_config(app, &config_path)?;
         emit_active_config_changed(app, Some(&config_path));
+        let _ = crate::mihomo_transport::request(app, Some("/proxies".to_string()), None).await;
+    } else if let Some(previous) = previous_active
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty() && *path != config_path.as_str())
+    {
+        let _ = prepare_runtime_config_for_reload(app, previous);
     }
 
     Ok(reload_completion.response)

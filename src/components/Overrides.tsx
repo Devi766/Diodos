@@ -551,7 +551,6 @@ export default function Overrides() {
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
-    // Optimistic toggle: flip UI first, roll back if the IPC call fails.
     const previousEnabled = items.find((item) => item.id === id)?.enabled;
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, enabled } : item)),

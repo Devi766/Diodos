@@ -884,12 +884,6 @@ pub(crate) fn runtime_config_error_response(
     Value::Object(payload)
 }
 
-/// AppHandle adapter for runtime-config prep.
-///
-/// Pure build/validate/write lives in `core::config`;
-/// this only loads content/settings, syncs bundled data, and injects overrides.
-///
-/// Used for core start — full `mihomo -t` validation stays here.
 pub(crate) fn prepare_runtime_config(
     app: &AppHandle,
     config_path: &str,
@@ -913,9 +907,6 @@ pub(crate) fn prepare_runtime_config(
     )
 }
 
-/// Fast path for profile / override hot-reload.
-/// Builds and writes work-config without spawning a full `mihomo -t` check.
-/// Skips geo-data sync (startup only) and reuses work-config when inputs hash-match.
 pub(crate) fn prepare_runtime_config_for_reload(
     app: &AppHandle,
     config_path: &str,
@@ -944,8 +935,6 @@ pub(crate) fn prepare_runtime_config_for_reload(
         }
     }
 
-    // Intentionally skip sync_bundled_mihomo_data here — geo files are synced on
-    // core start. Hot reload should not pay that IO cost every toggle/switch.
     let runtime_path = core_config::prepare_runtime_config_file(
         &content,
         &runtime_settings,
@@ -968,9 +957,6 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
         return success(json!({ "data": { "proxyGroups": [] } }));
     };
 
-    // Prefer already-prepared runtime work-config when available.
-    // It already includes applied overrides, so the Proxy Nodes page never has to
-    // re-run heavy JS scripts (e.g. mihomo-smart) just to paint the group order.
     let work_yaml = mihomo_dir(app)
         .ok()
         .and_then(|dir| {
@@ -988,7 +974,6 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
             Err(_) => Value::Null,
         };
         let config_json = if base_json.is_object() {
-            // Fallback only when work-config is missing (core not started yet).
             crate::overrides::apply_overrides(app, &path, base_json.clone()).unwrap_or(base_json)
         } else {
             base_json

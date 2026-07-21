@@ -520,9 +520,6 @@ async fn dispatch_compat_call(
                 return Ok(json!({ "success": false, "error": "订阅不存在" }));
             };
             let overrides = args.get(1).cloned().unwrap_or_else(|| json!([]));
-            // Optional 3rd arg: skipReload bool, or { skipReload: true }.
-            // Edit-subscription dialog uses this so UI can close after DB write
-            // and run a single background hot-reload instead of blocking twice.
             let skip_reload = args
                 .get(2)
                 .and_then(|value| {
@@ -541,7 +538,6 @@ async fn dispatch_compat_call(
                 return Ok(json!({ "success": false, "error": "订阅不存在" }));
             }
 
-            // Profile-scoped override assignment changes the work-config fingerprint.
             crate::runtime_config::invalidate_runtime_work_config_cache();
 
             if skip_reload {

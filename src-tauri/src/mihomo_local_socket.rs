@@ -4,9 +4,7 @@ use tokio::{
     time::{timeout, Duration},
 };
 
-/// Default timeout for ordinary controller calls (version / proxies / etc.).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-/// Force config reload can take much longer with large profiles + JS overrides.
 const CONFIG_RELOAD_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 

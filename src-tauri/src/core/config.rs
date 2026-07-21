@@ -226,9 +226,6 @@ where
     Ok(config)
 }
 
-/// Build runtime config and write it for hot-reload.
-/// Skips spawning `mihomo -t` so profile/override switches stay snappy; the
-/// kernel itself will reject invalid configs on PUT /configs.
 pub fn prepare_runtime_config_file<F>(
     content: &str,
     runtime_settings: &Value,
