@@ -51,7 +51,9 @@ pub fn complete_service_launch(
     config_path: String,
     controller_ready: bool,
 ) -> Result<(), String> {
-    controller_ready_outcome(CoreStartMode::Service, controller_ready)?;
+    // Service mode treats helper start success as authoritative.
+    // Controller readiness may still be warming up with heavy providers.
+    let _ = controller_ready;
     manager.complete_service_start(controller_endpoint, config_path);
     Ok(())
 }
@@ -694,9 +696,13 @@ mod tests {
         let result =
             complete_service_launch(&mut manager, endpoint, "profile.yaml".to_string(), false);
 
-        assert!(result.is_err());
+        // Service ownership is authoritative; controller warm-up is best-effort.
+        assert_eq!(result, Ok(()));
         assert_eq!(manager.running_mode(), RunningMode::Service);
-        assert_eq!(manager.active_config_owned(), None);
+        assert_eq!(
+            manager.active_config_owned().as_deref(),
+            Some("profile.yaml")
+        );
     }
 
     #[test]
@@ -766,19 +772,15 @@ mod tests {
     fn finish_service_start_aborts_and_reports_timeout() {
         let mut manager = CoreManager::default();
         let endpoint = controller::service_endpoint();
-
-        let failure = finish_service_start(
+        let success = finish_service_start(
             &mut manager,
             endpoint,
             "profile.yaml".to_string(),
             false,
         );
-
-        assert!(!failure.started);
-        assert_eq!(failure.response["success"], json!(false));
-        assert_eq!(manager.running_mode(), RunningMode::NotRunning);
-        assert!(manager.controller_endpoint_owned().is_none());
-        assert_eq!(manager.active_config_owned(), None);
+        assert!(success.started);
+        assert_eq!(success.response["success"], json!(true));
+        assert_eq!(manager.running_mode(), RunningMode::Service);
     }
 
     #[test]

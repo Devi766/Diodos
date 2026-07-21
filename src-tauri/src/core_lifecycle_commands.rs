@@ -333,68 +333,77 @@ pub(crate) async fn start_mihomo(
     }
 
     if matches!(prepared.start_path, core_lifecycle::CoreStartPath::Service) {
-        if let Err(error) = crate::tun_service::ensure_helper_service_current(app) {
-            return Ok(core_lifecycle::start_failure_completion(format!(
-                "TUN 服务模式已启用，但 Helper 服务不可用: {error}"
-            ))
-            .response);
-        }
+        match crate::tun_service::ensure_helper_service_current(app) {
+            Ok(()) => {
+                set_runtime_running_mode(app, RunningMode::Service);
+                match core_lifecycle::start_service_core(
+                    prepared.launch_executable(),
+                    &work_dir,
+                    &runtime_config,
+                    &log_path,
+                ) {
+                    Ok(launch) => {
+                        let controller_endpoint = launch.controller_endpoint;
+                        let plugin_sync =
+                            sync_mihomo_plugin_endpoint(app, &controller_endpoint).await;
+                        // Do not hard-fail service starts on controller warm-up.
+                        // Helper ownership already confirmed the core process.
+                        let controller_ready = if plugin_sync.is_ok() {
+                            wait_for_mihomo(app).await
+                        } else {
+                            false
+                        };
+                        if plugin_sync.is_ok() && !controller_ready {
+                            eprintln!(
+                                "[core-service] helper started core; controller still warming up"
+                            );
+                        }
+                        let service_start = {
+                            let mut runtime =
+                                state.runtime.lock().expect("runtime mutex poisoned");
+                            core_lifecycle::service_start_after_spawn(
+                                &mut runtime.core,
+                                controller_endpoint,
+                                config_path.clone(),
+                                // Plugin sync failure still fails the start.
+                                plugin_sync.is_ok(),
+                                true,
+                                plugin_sync.err().map(|err| err.to_string()),
+                            )
+                        };
 
-        set_runtime_running_mode(app, RunningMode::Service);
-        match core_lifecycle::start_service_core(
-            prepared.launch_executable(),
-            &work_dir,
-            &runtime_config,
-            &log_path,
-        ) {
-            Ok(launch) => {
-                let controller_endpoint = launch.controller_endpoint;
-                let plugin_sync = sync_mihomo_plugin_endpoint(app, &controller_endpoint).await;
-                let controller_ready = if plugin_sync.is_ok() {
-                    wait_for_mihomo(app).await
-                } else {
-                    false
-                };
-                let service_start = {
-                    let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                    core_lifecycle::service_start_after_spawn(
-                        &mut runtime.core,
-                        controller_endpoint,
-                        config_path.clone(),
-                        plugin_sync.is_ok(),
-                        controller_ready,
-                        plugin_sync.err().map(|err| err.to_string()),
-                    )
-                };
+                        if service_start.started {
+                            persist_started_config(app, &config_path)?;
+                            // Continue probing controller in background without
+                            // blocking the UI start success path.
+                            let probe_app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = wait_for_mihomo(&probe_app).await;
+                            });
+                            return Ok(service_start.response);
+                        }
 
-                if service_start.started {
-                    persist_started_config(app, &config_path)?;
-                    return Ok(service_start.response);
+                        set_runtime_running_mode(app, RunningMode::NotRunning);
+                        let error = service_start
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "Helper 服务启动内核失败".to_string());
+                        let _ = app.emit("mihomo-start-failed", json!({ "error": error }));
+                        // Fall through to sidecar if service handoff failed.
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "[core-service] helper start failed, falling back to sidecar: {error}"
+                        );
+                        set_runtime_running_mode(app, RunningMode::NotRunning);
+                    }
                 }
-
-                set_runtime_running_mode(app, RunningMode::NotRunning);
-                let error = service_start
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "Helper 服务启动内核失败".to_string());
-                let _ = app.emit("mihomo-start-failed", json!({ "error": error }));
-                return Ok(service_start.response);
             }
             Err(error) => {
-                let start_failure = {
-                    let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
-                    core_lifecycle::fail_service_launch(
-                        &mut runtime.core,
-                        format!("通过 Helper 服务启动内核失败: {error}"),
-                        false,
-                    )
-                };
-                set_runtime_running_mode(app, RunningMode::NotRunning);
-                let _ = app.emit(
-                    "mihomo-start-failed",
-                    json!({ "error": start_failure.error.clone().unwrap_or_default() }),
+                eprintln!(
+                    "[core-service] helper unavailable, falling back to sidecar: {error}"
                 );
-                return Ok(start_failure.response);
+                set_runtime_running_mode(app, RunningMode::NotRunning);
             }
         }
     }

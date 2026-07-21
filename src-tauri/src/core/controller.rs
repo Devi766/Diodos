@@ -1,4 +1,4 @@
-use std::{env, fs};
+use std::fs;
 
 use super::manager::RunningMode;
 
@@ -8,36 +8,16 @@ pub struct ControllerEndpoint {
     pub path: String,
 }
 
-pub fn service_endpoint() -> ControllerEndpoint {
+/// Stable controller endpoint shared by service and sidecar launches.
+/// Using one fixed path avoids probing a stale pipe after mode switches.
+pub fn shared_endpoint() -> ControllerEndpoint {
     if cfg!(target_os = "windows") {
         ControllerEndpoint {
             arg_name: "-ext-ctl-pipe",
-            path: r"\\.\pipe\flycast-mihomo-service".to_string(),
+            path: r"\.\pipelycast-mihomo".to_string(),
         }
     } else {
-        ControllerEndpoint {
-            arg_name: "-ext-ctl-unix",
-            path: "/tmp/flyclash-mihomo-service.sock".to_string(),
-        }
-    }
-}
-
-pub fn sidecar_endpoint() -> ControllerEndpoint {
-    if cfg!(target_os = "windows") {
-        let session = env::var("SESSIONNAME")
-            .or_else(|_| env::var("USERNAME"))
-            .unwrap_or_else(|_| "default".to_string());
-        ControllerEndpoint {
-            arg_name: "-ext-ctl-pipe",
-            path: format!(
-                r"\\.\pipe\FlyClash\mihomo-{}-{}",
-                session,
-                std::process::id()
-            ),
-        }
-    } else {
-        let uid = env::var("UID").unwrap_or_else(|_| "unknown".to_string());
-        let socket_dir = env::temp_dir().join(format!("flyclash-{uid}"));
+        let socket_dir = std::env::temp_dir().join("flyclash");
         let _ = fs::create_dir_all(&socket_dir);
         #[cfg(unix)]
         {
@@ -47,17 +27,24 @@ pub fn sidecar_endpoint() -> ControllerEndpoint {
         ControllerEndpoint {
             arg_name: "-ext-ctl-unix",
             path: socket_dir
-                .join(format!("mihomo-{}.sock", std::process::id()))
+                .join("mihomo.sock")
                 .to_string_lossy()
                 .to_string(),
         }
     }
 }
 
+pub fn service_endpoint() -> ControllerEndpoint {
+    shared_endpoint()
+}
+
+pub fn sidecar_endpoint() -> ControllerEndpoint {
+    shared_endpoint()
+}
+
 pub fn endpoint_for_mode(mode: RunningMode) -> Option<ControllerEndpoint> {
     match mode {
-        RunningMode::Service => Some(service_endpoint()),
-        RunningMode::Sidecar => Some(sidecar_endpoint()),
+        RunningMode::Service | RunningMode::Sidecar => Some(shared_endpoint()),
         RunningMode::NotRunning => None,
     }
 }
