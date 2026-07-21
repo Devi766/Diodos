@@ -134,21 +134,27 @@ jobs:
         run: |
           set -o pipefail
           TARGET_ARGS=()
+          BUNDLE_ROOT="src-tauri/target"
           if [ -n "${{ matrix.rust_target }}" ]; then
             TARGET_ARGS=(--target "${{ matrix.rust_target }}")
+            BUNDLE_ROOT="src-tauri/target/${{ matrix.rust_target }}"
           fi
 
-          if npm run tauri:build -- --bundles "${{ matrix.bundles }}" "${TARGET_ARGS[@]}"; then
+          # Capture the real exit code. After a failed `if cmd; then ...; fi`,
+          # `$?` is 0 (the if compound command succeeded), so we must store
+          # status before the if/fi, not after.
+          set +e
+          npm run tauri:build -- --bundles "${{ matrix.bundles }}" "${TARGET_ARGS[@]}"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            echo "Tauri build succeeded"
+            ls -la "${BUNDLE_ROOT}/release/bundle" || true
             exit 0
           fi
 
-          status=$?
           echo "::warning::Tauri DMG bundling failed with exit code ${status}; using the built .app as a release fallback."
-
-          BUNDLE_ROOT="src-tauri/target"
-          if [ -n "${{ matrix.rust_target }}" ]; then
-            BUNDLE_ROOT="src-tauri/target/${{ matrix.rust_target }}"
-          fi
 
           if [ -f "${BUNDLE_ROOT}/release/bundle/dmg/bundle_dmg.sh" ]; then
             echo "::group::bundle_dmg.sh"
@@ -157,12 +163,20 @@ jobs:
           fi
 
           echo "::group::macOS bundle output"
-          find "${BUNDLE_ROOT}/release/bundle" -maxdepth 4 -print | sort || true
+          if [ -d "${BUNDLE_ROOT}/release/bundle" ]; then
+            find "${BUNDLE_ROOT}/release/bundle" -maxdepth 4 -print | sort || true
+          else
+            echo "No bundle directory at ${BUNDLE_ROOT}/release/bundle"
+            find "${BUNDLE_ROOT}/release" -maxdepth 3 -print 2>/dev/null | sort || true
+          fi
           echo "::endgroup::"
 
-          app_bundle="$(find "${BUNDLE_ROOT}/release/bundle/macos" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          app_bundle=""
+          if [ -d "${BUNDLE_ROOT}/release/bundle/macos" ]; then
+            app_bundle="$(find "${BUNDLE_ROOT}/release/bundle/macos" -maxdepth 1 -name '*.app' -type d | head -n 1 || true)"
+          fi
           if [ -z "$app_bundle" ]; then
-            echo "::error::Tauri DMG failed and no .app bundle was produced."
+            echo "::error::Tauri build failed (exit ${status}) and no .app bundle was produced under ${BUNDLE_ROOT}/release/bundle/macos."
             exit "$status"
           fi
 
@@ -195,34 +209,36 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = (Get-Content package.json | ConvertFrom-Json).version
           $platform = "${{ matrix.name }}"
-          $releaseDir = "src-tauri/target/release"
-          $assetDir = "$releaseDir/release-assets"
+          # Always collect into a workspace-relative path so upload-artifact can
+          # use one location for host builds and cross-target macOS builds.
+          $assetDir = "ci-release-assets"
+          $rustTarget = "${{ matrix.rust_target }}"
+          $bundleRoot = "src-tauri/target"
+          if ($rustTarget -and $rustTarget.Trim() -ne "") {
+            $bundleRoot = "src-tauri/target/$rustTarget"
+          }
+          $releaseDir = "$bundleRoot/release"
 
           Remove-Item -LiteralPath $assetDir -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
 
           if ($env:RUNNER_OS -eq "Windows") {
             $installer = Get-ChildItem -LiteralPath "$releaseDir/bundle/nsis" -Filter "*.exe" | Select-Object -First 1
-            if (-not $installer) { throw "Missing Windows NSIS installer" }
+            if (-not $installer) { throw "Missing Windows NSIS installer under $releaseDir/bundle/nsis" }
             Copy-Item -LiteralPath $installer.FullName -Destination "$assetDir/FlyClash_${version}_${platform}-installer.exe" -Force
 
             $portable = Get-ChildItem -LiteralPath "$releaseDir/bundle/portable" -Filter "*.zip" | Select-Object -First 1
-            if (-not $portable) { throw "Missing Windows portable zip" }
+            if (-not $portable) { throw "Missing Windows portable zip under $releaseDir/bundle/portable" }
             Copy-Item -LiteralPath $portable.FullName -Destination "$assetDir/FlyClash_${version}_${platform}-portable.zip" -Force
           } elseif ($env:RUNNER_OS -eq "Linux") {
             $deb = Get-ChildItem -LiteralPath "$releaseDir/bundle/deb" -Filter "*.deb" | Select-Object -First 1
-            if (-not $deb) { throw "Missing Linux deb package" }
+            if (-not $deb) { throw "Missing Linux deb package under $releaseDir/bundle/deb" }
             Copy-Item -LiteralPath $deb.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.deb" -Force
 
             $appimage = Get-ChildItem -LiteralPath "$releaseDir/bundle/appimage" -Filter "*.AppImage" | Select-Object -First 1
-            if (-not $appimage) { throw "Missing Linux AppImage package" }
+            if (-not $appimage) { throw "Missing Linux AppImage package under $releaseDir/bundle/appimage" }
             Copy-Item -LiteralPath $appimage.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.AppImage" -Force
           } elseif ($env:RUNNER_OS -eq "macOS") {
-            $bundleRoot = "src-tauri/target"
-            if ("${{ matrix.rust_target }}" -ne "") {
-              $bundleRoot = "src-tauri/target/${{ matrix.rust_target }}"
-            }
-            $releaseDir = "$bundleRoot/release"
             $dmg = Get-ChildItem -LiteralPath "$releaseDir/bundle/dmg" -Filter "*.dmg" -ErrorAction SilentlyContinue | Select-Object -First 1
             $dmgVerified = $false
             if ($dmg) {
@@ -237,11 +253,14 @@ jobs:
                 Write-Warning "Ignoring invalid macOS dmg: $($dmg.FullName)"
               }
               $app = Get-ChildItem -LiteralPath "$releaseDir/bundle/macos" -Filter "*.app" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-              if (-not $app) { throw "Missing macOS dmg package and app bundle" }
-              $zipPath = "$assetDir/FlyClash_${version}_${platform}.app.zip"
+              if (-not $app) {
+                throw "Missing macOS dmg package and app bundle under $releaseDir/bundle"
+              }
+              $zipPath = Join-Path (Resolve-Path $assetDir) "FlyClash_${version}_${platform}.app.zip"
               Push-Location -LiteralPath $app.Parent.FullName
               try {
                 & /usr/bin/ditto -c -k --sequesterRsrc --keepParent $app.Name $zipPath
+                if ($LASTEXITCODE -ne 0) { throw "ditto failed packaging $($app.Name)" }
               } finally {
                 Pop-Location
               }
@@ -250,13 +269,17 @@ jobs:
             throw "Unsupported runner OS: $env:RUNNER_OS"
           }
 
-          Get-ChildItem -LiteralPath $assetDir | Sort-Object Name
+          $files = Get-ChildItem -LiteralPath $assetDir -File | Sort-Object Name
+          if (-not $files -or $files.Count -eq 0) {
+            throw "No release assets collected into $assetDir"
+          }
+          $files | Format-Table Name, Length, FullName
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: FlyClash-${{ matrix.name }}
-          path: src-tauri/target/release/release-assets/*
+          path: ci-release-assets/*
           if-no-files-found: error
           retention-days: 14
 
