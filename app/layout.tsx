@@ -28,6 +28,41 @@ export default function RootLayout({
     let removeThemeListener: (() => void) | undefined;
     let disposed = false;
 
+    // Desktop shell: hide WebView/browser default context menu.
+    // Custom UI menus still work because they call stopPropagation().
+    const isEditableTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      // Keep editor-native menus (Monaco / CodeMirror / contenteditable roots).
+      return Boolean(
+        target.closest(
+          '.monaco-editor, .cm-editor, [contenteditable="true"], [role="textbox"]',
+        ),
+      );
+    };
+
+    const onContextMenu = (event: MouseEvent) => {
+      // Keep native copy/paste menu for form fields and code editors.
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault();
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const isReload = (event.ctrlKey || event.metaKey) && key === "r";
+      const isDevtools =
+        key === "f12" ||
+        ((event.ctrlKey || event.metaKey) && event.shiftKey && (key === "i" || key === "j" || key === "c"));
+      if (isReload || isDevtools) {
+        event.preventDefault();
+      }
+    };
+
+    document.addEventListener("contextmenu", onContextMenu);
+    window.addEventListener("keydown", onKeyDown);
+
     applyPlatformBodyClass(getBrowserPlatform());
     void getRuntimePlatform().then((runtimePlatform) => {
       if (!disposed) {
@@ -178,6 +213,8 @@ export default function RootLayout({
     // 清理函数
     return () => {
       disposed = true;
+      document.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("keydown", onKeyDown);
       if (typeof removeThemeListener === 'function') {
         removeThemeListener();
       }
