@@ -23,22 +23,38 @@ let dashboardCardsMemoryCache: DashboardCard[] | null = null;
 const normalizeDashboardCards = (value: unknown): DashboardCard[] | null => {
   if (!Array.isArray(value)) return null;
   const knownTypes = new Set(DEFAULT_DASHBOARD_CARDS.map((card) => card.type));
-  const cards = value.filter((card): card is DashboardCard => (
-    !!card &&
-    typeof card === 'object' &&
-    typeof (card as DashboardCard).id === 'string' &&
-    knownTypes.has((card as DashboardCard).type) &&
-    typeof (card as DashboardCard).enabled === 'boolean' &&
-    typeof (card as DashboardCard).order === 'number'
-  ));
+  const knownIds = new Set(DEFAULT_DASHBOARD_CARDS.map((card) => card.id));
+  const seenIds = new Set<string>();
+  const cards = value.filter((card): card is DashboardCard => {
+    if (
+      !card ||
+      typeof card !== 'object' ||
+      typeof (card as DashboardCard).id !== 'string' ||
+      !knownTypes.has((card as DashboardCard).type) ||
+      typeof (card as DashboardCard).enabled !== 'boolean' ||
+      typeof (card as DashboardCard).order !== 'number'
+    ) {
+      return false;
+    }
+    // 过滤未知/重复 id，保留用户已删除的状态（不再把默认卡片硬塞回去）
+    if (!knownIds.has((card as DashboardCard).id)) return false;
+    if (seenIds.has((card as DashboardCard).id)) return false;
+    seenIds.add((card as DashboardCard).id);
+    return true;
+  });
   if (cards.length === 0) return null;
 
-  const byId = new Map(cards.map((card) => [card.id, card]));
-  const merged = [
-    ...cards,
-    ...DEFAULT_DASHBOARD_CARDS.filter((defaultCard) => !byId.has(defaultCard.id)),
-  ];
-  return merged;
+  // 仅补齐「可添加列表」需要的元数据：缺失的默认卡片以 disabled 形式加入，
+  // 这样删除后不会自动重新显示在仪表盘上，但仍可在「添加卡片」中找回。
+  const missingDefaults = DEFAULT_DASHBOARD_CARDS
+    .filter((defaultCard) => !seenIds.has(defaultCard.id))
+    .map((defaultCard, index) => ({
+      ...defaultCard,
+      enabled: false,
+      order: cards.length + index,
+    }));
+
+  return [...cards, ...missingDefaults];
 };
 
 const loadCardsFromLocalStorage = () => {
@@ -219,6 +235,17 @@ export function useDashboardCards() {
   const addCard = useCallback(
     async (card: DashboardCard) => {
       applyCardsUpdate((currentCards) => {
+        const existing = currentCards.find((c) => c.id === card.id);
+        if (existing) {
+          // 已存在但被禁用/删除过：重新启用并放到末尾
+          const maxOrder = Math.max(
+            ...currentCards.filter((c) => c.enabled).map((c) => c.order),
+            -1,
+          );
+          return currentCards.map((c) =>
+            c.id === card.id ? { ...c, enabled: true, order: maxOrder + 1 } : c,
+          );
+        }
         const maxOrder = Math.max(...currentCards.map((c) => c.order), -1);
         const newCard = { ...card, enabled: true, order: maxOrder + 1 };
         return [...currentCards, newCard];
@@ -227,13 +254,13 @@ export function useDashboardCards() {
     [applyCardsUpdate],
   );
 
-  // 删除卡片
+  // 删除卡片（标记为禁用，保留配置以便「添加」时可找回，且不会在加载时被默认配置覆盖）
   const removeCard = useCallback(
     async (cardId: string) => {
       applyCardsUpdate((currentCards) =>
-        currentCards
-          .filter((card) => card.id !== cardId)
-          .map((card, index) => ({ ...card, order: index })),
+        currentCards.map((card) =>
+          card.id === cardId ? { ...card, enabled: false } : card,
+        ),
       );
     },
     [applyCardsUpdate],
