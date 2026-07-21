@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 8;
+const PROXY_GROUPS_CACHE_VERSION = 9;
 
 // 定义类型
 type ProxyNode = {
@@ -314,6 +314,30 @@ const providerOrdersFromResponse = (value: unknown): Record<string, string[]> =>
       .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
   }
   return orders;
+};
+
+const providerProxyMetaFromResponse = (
+  value: unknown,
+): Record<string, { type?: string; server?: string; port?: number }> => {
+  const providers = value && typeof value === 'object'
+    ? (value as { providers?: unknown }).providers
+    : null;
+  if (!providers || typeof providers !== 'object') return {};
+
+  const meta: Record<string, { type?: string; server?: string; port?: number }> = {};
+  for (const provider of Object.values(providers as Record<string, any>)) {
+    const proxies = Array.isArray(provider?.proxies) ? provider.proxies : [];
+    for (const proxy of proxies) {
+      const name = typeof proxy?.name === 'string' ? proxy.name : '';
+      if (!name || meta[name]) continue;
+      meta[name] = {
+        type: typeof proxy?.type === 'string' ? proxy.type : undefined,
+        server: typeof proxy?.server === 'string' ? proxy.server : undefined,
+        port: typeof proxy?.port === 'number' ? proxy.port : undefined,
+      };
+    }
+  }
+  return meta;
 };
 
 const mergeProviderNodeOrders = (
@@ -1512,6 +1536,7 @@ export default function ProxyNodes() {
         proxyNodesViewCache.providerNodeOrders,
         configuredProviderNodeOrders,
       );
+      let providerProxyMeta: Record<string, { type?: string; server?: string; port?: number }> = {};
       if (
         shouldFetchProviderNodeOrders(
           configOrder,
@@ -1523,6 +1548,7 @@ export default function ProxyNodes() {
           const providersData = await mihomoAPI.proxyProviders();
           if (!isLatestRequest()) return;
           const runtimeProviderNodeOrders = providerOrdersFromResponse(providersData);
+          providerProxyMeta = providerProxyMetaFromResponse(providersData);
           providerNodeOrders = mergeProviderNodeOrders(
             proxyNodesViewCache.providerNodeOrders,
             runtimeProviderNodeOrders,
@@ -1533,6 +1559,22 @@ export default function ProxyNodes() {
           if (isDev) {
             console.warn('[调试] 获取 provider 节点顺序失败，使用缓存或运行时顺序:', error);
           }
+        }
+      } else {
+        // Even when order cache is warm, refresh meta once so type/server/port are available.
+        try {
+          const providersData = await mihomoAPI.proxyProviders();
+          if (!isLatestRequest()) return;
+          providerProxyMeta = providerProxyMetaFromResponse(providersData);
+          const runtimeProviderNodeOrders = providerOrdersFromResponse(providersData);
+          providerNodeOrders = mergeProviderNodeOrders(
+            providerNodeOrders,
+            runtimeProviderNodeOrders,
+            configuredProviderNodeOrders,
+          );
+          proxyNodesViewCache.providerNodeOrders = providerNodeOrders;
+        } catch {
+          // ignore meta refresh failures
         }
       }
 
@@ -1816,27 +1858,33 @@ export default function ProxyNodes() {
         const nodes = nodesOrder
           .map((nodeName: string): ProxyNode | null => {
             const node = data.proxies[nodeName];
-            if (!node) {
+            const providerMeta = providerProxyMeta[nodeName];
+            if (!node && !providerMeta) {
               // Keep a lightweight placeholder so include-all members still render
-              // even if the top-level proxies map is incomplete for nested groups.
+              // even if both proxies map and provider meta are incomplete.
               return {
                 name: nodeName,
-                type: 'Unknown',
+                type: 'Node',
                 server: '',
                 port: 0,
                 delay: undefined,
                 isGroup: false,
               };
             }
-            const isGroup = isGroupType(node.type);
 
+            const type = node?.type || providerMeta?.type || 'Node';
+            const isGroup = isGroupType(type);
             return {
               name: nodeName,
-              type: node.type,
-              server: isGroup ? '代理组' : ((node as any)?.server || ''),
-              port: isGroup ? 0 : ((node as any)?.port || 0),
-              delay: node.history && node.history.length > 0 ? node.history[0].delay : undefined,
-              isGroup: isGroup,
+              type,
+              server: isGroup
+                ? '代理组'
+                : ((node as any)?.server || providerMeta?.server || ''),
+              port: isGroup
+                ? 0
+                : ((node as any)?.port || providerMeta?.port || 0),
+              delay: node?.history && node.history.length > 0 ? node.history[0].delay : undefined,
+              isGroup,
             };
           })
           .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
