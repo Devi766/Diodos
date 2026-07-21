@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 7;
+const PROXY_GROUPS_CACHE_VERSION = 8;
 
 // 定义类型
 type ProxyNode = {
@@ -341,8 +341,12 @@ const shouldFetchProviderNodeOrders = (
 
   const orders = providerNodeOrders || {};
   for (const group of groups) {
-    if (group.includeAllProviders && !hasRuntimeProviderOrderCache) {
-      return true;
+    if (group.includeAll || group.includeAllProviders) {
+      // include-all groups need provider node names to populate membership when
+      // the top-level proxies list is empty (common for provider-only configs).
+      if (!hasRuntimeProviderOrderCache && Object.keys(orders).length === 0) {
+        return true;
+      }
     }
 
     for (const providerName of group.use || []) {
@@ -400,45 +404,62 @@ const orderedRuntimeNodes = (
   configProxyOrder?: string[],
   previousNodeOrder?: string[],
 ) => {
+  // Membership for include-all groups comes from the running core (`all`) plus
+  // any provider/config candidates that already exist in runtime.
+  // Never drop runtime members just because config-side candidate lists are thin
+  // (e.g. only "直连" in top-level proxies while nodes live in proxy-providers).
   const runtimeSet = new Set(runtimeNodeNames);
   const seen = new Set<string>();
   const ordered: string[] = [];
-  const append = (nodeName: string) => {
-    if (!runtimeSet.has(nodeName) || seen.has(nodeName)) return;
+  const append = (nodeName: string, requireRuntime = true) => {
+    if (!nodeName || seen.has(nodeName)) return;
+    if (requireRuntime && !runtimeSet.has(nodeName)) return;
     seen.add(nodeName);
     ordered.push(nodeName);
   };
 
-  for (const nodeName of configGroup?.proxies || []) {
-    append(nodeName);
+  // 1) Prefer runtime membership order first so include-all groups always show
+  // whatever the core currently exposes under group.all.
+  for (const nodeName of runtimeNodeNames) {
+    append(nodeName, true);
   }
 
+  // 2) Then apply config/provider preferred order for names already present.
+  const preferred: string[] = [];
+  for (const nodeName of configGroup?.proxies || []) preferred.push(nodeName);
   for (const providerName of configGroup?.use || []) {
     for (const nodeName of providerNodeOrders?.[providerName] || []) {
-      append(nodeName);
+      preferred.push(nodeName);
     }
   }
-
   if (configGroup?.includeAll) {
-    for (const nodeName of configProxyOrder || []) {
-      append(nodeName);
-    }
-  }
-
-  if (configGroup?.includeAllProviders && providerNodeOrders) {
-    for (const providerNames of Object.values(providerNodeOrders)) {
-      for (const nodeName of providerNames) {
-        append(nodeName);
+    for (const nodeName of configProxyOrder || []) preferred.push(nodeName);
+    // include-all should also consider all known provider proxies as candidates.
+    if (providerNodeOrders) {
+      for (const providerNames of Object.values(providerNodeOrders)) {
+        for (const nodeName of providerNames) preferred.push(nodeName);
       }
     }
   }
-
-  for (const nodeName of previousNodeOrder || []) {
-    append(nodeName);
+  if (configGroup?.includeAllProviders && providerNodeOrders) {
+    for (const providerNames of Object.values(providerNodeOrders)) {
+      for (const nodeName of providerNames) preferred.push(nodeName);
+    }
   }
+  for (const nodeName of previousNodeOrder || []) preferred.push(nodeName);
 
-  for (const nodeName of runtimeNodeNames) {
-    append(nodeName);
+  // Rebuild with preferred order while keeping only runtime-existing members.
+  if (preferred.length > 0) {
+    const preferredOrdered: string[] = [];
+    const preferredSeen = new Set<string>();
+    const pushPreferred = (nodeName: string) => {
+      if (!runtimeSet.has(nodeName) || preferredSeen.has(nodeName)) return;
+      preferredSeen.add(nodeName);
+      preferredOrdered.push(nodeName);
+    };
+    for (const nodeName of preferred) pushPreferred(nodeName);
+    for (const nodeName of runtimeNodeNames) pushPreferred(nodeName);
+    return configGroup ? applyConfigGroupFilters(preferredOrdered, configGroup) : preferredOrdered;
   }
 
   return configGroup ? applyConfigGroupFilters(ordered, configGroup) : ordered;
@@ -455,7 +476,22 @@ const configProxyNames = (configOrder?: ConfigOrder | null): string[] => {
 const safeRegex = (pattern?: string | null): RegExp | null => {
   if (!pattern) return null;
   try {
-    return new RegExp(pattern);
+    // Convert common PCRE inline flags used in Clash filters, e.g. (?i),
+    // into JS RegExp flags. Without this, many country filters throw and
+    // include-all groups end up empty in the UI.
+    let source = pattern;
+    let flags = '';
+    const inline = source.match(/^\(\?([a-z]+)\)/i);
+    if (inline) {
+      flags = inline[1].toLowerCase();
+      source = source.slice(inline[0].length);
+    }
+    // Also handle embedded (?i) fragments by promoting case-insensitive mode.
+    if (/\(\?i\)/i.test(source)) {
+      flags = flags.includes('i') ? flags : `${flags}i`;
+      source = source.replace(/\(\?i\)/gi, '');
+    }
+    return new RegExp(source, flags);
   } catch (error) {
     if (isDev) {
       console.warn('[调试] 无法解析代理组过滤正则:', pattern, error);
@@ -1745,49 +1781,33 @@ export default function ProxyNodes() {
         // include-all / provider-backed country groups may temporarily have no
         // members until provider health-check finishes, but they must stay visible.
         const runtimeAll = Array.isArray(proxy?.all) ? (proxy.all as string[]) : [];
-        let nodesOrder = orderedRuntimeNodes(
-          runtimeAll,
-          undefined,
-          null,
-          undefined,
-          groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
-        );
+        // For include-all / provider-backed groups, trust runtime membership first.
+        // Config filter re-application is only a preferred ordering aid and must
+        // never wipe a non-empty runtime `all` list.
+        let nodesOrder = runtimeAll.slice();
 
         if (configGroup) {
           if (isDev) {
             console.log(`[调试] 使用配置文件中 ${groupName} 组的节点顺序`);
           }
 
-          const apiNodeNames = runtimeAll;
-          const configNodeNames = [
-            ...(configGroup.proxies || []),
-            ...(configGroup.use || []).flatMap((providerName) => providerNodeOrders?.[providerName] || []),
-            ...(configGroup.includeAll ? configNodeOrder : []),
-            ...(configGroup.includeAllProviders && providerNodeOrders
-              ? Object.values(providerNodeOrders).flat()
-              : []),
-          ];
-
-          const missingInApi = configNodeNames.filter((name: string) => !apiNodeNames.includes(name));
-          if (isDev && missingInApi.length > 0) {
-            console.log(`[调试] 配置文件中有但API中不存在的节点: ${missingInApi.join(', ')}`);
-          }
-
-          const missingInConfig = apiNodeNames.filter((name: string) => !configNodeNames.includes(name));
-          if (isDev && missingInConfig.length > 0) {
-            console.log(`[调试] API中有但配置文件中不存在的节点: ${missingInConfig.join(', ')}`);
-          }
-
-          nodesOrder = orderedRuntimeNodes(
-            apiNodeNames,
+          const preferredOrder = orderedRuntimeNodes(
+            runtimeAll,
             configGroup,
             providerNodeOrders,
             configNodeOrder,
             groupsRef.current.find((group) => group.name === groupName)?.nodes.map((node) => node.name),
           );
 
+          if (preferredOrder.length > 0) {
+            nodesOrder = preferredOrder;
+          } else if (runtimeAll.length > 0) {
+            // Keep runtime members even if config-side filters failed/emptied.
+            nodesOrder = runtimeAll.slice();
+          }
+
           if (isDev) {
-            console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点`);
+            console.log(`[调试] 最终节点顺序: ${nodesOrder.length}个节点 (runtime=${runtimeAll.length})`);
           }
         } else if (isDev) {
           console.log(`[调试] 配置文件中没有找到 ${groupName} 组的节点顺序信息，使用API返回的顺序`);
@@ -1797,8 +1817,16 @@ export default function ProxyNodes() {
           .map((nodeName: string): ProxyNode | null => {
             const node = data.proxies[nodeName];
             if (!node) {
-              console.warn(`[ProxyNodes] 组 ${groupName} 引用了不存在的节点: ${nodeName}, 已忽略`);
-              return null;
+              // Keep a lightweight placeholder so include-all members still render
+              // even if the top-level proxies map is incomplete for nested groups.
+              return {
+                name: nodeName,
+                type: 'Unknown',
+                server: '',
+                port: 0,
+                delay: undefined,
+                isGroup: false,
+              };
             }
             const isGroup = isGroupType(node.type);
 
