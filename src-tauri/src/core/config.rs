@@ -226,6 +226,24 @@ where
     Ok(config)
 }
 
+/// Build runtime config and write it for hot-reload.
+/// Skips spawning `mihomo -t` so profile/override switches stay snappy; the
+/// kernel itself will reject invalid configs on PUT /configs.
+pub fn prepare_runtime_config_file<F>(
+    content: &str,
+    runtime_settings: &Value,
+    work_dir: &Path,
+    apply_overrides: F,
+) -> Result<PathBuf, RuntimeConfigPrepareError>
+where
+    F: FnOnce(Value) -> Result<Value, String>,
+{
+    let config = build_runtime_config(content, runtime_settings, apply_overrides)?;
+    let paths = runtime_config_paths(work_dir);
+    write_runtime_config(&paths.runtime_path, &config)
+        .map_err(RuntimeConfigPrepareError::prepare_failed)
+}
+
 pub fn prepare_validated_runtime_config<F>(
     content: &str,
     runtime_settings: &Value,

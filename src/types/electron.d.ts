@@ -598,7 +598,11 @@ export interface ElectronAPI {
   updateRemoteOverride: (id: string) => Promise<any>;
   reorderOverrides: (itemIds: string[]) => Promise<{ success?: boolean; error?: string; runtimeReload?: any } | any>;
   getSubscriptionOverrides: (filePath: string) => Promise<string[] | { success: boolean; error?: string }>;
-  setSubscriptionOverrides: (filePath: string, overrides: string[]) => Promise<{ success: boolean; error?: string; runtimeReload?: any }>;
+  setSubscriptionOverrides: (
+    filePath: string,
+    overrides: string[],
+    options?: boolean | { skipReload?: boolean },
+  ) => Promise<{ success: boolean; error?: string; runtimeReload?: any }>;
 
   // 事件监听
   onMihomoLog: (callback: (log: string) => void) => void;

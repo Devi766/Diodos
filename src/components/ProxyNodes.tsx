@@ -1451,7 +1451,7 @@ export default function ProxyNodes() {
         console.error('获取当前模式失败:', error);
       }
 
-      // 如果是直连模式，可以提前结束加载过程
+      // 直连模式提前结束
       if (currentProxyMode === 'direct') {
         if (isDev) {
           console.log('直连模式，不加载节点列表');
@@ -1468,45 +1468,35 @@ export default function ProxyNodes() {
         }
         return;
       }
-      
-      // 获取配置文件中的原始顺序
+
+      // Fetch runtime proxies FIRST so the page can render even if config-order
+      // (which used to re-run override scripts) is slow or fails.
+      const proxiesData = await mihomoAPI.proxies();
+      if (!isLatestRequest()) return;
+      if (!proxiesData || !proxiesData.proxies) {
+        throw new Error('获取代理信息失败');
+      }
+      const data = proxiesData;
+
+      // Optional config order for stable group ordering / icons / hidden flags.
+      // Never block node display on this call.
       let configOrder = proxyNodesViewCache.configOrder ?? undefined;
-      
       if (window.electronAPI) {
         try {
           const api = window.electronAPI as any;
-          if (isDev) {
-            console.log('[调试] 开始从配置文件获取代理组顺序');
-          }
-          const result = await api.getConfigOrder();
+          const result = await Promise.race([
+            api.getConfigOrder(),
+            new Promise((resolve) =>
+              window.setTimeout(() => resolve({ success: false, error: 'config-order-timeout' }), 2500),
+            ),
+          ]);
           if (!isLatestRequest()) return;
-          if (isDev) {
-            console.log('[调试] 获取配置文件顺序结果:', result);
-          }
-
-          if (result.success && isValidConfigOrder(result.data)) {
+          if (result?.success && isValidConfigOrder(result.data)) {
             configOrder = result.data;
             proxyNodesViewCache.configOrder = result.data;
             if (result.data.configPath) {
               writeActiveConfigCache(result.data.configPath, { broadcast: false });
             }
-            if (isDev) {
-              console.log('[调试] 成功获取配置文件顺序');
-            }
-
-            // 详细记录代理组顺序，方便调试
-            if (isDev) {
-              if (configOrder && configOrder.proxyGroups) {
-                console.log('[调试] 配置文件中的代理组顺序:');
-                configOrder.proxyGroups.forEach((group, index) => {
-                  console.log(`${index + 1}. ${group.name} (${group.type}), 包含节点: ${group.proxies.length}`);
-                });
-              } else {
-                console.log('[调试] 配置中没有代理组信息');
-              }
-            }
-          } else if (isDev) {
-            console.warn('[调试] 无法获取配置文件顺序:', result.error);
           }
         } catch (error) {
           if (isDev) {
@@ -1517,18 +1507,7 @@ export default function ProxyNodes() {
 
       if (!configOrder && proxyNodesViewCache.configOrder) {
         configOrder = proxyNodesViewCache.configOrder;
-        if (isDev) {
-          console.log('[调试] 使用上次成功读取的配置文件顺序');
-        }
       }
-
-      // 获取代理信息
-      const proxiesData = await mihomoAPI.proxies();
-      if (!isLatestRequest()) return;
-      if (!proxiesData || !proxiesData.proxies) {
-        throw new Error('获取代理信息失败');
-      }
-      const data = proxiesData;
 
       const configNodeOrder = configProxyNames(configOrder);
       const configuredProviderNodeOrders = configOrder?.providerProxies || null;

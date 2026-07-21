@@ -551,6 +551,12 @@ export default function Overrides() {
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
+    // Optimistic toggle: flip UI first, roll back if the IPC call fails.
+    const previousEnabled = items.find((item) => item.id === id)?.enabled;
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, enabled } : item)),
+    );
+
     try {
       if (typeof window === 'undefined' || !window.electronAPI?.updateOverride) {
         throw new Error(t('overrides.apiUnavailable'));
@@ -558,12 +564,23 @@ export default function Overrides() {
 
       const result = await window.electronAPI.updateOverride(id, { enabled });
       ensureActionSuccess(result, t('overrides.unknownError'));
-      setItems(prev => prev.map(item =>
-        item.id === id ? { ...item, enabled } : item
-      ));
       notifyProfileUpdated();
-      showToast(t('common.success'), formatActionSuccess(enabled ? t('overrides.enabledSuccess') : t('overrides.disabledSuccess'), result), 'success');
+      showToast(
+        t('common.success'),
+        formatActionSuccess(
+          enabled ? t('overrides.enabledSuccess') : t('overrides.disabledSuccess'),
+          result,
+        ),
+        'success',
+      );
     } catch (error: any) {
+      if (typeof previousEnabled === 'boolean') {
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, enabled: previousEnabled } : item,
+          ),
+        );
+      }
       console.error('切换覆写状态失败:', error);
       const message = t('overrides.toggleError', { error: errorToMessage(error) });
       setErrorMessage(message);

@@ -4,8 +4,22 @@ use tokio::{
     time::{timeout, Duration},
 };
 
+/// Default timeout for ordinary controller calls (version / proxies / etc.).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// Force config reload can take much longer with large profiles + JS overrides.
+const CONFIG_RELOAD_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
+fn request_timeout_for(method: &str, path: &str) -> Duration {
+    let path_only = path.split_once('?').map(|(p, _)| p).unwrap_or(path);
+    if method.eq_ignore_ascii_case("PUT")
+        && (path_only == "/configs" || path_only == "configs" || path_only.ends_with("/configs"))
+    {
+        CONFIG_RELOAD_TIMEOUT
+    } else {
+        REQUEST_TIMEOUT
+    }
+}
 
 pub(crate) async fn request_json(
     socket_path: &str,
@@ -13,18 +27,20 @@ pub(crate) async fn request_json(
     path: &str,
     body: &Value,
 ) -> Result<(u16, String), String> {
+    let request_timeout = request_timeout_for(method, path);
+
     #[cfg(unix)]
     {
         let stream = tokio::net::UnixStream::connect(socket_path)
             .await
             .map_err(|err| format!("failed to connect unix socket {socket_path}: {err}"))?;
-        send_http_request(stream, method, path, body).await
+        send_http_request(stream, method, path, body, request_timeout).await
     }
 
     #[cfg(windows)]
     {
         let stream = connect_named_pipe(socket_path).await?;
-        send_http_request(stream, method, path, body).await
+        send_http_request(stream, method, path, body, request_timeout).await
     }
 }
 
@@ -59,6 +75,7 @@ async fn send_http_request<S>(
     method: &str,
     path: &str,
     body: &Value,
+    request_timeout: Duration,
 ) -> Result<(u16, String), String>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -74,7 +91,7 @@ where
         body_bytes.len(),
     );
 
-    timeout(REQUEST_TIMEOUT, async {
+    timeout(request_timeout, async {
         stream
             .write_all(request.as_bytes())
             .await
@@ -90,10 +107,13 @@ where
     .await
     .map_err(|_| "local socket request write timed out".to_string())??;
 
-    read_http_response(&mut stream).await
+    read_http_response(&mut stream, request_timeout).await
 }
 
-async fn read_http_response<S>(stream: &mut S) -> Result<(u16, String), String>
+async fn read_http_response<S>(
+    stream: &mut S,
+    request_timeout: Duration,
+) -> Result<(u16, String), String>
 where
     S: AsyncRead + Unpin,
 {
@@ -105,7 +125,7 @@ where
 
     loop {
         let mut chunk = [0_u8; 4096];
-        let read = timeout(REQUEST_TIMEOUT, stream.read(&mut chunk))
+        let read = timeout(request_timeout, stream.read(&mut chunk))
             .await
             .map_err(|_| "local socket response read timed out".to_string())?
             .map_err(|err| err.to_string())?;
@@ -232,7 +252,8 @@ fn find_crlf(buffer: &[u8], start: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_chunked_body;
+    use super::{decode_chunked_body, request_timeout_for};
+    use std::time::Duration;
 
     #[test]
     fn decodes_chunked_http_body() {
@@ -246,5 +267,25 @@ mod tests {
         let body = b"7;foo=bar\r\n{\"a\":1}\r\n0\r\n\r\n";
         let decoded = decode_chunked_body(body).expect("chunked body with extension");
         assert_eq!(decoded, br#"{"a":1}"#);
+    }
+
+    #[test]
+    fn config_reload_uses_longer_timeout() {
+        assert_eq!(
+            request_timeout_for("PUT", "/configs?force=true"),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            request_timeout_for("PUT", "/configs"),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            request_timeout_for("GET", "/version"),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            request_timeout_for("PATCH", "/configs"),
+            Duration::from_secs(5)
+        );
     }
 }

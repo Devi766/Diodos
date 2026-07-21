@@ -15,7 +15,9 @@ use crate::runtime::{
     is_mihomo_running, set_runtime_running_mode, sync_core_running_state,
     sync_mihomo_plugin_endpoint,
 };
-use crate::runtime_config::{prepare_runtime_config, runtime_config_error_response};
+use crate::runtime_config::{
+    prepare_runtime_config, prepare_runtime_config_for_reload, runtime_config_error_response,
+};
 use crate::state::AppState;
 use crate::storage::set_setting;
 
@@ -576,8 +578,9 @@ pub(crate) async fn reload_mihomo_config(
         }));
     }
 
-    let mihomo = find_mihomo_executable(app)?;
-    let runtime_config = match prepare_runtime_config(app, &config_path, &mihomo) {
+    // Hot-reload skips full `mihomo -t` validation so profile/override switches
+    // stay close to Clash Verge latency. Core start still validates.
+    let runtime_config = match prepare_runtime_config_for_reload(app, &config_path) {
         Ok(path) => path,
         Err(error) => {
             return Ok(runtime_config_error_response(&error, Some(false)));

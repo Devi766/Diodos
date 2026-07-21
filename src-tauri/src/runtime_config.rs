@@ -1,5 +1,7 @@
 use serde_json::{json, Map, Value};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, State};
 
 use crate::core::config as core_config;
@@ -15,6 +17,44 @@ use crate::state::AppState;
 use crate::storage::{read_settings, set_setting, setting, write_settings};
 
 type CompatResult = Result<Value, String>;
+
+#[derive(Clone, Default)]
+struct WorkConfigCacheEntry {
+    fingerprint: u64,
+    runtime_path: PathBuf,
+}
+
+fn work_config_cache() -> &'static Mutex<Option<WorkConfigCacheEntry>> {
+    static CACHE: OnceLock<Mutex<Option<WorkConfigCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn invalidate_runtime_work_config_cache() {
+    if let Ok(mut guard) = work_config_cache().lock() {
+        *guard = None;
+    }
+}
+
+fn hash_bytes(hasher: &mut std::collections::hash_map::DefaultHasher, bytes: &[u8]) {
+    bytes.hash(hasher);
+}
+
+fn work_config_fingerprint(
+    config_path: &str,
+    content: &str,
+    runtime_settings: &Value,
+    override_fp: &str,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    config_path.hash(&mut hasher);
+    content.len().hash(&mut hasher);
+    hash_bytes(&mut hasher, content.as_bytes());
+    if let Ok(settings_json) = serde_json::to_string(runtime_settings) {
+        hash_bytes(&mut hasher, settings_json.as_bytes());
+    }
+    override_fp.hash(&mut hasher);
+    hasher.finish()
+}
 
 pub(crate) const KERNEL_FIELDS: &[&str] = &[
     "mode",
@@ -846,8 +886,10 @@ pub(crate) fn runtime_config_error_response(
 
 /// AppHandle adapter for runtime-config prep.
 ///
-/// Pure build/validate/write lives in `core::config::prepare_validated_runtime_config`;
+/// Pure build/validate/write lives in `core::config`;
 /// this only loads content/settings, syncs bundled data, and injects overrides.
+///
+/// Used for core start — full `mihomo -t` validation stays here.
 pub(crate) fn prepare_runtime_config(
     app: &AppHandle,
     config_path: &str,
@@ -871,22 +913,89 @@ pub(crate) fn prepare_runtime_config(
     )
 }
 
+/// Fast path for profile / override hot-reload.
+/// Builds and writes work-config without spawning a full `mihomo -t` check.
+/// Skips geo-data sync (startup only) and reuses work-config when inputs hash-match.
+pub(crate) fn prepare_runtime_config_for_reload(
+    app: &AppHandle,
+    config_path: &str,
+) -> Result<PathBuf, core_config::RuntimeConfigPrepareError> {
+    let content = config_content(app, config_path)
+        .map_err(core_config::RuntimeConfigPrepareError::prepare_failed)?;
+    let runtime_settings = runtime_user_settings(app)
+        .map_err(core_config::RuntimeConfigPrepareError::prepare_failed)?;
+    let override_fp = crate::overrides::override_fingerprint_for_config(app, config_path)
+        .map_err(core_config::RuntimeConfigPrepareError::prepare_failed)?;
+    let fingerprint =
+        work_config_fingerprint(config_path, &content, &runtime_settings, &override_fp);
+
+    let work_dir =
+        mihomo_dir(app).map_err(core_config::RuntimeConfigPrepareError::prepare_failed)?;
+    let paths = core_config::runtime_config_paths(&work_dir);
+
+    if let Ok(guard) = work_config_cache().lock() {
+        if let Some(entry) = guard.as_ref() {
+            if entry.fingerprint == fingerprint
+                && entry.runtime_path == paths.runtime_path
+                && paths.runtime_path.is_file()
+            {
+                return Ok(entry.runtime_path.clone());
+            }
+        }
+    }
+
+    // Intentionally skip sync_bundled_mihomo_data here — geo files are synced on
+    // core start. Hot reload should not pay that IO cost every toggle/switch.
+    let runtime_path = core_config::prepare_runtime_config_file(
+        &content,
+        &runtime_settings,
+        &work_dir,
+        |config| crate::overrides::apply_overrides(app, config_path, config),
+    )?;
+
+    if let Ok(mut guard) = work_config_cache().lock() {
+        *guard = Some(WorkConfigCacheEntry {
+            fingerprint,
+            runtime_path: runtime_path.clone(),
+        });
+    }
+
+    Ok(runtime_path)
+}
+
 pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -> Value {
     let Some(path) = config_path else {
         return success(json!({ "data": { "proxyGroups": [] } }));
     };
-    let content = config_content(app, &path).unwrap_or_default();
-    let base_json = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
-        Ok(yaml) => serde_json::to_value(yaml).unwrap_or(Value::Null),
-        Err(_) => Value::Null,
-    };
-    let config_json = if base_json.is_object() {
-        crate::overrides::apply_overrides(app, &path, base_json.clone()).unwrap_or(base_json)
+
+    // Prefer already-prepared runtime work-config when available.
+    // It already includes applied overrides, so the Proxy Nodes page never has to
+    // re-run heavy JS scripts (e.g. mihomo-smart) just to paint the group order.
+    let work_yaml = mihomo_dir(app)
+        .ok()
+        .and_then(|dir| {
+            let work_path = dir.join(core_config::RUNTIME_CONFIG_FILE_NAME);
+            std::fs::read_to_string(work_path).ok()
+        })
+        .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok());
+
+    let yaml = if let Some(work) = work_yaml {
+        work
     } else {
-        base_json
+        let content = config_content(app, &path).unwrap_or_default();
+        let base_json = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            Ok(yaml) => serde_json::to_value(yaml).unwrap_or(Value::Null),
+            Err(_) => Value::Null,
+        };
+        let config_json = if base_json.is_object() {
+            // Fallback only when work-config is missing (core not started yet).
+            crate::overrides::apply_overrides(app, &path, base_json.clone()).unwrap_or(base_json)
+        } else {
+            base_json
+        };
+        serde_json::from_value::<serde_yaml::Value>(config_json)
+            .unwrap_or(serde_yaml::Value::Null)
     };
-    let yaml = serde_json::from_value::<serde_yaml::Value>(config_json)
-        .unwrap_or(serde_yaml::Value::Null);
 
     let top_level_proxies = yaml
         .get("proxies")

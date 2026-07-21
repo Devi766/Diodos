@@ -520,6 +520,17 @@ async fn dispatch_compat_call(
                 return Ok(json!({ "success": false, "error": "订阅不存在" }));
             };
             let overrides = args.get(1).cloned().unwrap_or_else(|| json!([]));
+            // Optional 3rd arg: skipReload bool, or { skipReload: true }.
+            // Edit-subscription dialog uses this so UI can close after DB write
+            // and run a single background hot-reload instead of blocking twice.
+            let skip_reload = args
+                .get(2)
+                .and_then(|value| {
+                    value
+                        .as_bool()
+                        .or_else(|| value.get("skipReload").and_then(Value::as_bool))
+                })
+                .unwrap_or(false);
             let changed = db(app)?
                 .execute(
                     "UPDATE subscriptions SET overrides = ?1 WHERE file_path = ?2",
@@ -528,6 +539,19 @@ async fn dispatch_compat_call(
                 .map_err(|err| err.to_string())?;
             if changed == 0 {
                 return Ok(json!({ "success": false, "error": "订阅不存在" }));
+            }
+
+            // Profile-scoped override assignment changes the work-config fingerprint.
+            crate::runtime_config::invalidate_runtime_work_config_cache();
+
+            if skip_reload {
+                return Ok(success(json!({
+                    "runtimeReload": {
+                        "reloaded": false,
+                        "skipped": true,
+                        "reason": "skip-reload-requested"
+                    }
+                })));
             }
 
             let active = current_active_config(app, state);

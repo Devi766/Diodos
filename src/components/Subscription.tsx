@@ -720,7 +720,10 @@ export default function SubscriptionManager() {
       return true;
     }
 
+    // Optimistic UI: highlight immediately, roll back if backend fails.
+    const previousConfig = activeConfig;
     setSwitchingConfig(configPath);
+    updateActiveConfig(configPath);
 
     try{
       let result;
@@ -729,6 +732,7 @@ export default function SubscriptionManager() {
       // 检查服务是否正在运行
       if (isServiceRunning) {
         if (!hasElectronMethod(api, 'reloadMihomoConfig')) {
+          updateActiveConfig(previousConfig);
           showToast('错误', '配置热重载 API 不可用', 'error');
           return false;
         }
@@ -739,12 +743,11 @@ export default function SubscriptionManager() {
 
         const reloadSuccess = compatSuccess(result);
 
-        if (reloadSuccess) {
-          updateActiveConfig(configPath);
-        } else {
+        if (!reloadSuccess) {
           // 热重载失败，回退到重启方式
           console.warn('热重载失败，尝试重启服务...');
           if (!hasElectronMethod(api, 'stopMihomo') || !hasElectronMethod(api, 'startMihomo')) {
+            updateActiveConfig(previousConfig);
             showToast('错误', `配置热重载失败: ${compatError(result, '切换配置文件失败')}`, 'error');
             return false;
           }
@@ -753,23 +756,18 @@ export default function SubscriptionManager() {
           const stopSuccess = compatSuccess(stopResult);
 
           if (!stopSuccess) {
+            updateActiveConfig(previousConfig);
             showToast('错误', `停止当前服务失败，无法切换配置: ${compatError(stopResult, '停止当前服务失败')}`, 'error');
-            setSwitchingConfig(null);
             return false;
           }
 
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 300));
           const startResult = await api.startMihomo(configPath);
-          const startSuccess = compatSuccess(startResult);
-
           result = startResult;
-
-          if (startSuccess) {
-            updateActiveConfig(configPath);
-          }
         }
       } else {
         if (!hasElectronMethod(api, 'setPreferredConfig')) {
+          updateActiveConfig(previousConfig);
           showToast('错误', '设置首选配置 API 不可用', 'error');
           return false;
         }
@@ -780,7 +778,6 @@ export default function SubscriptionManager() {
         const preferredSuccess = compatSuccess(result);
 
         if (preferredSuccess) {
-          updateActiveConfig(configPath);
           if (options.startIfStopped) {
             if (!hasElectronMethod(api, 'startMihomo')) {
               result = { success: false, error: '启动内核 API 不可用' };
@@ -826,57 +823,61 @@ export default function SubscriptionManager() {
           runtimeReload: runtimeReloadFromResult(result),
         });
 
-        // 只在服务运行时才需要等待节点信息
+        // 服务运行时尽快刷新节点，不再硬等 2 秒
         if (isServiceRunning || options.startIfStopped) {
-          // 关键修改：等待服务完全启动后获取节点信息
-          setTimeout(async () => {
+          const refreshProxies = async (attempt = 0) => {
             try {
-              // 获取最新节点状态
-              if (hasElectronMethod(api, 'getProxies')) {
-                // 使用getProxies方法获取节点状态而不是getCurrentNode
-                const proxies = await api.getProxies();
-                if (proxies && proxies.groups) {
-                  // 找到当前选中的节点
-                  const selectedNodeName =
-                    typeof proxies.selected === 'string' && proxies.selected
-                      ? proxies.selected
-                      : (proxies.groups as any[])
-                          .map((group: any) => group?.now)
-                          .find((name: unknown) => typeof name === 'string' && name.length > 0);
+              if (!hasElectronMethod(api, 'getProxies')) return;
+              const proxies = await api.getProxies();
+              if (proxies && proxies.groups) {
+                const selectedNodeName =
+                  typeof proxies.selected === 'string' && proxies.selected
+                    ? proxies.selected
+                    : (proxies.groups as any[])
+                        .map((group: any) => group?.now)
+                        .find((name: unknown) => typeof name === 'string' && name.length > 0);
 
-                  if (selectedNodeName) {
-                    console.log('当前节点已更新为:', selectedNodeName);
-
-                    // 通知其他组件配置已切换 - 使用已有的notifyNodeChanged方法
-                    if (hasElectronMethod(api, 'notifyNodeChanged')) {
-                      await api.notifyNodeChanged(selectedNodeName);
-                    }
-                  }
+                if (selectedNodeName && hasElectronMethod(api, 'notifyNodeChanged')) {
+                  await api.notifyNodeChanged(selectedNodeName);
                 }
-                // 服务就绪后再次通知代理页面刷新
+
                 notifyProfileUpdated({
                   action: 'switch-config-ready',
                   filePath: configPath,
                   activeConfig: configPath,
                 });
+                return;
               }
             } catch (error) {
               console.error('获取节点信息失败:', error);
             }
-          }, 2000); // 等待2秒让服务完全启动
+
+            if (attempt < 4) {
+              window.setTimeout(() => {
+                void refreshProxies(attempt + 1);
+              }, 150 * (attempt + 1));
+            }
+          };
+
+          void refreshProxies();
         }
-      } else if (!failureNotified) {
-        showToast('错误', `切换配置文件失败: ${compatError(result, '切换配置文件失败')}`, 'error');
+      } else {
+        updateActiveConfig(previousConfig);
+        if (!failureNotified) {
+          showToast('错误', `切换配置文件失败: ${compatError(result, '切换配置文件失败')}`, 'error');
+        }
       }
 
       return finalSuccess;
     } catch (error) {
+      updateActiveConfig(previousConfig);
       console.error('切换配置文件失败:', error);
       showToast('错误', `切换配置文件失败: ${formatSubscriptionError(error)}`, 'error');
       return false;
     } finally {
       setSwitchingConfig(null);
-      loadActiveConfig(); // 重新加载当前活跃配置
+      // Don't force-loadActiveConfig here: optimistic path already wrote cache;
+      // backend emits active-config-changed on success.
     }
   };
 
@@ -1049,7 +1050,10 @@ export default function SubscriptionManager() {
     const api = window.electronAPI;
     const currentConfig = await getLatestActiveConfig();
 
-    if (currentConfig !== filePath) {
+    // Compare with path normalization so Windows separators / casing don't skip reload.
+    if (
+      normalizeSubscriptionPath(currentConfig) !== normalizeSubscriptionPath(filePath)
+    ) {
       return false;
     }
 
@@ -1688,11 +1692,15 @@ export default function SubscriptionManager() {
 
       // 使用后端返回的正确路径（而不是自己计算）
       const finalPath = result?.newPath || editingSub.path;
+      const previousPath = editingSub.path;
 
-      // 保存覆写设置 - 使用后端返回的正确路径
+      // Persist override assignment only. Skip backend hot-reload here so the
+      // dialog is not blocked by heavy scripts (e.g. mihomo-smart.js). We do a
+      // single reload in the background after the dialog closes.
       const overridesResult = await api.setSubscriptionOverrides(
         finalPath,
-        editingOverrides
+        editingOverrides,
+        { skipReload: true },
       );
       if (overridesResult?.success === false) {
         throw new Error(formatSubscriptionError((overridesResult as { error?: string }).error, '保存覆写设置失败'));
@@ -1707,32 +1715,48 @@ export default function SubscriptionManager() {
         throw new Error(formatSubscriptionError(intervalResult.error, '保存自动更新间隔失败'));
       }
 
-      const activePathSynced = await syncActiveConfigAfterPathChange(editingSub.path, finalPath);
-      const runtimeReloaded = await reloadRuntimeConfigIfNeeded(finalPath);
-      const reloadedSubscriptions = await loadSubscriptions();
-      if (reloadedSubscriptions) {
-        const editedSubscription = findSubscriptionByPath(reloadedSubscriptions, finalPath);
-        if (editedSubscription) {
-          setSelectedSub(editedSubscription);
-        }
-        highlightSubscriptions([editedSubscription?.path || finalPath], 'edited');
-      }
-      notifyProfileUpdated();
-
-      showToast(
-        t('common.success'),
-        runtimeReloaded
-          ? t('subscriptions.editSuccessReloaded')
-          : activePathSynced
-          ? t('subscriptions.editSuccessActivated')
-          : t('subscriptions.editSuccess'),
-        'success'
-      );
+      // Close dialog as soon as metadata is persisted. Runtime work continues below.
       setIsEditDialogOpen(false);
+      setIsLoading(false);
+      showToast(t('common.success'), t('subscriptions.editSuccess'), 'success');
+
+      void (async () => {
+        try {
+          const activePathSynced = await syncActiveConfigAfterPathChange(previousPath, finalPath);
+          const runtimeReloaded = await reloadRuntimeConfigIfNeeded(finalPath);
+          const reloadedSubscriptions = await loadSubscriptions();
+          if (reloadedSubscriptions) {
+            const editedSubscription = findSubscriptionByPath(reloadedSubscriptions, finalPath);
+            if (editedSubscription) {
+              setSelectedSub(editedSubscription);
+            }
+            highlightSubscriptions([editedSubscription?.path || finalPath], 'edited');
+          }
+          notifyProfileUpdated({
+            action: 'edit-subscription',
+            filePath: finalPath,
+            activeConfig: finalPath,
+          });
+
+          if (runtimeReloaded) {
+            showToast(t('common.success'), t('subscriptions.editSuccessReloaded'), 'success');
+          } else if (activePathSynced) {
+            showToast(t('common.success'), t('subscriptions.editSuccessActivated'), 'success');
+          }
+        } catch (error) {
+          console.error('编辑后热重载失败:', error);
+          showToast(
+            t('common.error'),
+            t('subscriptions.reloadActiveConfigFailed', {
+              error: formatSubscriptionError(error, t('subscriptions.reloadActiveConfigFailedFallback')),
+            }),
+            'error',
+          );
+        }
+      })();
     } catch (error) {
       console.error('编辑配置失败:', error);
       showToast('错误', `编辑配置失败: ${formatSubscriptionError(error)}`, 'error');
-    } finally {
       setIsLoading(false);
     }
   };

@@ -1,4 +1,7 @@
 use boa_engine::{Context as JsContext, Source};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, OptionalExtension};
@@ -6,6 +9,30 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::storage::{db, decrypt_text, encrypt_text};
+
+fn override_content_cache() -> &'static Mutex<HashMap<String, String>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn override_items_cache() -> &'static Mutex<Option<Vec<Value>>> {
+    static CACHE: OnceLock<Mutex<Option<Vec<Value>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn invalidate_override_caches(id: Option<&str>) {
+    if let Ok(mut guard) = override_content_cache().lock() {
+        if let Some(id) = id {
+            guard.remove(id);
+        } else {
+            guard.clear();
+        }
+    }
+    if let Ok(mut guard) = override_items_cache().lock() {
+        *guard = None;
+    }
+    crate::runtime_config::invalidate_runtime_work_config_cache();
+}
 
 type CompatResult = Result<CompatOutcome, String>;
 
@@ -102,6 +129,12 @@ fn attach_runtime_reload(mut result: Value, runtime_reload: Value) -> Value {
 }
 
 pub(crate) fn all_overrides(app: &AppHandle) -> Result<Vec<Value>, String> {
+    if let Ok(guard) = override_items_cache().lock() {
+        if let Some(items) = guard.as_ref() {
+            return Ok(items.clone());
+        }
+    }
+
     let conn = db(app)?;
     let mut stmt = conn
         .prepare("SELECT item_json FROM overrides ORDER BY sort_order ASC, created_at ASC")
@@ -114,6 +147,10 @@ pub(crate) fn all_overrides(app: &AppHandle) -> Result<Vec<Value>, String> {
         .map_err(|err| err.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.to_string())?;
+
+    if let Ok(mut guard) = override_items_cache().lock() {
+        *guard = Some(items.clone());
+    }
     Ok(items)
 }
 
@@ -141,6 +178,18 @@ fn save_override_item(app: &AppHandle, item: &Value, content: Option<&str>) -> R
             params![id, item.to_string(), encrypted, order, now_millis() as i64],
         )
         .map_err(|err| err.to_string())?;
+
+    // Metadata always changes item list (enabled/global/updatedAt/order fields).
+    if let Ok(mut guard) = override_items_cache().lock() {
+        *guard = None;
+    }
+    if let Some(content) = content {
+        if let Ok(mut guard) = override_content_cache().lock() {
+            guard.insert(id.to_string(), content.to_string());
+        }
+    }
+    // enabled/content changes invalidate the prepared work-config fingerprint.
+    crate::runtime_config::invalidate_runtime_work_config_cache();
     Ok(())
 }
 
@@ -242,6 +291,12 @@ fn override_update(app: &AppHandle, id: &str, updates: Value) -> Result<Value, S
 }
 
 pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, String> {
+    if let Ok(guard) = override_content_cache().lock() {
+        if let Some(content) = guard.get(id) {
+            return Ok(content.clone());
+        }
+    }
+
     let row = db(app)?
         .query_row(
             "SELECT item_json, content_cipher FROM overrides WHERE id = ?1",
@@ -251,14 +306,83 @@ pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, Stri
         .optional()
         .map_err(|err| err.to_string())?
         .ok_or_else(|| "覆写项不存在".to_string())?;
-    if let Some(cipher) = row.1 {
-        return decrypt_text(app, &cipher);
+
+    let content = if let Some(cipher) = row.1 {
+        decrypt_text(app, &cipher)?
+    } else {
+        let item = serde_json::from_str::<Value>(&row.0).unwrap_or(Value::Null);
+        if item.get("type").and_then(Value::as_str) == Some("remote") {
+            String::new()
+        } else {
+            String::new()
+        }
+    };
+
+    if let Ok(mut guard) = override_content_cache().lock() {
+        guard.insert(id.to_string(), content.clone());
     }
-    let item = serde_json::from_str::<Value>(&row.0).unwrap_or(Value::Null);
-    if item.get("type").and_then(Value::as_str) == Some("remote") {
+    Ok(content)
+}
+
+/// Stable fingerprint of enabled overrides that affect a given profile.
+/// Used by the hot-reload work-config cache to skip rebuilds when nothing changed.
+pub(crate) fn override_fingerprint_for_config(
+    app: &AppHandle,
+    config_path: &str,
+) -> Result<String, String> {
+    let enabled_items = all_overrides(app)?
+        .into_iter()
+        .filter(|item| {
+            item.get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+
+    if enabled_items.is_empty() {
         return Ok(String::new());
     }
-    Ok(String::new())
+
+    let mut ordered_ids = Vec::new();
+    for item in &enabled_items {
+        let is_global = item.get("global").and_then(Value::as_bool).unwrap_or(false);
+        if !is_global {
+            continue;
+        }
+        if let Some(id) = item.get("id").and_then(Value::as_str) {
+            push_unique_id(&mut ordered_ids, id.to_string());
+        }
+    }
+    for id in subscription_override_ids(app, config_path).unwrap_or_default() {
+        if enabled_items
+            .iter()
+            .any(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
+        {
+            push_unique_id(&mut ordered_ids, id);
+        }
+    }
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for id in ordered_ids {
+        id.hash(&mut hasher);
+        let ext = enabled_items
+            .iter()
+            .find(|item| item.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            .and_then(|item| item.get("ext").and_then(Value::as_str))
+            .unwrap_or("");
+        ext.hash(&mut hasher);
+        match override_content(app, &id) {
+            Ok(content) => {
+                content.len().hash(&mut hasher);
+                // Hash a cheap sample + full content for correctness.
+                content.hash(&mut hasher);
+            }
+            Err(_) => {
+                0u8.hash(&mut hasher);
+            }
+        }
+    }
+    Ok(format!("{:016x}", hasher.finish()))
 }
 
 fn unwrap_override_key(key: &str) -> String {
@@ -547,6 +671,7 @@ async fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> 
                     "error": "覆写项不存在"
                 })));
             }
+            invalidate_override_caches(Some(&id));
             Ok(CompatOutcome::success_reload_payload())
         }
         "getOverrideFileContent" | "override:getFileContent" => {
@@ -608,6 +733,7 @@ async fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> 
                     "error": "部分覆写项不存在，排序未完全保存"
                 })));
             }
+            invalidate_override_caches(None);
             Ok(CompatOutcome::success_reload_payload())
         }
         _ => Err(format!("Unsupported override method: {method}")),
