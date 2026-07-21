@@ -557,6 +557,9 @@ export default function Overrides() {
     const target = items.find((item) => item.id === id);
     const previousItems = items;
     const isGlobal = !!target?.global;
+    const otherEnabledGlobals = enabled && isGlobal
+      ? items.filter((item) => item.id !== id && item.global && item.enabled)
+      : [];
 
     // 全局覆写互斥：开启一个全局覆写时，自动关闭其他已启用的全局覆写
     setItems((prev) =>
@@ -574,10 +577,16 @@ export default function Overrides() {
         throw new Error(t('overrides.apiUnavailable'));
       }
 
+      // 先关闭其他全局，再开启当前（避免竞态导致两个同时开）
+      for (const other of otherEnabledGlobals) {
+        const disableResult = await window.electronAPI.updateOverride(other.id, { enabled: false });
+        ensureActionSuccess(disableResult, t('overrides.unknownError'));
+      }
+
       const result = await window.electronAPI.updateOverride(id, { enabled });
       ensureActionSuccess(result, t('overrides.unknownError'));
 
-      // 后端会同步关闭其他全局项，刷新列表保证 UI 一致
+      // 刷新列表，确保与后端一致
       if (enabled && isGlobal) {
         await fetchItems();
       }
@@ -587,7 +596,9 @@ export default function Overrides() {
         t('common.success'),
         formatActionSuccess(
           enabled
-            ? (isGlobal ? t('overrides.enabledGlobalExclusive') : t('overrides.enabledSuccess'))
+            ? (isGlobal && otherEnabledGlobals.length > 0
+                ? t('overrides.enabledGlobalExclusive')
+                : t('overrides.enabledSuccess'))
             : t('overrides.disabledSuccess'),
           result,
         ),

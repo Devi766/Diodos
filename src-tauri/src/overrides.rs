@@ -269,13 +269,63 @@ async fn override_add(app: &AppHandle, item: Value) -> Result<Value, String> {
     Ok(value)
 }
 
+fn is_truthy_bool(value: &Value) -> bool {
+    value.as_bool().unwrap_or(false)
+}
+
+/// 全局覆写互斥：同一时间只允许一个「已启用」的全局覆写。
+/// 其他全局项保留 global 标记，但强制 enabled=false。
+fn enforce_single_enabled_global(items: &mut [Value], keep_enabled_id: &str) {
+    let now = crate::telemetry::today_key();
+    for item in items.iter_mut() {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        let id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if id == keep_enabled_id {
+            continue;
+        }
+        let is_global = object
+            .get("global")
+            .map(is_truthy_bool)
+            .unwrap_or(false);
+        let is_enabled = object
+            .get("enabled")
+            .map(is_truthy_bool)
+            .unwrap_or(false);
+        if is_global && is_enabled {
+            object.insert("enabled".to_string(), Value::Bool(false));
+            object.insert("updatedAt".to_string(), Value::String(now.clone()));
+        }
+    }
+}
+
 fn override_update(app: &AppHandle, id: &str, updates: Value) -> Result<Value, String> {
     let mut items = all_overrides(app)?;
-    let item = items
-        .iter_mut()
-        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+    let index = items
+        .iter()
+        .position(|item| item.get("id").and_then(Value::as_str) == Some(id))
         .ok_or_else(|| "覆写项不存在".to_string())?;
-    if let (Some(object), Some(update_map)) = (item.as_object_mut(), updates.as_object()) {
+
+    // 记录互斥前：哪些全局项当前是启用的（用于只保存真正变更过的项）
+    let previously_enabled_globals: Vec<String> = items
+        .iter()
+        .filter_map(|item| {
+            let item_id = item.get("id").and_then(Value::as_str)?;
+            let is_global = item.get("global").map(is_truthy_bool).unwrap_or(false);
+            let is_enabled = item.get("enabled").map(is_truthy_bool).unwrap_or(false);
+            if is_global && is_enabled {
+                Some(item_id.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if let (Some(object), Some(update_map)) = (items[index].as_object_mut(), updates.as_object()) {
         for (key, value) in update_map {
             object.insert(key.clone(), value.clone());
         }
@@ -284,8 +334,34 @@ fn override_update(app: &AppHandle, id: &str, updates: Value) -> Result<Value, S
             Value::String(crate::telemetry::today_key()),
         );
     }
-    save_override_item(app, item, None)?;
-    Ok(item.clone())
+
+    let is_global = items[index]
+        .get("global")
+        .map(is_truthy_bool)
+        .unwrap_or(false);
+    let is_enabled = items[index]
+        .get("enabled")
+        .map(is_truthy_bool)
+        .unwrap_or(false);
+
+    // 开启某个全局覆写时，关闭其他已启用的全局覆写
+    if is_global && is_enabled {
+        enforce_single_enabled_global(&mut items, id);
+    }
+
+    // 保存当前项 + 被互斥关掉的全局项
+    for item in &items {
+        let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+        let was_enabled_global = previously_enabled_globals.iter().any(|x| x == item_id);
+        let still_enabled = item.get("enabled").map(is_truthy_bool).unwrap_or(false);
+        let should_save = item_id == id || (was_enabled_global && !still_enabled);
+        if should_save {
+            save_override_item(app, item, None)?;
+        }
+    }
+
+    invalidate_override_caches(None);
+    Ok(items[index].clone())
 }
 
 pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, String> {
@@ -340,6 +416,7 @@ pub(crate) fn override_fingerprint_for_config(
     }
 
     let mut ordered_ids = Vec::new();
+    // 全局覆写只取一个（按列表顺序优先）
     for item in &enabled_items {
         let is_global = item.get("global").and_then(Value::as_bool).unwrap_or(false);
         if !is_global {
@@ -347,6 +424,7 @@ pub(crate) fn override_fingerprint_for_config(
         }
         if let Some(id) = item.get("id").and_then(Value::as_str) {
             push_unique_id(&mut ordered_ids, id.to_string());
+            break;
         }
     }
     for id in subscription_override_ids(app, config_path).unwrap_or_default() {
@@ -543,6 +621,7 @@ pub(crate) fn apply_overrides(
     }
 
     let mut ordered_ids = Vec::new();
+    // 全局覆写只应用一个（按列表顺序优先），避免多个全局脚本互相覆盖
     for item in &enabled_items {
         let is_global = item.get("global").and_then(Value::as_bool).unwrap_or(false);
         if !is_global {
@@ -550,6 +629,7 @@ pub(crate) fn apply_overrides(
         }
         if let Some(id) = item.get("id").and_then(Value::as_str) {
             push_unique_id(&mut ordered_ids, id.to_string());
+            break;
         }
     }
 
