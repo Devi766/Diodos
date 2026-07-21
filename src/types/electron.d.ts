@@ -664,7 +664,14 @@ export interface ElectronAPI {
   // UWP 回环豁免管理
   loopback?: {
     getApps: () => Promise<LoopbackAppsResult>;
-    saveConfig: (exemptSids: string[]) => Promise<{ success: boolean; error?: string; count?: number; added?: number; failed?: number }>;
+    saveConfig: (exemptSids: string[]) => Promise<{
+      success: boolean;
+      error?: string;
+      count?: number;
+      added?: number;
+      failed?: number;
+      needsElevation?: boolean;
+    }>;
     addExemption: (sid: string) => Promise<{ success: boolean; error?: string; count?: number }>;
     removeExemption: (sid: string) => Promise<{ success: boolean; error?: string; count?: number }>;
     exemptAll?: () => Promise<{ success: boolean; error?: string; count?: number }>;
