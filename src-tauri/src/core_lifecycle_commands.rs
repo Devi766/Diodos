@@ -159,7 +159,30 @@ pub(crate) async fn stop_mihomo_process(
         core_lifecycle::stop_mode(&runtime.core)
     };
 
-    if running_mode == RunningMode::Service {
+    // Always try helper stop first when a Windows helper service is present.
+    // Mode memory can be wrong after crashes / dual-process races (sidecar +
+    // service core both alive). Best-effort: ignore helper errors unless we
+    // know we are in service mode.
+    if cfg!(target_os = "windows") {
+        match core_lifecycle::stop_service_core_checked() {
+            Ok(core_lifecycle::ServiceCoreStopResult::Stopped) => {}
+            Ok(core_lifecycle::ServiceCoreStopResult::AlreadyStoppedAfterError { error }) => {
+                eprintln!(
+                    "[core-service] stop helper returned an error after service stopped: {error}"
+                );
+            }
+            Err(error) => {
+                if running_mode == RunningMode::Service {
+                    eprintln!("[core-service] failed to stop core through helper: {error}");
+                    let _ = app.emit("mihomo-stop-failed", json!({ "error": error.clone() }));
+                    return Err(error);
+                }
+                eprintln!(
+                    "[core-service] best-effort helper stop ignored (mode={running_mode:?}): {error}"
+                );
+            }
+        }
+    } else if running_mode == RunningMode::Service {
         match core_lifecycle::stop_service_core_checked() {
             Ok(core_lifecycle::ServiceCoreStopResult::Stopped) => {}
             Ok(core_lifecycle::ServiceCoreStopResult::AlreadyStoppedAfterError { error }) => {
@@ -177,6 +200,7 @@ pub(crate) async fn stop_mihomo_process(
 
     {
         let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
+        // finish_stop kills sidecar child when mode is Sidecar; always safe.
         core_lifecycle::complete_core_stop(&mut runtime.core);
     }
     set_runtime_running_mode(app, RunningMode::NotRunning);

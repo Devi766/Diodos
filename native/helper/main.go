@@ -539,6 +539,11 @@ func startCore(payload *StartCorePayload) error {
 		return fmt.Errorf("security: config rejected: %v", err)
 	}
 
+	// Always clear leftover sidecar/service cores before (re)starting. Without
+	// this, a non-elevated mihomo-smart.exe can keep the TUN device and the UI
+	// shows Helper "ready" while Service Core is not the process handling traffic.
+	killOtherMihomoProcesses()
+
 	coreMutex.Lock()
 
 	// 如果已经在运行，先停止
@@ -682,32 +687,46 @@ func sendResponse(conn net.Conn, id string, success bool, data interface{}, errM
 	conn.Write(append(jsonResp, '\n'))
 }
 
-// 查找并终止其他 mihomo 进程
+// 查找并终止其他 mihomo 进程（含 mihomo-smart / alpha 等变体）
 func killOtherMihomoProcesses() {
-	// 使用 taskkill 终止所有 mihomo 进程（除了我们管理的）
+	// 使用 tasklist 扫描所有可能的内核镜像名，避免只清 mihomo.exe 而留下
+	// mihomo-smart.exe 等 sidecar 残留，导致 TUN 被非服务进程占用。
 	coreMutex.Lock()
 	ourPID := corePID
 	coreMutex.Unlock()
 
-	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq mihomo.exe", "/FO", "CSV", "/NH")
-	output, err := cmd.Output()
-	if err != nil {
-		return
+	imageNames := []string{
+		"mihomo.exe",
+		"mihomo-smart.exe",
+		"mihomo-alpha.exe",
+		"mihomo-meta.exe",
+		"FlyClash-Core.exe",
+		"flyclash-core.exe",
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, image := range imageNames {
+		cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq "+image, "/FO", "CSV", "/NH")
+		output, err := cmd.Output()
+		if err != nil {
 			continue
 		}
-		parts := strings.Split(line, ",")
-		if len(parts) >= 2 {
+
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(strings.ToLower(line), "info:") {
+				continue
+			}
+			parts := strings.Split(line, ",")
+			if len(parts) < 2 {
+				continue
+			}
 			pidStr := strings.Trim(parts[1], "\"")
 			var pid int
 			fmt.Sscanf(pidStr, "%d", &pid)
 			if pid > 0 && pid != ourPID {
-				exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid)).Run()
+				log.Printf("Killing leftover core process %s PID=%d", image, pid)
+				_ = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid)).Run()
 			}
 		}
 	}

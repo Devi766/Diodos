@@ -64,8 +64,13 @@ pub fn managed_core_path(
 }
 
 /// Service-mode start decision from already-resolved settings.
-pub fn should_start_by_service(is_windows: bool, elevation_mode: &str, tun_enabled: bool) -> bool {
-    is_windows && elevation_mode.trim() == "service" && tun_enabled
+///
+/// Match Electron: once the user selects Windows service elevation mode,
+/// always start the core through Helper (even when TUN is currently off).
+/// Gating on `tun_enabled` alone leaves a non-elevated sidecar running and
+/// makes TUN toggles appear to "do nothing" / Service Core stay stopped.
+pub fn should_start_by_service(is_windows: bool, elevation_mode: &str, _tun_enabled: bool) -> bool {
+    is_windows && elevation_mode.trim().eq_ignore_ascii_case("service")
 }
 
 pub fn short_path_digest(path: &Path) -> String {
@@ -220,11 +225,16 @@ mod tests {
     }
 
     #[test]
-    fn should_start_by_service_requires_windows_service_mode_and_tun() {
+    fn should_start_by_service_follows_windows_service_elevation_mode() {
+        // Match Electron: service elevation mode always uses helper, even if TUN
+        // is currently off. Otherwise a non-elevated sidecar keeps running and
+        // Service Core appears "stopped" after the helper is installed.
         assert!(should_start_by_service(true, "service", true));
+        assert!(should_start_by_service(true, "service", false));
+        assert!(should_start_by_service(true, "Service", false));
         assert!(!should_start_by_service(false, "service", true));
         assert!(!should_start_by_service(true, "task", true));
-        assert!(!should_start_by_service(true, "service", false));
+        assert!(!should_start_by_service(true, "task", false));
     }
 
     #[test]
