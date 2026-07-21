@@ -175,29 +175,174 @@ fn first_regex_capture(input: &str, patterns: &[&str]) -> Option<String> {
     })
 }
 
+// Align Netflix detection with Android NetflixDetector:
+// - Original: LEGO Ninjago (81280792)
+// - Non-original: Breaking Bad (70143836)
+// - Prefer reactContext.graphql mediaTracks for the specific title id
+
+fn netflix_browser_headers() -> &'static [(&'static str, &'static str)] {
+    &[
+        (
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        ),
+        ("Accept-Language", "en-US,en;q=0.9"),
+        (
+            "Sec-CH-UA",
+            "\"Google Chrome\";v=\"125\", \"Chromium\";v=\"125\", \"Not.A/Brand\";v=\"24\"",
+        ),
+        ("Sec-CH-UA-Mobile", "?0"),
+        ("Sec-CH-UA-Platform", "\"Windows\""),
+        ("Sec-Fetch-Dest", "document"),
+        ("Sec-Fetch-Mode", "navigate"),
+        ("Sec-Fetch-Site", "none"),
+        ("Upgrade-Insecure-Requests", "1"),
+    ]
+}
+
+fn netflix_extract_react_context_json(html: &str) -> Option<String> {
+    let marker = "netflix.reactContext = ";
+    let start = html.find(marker)? + marker.len();
+    let end = html[start..].find(";</script>")? + start;
+    Some(decode_js_hex_escapes(&html[start..end]))
+}
+
 fn netflix_region(html: &str) -> Option<String> {
     let decoded = decode_js_hex_escapes(html);
+    if let Some(region) = first_regex_capture(
+        &decoded,
+        &[
+            r#""requestCountry"\s*:\s*\{[^}]*"id"\s*:\s*"([A-Za-z]{2})""#,
+            r#"requestCountry"?\s*:\s*\{[^}]*"id"?\s*:\s*"([A-Za-z]{2})""#,
+            r#"data-country=["']([A-Z]{2})["']"#,
+            r#""countryCode"\s*:\s*"([A-Z]{2})""#,
+            r#""countryOfSignup"\s*:\s*"([A-Za-z]{2})""#,
+        ],
+    ) {
+        return Some(region.to_uppercase());
+    }
+
+    // Fallback: locale from originalUrl path like /sg-en/title/...
     first_regex_capture(
         &decoded,
         &[
-            r#"requestCountry"?\s*:\s*\{[^}]*"id"?\s*:\s*"([A-Za-z]{2})""#,
-            r#""requestCountry"\s*:\s*\{[^}]*"id"\s*:\s*"([A-Za-z]{2})""#,
+            r#""originalUrl"\s*:\s*"/*([A-Za-z]{2})-[A-Za-z]{2}/"#,
             r#"/([a-z]{2})-[A-Za-z]{2}/title/"#,
-            r#""countryOfSignup"\s*:\s*"([A-Za-z]{2})""#,
         ],
     )
     .map(|value| value.to_uppercase())
 }
 
-fn netflix_playable(html: &str, title_id: &str) -> bool {
-    let decoded = decode_js_hex_escapes(html);
-    let lower = decoded.to_ascii_lowercase();
-    let has_title = decoded.contains(title_id);
-    let has_media_tracks = lower.contains("mediatracks");
-    let explicit_playable = lower.contains("\"playable\":true")
-        || lower.contains("\"isplayable\":true")
-        || lower.contains("isplayable&quot;:true");
-    has_title && (has_media_tracks || explicit_playable)
+fn netflix_has_unavailable_signal(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    [
+        "oh no!",
+        "not available in your country",
+        "isn't available to watch in your country",
+        "isn't available in your country",
+        "not available in your region",
+        "isn't available in your region",
+        "currently isn't available",
+        "isn't available to watch",
+        "not available to watch",
+        "unavailable in your area",
+        "locally-unavailable",
+        "nses-nti",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn netflix_has_page_error_signal(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    [
+        "<title>netflix - error</title>",
+        "<title>netflix - oops</title>",
+        "<title>netflix - 出错了</title>",
+        "error-page",
+        "serviceerrormessage",
+        "nses-403",
+        "nses-404",
+        "nses-500",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn netflix_looks_like_title_page(html: &str, title_id: &str) -> bool {
+    if !html.to_ascii_lowercase().contains("netflix") {
+        return false;
+    }
+    html.contains(title_id)
+        || html.contains(&format!("/title/{title_id}"))
+        || html.contains(&format!("videoId\":{title_id}"))
+        || html.contains(&format!("videoId\\\":{title_id}"))
+}
+
+/// True when reactContext graphql exposes non-empty mediaTracks for this title.
+fn netflix_playable_from_graphql(html: &str, title_id: &str) -> bool {
+    let Some(raw_json) = netflix_extract_react_context_json(html) else {
+        return false;
+    };
+    let Ok(context) = serde_json::from_str::<Value>(&raw_json) else {
+        return false;
+    };
+    let Some(graphql) = context
+        .pointer("/models/graphql/data")
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+
+    let show_key = format!("Show:{{\"videoId\":{title_id}}}");
+    let movie_key = format!("Movie:{{\"videoId\":{title_id}}}");
+    let video_node = graphql
+        .get(&show_key)
+        .or_else(|| graphql.get(&movie_key));
+
+    match video_node.and_then(|node| node.get("mediaTracks")) {
+        Some(Value::Object(map)) => !map.is_empty(),
+        Some(Value::Array(items)) => !items.is_empty(),
+        _ => false,
+    }
+}
+
+/// Probe result: (success, playable, region, error)
+fn netflix_analyze_response(status: u16, html: &str, title_id: &str) -> (bool, bool, Option<String>, Option<String>) {
+    let region = netflix_region(html);
+    let blocked = netflix_has_unavailable_signal(html);
+    let page_error = netflix_has_page_error_signal(html);
+    let playable_graphql = netflix_playable_from_graphql(html, title_id);
+    let valid_title_page = netflix_looks_like_title_page(html, title_id);
+
+    if playable_graphql {
+        return (true, true, region, None);
+    }
+
+    if blocked || status == 403 || status == 404 {
+        return (true, false, region, None);
+    }
+
+    if (200..400).contains(&status) && !page_error && valid_title_page {
+        // Fallback when page shell loads for the title but graphql payload is stripped.
+        return (true, true, region, None);
+    }
+
+    if (200..400).contains(&status) {
+        return (
+            false,
+            false,
+            region,
+            Some("Netflix页面结构变化，无法判定".to_string()),
+        );
+    }
+
+    (
+        false,
+        false,
+        region,
+        Some(format!("HTTP {status}")),
+    )
 }
 
 async fn test_netflix(client: &reqwest::Client, started: u128) -> Value {
@@ -205,48 +350,64 @@ async fn test_netflix(client: &reqwest::Client, started: u128) -> Value {
         client: &reqwest::Client,
         url: &str,
         title_id: &str,
-    ) -> (bool, bool, Option<String>) {
-        match media_fetch_text(client, url, &[]).await {
-            Ok((status, html)) if (200..400).contains(&status) => {
-                let region = netflix_region(&html);
-                let playable = netflix_playable(&html, title_id);
-                (true, playable, region)
-            }
-            Ok((status, html)) => {
-                let region = netflix_region(&html);
-                (status == 401 || status == 403, false, region)
-            }
-            Err(_) => (false, false, None),
+    ) -> (bool, bool, Option<String>, Option<String>) {
+        match media_fetch_text(client, url, netflix_browser_headers()).await {
+            Ok((status, html)) => netflix_analyze_response(status, &html, title_id),
+            Err(error) => (false, false, None, Some(error)),
         }
     }
 
+    // Keep IDs in sync with Android NetflixDetector
     let original = probe(client, "https://www.netflix.com/title/81280792", "81280792").await;
-    let non_original = probe(client, "https://www.netflix.com/title/80057281", "80057281").await;
+    let non_original = probe(client, "https://www.netflix.com/title/70143836", "70143836").await;
     let check_time = now_millis().saturating_sub(started);
-    let region = original.2.or(non_original.2);
+    let region = original.2.clone().or(non_original.2.clone());
 
     if !original.0 && !non_original.0 {
-        return media_result(false, false, "Netflix 检测失败", region, check_time);
-    }
-    if original.1 && non_original.1 {
-        return media_result(true, true, "解锁所有内容", region, check_time);
-    }
-    if original.1 {
-        return media_result(true, false, "仅支持自制剧", region, check_time);
-    }
-    if non_original.1 {
-        return media_result(true, true, "解锁非自制剧", region, check_time);
-    }
-    if original.0 || non_original.0 {
+        let reason = original
+            .3
+            .or(non_original.3)
+            .unwrap_or_else(|| "未知错误".to_string());
         return media_result(
-            true,
             false,
-            "Netflix 页面可访问，未检测到可播放内容",
+            false,
+            format!("检测失败: {reason}"),
             region,
             check_time,
         );
     }
-    media_result(false, false, "不支持", region, check_time)
+
+    if !original.0 && non_original.0 {
+        return if non_original.1 {
+            media_result(true, true, "解锁非自制剧", region, check_time)
+        } else {
+            media_result(false, false, "不支持", region, check_time)
+        };
+    }
+
+    if original.0 && !non_original.0 {
+        return if original.1 {
+            media_result(true, false, "仅支持自制剧", region, check_time)
+        } else {
+            let reason = non_original
+                .3
+                .unwrap_or_else(|| "非自制剧检测失败".to_string());
+            media_result(
+                false,
+                false,
+                format!("检测失败: {reason}"),
+                region,
+                check_time,
+            )
+        };
+    }
+
+    match (original.1, non_original.1) {
+        (true, true) => media_result(true, true, "解锁所有内容", region, check_time),
+        (true, false) => media_result(true, false, "仅支持自制剧", region, check_time),
+        (false, true) => media_result(true, true, "解锁非自制剧", region, check_time),
+        (false, false) => media_result(false, false, "不支持", region, check_time),
+    }
 }
 
 async fn test_youtube_premium(client: &reqwest::Client, started: u128) -> Value {

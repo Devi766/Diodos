@@ -112,9 +112,9 @@ async function testMediaStreaming(serviceName, checkUrl) {
           const NETFLIX_ORIGINAL_URL = 'https://www.netflix.com/title/81280792';
           const NETFLIX_ORIGINAL_ID = '81280792';
 
-          // Netflix非自制剧测试URL (Breaking Bad) - 更新为Android版本使用的ID
-          const NETFLIX_NON_ORIGINAL_URL = 'https://www.netflix.com/title/80057281';
-          const NETFLIX_NON_ORIGINAL_ID = '80057281';
+          // Netflix非自制剧测试URL (Breaking Bad) — 与 Android NetflixDetector 对齐
+          const NETFLIX_NON_ORIGINAL_URL = 'https://www.netflix.com/title/70143836';
+          const NETFLIX_NON_ORIGINAL_ID = '70143836';
 
           // 解码十六进制转义字符
           const decodeHexEscapes = (input) => {
@@ -179,7 +179,60 @@ async function testMediaStreaming(serviceName, checkUrl) {
             return mediaTracks && typeof mediaTracks === 'object' && Object.keys(mediaTracks).length > 0;
           };
 
-          // 测试特定Netflix内容
+          // 测试特定Netflix内容（对齐 Android NetflixDetector）
+          const hasUnavailableSignal = (body) => {
+            const lower = String(body || '').toLowerCase();
+            return [
+              'oh no!',
+              'not available in your country',
+              "isn't available to watch in your country",
+              "isn't available in your country",
+              'not available in your region',
+              "isn't available in your region",
+              "currently isn't available",
+              "isn't available to watch",
+              'not available to watch',
+              'unavailable in your area',
+              'locally-unavailable',
+              'nses-nti',
+            ].some((text) => lower.includes(text));
+          };
+
+          const hasPageErrorSignal = (body) => {
+            const lower = String(body || '').toLowerCase();
+            return [
+              '<title>netflix - error</title>',
+              '<title>netflix - oops</title>',
+              '<title>netflix - 出错了</title>',
+              'error-page',
+              'serviceerrormessage',
+              'nses-403',
+              'nses-404',
+              'nses-500',
+            ].some((text) => lower.includes(text));
+          };
+
+          const looksLikeTitlePage = (body, titleId) => {
+            if (!String(body || '').toLowerCase().includes('netflix')) return false;
+            return body.includes(titleId)
+              || body.includes(`/title/${titleId}`)
+              || body.includes(`videoId":${titleId}`)
+              || body.includes(`videoId\\":${titleId}`);
+          };
+
+          const extractRegionFromHtml = (body) => {
+            const patterns = [
+              /data-country=["']([A-Z]{2})["']/,
+              /"countryCode"\s*:\s*"([A-Z]{2})"/,
+              /"requestCountry"\s*:\s*\{[^}]*"id"\s*:\s*"([A-Z]{2})"/,
+            ];
+            for (const pattern of patterns) {
+              const match = String(body || '').match(pattern);
+              if (match?.[1]) return match[1].toUpperCase();
+            }
+            return null;
+          };
+
           const testNetflixContent = async (url, titleId, contentType) => {
             try {
               await logger.log(`检测Netflix${contentType}...`);
@@ -189,7 +242,13 @@ async function testMediaStreaming(serviceName, checkUrl) {
                   ...baseRequestOptions.headers,
                   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                   'Accept-Language': 'en-US,en;q=0.9',
-                  'Upgrade-Insecure-Requests': '1'
+                  'Sec-CH-UA': '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+                  'Sec-CH-UA-Mobile': '?0',
+                  'Sec-CH-UA-Platform': '"Windows"',
+                  'Sec-Fetch-Dest': 'document',
+                  'Sec-Fetch-Mode': 'navigate',
+                  'Sec-Fetch-Site': 'none',
+                  'Upgrade-Insecure-Requests': '1',
                 }
               });
 
@@ -197,26 +256,45 @@ async function testMediaStreaming(serviceName, checkUrl) {
               const html = await response.text();
               await logger.logResponse(`Netflix ${contentType}`, url, response, html);
 
+              const blocked = hasUnavailableSignal(html);
+              const pageError = hasPageErrorSignal(html);
               const context = parseReactContext(html);
-              if (!context) {
-                await logger.log(`Netflix${contentType}: 解析reactContext失败`);
+              const region = context?.region || extractRegionFromHtml(html);
+              const playableFromGraphql = isVideoPlayable(context?.graphqlData, titleId);
+              const validTitlePage = looksLikeTitlePage(html, titleId);
+
+              if (playableFromGraphql) {
+                await logger.log(`Netflix${contentType}: playable=true (graphql), region=${region}`);
+                return { contentType, success: true, playable: true, region };
+              }
+
+              if (blocked || response.status === 403 || response.status === 404) {
+                await logger.log(`Netflix${contentType}: blocked/unavailable, region=${region}`);
+                return { contentType, success: true, playable: false, region };
+              }
+
+              if (response.ok && !pageError && validTitlePage) {
+                await logger.log(`Netflix${contentType}: playable=true (title page fallback), region=${region}`);
+                return { contentType, success: true, playable: true, region };
+              }
+
+              if (response.ok) {
+                await logger.log(`Netflix${contentType}: 页面结构变化，无法判定`);
                 return {
                   contentType,
                   success: false,
                   playable: false,
-                  region: null,
-                  errorMessage: '解析Netflix页面失败'
+                  region,
+                  errorMessage: 'Netflix页面结构变化，无法判定',
                 };
               }
 
-              const playable = isVideoPlayable(context.graphqlData, titleId);
-              await logger.log(`Netflix${contentType}: playable=${playable}, region=${context.region}`);
-
               return {
                 contentType,
-                success: true,
-                playable,
-                region: context.region
+                success: false,
+                playable: false,
+                region,
+                errorMessage: `HTTP ${response.status}`,
               };
             } catch (e) {
               await logger.error(`Netflix${contentType}检测出错: ${e.message}`);
