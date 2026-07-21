@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { ReloadIcon, PlusIcon, TrashIcon, Pencil1Icon, FileTextIcon, DotsVerticalIcon, DragHandleDots2Icon, Cross2Icon } from '@radix-ui/react-icons';
 import * as Toast from '@radix-ui/react-toast';
 import { Card } from './ui/card';
@@ -237,16 +238,6 @@ function SortableOverrideCard({
               checked={item.enabled}
               onCheckedChange={(checked) => onToggle(item.id, checked)}
             />
-            {item.type === 'remote' && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onUpdate(item.id)}
-                title={t('overrides.updateTitle')}
-              >
-                <ReloadIcon className="w-4 h-4" />
-              </Button>
-            )}
 
             {/* 更多菜单 */}
             <div className="relative">
@@ -277,6 +268,18 @@ function SortableOverrideCard({
               right: `${menuPosition.right}px`,
             }}
           >
+            {item.type === 'remote' && (
+              <button
+                onClick={() => {
+                  onUpdate(item.id);
+                  setShowMenu(false);
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+              >
+                <ReloadIcon className="w-4 h-4" />
+                {t('overrides.updateTitle')}
+              </button>
+            )}
             <button
               onClick={() => {
                 onEdit(item);
@@ -941,7 +944,7 @@ export default function Overrides() {
         <EditInfoDialog
           item={editingItem}
           onClose={() => setEditingItem(null)}
-          onSave={async (updatedItem) => {
+          onSave={async (updatedItem, appliedConfigPaths) => {
             try {
               if (typeof window === 'undefined' || !window.electronAPI?.updateOverride) {
                 throw new Error(t('overrides.apiUnavailable'));
@@ -953,6 +956,50 @@ export default function Overrides() {
                   global: updatedItem.global
               });
               ensureActionSuccess(result, t('overrides.unknownError'));
+
+              // 同步「此覆写应用到哪些配置」
+              if (typeof window !== 'undefined' && window.electronAPI?.getSubscriptions && window.electronAPI?.getSubscriptionOverrides && window.electronAPI?.setSubscriptionOverrides) {
+                const subsResult = await window.electronAPI.getSubscriptions();
+                if (subsResult && typeof subsResult === 'object' && (subsResult as { success?: boolean }).success === false) {
+                  throw new Error(getCompatError(subsResult, t('overrides.unknownError')));
+                }
+                const nested = subsResult && typeof subsResult === 'object' && !Array.isArray(subsResult)
+                  ? ((subsResult as { data?: unknown; items?: unknown; subscriptions?: unknown }).data
+                    ?? (subsResult as { items?: unknown }).items
+                    ?? (subsResult as { subscriptions?: unknown }).subscriptions)
+                  : null;
+                const subscriptions = (Array.isArray(subsResult)
+                  ? subsResult
+                  : Array.isArray(nested)
+                    ? nested
+                    : []) as Array<{ path?: string; name?: string }>;
+                const selectedSet = new Set(appliedConfigPaths);
+
+                for (const sub of subscriptions) {
+                  const filePath = typeof sub?.path === 'string' ? sub.path : '';
+                  if (!filePath) continue;
+
+                  const currentResult = await window.electronAPI.getSubscriptionOverrides(filePath);
+                  if (currentResult && typeof currentResult === 'object' && !Array.isArray(currentResult) && (currentResult as { success?: boolean }).success === false) {
+                    throw new Error(getCompatError(currentResult, t('overrides.unknownError')));
+                  }
+                  const currentIds = Array.isArray(currentResult)
+                    ? currentResult.filter((id): id is string => typeof id === 'string')
+                    : [];
+                  const shouldApply = selectedSet.has(filePath);
+                  const hasOverride = currentIds.includes(updatedItem.id);
+
+                  if (shouldApply === hasOverride) continue;
+
+                  const nextIds = shouldApply
+                    ? [...currentIds, updatedItem.id]
+                    : currentIds.filter((id) => id !== updatedItem.id);
+
+                  const setResult = await window.electronAPI.setSubscriptionOverrides(filePath, nextIds);
+                  ensureActionSuccess(setResult, t('overrides.unknownError'));
+                }
+              }
+
               setItems(prev => prev.map(item =>
                 item.id === updatedItem.id ? updatedItem : item
               ));
@@ -1063,41 +1110,146 @@ function EditInfoDialog({
 }: {
   item: OverrideItem;
   onClose: () => void;
-  onSave: (item: OverrideItem) => void;
+  onSave: (item: OverrideItem, appliedConfigPaths: string[]) => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(item.name);
   const [url, setUrl] = useState(item.url || '');
   const [global, setGlobal] = useState(item.global || false);
+  const [subscriptions, setSubscriptions] = useState<Array<{ path: string; name: string }>>([]);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [loadingConfigs, setLoadingConfigs] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white dark:bg-[#2a2a2a] rounded-xl shadow-2xl w-full max-w-md mx-4">
-        <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAppliedConfigs = async () => {
+      setLoadingConfigs(true);
+      try {
+        if (typeof window === 'undefined' || !window.electronAPI?.getSubscriptions) {
+          if (!cancelled) {
+            setSubscriptions([]);
+            setSelectedPaths([]);
+          }
+          return;
+        }
+
+        const subsResult = await window.electronAPI.getSubscriptions();
+        if (subsResult && typeof subsResult === 'object' && !Array.isArray(subsResult) && (subsResult as { success?: boolean }).success === false) {
+          throw new Error(
+            typeof (subsResult as { error?: string }).error === 'string'
+              ? (subsResult as { error: string }).error
+              : t('overrides.unknownError'),
+          );
+        }
+
+        const subsRaw = Array.isArray(subsResult)
+          ? subsResult
+          : (subsResult && typeof subsResult === 'object'
+            ? ((subsResult as { data?: unknown; items?: unknown; subscriptions?: unknown }).data
+              ?? (subsResult as { items?: unknown }).items
+              ?? (subsResult as { subscriptions?: unknown }).subscriptions)
+            : []);
+        const subs = (Array.isArray(subsRaw) ? subsRaw : [])
+          .map((sub: any) => ({
+            path: typeof sub?.path === 'string' ? sub.path : '',
+            name: typeof sub?.name === 'string' && sub.name.trim()
+              ? sub.name
+              : (typeof sub?.path === 'string' ? sub.path.split(/[/\\]/).pop() || sub.path : ''),
+          }))
+          .filter((sub) => !!sub.path);
+
+        const applied: string[] = [];
+        if (window.electronAPI?.getSubscriptionOverrides) {
+          for (const sub of subs) {
+            try {
+              const overridesResult = await window.electronAPI.getSubscriptionOverrides(sub.path);
+              if (overridesResult && typeof overridesResult === 'object' && !Array.isArray(overridesResult) && (overridesResult as { success?: boolean }).success === false) {
+                continue;
+              }
+              const ids = Array.isArray(overridesResult)
+                ? overridesResult
+                : [];
+              if (ids.includes(item.id)) {
+                applied.push(sub.path);
+              }
+            } catch {
+              // ignore single subscription load errors
+            }
+          }
+        }
+
+        if (!cancelled) {
+          setSubscriptions(subs);
+          setSelectedPaths(applied);
+        }
+      } catch (error) {
+        console.error('加载可应用配置失败:', error);
+        if (!cancelled) {
+          setSubscriptions([]);
+          setSelectedPaths([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingConfigs(false);
+      }
+    };
+
+    loadAppliedConfigs();
+    return () => {
+      cancelled = true;
+    };
+  }, [item.id, t]);
+
+  const togglePath = (path: string, checked: boolean) => {
+    setSelectedPaths((prev) => {
+      if (checked) {
+        return prev.includes(path) ? prev : [...prev, path];
+      }
+      return prev.filter((p) => p !== path);
+    });
+  };
+
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <>
+      {/* 遮罩与弹窗分离，避免圆角抗锯齿透出遮罩色 */}
+      <div
+        className="fixed inset-0 z-[100] bg-black/50"
+        onClick={onClose}
+      />
+      <div
+        className="fixed left-1/2 top-1/2 z-[101] w-full max-w-md max-h-[90vh] -translate-x-1/2 -translate-y-1/2 flex flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-[#2a2a2a]"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-700 dark:bg-[#2a2a2a]">
           <h3 className="text-lg font-semibold text-foreground">{t('overrides.editInfo')}</h3>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto px-6 py-5">
           <div>
-            <label className="block text-sm font-medium text-foreground mb-2">
+            <label className="mb-2 block text-sm font-medium text-foreground">
               {t('overrides.name')}
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full h-9 px-3 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a] text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-[#2a2a2a]"
             />
           </div>
           {item.type === 'remote' && (
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">
+              <label className="mb-2 block text-sm font-medium text-foreground">
                 URL
               </label>
               <input
                 type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                className="w-full h-9 px-3 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a] text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-[#2a2a2a]"
               />
             </div>
           )}
@@ -1110,27 +1262,85 @@ function EditInfoDialog({
               onCheckedChange={setGlobal}
             />
           </div>
+
+          {/* 应用覆写到指定配置（全局覆写会自动应用到全部） */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-foreground">
+              {t('overrides.applyToConfigs')}
+            </label>
+            <div className={`max-h-40 overflow-y-auto rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#222222] ${global ? 'pointer-events-none opacity-50' : ''}`}>
+              {loadingConfigs ? (
+                <div className="p-3 text-center text-sm text-muted-foreground">
+                  {t('overrides.loadingConfigs')}
+                </div>
+              ) : subscriptions.length === 0 ? (
+                <div className="p-3 text-center text-sm text-muted-foreground">
+                  {t('overrides.noConfigs')}
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                  {subscriptions.map((sub) => (
+                    <label
+                      key={sub.path}
+                      className="flex cursor-pointer items-center gap-2 p-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedPaths.includes(sub.path)}
+                        onChange={(e) => togglePath(sub.path, e.target.checked)}
+                        disabled={global}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500 dark:border-slate-600"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-foreground">
+                          {sub.name}
+                        </span>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {sub.path}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {global
+                ? t('overrides.applyToConfigsGlobalHint')
+                : t('overrides.applyToConfigsHint')}
+            </p>
+          </div>
         </div>
-        <div className="p-6 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4 dark:border-slate-700 dark:bg-[#2a2a2a]">
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t('overrides.cancel')}
           </Button>
           <Button
             variant="primary"
-            onClick={() => {
-              onSave({
-                ...item,
-                name,
-                url: item.type === 'remote' ? url : item.url,
-                global,
-              });
+            disabled={saving || !name.trim()}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await onSave(
+                  {
+                    ...item,
+                    name,
+                    url: item.type === 'remote' ? url : item.url,
+                    global,
+                  },
+                  selectedPaths,
+                );
+              } finally {
+                setSaving(false);
+              }
             }}
           >
-            {t('overrides.save')}
+            {saving ? t('overrides.saving') : t('overrides.save')}
           </Button>
         </div>
       </div>
-    </div>
+    </>,
+    document.body,
   );
 }
 
@@ -1178,29 +1388,40 @@ function EditFileDialog({
     loadContent();
   }, [item.id, item.file]);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white dark:bg-[#2a2a2a] rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col">
-        <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <>
+      <div
+        className="fixed inset-0 z-[100] bg-black/50"
+        onClick={onClose}
+      />
+      <div
+        className="fixed left-1/2 top-1/2 z-[101] flex h-[80vh] w-full max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-[#2a2a2a]"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-700 dark:bg-[#2a2a2a]">
           <h3 className="text-lg font-semibold text-foreground">
             {t('overrides.editFileTitle', { name: item.name })}
           </h3>
         </div>
-        <div className="flex-1 p-6 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-hidden p-6">
           {loading ? (
-            <div className="flex items-center justify-center h-full">
-              <ReloadIcon className="w-8 h-8 animate-spin text-primary" />
+            <div className="flex h-full items-center justify-center">
+              <ReloadIcon className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : (
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              className="w-full h-full px-3 py-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#2a2a2a] text-foreground text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+              className="h-full w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-[#2a2a2a]"
               placeholder={item.ext === 'js' ? t('overrides.jsPlaceholder') : t('overrides.yamlPlaceholder')}
             />
           )}
         </div>
-        <div className="p-6 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-[#2a2a2a]">
           <Button variant="ghost" onClick={onClose}>
             {t('overrides.cancel')}
           </Button>
@@ -1220,7 +1441,8 @@ function EditFileDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </>,
+    document.body,
   );
 }
 

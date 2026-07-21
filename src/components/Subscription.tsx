@@ -461,8 +461,6 @@ export default function SubscriptionManager() {
   const [editingName, setEditingName] = useState('');
   const [editingUrl, setEditingUrl] = useState('');
   const [editingIconUrl, setEditingIconUrl] = useState('');
-  const [editingOverrides, setEditingOverrides] = useState<string[]>([]);
-  const [availableOverrides, setAvailableOverrides] = useState<any[]>([]);
   const [editingUpdateInterval, setEditingUpdateInterval] = useState<number>(0);
 
   // 可视化编辑对话框相关状态
@@ -516,7 +514,6 @@ export default function SubscriptionManager() {
   useEffect(() => {
     loadSubscriptions();
     loadActiveConfig();
-    loadAvailableOverrides();
 
     // 设置定期刷新活跃配置的计时器
     const intervalId = setInterval(loadActiveConfig, 5000);
@@ -530,7 +527,6 @@ export default function SubscriptionManager() {
         externalRefreshTimer = null;
         loadSubscriptions();
         loadActiveConfig();
-        loadAvailableOverrides();
       }, 120);
     };
     
@@ -551,7 +547,6 @@ export default function SubscriptionManager() {
         }
       });
       loadActiveConfig();
-      loadAvailableOverrides();
       refreshProvidersAvailability();
     };
 
@@ -1614,23 +1609,6 @@ export default function SubscriptionManager() {
     setContextMenuSub(null);
   };
 
-  // 加载可用的覆写列表
-  const loadAvailableOverrides = async () => {
-    if (!window.electronAPI?.getOverrides) return;
-
-    try {
-      const result = await window.electronAPI.getOverrides();
-      if (result && typeof result === 'object' && !Array.isArray(result) && (result as { success?: boolean }).success === false) {
-        throw new Error(formatSubscriptionError((result as { error?: string; message?: string }).error || (result as { message?: string }).message, '加载覆写列表失败'));
-      }
-      const overrides = toArray<any>(result);
-      setAvailableOverrides(overrides);
-    } catch (error) {
-      console.error('加载覆写列表失败:', error);
-      setAvailableOverrides([]);
-    }
-  };
-
   // 打开编辑对话框
   const openEditDialog = async (sub: Subscription) => {
     setEditingSub(sub);
@@ -1648,22 +1626,6 @@ export default function SubscriptionManager() {
       }
     } else {
       setEditingUrl('');
-    }
-
-    // 加载订阅的覆写设置
-    try {
-      const overridesResult: unknown = await window.electronAPI?.getSubscriptionOverrides?.(sub.path);
-      const overridesRecord = overridesResult && typeof overridesResult === 'object'
-        ? overridesResult as { success?: boolean; error?: unknown }
-        : null;
-      if (overridesRecord?.success === false) {
-        throw new Error(formatSubscriptionError(overridesRecord.error, '加载订阅覆写失败'));
-      }
-      setEditingOverrides(toArray<any>(overridesResult));
-    } catch (error) {
-      console.error('加载订阅覆写失败:', error);
-      setEditingOverrides([]);
-      showToast('错误', formatSubscriptionError(error, '加载订阅覆写失败'), 'error');
     }
 
     // 加载订阅的自动更新间隔
@@ -1690,7 +1652,6 @@ export default function SubscriptionManager() {
     const api = window.electronAPI;
     if (
       !hasElectronMethod(api, 'editSubscription') ||
-      !hasElectronMethod(api, 'setSubscriptionOverrides') ||
       !hasElectronMethod(api, 'setSubscriptionUpdateInterval')
     ) {
       showToast('错误', '订阅 API 不可用', 'error');
@@ -1715,15 +1676,6 @@ export default function SubscriptionManager() {
       // 使用后端返回的正确路径（而不是自己计算）
       const finalPath = result?.newPath || editingSub.path;
       const previousPath = editingSub.path;
-
-      const overridesResult = await api.setSubscriptionOverrides(
-        finalPath,
-        editingOverrides,
-        { skipReload: true },
-      );
-      if (overridesResult?.success === false) {
-        throw new Error(formatSubscriptionError((overridesResult as { error?: string }).error, '保存覆写设置失败'));
-      }
 
       const intervalResult = await api.setSubscriptionUpdateInterval(
         finalPath,
@@ -2879,62 +2831,6 @@ export default function SubscriptionManager() {
                 />
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                   输入网站URL自动提取favicon，或直接输入图片链接
-                </p>
-              </div>
-
-              {/* 覆写选择 */}
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {t('subscriptions.applyOverrides')}
-                </label>
-                <div className="max-h-24 overflow-y-auto rounded-md border border-slate-300 bg-white dark:border-slate-600 dark:bg-[#222222] custom-scrollbar">
-                  {availableOverrides.length === 0 ? (
-                    <div className="p-3 text-center text-sm text-slate-500 dark:text-slate-400">
-                      {t('subscriptions.noOverrides')}
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-200 dark:divide-slate-700">
-                      {availableOverrides.map((override) => (
-                        <label
-                          key={override.id}
-                          className="flex items-center gap-2 p-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={editingOverrides.includes(override.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setEditingOverrides([...editingOverrides, override.id]);
-                              } else {
-                                setEditingOverrides(editingOverrides.filter(id => id !== override.id));
-                              }
-                            }}
-                            className="h-4 w-4 rounded border-slate-300 text-blue-500 focus:ring-blue-500 dark:border-slate-600"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                                {override.name}
-                              </span>
-                              {override.global && (
-                                <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-                                  {t('subscriptions.global')}
-                                </span>
-                              )}
-                            </div>
-                            {override.url && (
-                              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                                {override.url}
-                              </p>
-                            )}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  {t('subscriptions.overrideDescription')}
                 </p>
               </div>
             </div>
