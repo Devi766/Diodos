@@ -491,7 +491,6 @@ export default function Overrides() {
       !overridesViewCache.loaded &&
       !hasOverridesCache();
     if (coldLoad) setIsLoading(true);
-    setErrorMessage(null);
 
     try {
       if (typeof window !== 'undefined' && window.electronAPI?.getOverrides) {
@@ -500,11 +499,18 @@ export default function Overrides() {
           throw new Error(getCompatError(result, t('overrides.unknownError')));
         }
         const nextItems = toOverrideItems(result);
-        writeOverridesCache( nextItems);
+        // 热刷新时若返回空列表但本地已有数据，保留现有列表，避免页面闪成空态
+        if (nextItems.length === 0 && itemsRef.current.length > 0) {
+          return;
+        }
+        writeOverridesCache(nextItems);
+        overridesViewCache.items = nextItems;
+        overridesViewCache.loaded = true;
         setItems(nextItems);
+        setErrorMessage(null);
       } else {
         if (itemsRef.current.length === 0 && !overridesViewCache.loaded) {
-          writeOverridesCache( []);
+          writeOverridesCache([]);
           setItems([]);
         }
       }
@@ -557,46 +563,34 @@ export default function Overrides() {
     const target = items.find((item) => item.id === id);
     const previousItems = items;
     const isGlobal = !!target?.global;
-    const otherEnabledGlobals = enabled && isGlobal
-      ? items.filter((item) => item.id !== id && item.global && item.enabled)
-      : [];
 
-    // 全局覆写互斥：开启一个全局覆写时，自动关闭其他已启用的全局覆写
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id === id) return { ...item, enabled };
-        if (enabled && isGlobal && item.global && item.enabled) {
-          return { ...item, enabled: false };
-        }
-        return item;
-      }),
-    );
+    // 乐观更新：全局覆写互斥时同步关闭其它全局项（后端也会落盘）
+    const nextItems = items.map((item) => {
+      if (item.id === id) return { ...item, enabled };
+      if (enabled && isGlobal && item.global && item.enabled) {
+        return { ...item, enabled: false };
+      }
+      return item;
+    });
+    setItems(nextItems);
+    writeOverridesCache(nextItems, { broadcast: false });
+    overridesViewCache.items = nextItems;
 
     try {
       if (typeof window === 'undefined' || !window.electronAPI?.updateOverride) {
         throw new Error(t('overrides.apiUnavailable'));
       }
 
-      // 先关闭其他全局，再开启当前（避免竞态导致两个同时开）
-      for (const other of otherEnabledGlobals) {
-        const disableResult = await window.electronAPI.updateOverride(other.id, { enabled: false });
-        ensureActionSuccess(disableResult, t('overrides.unknownError'));
-      }
-
+      // 只调用一次：后端负责关闭其它已启用全局覆写，避免多次热重载造成页面闪烁
       const result = await window.electronAPI.updateOverride(id, { enabled });
       ensureActionSuccess(result, t('overrides.unknownError'));
-
-      // 刷新列表，确保与后端一致
-      if (enabled && isGlobal) {
-        await fetchItems();
-      }
 
       notifyProfileUpdated();
       showToast(
         t('common.success'),
         formatActionSuccess(
           enabled
-            ? (isGlobal && otherEnabledGlobals.length > 0
+            ? (isGlobal && previousItems.some((item) => item.id !== id && item.global && item.enabled)
                 ? t('overrides.enabledGlobalExclusive')
                 : t('overrides.enabledSuccess'))
             : t('overrides.disabledSuccess'),
@@ -606,6 +600,8 @@ export default function Overrides() {
       );
     } catch (error: any) {
       setItems(previousItems);
+      writeOverridesCache(previousItems, { broadcast: false });
+      overridesViewCache.items = previousItems;
       console.error('切换覆写状态失败:', error);
       const message = t('overrides.toggleError', { error: errorToMessage(error) });
       setErrorMessage(message);
@@ -716,7 +712,12 @@ export default function Overrides() {
   useEffect(() => {
     fetchItems();
 
-    const refreshAfterProfileChange = () => {
+    const refreshAfterProfileChange = (event?: Event) => {
+      // 忽略本页自己发出的 profile-updated，避免开关后立刻重拉导致闪烁
+      if (event instanceof CustomEvent) {
+        const source = (event.detail as { source?: string } | undefined)?.source;
+        if (source === 'overrides') return;
+      }
       fetchItems();
     };
     window.addEventListener('profile-updated', refreshAfterProfileChange);
@@ -724,10 +725,10 @@ export default function Overrides() {
     window.addEventListener('subscription-auto-updated', refreshAfterProfileChange);
 
     const unsubscribeActiveConfig = window.electronAPI?.onActiveConfigChanged?.(() => {
-      refreshAfterProfileChange();
+      fetchItems();
     });
     const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
-      refreshAfterProfileChange();
+      fetchItems();
     });
 
     return () => {
@@ -1023,18 +1024,24 @@ export default function Overrides() {
                 }
               }
 
-              setItems(prev => prev.map(item => {
-                if (item.id === updatedItem.id) return updatedItem;
-                // 设为全局时，其他项取消全局标记（后端也会同步）
-                if (updatedItem.global && item.global) {
-                  return { ...item, global: false };
-                }
-                return item;
-              }));
-              // 若当前项是全局且启用，刷新列表确保互斥状态一致
-              if (updatedItem.global && updatedItem.enabled) {
-                await fetchItems();
-              }
+              setItems(prev => {
+                const next = prev.map(item => {
+                  if (item.id === updatedItem.id) return updatedItem;
+                  // 设为全局时，其他项取消全局标记（后端也会同步）
+                  if (updatedItem.global && item.global) {
+                    return { ...item, global: false, enabled: updatedItem.enabled && item.enabled ? false : item.enabled };
+                  }
+                  // 当前项是全局且启用时，关闭其他已启用全局
+                  if (updatedItem.global && updatedItem.enabled && item.global && item.enabled) {
+                    return { ...item, enabled: false };
+                  }
+                  return item;
+                });
+                writeOverridesCache(next, { broadcast: false });
+                overridesViewCache.items = next;
+                return next;
+              });
+              // 不再 fetchItems，避免开关/保存后整页闪回初始态
               setEditingItem(null);
               notifyProfileUpdated();
               showToast(t('common.success'), formatActionSuccess(t('overrides.saveSuccess'), result), 'success');

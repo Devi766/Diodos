@@ -194,7 +194,9 @@ const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
     APP_DATA_CACHE_KEYS.matchRules,
     APP_DATA_CACHE_KEYS.proxyProviders,
     APP_DATA_CACHE_KEYS.ruleProviders,
-    APP_DATA_CACHE_KEYS.overrides,
+    // Keep overrides list warm too — clearing it flashes the overrides page
+    // when toggling enabled/global (profile-updated -> invalidate).
+    // Override content changes still refresh via explicit page fetches.
     APP_DATA_CACHE_KEYS.connections,
     APP_DATA_CACHE_KEYS.dashboardRuntime,
     APP_DATA_CACHE_KEYS.ipInfo,

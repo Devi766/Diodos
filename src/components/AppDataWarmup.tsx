@@ -107,6 +107,12 @@ export default function AppDataWarmup() {
         invalidateAndRefresh('runtime', true, 300);
         return;
       }
+      if (source === 'overrides') {
+        // 覆写页已乐观更新列表；清掉 overrides 缓存会闪回空/初始态。
+        // 这里只刷新运行时相关数据（内核重载后的代理组等）。
+        invalidateAndRefresh('runtime', true, 400);
+        return;
+      }
       invalidateAndRefresh('profile', true, 300);
     };
 
