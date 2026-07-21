@@ -398,6 +398,8 @@ const getTrafficInfo = (subscription: Subscription) => {
   };
 };
 
+const isDev = process.env.NODE_ENV === 'development';
+
 export default function SubscriptionManager() {
   const { t } = useTranslation();
   // 初始化时直接从共享缓存加载，避免切页闪烁
@@ -886,8 +888,9 @@ export default function SubscriptionManager() {
       return null;
     }
 
-    // Keep showing previous list while refreshing to avoid empty-state flash.
-    if (!hasSubscriptionsCache() && subscriptions.length === 0) {
+    // Never blank the page while refreshing. Keep previous list / cache visible.
+    const hasWarmList = subscriptions.length > 0 || hasSubscriptionsCache();
+    if (!hasWarmList) {
       setIsSubscriptionsLoading(true);
     }
     try {
@@ -904,6 +907,14 @@ export default function SubscriptionManager() {
       }
 
       const subs = toArray<Subscription>(subscriptionsResult);
+      // If a transient empty payload arrives while we already have warm data,
+      // keep the previous list instead of flashing the empty state.
+      if (subs.length === 0 && hasWarmList) {
+        if (isDev) {
+          console.warn('[subscriptions] ignore empty refresh while warm list exists');
+        }
+        return subscriptions.length > 0 ? subscriptions : readSubscriptionsCache<Subscription>();
+      }
       console.log('[前端] 加载的配置数据:', subs);
 
       // 下载并缓存图标
@@ -937,7 +948,10 @@ export default function SubscriptionManager() {
       return subsWithIcons;
     } catch (error) {
       console.error('加载配置失败:', error);
-      showToast('错误', `加载配置失败: ${formatSubscriptionError(error)}`, 'error');
+      // Keep warm list on refresh errors; only toast when page is truly empty.
+      if (!hasWarmList) {
+        showToast('错误', `加载配置失败: ${formatSubscriptionError(error)}`, 'error');
+      }
       return null;
     } finally {
       setIsSubscriptionsLoading(false);

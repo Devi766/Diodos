@@ -32,9 +32,22 @@ fn success(value: Value) -> Value {
 }
 
 async fn wait_for_mihomo(app: &AppHandle) -> bool {
-    // Provider-heavy configs (include-all + health-check + rule providers) can
-    // take longer than a few seconds before /version answers.
-    for _ in 0..80 {
+    // Provider-heavy configs can take longer before /version answers.
+    // Also re-sync the controller endpoint each attempt so service/sidecar
+    // switches never keep probing a stale pipe path.
+    for attempt in 0..100 {
+        let endpoint = crate::runtime::active_runtime_controller_endpoint(app);
+        if let Err(error) =
+            crate::runtime::sync_mihomo_plugin_endpoint(app, &endpoint).await
+        {
+            if attempt == 0 || attempt % 10 == 0 {
+                eprintln!(
+                    "[core-start] controller endpoint sync failed (attempt {}): {error}",
+                    attempt + 1
+                );
+            }
+        }
+
         if crate::mihomo_transport::request(app, Some("/version".to_string()), None)
             .await
             .map(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))

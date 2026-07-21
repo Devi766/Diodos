@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 5;
+const PROXY_GROUPS_CACHE_VERSION = 6;
 
 // 定义类型
 type ProxyNode = {
@@ -1614,44 +1614,30 @@ export default function ProxyNodes() {
         }
       }
 
-      // Prefer overridden config order, but keep runtime API groups that exist in
-      // /proxies (url-test / smart / include-all country groups, etc.).
-      // Only skip groups that are explicitly hidden.
+      // Prefer runtime API groups as membership source of truth.
+      // Config order is only used for ordering / hidden flags.
+      const apiGroupNames = Object.keys(selectorGroups).filter(
+        (name) => name !== 'GLOBAL' && !hiddenGroups.has(name),
+      );
+
       if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
         if (isDev) {
-          console.log('[调试] 使用配置顺序展示代理组，并补齐 API 中已存在的组');
+          console.log('[调试] 按配置顺序排列运行时代理组');
         }
-        groupsOrder = configOrder.proxyGroups
-          .filter(group => group.hidden !== true)
-          .filter(group => group.name !== 'GLOBAL')
-          .map(group => group.name);
+        const preferred = configOrder.proxyGroups
+          .filter((group) => group.hidden !== true)
+          .filter((group) => group.name !== 'GLOBAL')
+          .map((group) => group.name)
+          .filter((name) => !!selectorGroups[name]);
+
+        const preferredSet = new Set(preferred);
+        const remaining = apiGroupNames.filter((name) => !preferredSet.has(name));
+        groupsOrder = [...preferred, ...remaining];
 
         if (isDev) {
-          console.log(`[调试] 配置文件中的代理组顺序: ${groupsOrder.join(', ')}`);
-        }
-
-        const apiGroups = Object.keys(selectorGroups);
-        if (isDev) {
-          console.log(`[调试] API中的代理组: ${apiGroups.join(', ')}`);
-        }
-
-        const missingInApi = groupsOrder.filter(name => !apiGroups.includes(name));
-        if (isDev && missingInApi.length > 0) {
-          console.log(`[调试] 配置中有但API中不存在的代理组(已跳过): ${missingInApi.join(', ')}`);
-        }
-
-        // Append runtime groups not present in config order. This restores
-        // include-all url-test groups (e.g. 香港/日本自动) that may be filtered
-        // out of getConfigOrder while still existing in the running core.
-        const known = new Set(groupsOrder);
-        const missingInConfig = apiGroups.filter(
-          (name) => !known.has(name) && !hiddenGroups.has(name) && name !== 'GLOBAL',
-        );
-        if (missingInConfig.length > 0) {
-          groupsOrder = [...groupsOrder, ...missingInConfig];
-          if (isDev) {
-            console.log(`[调试] 补齐 API 中有但配置顺序缺失的代理组: ${missingInConfig.join(', ')}`);
-          }
+          console.log(`[调试] 配置优先顺序: ${preferred.join(', ')}`);
+          console.log(`[调试] API补齐顺序: ${remaining.join(', ')}`);
+          console.log(`[调试] 最终代理组顺序: ${groupsOrder.join(', ')}`);
         }
       } else {
         if (isDev) {
@@ -1664,10 +1650,10 @@ export default function ProxyNodes() {
           const knownSet = new Set(existingOrder);
 
           // 先按现有顺序保留仍然存在的分组
-          groupsOrder = existingOrder.filter(name => selectorGroups[name]);
+          groupsOrder = existingOrder.filter(name => selectorGroups[name] && !hiddenGroups.has(name));
 
           // 再把这次新增的分组追加到末尾
-          for (const name of Object.keys(selectorGroups)) {
+          for (const name of apiGroupNames) {
             if (!knownSet.has(name)) {
               groupsOrder.push(name);
             }
@@ -1681,9 +1667,7 @@ export default function ProxyNodes() {
           if (isDev) {
             console.log('[调试] 没有现有分组顺序，使用API返回的顺序');
           }
-          for (const name of Object.keys(selectorGroups)) {
-            groupsOrder.push(name);
-          }
+          groupsOrder = [...apiGroupNames];
         }
       }
 

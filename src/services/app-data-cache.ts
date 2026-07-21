@@ -186,7 +186,8 @@ export type AppDataInvalidationScope =
 const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
   all: Object.values(APP_DATA_CACHE_KEYS),
   profile: [
-    APP_DATA_CACHE_KEYS.subscriptions,
+    // Keep the subscription list warm during profile/config switches.
+    // Clearing it causes a visible empty-state flash on the configs page.
     APP_DATA_CACHE_KEYS.activeConfig,
     APP_DATA_CACHE_KEYS.proxyGroups,
     APP_DATA_CACHE_KEYS.proxyMode,

@@ -218,6 +218,11 @@ where
         parse_user_config(content).map_err(RuntimeConfigPrepareError::prepare_failed)?;
     config = apply_overrides(config).map_err(RuntimeConfigPrepareError::prepare_failed)?;
     merge_runtime_settings(&mut config, runtime_settings);
+    // Newer mihomo cores reject the legacy top-level field and may fail controller
+    // bootstrap on some builds when it is present.
+    if let Some(object) = config.as_object_mut() {
+        object.remove("global-client-fingerprint");
+    }
     Ok(config)
 }
 
