@@ -330,9 +330,9 @@ jobs:
         with:
           tag: tarui-latest
           commit: ${{ github.sha }}
-          name: FlyClash v${{ steps.pkg.outputs.version }} 测试版 (tarui)
+          name: FlyClash Desktop v${{ steps.pkg.outputs.version }} 测试版 (tarui)
           body: |
-            ## FlyClash v${{ steps.pkg.outputs.version }} 测试版
+            ## FlyClash Desktop v${{ steps.pkg.outputs.version }} 测试版
 
             tarui 开发通道滚动构建。
 
@@ -360,7 +360,7 @@ jobs:
           VERSION="${TAG#v}"
 
           {
-            echo "## FlyClash v${VERSION} 测试版"
+            echo "## FlyClash Desktop v${VERSION} 测试版"
             echo
             echo "相对 main（Electron）切到 tarui（Tauri）的主要变化："
             echo
@@ -375,7 +375,7 @@ jobs:
           } > release-notes.md
 
           {
-            echo "name=FlyClash v${VERSION} 测试版"
+            echo "name=FlyClash Desktop v${VERSION} 测试版"
             echo "body<<EOF"
             cat release-notes.md
             echo "EOF"
