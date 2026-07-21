@@ -442,18 +442,19 @@ fn build_tray_proxy_snapshot(
         selector_groups.insert(name.clone(), proxy.clone());
     }
 
-    // Prefer overridden runtime config order (clash-party style). When config
-    // groups are available, do not re-append API-only groups — those often
-    // are leftovers after a script replaces proxy-groups.
-    let group_order: Vec<String> = if !config_groups.is_empty() {
-        config_groups
-            .iter()
-            .map(|(name, _)| name.clone())
-            .filter(|name| selector_groups.contains_key(name))
-            .collect()
-    } else {
-        selector_groups.keys().cloned().collect()
-    };
+    // Prefer config order, but keep runtime API groups that still exist.
+    // This is important for include-all url-test groups that may be missing
+    // from a partial config order parse.
+    let mut group_order: Vec<String> = config_groups
+        .iter()
+        .map(|(name, _)| name.clone())
+        .filter(|name| selector_groups.contains_key(name))
+        .collect();
+    for name in selector_groups.keys() {
+        if !group_order.iter().any(|item| item == name) {
+            group_order.push(name.clone());
+        }
+    }
 
     let mut groups = Vec::new();
     for group_name in group_order.into_iter().take(TRAY_MAX_PROXY_GROUPS) {

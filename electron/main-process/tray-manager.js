@@ -459,8 +459,8 @@ module.exports = function initTrayManager(context) {
                 }
               }
 
-              // Use overridden runtime config order only. Do not re-append API-only groups,
-              // otherwise script overrides that replace proxy-groups still show original groups.
+              // Prefer config order, then append remaining API groups so include-all
+              // url-test groups are not dropped by partial config parsing.
               let groupsOrder = [];
               if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
                 groupsOrder = configOrder.proxyGroups
@@ -471,6 +471,11 @@ module.exports = function initTrayManager(context) {
                     return true;
                   })
                   .map(group => group.name);
+
+                const missingInConfig = Object.keys(selectorGroups).filter(
+                  (name) => !groupsOrder.includes(name),
+                );
+                groupsOrder.push(...missingInConfig);
               } else {
                 groupsOrder = Object.keys(selectorGroups);
               }

@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 4;
+const PROXY_GROUPS_CACHE_VERSION = 5;
 
 // 定义类型
 type ProxyNode = {
@@ -361,7 +361,7 @@ const mergeProxyGroupsWithPrevious = (
   configOrder?: ConfigOrder | null,
 ): ProxyGroup[] => {
   // Runtime snapshot is the source of truth for membership. Never resurrect
-  // groups that disappeared after script/yaml overrides (clash-party behavior).
+  // groups that disappeared after script/yaml overrides.
   if (nextGroups.length === 0) return nextGroups;
   if (previousGroups.length === 0 && !(configOrder?.proxyGroups?.length)) {
     return nextGroups;
@@ -1614,13 +1614,12 @@ export default function ProxyNodes() {
         }
       }
 
-      // clash-party style: when runtime config order is available (already includes
-      // overrides), only show groups listed there. Do not re-append API-only groups,
-      // otherwise script overrides that replace proxy-groups will still show the
-      // original subscription groups that remain briefly/stale in /proxies.
+      // Prefer overridden config order, but keep runtime API groups that exist in
+      // /proxies (url-test / smart / include-all country groups, etc.).
+      // Only skip groups that are explicitly hidden.
       if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
         if (isDev) {
-          console.log('[调试] 使用覆写后的配置顺序展示代理组（不补齐 API 独有组）');
+          console.log('[调试] 使用配置顺序展示代理组，并补齐 API 中已存在的组');
         }
         groupsOrder = configOrder.proxyGroups
           .filter(group => group.hidden !== true)
@@ -1641,12 +1640,18 @@ export default function ProxyNodes() {
           console.log(`[调试] 配置中有但API中不存在的代理组(已跳过): ${missingInApi.join(', ')}`);
         }
 
+        // Append runtime groups not present in config order. This restores
+        // include-all url-test groups (e.g. 香港/日本自动) that may be filtered
+        // out of getConfigOrder while still existing in the running core.
         const known = new Set(groupsOrder);
-        const missingInConfig = apiGroups.filter(name => !known.has(name));
-        if (isDev && missingInConfig.length > 0) {
-          console.log(
-            `[调试] API 中有但配置顺序不存在的代理组(按 clash-party 忽略，避免覆写后残留原组): ${missingInConfig.join(', ')}`,
-          );
+        const missingInConfig = apiGroups.filter(
+          (name) => !known.has(name) && !hiddenGroups.has(name) && name !== 'GLOBAL',
+        );
+        if (missingInConfig.length > 0) {
+          groupsOrder = [...groupsOrder, ...missingInConfig];
+          if (isDev) {
+            console.log(`[调试] 补齐 API 中有但配置顺序缺失的代理组: ${missingInConfig.join(', ')}`);
+          }
         }
       } else {
         if (isDev) {
