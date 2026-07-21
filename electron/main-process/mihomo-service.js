@@ -385,24 +385,35 @@ module.exports = function initMihomoService(context) {
       }
 
       const proxyGroups = [];
+      const isSupportedProxyGroupType = (type) => {
+        const normalized = String(type || '')
+          .toLowerCase()
+          .replace(/[-_\s]/g, '');
+        return [
+          'select',
+          'selector',
+          'urltest',
+          'fallback',
+          'loadbalance',
+          'relay',
+          'smart',
+        ].includes(normalized);
+      };
 
       if (config['proxy-groups'] && Array.isArray(config['proxy-groups'])) {
         for (const group of config['proxy-groups']) {
-          if (
-            group.name &&
-            (
-              group.type === 'select' ||
-              group.type === 'url-test' ||
-              group.type === 'fallback' ||
-              group.type === 'load-balance'
-            )
-          ) {
+          if (group.name && isSupportedProxyGroupType(group.type || 'select')) {
             proxyGroups.push({
               name: group.name,
-              type: group.type,
+              type: group.type || 'select',
               proxies: group.proxies || [],
+              use: group.use || [],
+              includeAll: group['include-all'] === true,
+              includeAllProviders: group['include-all-providers'] === true,
+              filter: group.filter || null,
+              excludeFilter: group['exclude-filter'] || null,
               hidden: group.hidden === true,
-              icon: group.icon
+              icon: group.icon || null,
             });
           }
         }

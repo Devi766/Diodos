@@ -144,10 +144,19 @@ function registerProxyNodeIpcHandlers(deps) {
           }
         }
 
-        // Extract other selector-type groups
+        // Extract selector-like groups (select / url-test / fallback / load-balance / smart / relay)
         const isSelectorType = (type) => {
-          const normalized = typeof type === 'string' ? type.toLowerCase() : '';
-          return ['selector', 'urltest', 'fallback', 'loadbalance', 'smart'].includes(normalized);
+          const normalized = String(type || '')
+            .toLowerCase()
+            .replace(/[-_\s]/g, '');
+          return [
+            'selector',
+            'urltest',
+            'fallback',
+            'loadbalance',
+            'relay',
+            'smart',
+          ].includes(normalized);
         };
 
         for (const [name, proxy] of Object.entries(data.proxies)) {

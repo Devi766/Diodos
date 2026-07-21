@@ -1106,14 +1106,29 @@ pub(crate) fn parse_proxy_nodes_config(app: &AppHandle, config_path: &str) -> Va
                     if !config_group_supported_for_proxy_nodes(group_type) {
                         return None;
                     }
+                    // Keep groups that only use providers / include-all flags.
+                    // Empty `proxies` is valid for url-test/smart/load-balance provider groups.
                     let proxies = yaml_string_array(group.get("proxies"));
-                    if proxies.is_empty() {
+                    let use_providers = yaml_string_array(group.get("use"));
+                    let include_all = yaml_bool(group.get("include-all"));
+                    let include_all_providers = yaml_bool(group.get("include-all-providers"));
+                    if proxies.is_empty()
+                        && use_providers.is_empty()
+                        && !include_all
+                        && !include_all_providers
+                    {
                         return None;
                     }
                     Some(json!({
                         "name": name,
                         "type": group_type,
                         "proxies": proxies,
+                        "use": use_providers,
+                        "includeAll": include_all,
+                        "includeAllProviders": include_all_providers,
+                        "filter": yaml_string(group.get("filter")),
+                        "excludeFilter": yaml_string(group.get("exclude-filter")),
+                        "hidden": yaml_bool(group.get("hidden")),
                         "icon": group
                             .get("icon")
                             .and_then(serde_yaml::Value::as_str)

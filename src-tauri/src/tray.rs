@@ -323,9 +323,14 @@ fn node_delay_ms(node: &Value) -> Option<i64> {
 }
 
 fn is_selector_like(proxy_type: &str) -> bool {
+    let normalized = proxy_type
+        .chars()
+        .filter(|ch| *ch != '-' && *ch != '_' && !ch.is_whitespace())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>();
     matches!(
-        proxy_type,
-        "Selector" | "URLTest" | "Fallback" | "LoadBalance"
+        normalized.as_str(),
+        "selector" | "urltest" | "fallback" | "loadbalance" | "relay" | "smart"
     )
 }
 

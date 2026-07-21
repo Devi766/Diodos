@@ -37,17 +37,19 @@ const (
 	messageExpirySecs = 30
 	secretSeed        = "flyclash-helper-service-secret-key-v1"
 	createNoWindow    = 0x08000000
-	helperVersion     = "1.0.2"
+	helperVersion     = "1.0.3"
 )
 
 var (
-	coreProcess    *exec.Cmd
-	coreMutex      sync.Mutex
-	coreRunning    bool
-	corePID        int
-	secretKey      []byte
-	serverListener net.Listener
-	serverMutex    sync.Mutex
+	coreProcess        *exec.Cmd
+	coreMutex          sync.Mutex
+	coreRunning        bool
+	corePID            int
+	lastCoreConfigDir  string
+	lastCoreConfigFile string
+	secretKey          []byte
+	serverListener     net.Listener
+	serverMutex        sync.Mutex
 )
 
 // IpcCommand 命令类型
@@ -539,9 +541,12 @@ func startCore(payload *StartCorePayload) error {
 		return fmt.Errorf("security: config rejected: %v", err)
 	}
 
-	// Always clear leftover sidecar/service cores before (re)starting. Without
-	// this, a non-elevated mihomo-smart.exe can keep the TUN device and the UI
-	// shows Helper "ready" while Service Core is not the process handling traffic.
+	// Always clear leftover FlyClash cores before (re)starting. Fingerprint-based
+	// cleanup handles arbitrary kernel names (mihomo-smart/alpha/custom).
+	coreMutex.Lock()
+	lastCoreConfigDir = payload.ConfigDir
+	lastCoreConfigFile = payload.ConfigFile
+	coreMutex.Unlock()
 	killOtherMihomoProcesses()
 
 	coreMutex.Lock()
@@ -687,14 +692,177 @@ func sendResponse(conn net.Conn, id string, success bool, data interface{}, errM
 	conn.Write(append(jsonResp, '\n'))
 }
 
-// 查找并终止其他 mihomo 进程（含 mihomo-smart / alpha 等变体）
+// 查找并终止“属于 FlyClash 的残留内核”进程。
+//
+// 不能依赖固定镜像名（用户会换成 mihomo-smart / alpha / 自定义核心）。
+// 识别指纹：
+//  1) 命令行包含本应用的 work-dir（-d <configDir>）或 work-config（-f <configFile>）
+//  2) 命令行包含本应用 controller 管道前缀（FlyClash/mihomo / flycast-mihomo）
+//  3) 兜底：命令行含 -d/-f 且可执行路径位于已授权的 cores 目录
+//
+// 永不杀：helper 自身、当前 helper 管理的 corePID。
 func killOtherMihomoProcesses() {
-	// 使用 tasklist 扫描所有可能的内核镜像名，避免只清 mihomo.exe 而留下
-	// mihomo-smart.exe 等 sidecar 残留，导致 TUN 被非服务进程占用。
 	coreMutex.Lock()
 	ourPID := corePID
+	lastDir := lastCoreConfigDir
+	lastFile := lastCoreConfigFile
 	coreMutex.Unlock()
 
+	selfPID := os.Getpid()
+	killed := killProcessesByFingerprint(selfPID, ourPID, lastDir, lastFile)
+	if killed > 0 {
+		log.Printf("Cleared %d leftover FlyClash core process(es)", killed)
+	}
+}
+
+func killProcessesByFingerprint(selfPID, ourCorePID int, configDir, configFile string) int {
+	// Prefer PowerShell CIM: works for arbitrary image names and exposes CommandLine.
+	script := `
+$ErrorActionPreference='SilentlyContinue'
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -and $_.Name -notmatch '^(flyclash-helper|FlyClashHelper)' } |
+  ForEach-Object { '{0}|{1}|{2}' -f $_.ProcessId, $_.Name, ($_.CommandLine -replace '[\r\n]+',' ') }
+`
+	cmd := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", script,
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
+	output, err := cmd.Output()
+	if err != nil {
+		return killProcessesByImageFallback(selfPID, ourCorePID)
+	}
+
+	configDirLower := strings.ToLower(filepath.Clean(configDir))
+	configFileLower := strings.ToLower(filepath.Clean(configFile))
+	allowedDirs := getAllowedCoreDirs()
+
+	killed := 0
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		var pid int
+		fmt.Sscanf(parts[0], "%d", &pid)
+		if pid <= 0 || pid == selfPID || pid == ourCorePID {
+			continue
+		}
+		name := parts[1]
+		cmdline := parts[2]
+		if !isFlyClashCoreProcess(name, cmdline, configDirLower, configFileLower, allowedDirs) {
+			continue
+		}
+		log.Printf("Killing leftover FlyClash core pid=%d name=%s", pid, name)
+		kill := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+		kill.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: createNoWindow,
+		}
+		if err := kill.Run(); err == nil {
+			killed++
+		}
+	}
+	return killed
+}
+
+func isFlyClashCoreProcess(
+	name, cmdline, configDirLower, configFileLower string,
+	allowedDirs []string,
+) bool {
+	lowerName := strings.ToLower(name)
+	if strings.Contains(lowerName, "flyclash-helper") {
+		return false
+	}
+	if strings.Contains(lowerName, "helper") && strings.Contains(lowerName, "flyclash") {
+		return false
+	}
+
+	cmdLower := strings.ToLower(cmdline)
+
+	// Strong fingerprints: our work dir / config file / controller pipes.
+	if configDirLower != "" && configDirLower != "." && strings.Contains(cmdLower, configDirLower) {
+		return true
+	}
+	if configFileLower != "" && configFileLower != "." && strings.Contains(cmdLower, configFileLower) {
+		return true
+	}
+	if strings.Contains(cmdLower, `pipe\flycast-mihomo`) ||
+		strings.Contains(cmdLower, `pipe\flyclash\mihomo`) ||
+		strings.Contains(cmdLower, `pipe/flyclash/mihomo`) ||
+		strings.Contains(cmdLower, "flyclash\\mihomo-") ||
+		strings.Contains(cmdLower, "flycast-mihomo") {
+		return true
+	}
+	// Common work-config file name used by this app.
+	if strings.Contains(cmdLower, "work-config.yaml") &&
+		(strings.Contains(cmdLower, "com.flyclash.desktop") ||
+			strings.Contains(cmdLower, "\\flyclash\\") ||
+			strings.Contains(cmdLower, "/flyclash/")) {
+		return true
+	}
+
+	// Fallback: launched with -d/-f from an allowed cores directory.
+	hasDashD := strings.Contains(cmdLower, " -d ") || strings.Contains(cmdLower, "\"-d\"") || strings.HasPrefix(cmdLower, "-d ")
+	hasDashF := strings.Contains(cmdLower, " -f ") || strings.Contains(cmdLower, "\"-f\"")
+	if !(hasDashD && hasDashF) {
+		return false
+	}
+	exePath := firstCommandToken(cmdline)
+	if exePath == "" {
+		return false
+	}
+	exeDir := filepath.Clean(filepath.Dir(exePath))
+	for _, dir := range allowedDirs {
+		if pathIsSameOrChild(exeDir, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstCommandToken(cmdline string) string {
+	s := strings.TrimSpace(cmdline)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "\"") {
+		if end := strings.Index(s[1:], "\""); end >= 0 {
+			return s[1 : 1+end]
+		}
+	}
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func pathIsSameOrChild(child, parent string) bool {
+	c := strings.ToLower(filepath.Clean(child))
+	p := strings.ToLower(filepath.Clean(parent))
+	if c == p {
+		return true
+	}
+	sep := string(os.PathSeparator)
+	if !strings.HasSuffix(p, sep) {
+		p += sep
+	}
+	return strings.HasPrefix(c, p)
+}
+
+// Degraded fallback if PowerShell CIM is unavailable.
+func killProcessesByImageFallback(selfPID, ourCorePID int) int {
 	imageNames := []string{
 		"mihomo.exe",
 		"mihomo-smart.exe",
@@ -703,16 +871,15 @@ func killOtherMihomoProcesses() {
 		"FlyClash-Core.exe",
 		"flyclash-core.exe",
 	}
-
+	killed := 0
 	for _, image := range imageNames {
 		cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq "+image, "/FO", "CSV", "/NH")
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 		output, err := cmd.Output()
 		if err != nil {
 			continue
 		}
-
-		lines := strings.Split(string(output), "\n")
-		for _, line := range lines {
+		for _, line := range strings.Split(string(output), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || strings.HasPrefix(strings.ToLower(line), "info:") {
 				continue
@@ -724,10 +891,14 @@ func killOtherMihomoProcesses() {
 			pidStr := strings.Trim(parts[1], "\"")
 			var pid int
 			fmt.Sscanf(pidStr, "%d", &pid)
-			if pid > 0 && pid != ourPID {
-				log.Printf("Killing leftover core process %s PID=%d", image, pid)
-				_ = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid)).Run()
+			if pid > 0 && pid != selfPID && pid != ourCorePID {
+				kill := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+				kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+				if kill.Run() == nil {
+					killed++
+				}
 			}
 		}
 	}
+	return killed
 }

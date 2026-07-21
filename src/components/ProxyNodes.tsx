@@ -45,7 +45,7 @@ import { EmojiText } from './ui/emoji';
 const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
-const PROXY_GROUPS_CACHE_VERSION = 2;
+const PROXY_GROUPS_CACHE_VERSION = 3;
 
 // 定义类型
 type ProxyNode = {
@@ -281,10 +281,17 @@ const queryRuntimeRunning = async (): Promise<boolean | null> => {
   return null;
 };
 
+// Match Mihomo API / config type names (Selector, URLTest, url-test, load-balance, smart...).
+const normalizeGroupType = (type?: string | null) =>
+  String(type || '')
+    .toLowerCase()
+    .replace(/[-_\s]/g, '');
+
 const isGroupType = (type?: string | null) => {
   if (!type) return false;
-  const normalized = type.toLowerCase().replace(/-/g, '');
-  return ['selector', 'urltest', 'fallback', 'loadbalance', 'relay', 'smart'].includes(normalized);
+  return ['selector', 'urltest', 'fallback', 'loadbalance', 'relay', 'smart'].includes(
+    normalizeGroupType(type),
+  );
 };
 
 const isValidConfigOrder = (value: unknown): value is ConfigOrder => {
@@ -1610,39 +1617,40 @@ export default function ProxyNodes() {
         }
       }
 
-      // 严格按照配置文件中的顺序排列代理组，完全忽略API返回的顺序
+      // Prefer config-file order (like clash-party), but always keep API groups that
+      // are missing from the parsed order (url-test / smart / load-balance / overrides).
       if (configOrder && configOrder.proxyGroups && configOrder.proxyGroups.length > 0) {
-        // 使用配置文件中的组顺序，GLOBAL由全局模式置顶逻辑单独处理
         if (isDev) {
-          console.log('[调试] 严格使用配置文件中的代理组顺序');
+          console.log('[调试] 使用配置文件中的代理组顺序，并补齐 API 中的其它组');
         }
         groupsOrder = configOrder.proxyGroups
           .filter(group => group.hidden !== true)
           .filter(group => group.name !== 'GLOBAL')
           .map(group => group.name);
 
-        // 记录顺序详情
         if (isDev) {
           console.log(`[调试] 配置文件中的代理组顺序: ${groupsOrder.join(', ')}`);
         }
 
-        // 检查对比API中的代理组
         const apiGroups = Object.keys(selectorGroups);
         if (isDev) {
           console.log(`[调试] API中的代理组: ${apiGroups.join(', ')}`);
         }
 
-        // 检查配置文件中有但API中没有的组
         const missingInApi = groupsOrder.filter(name => !apiGroups.includes(name));
         if (isDev && missingInApi.length > 0) {
           console.log(`[调试] 配置文件中有但API中不存在的代理组: ${missingInApi.join(', ')}`);
         }
 
-        // 检查API中有但配置文件中没有的组
-        const missingInConfig = apiGroups.filter(name => !groupsOrder.includes(name));
+        // Append runtime groups not present in the config order instead of dropping them.
+        // This is the main reason url-test / smart / load-balance groups disappeared when
+        // getConfigOrder filtered types or only had partial group metadata.
+        const known = new Set(groupsOrder);
+        const missingInConfig = apiGroups.filter(name => !known.has(name));
         if (missingInConfig.length > 0) {
+          groupsOrder = [...groupsOrder, ...missingInConfig];
           if (isDev) {
-            console.log(`[调试] API中有但配置文件中不存在的代理组，按配置顺序展示时忽略: ${missingInConfig.join(', ')}`);
+            console.log(`[调试] 补齐 API 中有但配置顺序缺失的代理组: ${missingInConfig.join(', ')}`);
           }
         }
       } else {

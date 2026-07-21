@@ -427,21 +427,35 @@ module.exports = function initTrayManager(context) {
               const proxyGroups = [];
               const selectorGroups = {};
 
-              // 提取所有 selector 类型的组
-              for (const [name, proxy] of Object.entries(data.proxies || {})) {
-                if (proxy.type === 'Selector' || proxy.type === 'URLTest' || proxy.type === 'Fallback') {
-                  // 全局模式只显示 GLOBAL 组
-                  if (currentMode === 'global' && name !== 'GLOBAL') {
-                    continue;
-                  }
-                  // 规则模式不显示 GLOBAL 组
-                  if (currentMode === 'rule' && name === 'GLOBAL') {
-                    continue;
-                  }
+              const isSelectorLikeType = (type) => {
+                const normalized = String(type || '')
+                  .toLowerCase()
+                  .replace(/[-_\s]/g, '');
+                return [
+                  'selector',
+                  'urltest',
+                  'fallback',
+                  'loadbalance',
+                  'relay',
+                  'smart',
+                ].includes(normalized);
+              };
 
-                  if (proxy.all && proxy.all.length > 0) {
-                    selectorGroups[name] = proxy;
-                  }
+              // 提取所有可选代理组（含 url-test / smart / load-balance）
+              for (const [name, proxy] of Object.entries(data.proxies || {})) {
+                if (!isSelectorLikeType(proxy.type)) continue;
+
+                // 全局模式只显示 GLOBAL 组
+                if (currentMode === 'global' && name !== 'GLOBAL') {
+                  continue;
+                }
+                // 规则模式不显示 GLOBAL 组
+                if (currentMode === 'rule' && name === 'GLOBAL') {
+                  continue;
+                }
+
+                if (proxy.all && proxy.all.length > 0) {
+                  selectorGroups[name] = proxy;
                 }
               }
 
@@ -512,7 +526,7 @@ module.exports = function initTrayManager(context) {
                       label = `${nodeName} (超时)`;
                     }
                   }
-                  if (node.type === 'Selector' || node.type === 'URLTest' || node.type === 'Fallback') {
+                  if (isSelectorLikeType(node.type)) {
                     label = `${label} [组]`;
                   }
 
