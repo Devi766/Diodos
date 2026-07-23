@@ -670,8 +670,8 @@ pub(crate) fn webdav_validate_config(config: &Value) -> Result<(), String> {
     }
 
     let url = reqwest::Url::parse(&uri).map_err(|_| "WebDAV地址无效".to_string())?;
-    if url.scheme() != "https" || url.host_str().is_none() {
-        return Err("WebDAV地址必须是有效的 HTTPS 地址".to_string());
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("WebDAV地址必须是有效的 HTTP 或 HTTPS 地址".to_string());
     }
     if !url.username().is_empty()
         || url.password().is_some()
@@ -1250,5 +1250,24 @@ mod tests {
             "backupDirectory": "FlyClash/../other"
         });
         assert!(webdav_url(&config, Some("backup.zip")).is_err());
+    }
+
+    #[test]
+    fn webdav_allows_http_and_https_endpoints() {
+        for uri in [
+            "http://dav.example.test/root",
+            "https://dav.example.test/root",
+        ] {
+            let config = json!({
+                "uri": uri,
+                "username": "user",
+                "password": "password",
+                "backupDirectory": "FlyClash"
+            });
+            assert!(
+                webdav_validate_config(&config).is_ok(),
+                "{uri} must be accepted"
+            );
+        }
     }
 }
