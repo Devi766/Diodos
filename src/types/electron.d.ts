@@ -558,8 +558,18 @@ export interface ElectronAPI {
   // 配置编辑器
   getKernelConfig: (configPath?: string) => Promise<{ success: boolean; config?: any; error?: string }>;
   saveKernelConfig: (config: any, configPath?: string) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;
-  getDnsConfig: (configPath?: string) => Promise<{ success: boolean; config?: any; hosts?: Record<string, string | string[]>; error?: string }>;
-  saveDnsConfig: (config: any, configPath?: string) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;
+  getDnsConfig: (configPath?: string) => Promise<{
+    success: boolean;
+    config?: any;
+    hosts?: Record<string, string | string[]>;
+    /** 用户设置路径：DNS 覆写是否开启（默认 false）；订阅 YAML 路径固定为 true */
+    overrideEnabled?: boolean;
+    error?: string;
+  }>;
+  saveDnsConfig: (
+    config: any,
+    configPathOrOptions?: string | { overrideEnabled?: boolean }
+  ) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;
   saveHostsConfig: (hosts: Array<{ domain: string; value: string | string[] }>, configPath?: string) => Promise<{ success: boolean; error?: string }>;
   getSnifferConfig: (configPath?: string) => Promise<{ success: boolean; config?: any; error?: string }>;
   saveSnifferConfig: (config: any, configPath?: string) => Promise<{ success: boolean; restarted?: boolean; message?: string; error?: string }>;

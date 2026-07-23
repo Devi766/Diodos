@@ -242,6 +242,8 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
   const [config, setConfig] = useState<KernelConfig>({});
   const [dnsConfig, setDnsConfig] = useState<DnsConfig>({});
   const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
+  // 全局用户设置模式下的 DNS 覆写开关（编辑订阅 YAML 时不使用）
+  const [dnsOverrideEnabled, setDnsOverrideEnabled] = useState(false);
   const [proxyGroups, setProxyGroups] = useState<any[]>([]);
   const [rules, setRules] = useState<string[]>([]);
   const [proxies, setProxies] = useState<any[]>([]);
@@ -319,6 +321,8 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
       setConfig(ensureSuccess(kernelRes, t('configEditor.loadFailed')).config || {});
       ensureSuccess(dnsRes, t('configEditor.loadFailed'));
       setDnsConfig(dnsRes.config || {});
+      // 用户设置路径：默认关闭；订阅 YAML 路径后端固定返回 true
+      setDnsOverrideEnabled(configPath ? true : dnsRes.overrideEnabled === true);
       if (dnsRes.hosts && typeof dnsRes.hosts === 'object') {
         setHostsConfig({
           hosts: Object.entries(dnsRes.hosts).map(([domain, value]) => ({
@@ -470,16 +474,21 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
         );
         if (typeof kernelRes.restarted === 'boolean') restartStates.push(kernelRes.restarted);
 
+        if (dnsOverrideEnabled && cleanDns.enable === undefined) {
+          cleanDns.enable = true;
+        }
+
         const dnsRes = ensureSuccess(
-          await api.saveDnsConfig(cleanDns),
+          await api.saveDnsConfig(cleanDns, { overrideEnabled: dnsOverrideEnabled }),
           t('configEditor.saveFailed')
         );
         if (typeof dnsRes.restarted === 'boolean') restartStates.push(dnsRes.restarted);
 
-        if ((cleanDns['use-hosts'] || cleanHosts.length > 0) && !hasElectronMethod(api, 'saveHostsConfig')) {
+        // hosts 仅在覆写开启时写入运行配置；仍可保存草稿
+        if (dnsOverrideEnabled && (cleanDns['use-hosts'] || cleanHosts.length > 0) && !hasElectronMethod(api, 'saveHostsConfig')) {
           throw new Error(t('configEditor.apiUnavailable'));
         }
-        if (hasElectronMethod(api, 'saveHostsConfig')) {
+        if (dnsOverrideEnabled && hasElectronMethod(api, 'saveHostsConfig')) {
           const hostsRes = ensureSuccess(
             await api.saveHostsConfig(cleanHosts),
             t('configEditor.saveFailed')
@@ -573,7 +582,23 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
       {/* Tab content */}
       <div className="space-y-5 pt-5">
         {activeTab === 'general' && <GeneralTab config={config} updateConfig={updateConfig} updateProfileConfig={updateProfileConfig} t={t} />}
-        {activeTab === 'dns' && <DnsTab dnsConfig={dnsConfig} hostsConfig={hostsConfig} updateDns={updateDns} updateDnsArray={updateDnsArray} updateHostsRaw={updateHostsRaw} t={t} />}
+        {activeTab === 'dns' && (
+          <DnsTab
+            dnsConfig={dnsConfig}
+            hostsConfig={hostsConfig}
+            updateDns={updateDns}
+            updateDnsArray={updateDnsArray}
+            updateHostsRaw={updateHostsRaw}
+            t={t}
+            // 编辑订阅 YAML 时直接改文件 DNS；全局设置时为 DNS 覆写开关
+            isSubscriptionFile={Boolean(configPath)}
+            overrideEnabled={dnsOverrideEnabled}
+            onOverrideChange={(enabled) => {
+              setDnsOverrideEnabled(enabled);
+              if (enabled) updateDns('enable', true);
+            }}
+          />
+        )}
         {activeTab === 'proxies' && <ProxiesTab proxies={proxies} setProxies={setProxies} proxyGroups={proxyGroups} setProxyGroups={setProxyGroups} t={t} />}
         {activeTab === 'proxy-groups' && <ProxyGroupsTab groups={proxyGroups} setGroups={setProxyGroups} t={t} />}
         {activeTab === 'rules' && <RulesTab rules={rules} setRules={setRules} t={t} />}
@@ -766,22 +791,42 @@ function GeneralTab({ config, updateConfig, updateProfileConfig, t }: {
 }
 
 // ==================== DNS Settings Tab ====================
-function DnsTab({ dnsConfig, hostsConfig, updateDns, updateDnsArray, updateHostsRaw, t }: {
+function DnsTab({ dnsConfig, hostsConfig, updateDns, updateDnsArray, updateHostsRaw, t, isSubscriptionFile, overrideEnabled, onOverrideChange }: {
   dnsConfig: DnsConfig;
   hostsConfig: HostsConfig;
   updateDns: (k: keyof DnsConfig, v: any) => void;
   updateDnsArray: (k: keyof DnsConfig, v: string) => void;
   updateHostsRaw: (raw: string) => void;
   t: any;
+  isSubscriptionFile: boolean;
+  overrideEnabled: boolean;
+  onOverrideChange: (enabled: boolean) => void;
 }) {
+  // 订阅文件：直接编辑 enable；全局设置：DNS 覆写总开关
+  const detailsEnabled = isSubscriptionFile ? true : overrideEnabled;
+
   return (
     <>
       <SectionCard icon={<Globe className="w-4 h-4" />} title={t('overrideSettings.dns')}>
-        <SettingRow label={t('overrideSettings.enableDns')} desc={t('overrideSettings.enableDnsDesc')}>
-          <Switch checked={dnsConfig.enable !== false} onCheckedChange={(v) => updateDns('enable', v)} />
-        </SettingRow>
+        {isSubscriptionFile ? (
+          <SettingRow label={t('overrideSettings.enableDnsModule')} desc={t('overrideSettings.enableDnsModuleDesc')}>
+            <Switch checked={dnsConfig.enable !== false} onCheckedChange={(v) => updateDns('enable', v)} />
+          </SettingRow>
+        ) : (
+          <SettingRow label={t('overrideSettings.dnsOverride')} desc={t('overrideSettings.dnsOverrideDesc')}>
+            <Switch checked={overrideEnabled} onCheckedChange={onOverrideChange} />
+          </SettingRow>
+        )}
+
+        {!isSubscriptionFile && !overrideEnabled && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+            {t('overrideSettings.dnsOverrideOffHint')}
+          </div>
+        )}
+
+        <div className={`space-y-4 ${detailsEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
         <SettingRow label={t('overrideSettings.dnsIpv6')} desc={t('overrideSettings.dnsIpv6Desc')}>
-          <Switch checked={dnsConfig.ipv6 || false} onCheckedChange={(v) => updateDns('ipv6', v)} />
+          <Switch checked={dnsConfig.ipv6 || false} onCheckedChange={(v) => updateDns('ipv6', v)} disabled={!detailsEnabled} />
         </SettingRow>
         <SettingRow label={t('overrideSettings.enhancedMode')} desc={t('overrideSettings.enhancedModeDesc')}>
           <StyledSelect
@@ -818,8 +863,10 @@ function DnsTab({ dnsConfig, hostsConfig, updateDns, updateDnsArray, updateHosts
         <SettingRow label={t('overrideSettings.useHosts')} desc={t('overrideSettings.useHostsDesc')}>
           <Switch checked={dnsConfig['use-hosts'] || false} onCheckedChange={(v) => updateDns('use-hosts', v)} />
         </SettingRow>
+        </div>
       </SectionCard>
 
+      <div className={detailsEnabled ? '' : 'opacity-50 pointer-events-none'}>
       {dnsConfig['use-hosts'] && (
         <SectionCard icon={<Server className="w-4 h-4" />} title={t('overrideSettings.hostsMapping')} desc={t('overrideSettings.hostsMappingDesc')}>
           <StyledTextarea
@@ -887,6 +934,7 @@ function DnsTab({ dnsConfig, hostsConfig, updateDns, updateDnsArray, updateHosts
           placeholder={t('configEditor.nameserverPolicyPlaceholder')}
         />
       </SectionCard>
+      </div>
     </>
   );
 }

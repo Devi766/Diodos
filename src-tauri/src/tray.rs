@@ -88,8 +88,9 @@ fn tray_menu_hold() -> &'static Mutex<Option<Instant>> {
 }
 
 fn mark_tray_menu_hold() {
+    // Windows 在菜单弹出期间 set_menu 会白闪/闪断；拉长 hold 覆盖完整右键交互
     if let Ok(mut guard) = tray_menu_hold().lock() {
-        *guard = Some(Instant::now() + Duration::from_millis(1800));
+        *guard = Some(Instant::now() + Duration::from_millis(3200));
     }
 }
 
@@ -100,6 +101,68 @@ fn tray_menu_is_held() -> bool {
         .and_then(|guard| *guard)
         .map(|until| Instant::now() < until)
         .unwrap_or(false)
+}
+
+/// 菜单打开期间积压的刷新请求，关闭后补刷一次
+fn tray_menu_pending_refresh() -> &'static Mutex<Option<String>> {
+    static PENDING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(None))
+}
+
+fn tray_menu_after_hold_scheduled() -> &'static AtomicBool {
+    static FLAG: AtomicBool = AtomicBool::new(false);
+    &FLAG
+}
+
+fn queue_tray_menu_refresh(reason: &str) {
+    if let Ok(mut guard) = tray_menu_pending_refresh().lock() {
+        *guard = Some(reason.to_string());
+    }
+}
+
+fn take_tray_menu_pending_refresh() -> Option<String> {
+    tray_menu_pending_refresh()
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
+fn schedule_tray_menu_refresh_after_hold(app: &AppHandle) {
+    // 只允许一个 after-hold 调度在飞，避免每次 right-click 都开线程
+    if tray_menu_after_hold_scheduled().swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _reset = AfterHoldGuard;
+        loop {
+            let remaining = tray_menu_hold()
+                .lock()
+                .ok()
+                .and_then(|guard| *guard)
+                .map(|until| until.saturating_duration_since(Instant::now()))
+                .unwrap_or(Duration::ZERO);
+            if remaining.is_zero() {
+                break;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(200)));
+        }
+        if let Some(reason) = take_tray_menu_pending_refresh() {
+            let reason = format!("{reason}-after-hold");
+            if let Err(error) = refresh_tray_menu(&app) {
+                eprintln!("[tray] failed to refresh menu after hold ({reason}): {error}");
+            }
+            // hold 结束后再拉一次节点快照，供下次右键使用
+            schedule_tray_proxy_snapshot_refresh(&app);
+        }
+    });
+}
+
+struct AfterHoldGuard;
+impl Drop for AfterHoldGuard {
+    fn drop(&mut self) {
+        tray_menu_after_hold_scheduled().store(false, Ordering::SeqCst);
+    }
 }
 
 fn tray_snapshot_refresh_token() -> &'static AtomicU64 {
@@ -950,6 +1013,9 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
 
 fn refresh_tray_menu(app: &AppHandle) -> Result<(), String> {
     if tray_menu_is_held() {
+        // 菜单打开中不 set_menu，避免 Windows 白闪
+        queue_tray_menu_refresh("held");
+        schedule_tray_menu_refresh_after_hold(app);
         return Ok(());
     }
     let (menu, tooltip) = build_tray_menu(app)?;
@@ -963,6 +1029,8 @@ fn refresh_tray_menu(app: &AppHandle) -> Result<(), String> {
 
 pub(crate) fn refresh_tray_menu_after(app: &AppHandle, reason: &str) {
     if tray_menu_is_held() {
+        queue_tray_menu_refresh(reason);
+        schedule_tray_menu_refresh_after_hold(app);
         return;
     }
     if let Err(error) = refresh_tray_menu(app) {
@@ -1384,11 +1452,10 @@ pub(crate) fn setup_tray(app: &AppHandle) -> Result<(), String> {
                     button_state: MouseButtonState::Up,
                     ..
                 } => {
+                    // 右键弹出期间禁止 set_menu；只冻结菜单并排队后台刷新
                     mark_tray_menu_hold();
-                    let app = tray.app_handle().clone();
-                    if is_mihomo_running(&app) && read_tray_proxy_snapshot().is_none() {
-                        schedule_tray_proxy_snapshot_refresh(&app);
-                    }
+                    queue_tray_menu_refresh("right-click");
+                    schedule_tray_menu_refresh_after_hold(tray.app_handle());
                 }
                 _ => {}
             }

@@ -12,11 +12,11 @@ use crate::core_lifecycle_commands::{
 use crate::platform::{
     apply_appearance_mode_for_app, apply_windows_window_icons, emit_window_state,
     handle_compat_call as handle_platform_compat_call, kick_window_paint,
-    schedule_auto_lightweight_timer, set_system_proxy, show_main_window,
+    schedule_auto_lightweight_timer, set_system_proxy_with_options, show_main_window,
 };
 use crate::runtime_config::mihomo_mixed_port;
 use crate::state::AppState;
-use crate::storage::setting;
+use crate::storage::{set_setting, setting};
 use crate::tray::setup_tray;
 use crate::tun_service::schedule_pending_tun_enable;
 
@@ -190,6 +190,8 @@ fn exit_cleanup_started() -> &'static AtomicBool {
 }
 
 pub(crate) fn request_app_quit(app: &AppHandle) {
+    // 托盘「退出」是完整退出：清除轻量标记，确保 cleanup 会停核
+    let _ = set_setting(app, "lightweightModeActive", json!(false));
     app.exit(0);
 }
 
@@ -198,7 +200,22 @@ fn cleanup_on_exit(app: &AppHandle) {
         return;
     }
 
-    if let Err(error) = set_system_proxy(app, false, "127.0.0.1", mihomo_mixed_port(app)) {
+    let lightweight = setting(app, "lightweightModeActive", json!(false))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    if lightweight {
+        // 轻量 service-exit：只结束 UI，保留 Helper 内核与当前系统代理
+        // 下次打开主界面时由 show_main_window 清除 lightweightModeActive
+        eprintln!("[exit] lightweight service-exit: keep core and system proxy");
+        return;
+    }
+
+    // 退出时只关闭系统代理，不改写用户偏好（否则下次无法自动恢复）
+    if let Err(error) =
+        set_system_proxy_with_options(app, false, "127.0.0.1", mihomo_mixed_port(app), false)
+    {
         eprintln!("[exit] disable system proxy failed: {error}");
     }
 
@@ -264,9 +281,17 @@ pub fn run() {
                 // and default_window_icon only reads ICO entry[0]. Apply both sizes
                 // from the embedded multi-frame ICO so the taskbar stays sharp.
                 apply_windows_window_icons(&window);
+
+                // 静默启动：首次启动隐藏主窗口，只保留托盘
+                let silent_start = setting(app.handle(), "silentStart", json!(false))
+                    .ok()
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+
                 // Transparent + acrylic windows on WebView2 sometimes stay blank
                 // until the first user click. Force an initial paint/layout pass.
-                kick_window_paint(&window);
+                // 静默启动时禁止 show/focus，否则会把 hide 打穿。
+                kick_window_paint(&window, !silent_start);
 
                 let mode = setting(app.handle(), "appearanceMode", json!("dynamic"))
                     .ok()
@@ -274,7 +299,15 @@ pub fn run() {
                     .unwrap_or_else(|| "dynamic".to_string());
                 let _ = apply_appearance_mode_for_app(app.handle(), &window, &mode);
                 // Appearance may reset transparency; paint again after effects.
-                kick_window_paint(&window);
+                kick_window_paint(&window, !silent_start);
+
+                if silent_start {
+                    let _ = window.hide();
+                } else {
+                    // 非静默：显示主窗口并清除遗留轻量标记
+                    let _ = set_setting(app.handle(), "lightweightModeActive", json!(false));
+                    let _ = window.show();
+                }
 
                 // Re-apply after the webview paints. macOS vibrancy can be lost if
                 // applied too early, and theme class changes may arrive a tick later.
@@ -291,7 +324,16 @@ pub fn run() {
                                 .and_then(|value| value.as_str().map(ToString::to_string))
                                 .unwrap_or_else(|| refresh_mode.clone());
                             let _ = apply_appearance_mode_for_app(&refresh_app, &window, &mode);
-                            kick_window_paint(&window);
+                            let silent = setting(&refresh_app, "silentStart", json!(false))
+                                .ok()
+                                .and_then(|value| value.as_bool())
+                                .unwrap_or(false);
+                            // 静默且窗口仍隐藏时，不要强制 show
+                            let force_show = !silent || window.is_visible().unwrap_or(false);
+                            kick_window_paint(&window, force_show);
+                            if silent && !window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            }
                         }
                     }
                 });
@@ -326,9 +368,9 @@ pub fn run() {
                                 .and_then(|value| value.as_str().map(ToString::to_string))
                                 .unwrap_or_else(|| "dynamic".to_string());
                             let _ = apply_appearance_mode_for_app(&close_app, &window, &mode);
-                            // First focus often arrives before WebView2 has composed;
-                            // kick paint so the dashboard is not blank until a click.
-                            kick_window_paint(&window);
+                            // 仅当窗口当前可见时才 show/focus 重绘，避免静默启动被打穿
+                            let visible = window.is_visible().unwrap_or(false);
+                            kick_window_paint(&window, visible);
                         }
                     }
                     WindowEvent::ThemeChanged(_) => {

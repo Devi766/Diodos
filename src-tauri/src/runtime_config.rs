@@ -609,6 +609,11 @@ pub(crate) async fn patch_active_geodata_config(
 }
 
 pub(crate) fn ensure_tun_dns_defaults(app: &AppHandle) -> Result<(), String> {
+    // DNS 覆写关闭时不注入默认 DNS，避免静默覆盖订阅里的私有 DNS。
+    if !dns_override_enabled(app) {
+        return Ok(());
+    }
+
     let current = setting(app, "dns", json!({}))?;
     let current_mode = current.get("enhanced-mode").and_then(Value::as_str);
     if current_mode.is_some_and(|mode| mode != "fake-ip") {
@@ -826,6 +831,14 @@ fn build_tun_config(settings: &Map<String, Value>) -> Value {
     Value::Object(tun)
 }
 
+/// 用户侧「DNS 覆写」总开关，默认关闭：关闭时不把设置页 DNS/hosts 合并进运行配置。
+pub(crate) fn dns_override_enabled(app: &AppHandle) -> bool {
+    setting(app, "dnsOverrideEnabled", Value::Bool(false))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
 fn runtime_user_settings(app: &AppHandle) -> Result<Value, String> {
     let settings = read_settings(app)?;
     let mut output = Map::new();
@@ -838,14 +851,17 @@ fn runtime_user_settings(app: &AppHandle) -> Result<Value, String> {
         }
     }
 
-    let dns = setting(app, "dns", Value::Null)?;
-    if non_empty_object(&dns) {
-        output.insert("dns".to_string(), dns);
-    }
+    // 仅在开启 DNS 覆写时合并用户 DNS / hosts，否则完整保留订阅原始 DNS。
+    if dns_override_enabled(app) {
+        let dns = setting(app, "dns", Value::Null)?;
+        if non_empty_object(&dns) {
+            output.insert("dns".to_string(), dns);
+        }
 
-    let hosts = setting(app, "hosts", Value::Null)?;
-    if non_empty_object(&hosts) {
-        output.insert("hosts".to_string(), hosts);
+        let hosts = setting(app, "hosts", Value::Null)?;
+        if non_empty_object(&hosts) {
+            output.insert("hosts".to_string(), hosts);
+        }
     }
 
     let sniffer = setting(app, "sniffer", Value::Null)?;

@@ -110,7 +110,9 @@ async fn dispatch_compat_call(
                     .unwrap_or(serde_yaml::Value::Mapping(Default::default()));
                 Ok(success(json!({
                     "config": serde_json::to_value(dns).unwrap_or_else(|_| default_dns_config()),
-                    "hosts": serde_json::to_value(hosts).unwrap_or_else(|_| json!({}))
+                    "hosts": serde_json::to_value(hosts).unwrap_or_else(|_| json!({})),
+                    // 订阅 YAML 路径没有独立覆写开关，始终视为该文件自身 DNS 生效
+                    "overrideEnabled": true
                 })))
             } else {
                 let dns = setting(app, "dns", default_dns_config())?;
@@ -121,7 +123,8 @@ async fn dispatch_compat_call(
                 };
                 Ok(success(json!({
                     "config": dns,
-                    "hosts": setting(app, "hosts", json!({}))?
+                    "hosts": setting(app, "hosts", json!({}))?,
+                    "overrideEnabled": crate::runtime_config::dns_override_enabled(app)
                 })))
             }
         }
@@ -134,6 +137,13 @@ async fn dispatch_compat_call(
                     "message": "dns config saved to YAML"
                 })))
             } else {
+                // 可选第二参数（无 configPath 时）：{ overrideEnabled?: bool }
+                // 兼容旧调用：仅传 dns config 时不改覆写开关
+                if let Some(options) = args.get(1).and_then(Value::as_object) {
+                    if let Some(enabled) = options.get("overrideEnabled").and_then(Value::as_bool) {
+                        set_setting(app, "dnsOverrideEnabled", Value::Bool(enabled))?;
+                    }
+                }
                 set_setting(app, "dns", config)?;
                 apply_saved_config(app, window, state, "dns").await
             }

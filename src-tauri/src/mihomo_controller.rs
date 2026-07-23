@@ -326,13 +326,35 @@ fn resolve_proxy_now(proxies: &Map<String, Value>, name: &str, depth: usize) -> 
     Some(now.to_string())
 }
 
-fn current_node_from_proxies_response(response: &Value) -> Option<String> {
+fn runtime_mode_from_configs(response: &Value) -> Option<String> {
+    let data = response.get("data").unwrap_or(response);
+    data.get("mode")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn current_node_from_proxies_response(
+    response: &Value,
+    mode_hint: Option<&str>,
+) -> Option<String> {
     let data = response.get("data").unwrap_or(response);
     let proxies = data.get("proxies").and_then(Value::as_object)?;
-    for group in ["PROXY", "GLOBAL"] {
+
+    // 全局模式只读 GLOBAL；规则模式优先 PROXY
+    let preferred: &[&str] = match mode_hint.map(str::to_ascii_lowercase).as_deref() {
+        Some("global") => &["GLOBAL"],
+        Some("direct") => &[],
+        _ => &["PROXY", "GLOBAL"],
+    };
+
+    for group in preferred {
         if let Some(node) = resolve_proxy_now(proxies, group, 0) {
             return Some(node);
         }
+    }
+    if mode_hint.map(|value| value.eq_ignore_ascii_case("global")) == Some(true) {
+        return None;
     }
     for (name, proxy) in proxies {
         if proxy_is_group(proxy) {
@@ -348,12 +370,20 @@ fn current_node_from_proxies_response(response: &Value) -> Option<String> {
 fn current_node_from_proxies_response_ordered(
     response: &Value,
     group_order: &[String],
+    mode_hint: Option<&str>,
 ) -> Option<String> {
     let data = response.get("data").unwrap_or(response);
     let proxies = data.get("proxies").and_then(Value::as_object)?;
     let mut fallback = None;
 
+    if mode_hint.map(|value| value.eq_ignore_ascii_case("global")) == Some(true) {
+        return resolve_proxy_now(proxies, "GLOBAL", 0);
+    }
+
     for group in group_order {
+        if group.eq_ignore_ascii_case("GLOBAL") {
+            continue;
+        }
         if let Some(node) = resolve_proxy_now(proxies, group, 0) {
             if !is_builtin_proxy_name(&node) {
                 return Some(node);
@@ -362,7 +392,7 @@ fn current_node_from_proxies_response_ordered(
         }
     }
 
-    current_node_from_proxies_response(response).or(fallback)
+    current_node_from_proxies_response(response, mode_hint).or(fallback)
 }
 
 fn proxy_group_for_compat(name: &str, group: &Value, proxies: &Map<String, Value>) -> Value {
@@ -422,7 +452,7 @@ fn proxies_payload_for_compat(response: Value) -> Value {
         groups.push(proxy_group_for_compat(name, group, &proxies));
     }
 
-    let selected = current_node_from_proxies_response(&data);
+    let selected = current_node_from_proxies_response(&data, None);
 
     if let Some(object) = data.as_object_mut() {
         object.insert("groups".to_string(), Value::Array(groups));
@@ -454,14 +484,21 @@ pub(crate) async fn fetch_connections_info(app: &AppHandle, state: &State<'_, Ap
             .current_node
             .clone()
     };
+    let mode_hint = request_http(app, Some("/configs".to_string()), None)
+        .await
+        .ok()
+        .and_then(|value| runtime_mode_from_configs(&value));
     let resolved = request_http(app, Some("/proxies".to_string()), None)
         .await
         .ok()
         .and_then(|value| {
+            let mode = mode_hint.as_deref();
             active_proxy_group_names(app, state)
                 .filter(|groups| !groups.is_empty())
-                .and_then(|groups| current_node_from_proxies_response_ordered(&value, &groups))
-                .or_else(|| current_node_from_proxies_response(&value))
+                .and_then(|groups| {
+                    current_node_from_proxies_response_ordered(&value, &groups, mode)
+                })
+                .or_else(|| current_node_from_proxies_response(&value, mode))
         });
     let current_node = match resolved {
         Some(node) if !is_builtin_proxy_name(&node) => {

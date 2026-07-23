@@ -132,6 +132,9 @@ module.exports = function initTrayManager(context) {
       }
     }
 
+    // 先挂上同步基础菜单，避免首次右键时空菜单白闪
+    applyContextMenu(buildBasicContextMenu());
+
     // 设置托盘事件监听
     if (!isMac) {
       // Windows/Linux: 左键点击显示/隐藏窗口
@@ -154,28 +157,154 @@ module.exports = function initTrayManager(context) {
       });
     }
 
-    // 右键点击时更新菜单（所有平台）
-    state.tray.on('right-click', async () => {
-      console.log('[托盘] 右键点击，更新菜单');
-      await updateTrayMenu();
+    // 右键：只标记菜单打开中，不要在弹出瞬间异步重建菜单（Windows 会白闪）
+    // 系统会使用已 setContextMenu 的缓存菜单立即弹出。
+    state.tray.on('right-click', () => {
+      markTrayMenuOpen();
+      // 菜单关闭后在后台刷新，供下次右键使用
+      scheduleTrayMenuRefresh(800);
     });
 
-    // macOS 特殊处理：点击图标时更新菜单（macOS 会自动显示菜单）
+    // macOS：点击图标也会弹菜单，同样避免同步阻塞重建
     if (isMac) {
-      state.tray.on('click', async () => {
-        console.log('[托盘] macOS 点击，更新菜单');
-        await updateTrayMenu();
+      state.tray.on('click', () => {
+        markTrayMenuOpen();
+        scheduleTrayMenuRefresh(800);
       });
     }
+
+    // 后台预热完整菜单
+    scheduleTrayMenuRefresh(0);
 
     return state.tray;
   }
 
   let updateTrayMenuInProgress = false;
+  let lastContextMenu = null;
+  let trayMenuOpenUntil = 0;
+  let trayMenuRefreshTimer = null;
+
+  function markTrayMenuOpen(durationMs = 2500) {
+    trayMenuOpenUntil = Date.now() + durationMs;
+  }
+
+  function isTrayMenuOpen() {
+    return Date.now() < trayMenuOpenUntil;
+  }
+
+  function scheduleTrayMenuRefresh(delayMs = 0) {
+    if (trayMenuRefreshTimer) {
+      clearTimeout(trayMenuRefreshTimer);
+      trayMenuRefreshTimer = null;
+    }
+    trayMenuRefreshTimer = setTimeout(() => {
+      trayMenuRefreshTimer = null;
+      updateTrayMenu().catch((error) => {
+        console.error('[托盘菜单] 后台刷新失败:', error);
+      });
+    }, Math.max(0, delayMs));
+  }
+
+  function buildBasicContextMenu() {
+    return Menu.buildFromTemplate([
+      {
+        label: '显示主窗口',
+        click: () => {
+          if (state.mainWindow) {
+            state.mainWindow.show();
+            if (context.lightweightModeManager) {
+              context.lightweightModeManager.cancelAutoLightweightTimer();
+            }
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '退出',
+        click: () => {
+          state.isQuitting = true;
+          app.quit();
+        }
+      }
+    ]);
+  }
+
+  function applyContextMenu(menu) {
+    if (!state.tray || state.tray.isDestroyed?.()) return;
+    // 菜单正在显示时不要 setContextMenu，否则 Windows 会出现白闪/闪断
+    if (isTrayMenuOpen()) {
+      lastContextMenu = menu;
+      return;
+    }
+    lastContextMenu = menu;
+    state.tray.setContextMenu(menu);
+  }
+
+  async function switchOutboundMode(nextMode) {
+    const updateResponse = await context.fetchMihomoAPI('/configs', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: nextMode }),
+    });
+    if (!updateResponse.ok) {
+      throw new Error(updateResponse.statusText || `switch mode to ${nextMode} failed`);
+    }
+
+    // 切入全局时同步 GLOBAL 出口
+    if (nextMode === 'global') {
+      try {
+        const proxiesRes = await context.fetchMihomoAPI('/proxies');
+        if (proxiesRes.ok) {
+          const data = await proxiesRes.json();
+          const proxies = data?.proxies || {};
+          const globalProxy = proxies.GLOBAL;
+          const globalMembers = new Set(
+            Array.isArray(globalProxy?.all)
+              ? globalProxy.all
+                  .map((item) => (typeof item === 'string' ? item : item?.name))
+                  .filter((name) => typeof name === 'string' && name.length > 0)
+              : [],
+          );
+          const preferred = ['PROXY', 'Auto', 'AUTO'];
+          let candidate = null;
+          for (const groupName of preferred) {
+            const now = typeof proxies[groupName]?.now === 'string' ? proxies[groupName].now.trim() : '';
+            if (!now || now.toUpperCase() === 'DIRECT' || now.toUpperCase() === 'REJECT') continue;
+            if (globalMembers.size > 0 && !globalMembers.has(now)) continue;
+            candidate = now;
+            break;
+          }
+          if (candidate && globalProxy?.now !== candidate) {
+            await context.fetchMihomoAPI(`/proxies/${encodeURIComponent('GLOBAL')}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: candidate }),
+            });
+            state.currentNode = candidate;
+          }
+        }
+      } catch (error) {
+        console.warn('[托盘] 同步 GLOBAL 出口失败:', error);
+      }
+    }
+
+    // 断开旧连接
+    try {
+      await context.fetchMihomoAPI('/connections', { method: 'DELETE' });
+    } catch (error) {
+      console.warn('[托盘] 切换模式后断开连接失败:', error);
+    }
+  }
 
   async function updateTrayMenu() {
     if (!state.tray) await ensureTray();
     if (!state.tray) return;
+
+    // 菜单打开中：延后刷新，避免白闪
+    if (isTrayMenuOpen()) {
+      scheduleTrayMenuRefresh(400);
+      return;
+    }
 
     // 防止重复更新
     if (updateTrayMenuInProgress) {
@@ -247,18 +376,9 @@ module.exports = function initTrayManager(context) {
                 checked: currentMode === 'rule',
                 click: async () => {
                   try {
-                    const updateResponse = await context.fetchMihomoAPI('/configs', {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ mode: 'rule' })
-                    });
-
-                    if (updateResponse.ok) {
-                      console.log('已切换到规则模式');
-                      setTimeout(() => updateTrayMenu(), 500);
-                    } else {
-                      console.error('切换模式失败:', updateResponse.statusText);
-                    }
+                    await switchOutboundMode('rule');
+                    console.log('已切换到规则模式');
+                    setTimeout(() => updateTrayMenu(), 500);
                   } catch (error) {
                     console.error('切换模式时出错:', error);
                   }
@@ -270,18 +390,9 @@ module.exports = function initTrayManager(context) {
                 checked: currentMode === 'global',
                 click: async () => {
                   try {
-                    const updateResponse = await context.fetchMihomoAPI('/configs', {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ mode: 'global' })
-                    });
-
-                    if (updateResponse.ok) {
-                      console.log('已切换到全局模式');
-                      setTimeout(() => updateTrayMenu(), 500);
-                    } else {
-                      console.error('切换模式失败:', updateResponse.statusText);
-                    }
+                    await switchOutboundMode('global');
+                    console.log('已切换到全局模式');
+                    setTimeout(() => updateTrayMenu(), 500);
                   } catch (error) {
                     console.error('切换模式时出错:', error);
                   }
@@ -293,18 +404,9 @@ module.exports = function initTrayManager(context) {
                 checked: currentMode === 'direct',
                 click: async () => {
                   try {
-                    const updateResponse = await context.fetchMihomoAPI('/configs', {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ mode: 'direct' })
-                    });
-
-                    if (updateResponse.ok) {
-                      console.log('已切换到直连模式');
-                      setTimeout(() => updateTrayMenu(), 500);
-                    } else {
-                      console.error('切换模式失败:', updateResponse.statusText);
-                    }
+                    await switchOutboundMode('direct');
+                    console.log('已切换到直连模式');
+                    setTimeout(() => updateTrayMenu(), 500);
                   } catch (error) {
                     console.error('切换模式时出错:', error);
                   }
@@ -624,7 +726,8 @@ module.exports = function initTrayManager(context) {
         }
       ]);
 
-      state.tray.setContextMenu(contextMenu);
+      // 仅在菜单未打开时应用；打开中会缓存到 lastContextMenu，关闭后再刷新
+      applyContextMenu(contextMenu);
       console.log('[托盘菜单] 菜单已更新');
 
       if (state.currentNode) {
@@ -634,31 +737,16 @@ module.exports = function initTrayManager(context) {
       }
     } catch (error) {
       console.error('更新托盘菜单失败:', error);
-      const basicMenu = Menu.buildFromTemplate([
-        {
-          label: '显示主窗口',
-          click: () => {
-            if (state.mainWindow) {
-              state.mainWindow.show();
-              // 窗口显示时，取消自动轻量模式定时器
-              if (context.lightweightModeManager) {
-                context.lightweightModeManager.cancelAutoLightweightTimer();
-              }
-            }
-          }
-        },
-        { type: 'separator' },
-        {
-          label: '退出',
-          click: () => {
-            state.isQuitting = true;
-            app.quit();
-          }
-        }
-      ]);
-      state.tray.setContextMenu(basicMenu);
+      // 失败时保留上次完整菜单；没有则回退基础菜单
+      if (!lastContextMenu) {
+        applyContextMenu(buildBasicContextMenu());
+      }
     } finally {
       updateTrayMenuInProgress = false;
+      // 若菜单仍打开，关闭后再补一次，避免状态过期
+      if (isTrayMenuOpen()) {
+        scheduleTrayMenuRefresh(500);
+      }
     }
   }
 

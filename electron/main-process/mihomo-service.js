@@ -465,9 +465,20 @@ module.exports = function initMihomoService(context) {
       return source;
     }
 
+    // DNS 覆写默认关闭：关闭时不把用户 settings 里的 dns/hosts 合并进运行配置
+    const dnsOverrideEnabled = source.dnsOverrideEnabled === true;
     const result = { ...target };
 
     for (const key in source) {
+      // 元数据字段，不进入 mihomo 配置
+      if (key === 'dnsOverrideEnabled') {
+        continue;
+      }
+      // 关闭 DNS 覆写时跳过 dns/hosts，完整保留订阅原始配置
+      if (!dnsOverrideEnabled && (key === 'dns' || key === 'hosts')) {
+        continue;
+      }
+
       const mustOverrideFields = ['mixed-port', 'allow-lan', 'ipv6', 'log-level', 'find-process-mode'];
 
       // external-controller 和 secret 特殊处理:

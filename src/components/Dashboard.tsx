@@ -764,7 +764,7 @@ export default function Dashboard() {
       const effectiveMode: ProxyMode = overrideMode ?? proxyMode ?? 'rule';
       let allCandidates: string[];
       if (effectiveMode === 'global') {
-        allCandidates = ['GLOBAL', primaryProxyGroup, 'PROXY'].filter(Boolean);
+        allCandidates = ['GLOBAL'];
       } else if (effectiveMode === 'direct') {
         commitCurrentNode('DIRECT');
         return;
@@ -1356,9 +1356,15 @@ export default function Dashboard() {
     if (!electron?.onNodeChanged) return;
 
     const handler = (payload: { nodeName?: string; groupName?: string }) => {
-      const groupName = typeof payload?.groupName === 'string' && payload.groupName.trim()
-        ? payload.groupName
-        : primaryProxyGroup;
+      const incomingGroup =
+        typeof payload?.groupName === 'string' && payload.groupName.trim()
+          ? payload.groupName
+          : primaryProxyGroup;
+      // 全局模式只认 GLOBAL 上的选择
+      if (proxyMode === 'global' && incomingGroup !== 'GLOBAL') {
+        return;
+      }
+      const groupName = proxyMode === 'global' ? 'GLOBAL' : incomingGroup;
       rememberNodeSelection(payload?.nodeName, groupName);
       if (payload?.nodeName) {
         updateCurrentNodeDisplay(undefined, groupName, {
@@ -1844,7 +1850,56 @@ export default function Dashboard() {
       }
       showBanner(null);
       try {
+        // 切入全局时先同步 GLOBAL 出口，避免 GLOBAL.now 与规则模式当前节点不一致
+        if (nextMode === 'global') {
+          try {
+            const proxiesPayload: any = await mihomoClient.getProxies();
+            const proxies = proxiesPayload?.proxies || proxiesPayload || {};
+            const preferred = [primaryProxyGroup, 'PROXY', 'Auto', 'AUTO'].filter(Boolean);
+            let candidate: string | null = null;
+            const globalProxy = proxies['GLOBAL'];
+            const globalMembers = new Set(
+              Array.isArray(globalProxy?.all)
+                ? globalProxy.all
+                    .map((item: unknown) =>
+                      typeof item === 'string' ? item : (item as any)?.name,
+                    )
+                    .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0)
+                : [],
+            );
+            for (const groupName of preferred) {
+              const now = typeof proxies[groupName]?.now === 'string' ? proxies[groupName].now.trim() : '';
+              if (!now || now.toUpperCase() === 'DIRECT' || now.toUpperCase() === 'REJECT') continue;
+              if (globalMembers.size > 0 && !globalMembers.has(now)) continue;
+              candidate = now;
+              break;
+            }
+            if (candidate && globalProxy?.now !== candidate) {
+              await mihomoClient.selectNodeForGroup('GLOBAL', candidate);
+              commitCurrentNode(candidate);
+            }
+          } catch (error) {
+            console.warn('同步 GLOBAL 出口失败:', error);
+          }
+        }
+
         await mihomoClient.patchRuntimeConfig({ mode: nextMode });
+
+        // 持久化代理模式，重启后由 runtime 合并恢复
+        try {
+          if (electron?.saveProxySettings) {
+            await electron.saveProxySettings({ mode: nextMode });
+          }
+        } catch (error) {
+          console.warn('持久化代理模式失败:', error);
+        }
+
+        // 断开旧连接，避免继续按原模式路由
+        try {
+          await mihomoClient.closeAllConnections();
+        } catch (error) {
+          console.warn('切换模式后清除连接失败:', error);
+        }
 
         showBanner({ type: 'success', message: t('dashboard.switchedToMode', { mode: MODE_LABELS[nextMode] }) });
         window.setTimeout(() => {
@@ -1862,7 +1917,7 @@ export default function Dashboard() {
         setIsModeUpdating(false);
       }
     },
-    [commitCurrentNode, formatDashboardError, isModeUpdating, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
+    [commitCurrentNode, formatDashboardError, isModeUpdating, primaryProxyGroup, proxyMode, showBanner, syncCurrentNode, syncProxyMode, t]
   );
 
   const handleResetDashboardLayout = useCallback(async () => {

@@ -175,17 +175,22 @@ function registerConfigIpcHandlers(deps) {
     try {
       let dnsConfig;
       let hosts = {};
+      let overrideEnabled = true;
 
-      if (configPath && fs.existsSync(configPath)) {
+      if (configPath && typeof configPath === 'string' && fs.existsSync(configPath)) {
         console.log('[get-dns-config] Reading from subscription YAML:', configPath);
         const content = fs.readFileSync(configPath, 'utf8');
         const config = yaml.load(content) || {};
         dnsConfig = config.dns;
         hosts = config.hosts || {};
+        // 订阅 YAML 路径没有独立覆写开关，始终视为该文件自身 DNS 生效
+        overrideEnabled = true;
       } else {
         const userSettings = context.getUserSettings ? context.getUserSettings() : {};
         dnsConfig = userSettings.dns;
         hosts = userSettings.hosts || {};
+        // DNS 覆写默认关闭
+        overrideEnabled = userSettings.dnsOverrideEnabled === true;
       }
 
       if (!dnsConfig || Object.keys(dnsConfig).length === 0) {
@@ -193,16 +198,26 @@ function registerConfigIpcHandlers(deps) {
         dnsConfig = defaultDnsConfig;
       }
 
-      return { success: true, config: dnsConfig, hosts };
+      return { success: true, config: dnsConfig, hosts, overrideEnabled };
     } catch (error) {
       console.error('Failed to get DNS config:', error);
       return { success: false, error: error.message };
     }
   });
 
-  ipcMain.handle('save-dns-config', async (event, dnsConfig, configPath) => {
+  ipcMain.handle('save-dns-config', async (event, dnsConfig, configPathOrOptions) => {
     try {
       console.log('[save-dns-config] ========== Saving DNS config ==========');
+
+      // 兼容：第二参数可以是 configPath 字符串，或 { overrideEnabled?: boolean }
+      const configPath =
+        typeof configPathOrOptions === 'string' ? configPathOrOptions : undefined;
+      const overrideOption =
+        configPathOrOptions &&
+        typeof configPathOrOptions === 'object' &&
+        !Array.isArray(configPathOrOptions)
+          ? configPathOrOptions
+          : null;
 
       if (configPath && fs.existsSync(configPath)) {
         // Write directly to subscription YAML file
@@ -217,6 +232,9 @@ function registerConfigIpcHandlers(deps) {
       // Fallback: save to user settings (no configPath)
       const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
       const newSettings = { ...currentSettings, dns: dnsConfig };
+      if (overrideOption && typeof overrideOption.overrideEnabled === 'boolean') {
+        newSettings.dnsOverrideEnabled = overrideOption.overrideEnabled;
+      }
       return await saveConfigAndRestart('dns', currentSettings, newSettings);
     } catch (error) {
       console.error('[save-dns-config] ========== Failed ==========');

@@ -938,7 +938,7 @@ pub(crate) fn schedule_pending_tun_enable(app: &AppHandle) {
                     }
                     Err(error) => {
                         eprintln!("[TUN] pendingTunEnable: helper not ready: {error}");
-                        let _ = set_setting(&app, "tunModeEnabled", json!(false));
+                        // 恢复失败不抹掉用户偏好；保留 tunModeEnabled，下次可再试
                         let _ = window.emit("tun-status", false);
                         let _ = window.emit(
                             "service-restarted",
@@ -955,7 +955,7 @@ pub(crate) fn schedule_pending_tun_enable(app: &AppHandle) {
                 // Task mode: elevated task / admin process is enough; do not require helper.
                 if !windows_is_admin() && !windows_elevated_task_exists() {
                     eprintln!("[TUN] pendingTunEnable: task mode has no elevate task/admin");
-                    let _ = set_setting(&app, "tunModeEnabled", json!(false));
+                    // 恢复失败不抹掉用户偏好
                     let _ = window.emit("tun-status", false);
                     let _ = window.emit(
                         "service-restarted",
@@ -999,7 +999,7 @@ pub(crate) fn schedule_pending_tun_enable(app: &AppHandle) {
             }
             Err(error) => {
                 eprintln!("[TUN] pendingTunEnable: apply error: {error}");
-                let _ = set_setting(&app, "tunModeEnabled", json!(false));
+                // apply 失败不抹掉用户偏好；运行时已是关，偏好仍保留以便重试
                 let _ = window.emit("tun-status", false);
                 let _ = window.emit(
                     "service-restarted",

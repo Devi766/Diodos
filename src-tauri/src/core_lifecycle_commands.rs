@@ -19,7 +19,7 @@ use crate::runtime_config::{
     prepare_runtime_config, prepare_runtime_config_for_reload, runtime_config_error_response,
 };
 use crate::state::AppState;
-use crate::storage::set_setting;
+use crate::storage::{set_setting, setting};
 
 type CompatResult = Result<Value, String>;
 
@@ -498,6 +498,7 @@ pub(crate) fn schedule_mihomo_autostart(app: &AppHandle) {
                 .expect("runtime mutex poisoned")
                 .core
                 .prefer_runtime_or_preferred(preferred);
+            restore_system_proxy_preference(&app);
             let _ = app.emit(
                 "mihomo-autostart",
                 json!({ "success": true, "existing": true, "configPath": config_path }),
@@ -528,6 +529,8 @@ pub(crate) fn schedule_mihomo_autostart(app: &AppHandle) {
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let payload = if success {
+                    // 启动成功后恢复上次系统代理偏好
+                    restore_system_proxy_preference(&app);
                     json!({ "success": true, "configPath": config_path })
                 } else {
                     let error = result
@@ -553,6 +556,30 @@ pub(crate) fn schedule_mihomo_autostart(app: &AppHandle) {
             }
         }
     });
+}
+
+fn restore_system_proxy_preference(app: &AppHandle) {
+    let preferred = setting(app, "systemProxyEnabled", json!(false))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !preferred {
+        return;
+    }
+    if !is_mihomo_running(app) {
+        return;
+    }
+    let port = crate::runtime_config::mihomo_mixed_port(app);
+    match crate::platform::set_system_proxy(app, true, "127.0.0.1", port) {
+        Ok(()) => {
+            let _ = app.emit("proxy-status", true);
+            crate::tray::refresh_tray_menu_after(app, "restore-system-proxy");
+            eprintln!("[mihomo-autostart] restored system proxy preference");
+        }
+        Err(error) => {
+            eprintln!("[mihomo-autostart] restore system proxy failed: {error}");
+        }
+    }
 }
 
 pub(crate) async fn reload_mihomo_config(

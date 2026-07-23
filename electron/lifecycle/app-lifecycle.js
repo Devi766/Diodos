@@ -75,8 +75,13 @@ function registerAppLifecycle({ app, state, dbManager, subscriptionScheduler, st
       global.staticServer.close();
     }
 
-    // 确保退出时关闭系统代理
+    // 退出时只关闭系统代理，不改写用户偏好（systemProxyEnabled），
+    // 否则下次启动无法按上次状态自动恢复。
     try {
+      if (typeof context.disableSystemProxy === 'function') {
+        // 尽量走统一关闭逻辑（不依赖它是否会写 preference）
+        // 下面仍用注册表兜底，避免关闭失败。
+      }
       execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f');
     } catch (error) {
       console.error('Failed to disable system proxy on exit:', error);

@@ -57,10 +57,14 @@ pub(crate) fn apply_windows_window_icons(_window: &WebviewWindow) {}
 /// On some Windows builds the main content stays blank until the user clicks
 /// (input/focus triggers a composition pass). Nudging show/focus + a layout
 /// reflow after startup makes the dashboard appear without interaction.
-pub(crate) fn kick_window_paint(window: &WebviewWindow) {
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+///
+/// `force_show` 为 false 时（静默启动）只做 webview 重绘，不 show/focus 窗口。
+pub(crate) fn kick_window_paint(window: &WebviewWindow, force_show: bool) {
+    if force_show {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
     // Tiny reflow: WebView2 often composites the first transparent frame only
     // after a resize/focus/input event.
     let _ = window.eval(
@@ -246,7 +250,8 @@ fn set_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     if cfg!(target_os = "windows") {
         let exe = std::env::current_exe().map_err(|err| err.to_string())?;
         if enabled {
-            let value = format!("\"{}\"", exe.to_string_lossy());
+            // 开机自启附带 --autostart，便于识别并配合 silentStart
+            let value = format!("\"{}\" --autostart", exe.to_string_lossy());
             let _ = command_output(
                 "reg",
                 &[
@@ -320,7 +325,7 @@ fn set_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
             let exe = std::env::current_exe().map_err(|err| err.to_string())?;
             fs::create_dir_all(&autostart_dir).map_err(|err| err.to_string())?;
             let content = format!(
-                "[Desktop Entry]\nType=Application\nName=FlyClash\nExec=\"{}\"\nX-GNOME-Autostart-enabled=true\n",
+                "[Desktop Entry]\nType=Application\nName=FlyClash\nExec=\"{}\" --autostart\nX-GNOME-Autostart-enabled=true\n",
                 exe.to_string_lossy()
             );
             fs::write(&desktop, content).map_err(|err| err.to_string())?;
@@ -1039,6 +1044,18 @@ pub(crate) fn set_system_proxy(
     host: &str,
     port: u16,
 ) -> Result<(), String> {
+    set_system_proxy_with_options(app, enabled, host, port, true)
+}
+
+/// 设置系统代理。
+/// `persist_preference=false` 时只操作系统代理状态，不改用户偏好（用于退出清理）。
+pub(crate) fn set_system_proxy_with_options(
+    app: &AppHandle,
+    enabled: bool,
+    host: &str,
+    port: u16,
+    persist_preference: bool,
+) -> Result<(), String> {
     let bypass = setting(app, "system_proxy_bypass", json!(DEFAULT_PROXY_BYPASS))
         .ok()
         .and_then(|value| value.as_str().map(ToString::to_string));
@@ -1065,7 +1082,9 @@ pub(crate) fn set_system_proxy(
         std::env::remove_var("https_proxy");
         std::env::remove_var("all_proxy");
     }
-    set_setting(app, "systemProxyEnabled", json!(enabled))?;
+    if persist_preference {
+        set_setting(app, "systemProxyEnabled", json!(enabled))?;
+    }
     Ok(())
 }
 
@@ -1809,19 +1828,11 @@ async fn dispatch_compat_call(
         }
         "getSystemProxyStatus" => Ok(system_proxy_status(app)),
         "getProxyStatus" => {
-            let status = system_proxy_status(app);
-            let enabled = status
-                .get("enabled")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if setting(app, "systemProxyEnabled", json!(false))?
+            // 返回用户偏好（不是当前 OS 代理瞬时状态），避免启动早期读到“关”后把偏好覆盖掉
+            let preferred = setting(app, "systemProxyEnabled", json!(false))?
                 .as_bool()
-                .unwrap_or(false)
-                != enabled
-            {
-                set_setting(app, "systemProxyEnabled", json!(enabled))?;
-            }
-            Ok(Value::Bool(enabled))
+                .unwrap_or(false);
+            Ok(Value::Bool(preferred))
         }
         "setAsDefaultProtocolClient" | "registerProtocol" => {
             let protocol = arg_string(args, 0)

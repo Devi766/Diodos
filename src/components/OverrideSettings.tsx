@@ -110,6 +110,8 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
   const [dnsConfig, setDnsConfig] = useState<DnsConfig>({});
   const [hostsConfig, setHostsConfig] = useState<HostsConfig>({});
   const [snifferConfig, setSnifferConfig] = useState<SnifferConfig>({});
+  // DNS 覆写总开关：默认关闭
+  const [dnsOverrideEnabled, setDnsOverrideEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadErrors, setLoadErrors] = useState<Record<'kernel' | 'dns' | 'sniffer', string | null>>({
@@ -181,6 +183,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
       const result = await api.getDnsConfig();
       if (result.success) {
         setDnsConfig(result.config || {});
+        setDnsOverrideEnabled(result.overrideEnabled === true);
 
         if (result.hosts) {
           const hostsArray = Object.entries(result.hosts).map(([domain, value]) => ({
@@ -278,14 +281,18 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
         }
       });
 
+      if (dnsOverrideEnabled && cleanedDnsConfig.enable === undefined) {
+        cleanedDnsConfig.enable = true;
+      }
+
       const dnsResult = ensureResultSuccess(
-        await api.saveDnsConfig(cleanedDnsConfig),
+        await api.saveDnsConfig(cleanedDnsConfig, { overrideEnabled: dnsOverrideEnabled }),
         t('overrideSettings.dnsConfigSaveFailed')
       );
       if (typeof dnsResult.restarted === 'boolean') restartStates.push(dnsResult.restarted);
 
-      // 保存Hosts配置
-      if (dnsConfig['use-hosts']) {
+      // 保存Hosts配置（仅覆写开启时写入）
+      if (dnsOverrideEnabled && dnsConfig['use-hosts']) {
         if (!hasElectronMethod(api, 'saveHostsConfig')) {
           throw new Error(t('overrideSettings.apiUnavailable'));
         }
@@ -685,23 +692,36 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
       {/* DNS设置 */}
       {activeTab === 'dns' && (
         <div className="space-y-4">
-          {/* 启用 DNS */}
+          {/* DNS 覆写总开关 */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enableDns')}</label>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enableDnsDesc')}</p>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.dnsOverride')}</label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.dnsOverrideDesc')}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
                 type="checkbox"
                 className="sr-only peer"
-                checked={dnsConfig.enable !== false}
-                onChange={(e) => updateDnsConfig('enable', e.target.checked)}
+                checked={dnsOverrideEnabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  setDnsOverrideEnabled(enabled);
+                  if (enabled) {
+                    updateDnsConfig('enable', true);
+                  }
+                }}
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/40 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
             </label>
           </div>
 
+          {!dnsOverrideEnabled && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+              {t('overrideSettings.dnsOverrideOffHint')}
+            </div>
+          )}
+
+          <div className={`space-y-4 ${dnsOverrideEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
           {/* IPv6 */}
           <div className="flex items-center justify-between">
             <div>
@@ -714,6 +734,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
                 className="sr-only peer"
                 checked={dnsConfig.ipv6 || false}
                 onChange={(e) => updateDnsConfig('ipv6', e.target.checked)}
+                disabled={!dnsOverrideEnabled}
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/40 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
             </label>
@@ -889,6 +910,7 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
               />
             </div>
           )}
+          </div>
         </div>
       )}
 

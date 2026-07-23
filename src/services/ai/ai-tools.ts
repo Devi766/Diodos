@@ -320,6 +320,7 @@ interface MihomoAPI {
   proxies: () => Promise<any>;
   putProxies: (opts: { group: string; proxy: string }) => Promise<any>;
   connections: () => Promise<any>;
+  deleteConnections?: (id?: string) => Promise<any>;
   proxiesDelay: (name: string, opts?: any) => Promise<any>;
   groupDelay: (group: string, opts?: any) => Promise<any>;
   proxyProviders: () => Promise<any>;
@@ -504,7 +505,35 @@ export async function executeTool(
       case 'switch_mode': {
         const modeMap: Record<string, string> = { rule: 'rule', global: 'global', direct: 'direct' };
         const mode = modeMap[args.mode] || args.mode;
+        if (mode === 'global') {
+          try {
+            const proxiesPayload: any = await mihomoAPI.proxies();
+            const proxies = proxiesPayload?.proxies || proxiesPayload || {};
+            const globalProxy = proxies['GLOBAL'];
+            const members = new Set(
+              Array.isArray(globalProxy?.all)
+                ? globalProxy.all
+                    .map((item: any) => (typeof item === 'string' ? item : item?.name))
+                    .filter((name: any) => typeof name === 'string' && name.length > 0)
+                : [],
+            );
+            for (const groupName of ['PROXY', 'Auto', 'AUTO']) {
+              const now = typeof proxies[groupName]?.now === 'string' ? proxies[groupName].now.trim() : '';
+              if (!now || now.toUpperCase() === 'DIRECT' || now.toUpperCase() === 'REJECT') continue;
+              if (members.size > 0 && !members.has(now)) continue;
+              if (globalProxy?.now !== now) {
+                await mihomoAPI.putProxies({ group: 'GLOBAL', proxy: now });
+              }
+              break;
+            }
+          } catch {}
+        }
         await mihomoAPI.patchConfigs({ mode } as any);
+        try {
+          if (typeof mihomoAPI.deleteConnections === 'function') {
+            await mihomoAPI.deleteConnections();
+          }
+        } catch {}
         return { success: true, content: `已切换到${mode === 'rule' ? '规则' : mode === 'global' ? '全局' : '直连'}模式` };
       }
 

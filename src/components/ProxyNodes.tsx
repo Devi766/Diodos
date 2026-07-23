@@ -142,12 +142,53 @@ const readCachedProxyMode = (fallback: ProxyMode = 'rule'): ProxyMode => {
 
 const filterProxyGroupsForMode = (items: ProxyGroup[], mode: ProxyMode): ProxyGroup[] => {
   if (mode === 'direct') return [];
+  // 全局模式流量只认 GLOBAL.now，UI 也只展示 GLOBAL，避免误改其它策略组
   if (mode === 'global') {
-    const globalGroups = items.filter(group => group.name === 'GLOBAL');
-    const otherGroups = items.filter(group => group.name !== 'GLOBAL');
-    return [...globalGroups, ...otherGroups];
+    return items.filter(group => group.name === 'GLOBAL');
   }
   return items.filter(group => group.name !== 'GLOBAL');
+};
+
+const isBuiltinOutboundName = (name?: string | null): boolean => {
+  if (!name) return true;
+  const upper = name.trim().toUpperCase();
+  return upper === 'DIRECT' || upper === 'REJECT' || upper === 'REJECT-DROP' || upper === 'PASS';
+};
+
+/** 切入全局模式时，把规则模式正在用的节点同步到 GLOBAL */
+const syncGlobalOutboundFromPrimary = async (
+  proxies: Record<string, any> | undefined,
+  preferredGroupNames: string[],
+): Promise<string | null> => {
+  if (!proxies || typeof proxies !== 'object') return null;
+  const globalProxy = proxies['GLOBAL'];
+  if (!globalProxy || !Array.isArray(globalProxy.all)) return null;
+
+  const globalMembers = new Set(
+    globalProxy.all
+      .map((item: unknown) => (typeof item === 'string' ? item : (item as any)?.name))
+      .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0),
+  );
+
+  const currentGlobalNow =
+    typeof globalProxy.now === 'string' && globalProxy.now.trim() ? globalProxy.now.trim() : null;
+
+  let candidate: string | null = null;
+  for (const groupName of preferredGroupNames) {
+    if (!groupName || groupName === 'GLOBAL') continue;
+    const group = proxies[groupName];
+    const now = typeof group?.now === 'string' ? group.now.trim() : '';
+    if (!now || isBuiltinOutboundName(now)) continue;
+    if (!globalMembers.has(now)) continue;
+    candidate = now;
+    break;
+  }
+
+  if (!candidate) return currentGlobalNow;
+  if (currentGlobalNow === candidate) return currentGlobalNow;
+
+  await mihomoClient.selectNodeForGroup('GLOBAL', candidate);
+  return candidate;
 };
 
 const normalizeCacheIdentity = (value: unknown): string | null => {
@@ -712,12 +753,10 @@ const renderGroupIcon = (icon?: string | null) => {
 // 节点组件
 export default function ProxyNodes() {
   const { t } = useTranslation();
+  // groups 始终保存完整代理组（含 GLOBAL）；展示层再按 mode 过滤，避免切模式瞬间空列表
   const [groups, setGroups] = useState<ProxyGroup[]>(() => {
     if (proxyNodesViewCache.groups.length > 0) {
-      return filterProxyGroupsForMode(
-        proxyNodesViewCache.groups,
-        readCachedProxyMode(normalizeProxyMode(proxyNodesViewCache.currentMode)),
-      );
+      return proxyNodesViewCache.groups;
     }
 
     const cachedGroups = readProxyGroupsSessionCache();
@@ -730,6 +769,7 @@ export default function ProxyNodes() {
     return [];
   });
   const [isLoading, setIsLoading] = useState(() => !proxyNodesViewCache.loaded);
+  const [isModeSwitching, setIsModeSwitching] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNode, setSelectedNode] = useState<string | null>(() => proxyNodesViewCache.selectedNode);
   const [activeTab, setActiveTab] = useState<string>('all');
@@ -1452,22 +1492,21 @@ export default function ProxyNodes() {
         console.error('获取当前模式失败:', error);
       }
 
-      // 直连模式提前结束
+      // 直连模式只隐藏列表，不丢弃已加载的完整组数据，避免切回时闪空
       if (currentProxyMode === 'direct') {
         if (isDev) {
-          console.log('直连模式，不加载节点列表');
+          console.log('直连模式，保留已加载节点目录');
         }
         writeMihomoRunningCache(true);
         writeProxyModeCache(currentProxyMode, { broadcast: false });
         writeProxyGroupsCache(
           proxyGroupsCacheValue(currentProxyMode, groupsRef.current, proxyNodesViewCache.configOrder?.configPath),
         );
-        setSelectedNode(null);
         if (isInitialLoadRef.current) {
           setIsLoading(false);
           isInitialLoadRef.current = false;
         }
-        return;
+        // 仍继续拉取完整组，方便切回规则/全局时瞬时过滤展示
       }
 
       const proxiesData = await mihomoAPI.proxies();
@@ -1565,30 +1604,22 @@ export default function ProxyNodes() {
 
       const groupsData: ProxyGroup[] = [];
       let nextSelectedNode: string | null = null;
-      
-      // 根据当前模式决定如何显示节点
-      if (currentProxyMode === 'global') {
-        // 全局模式下，GLOBAL置顶，同时继续显示其它代理组
-        if (isDev) {
-          console.log(`[调试] 当前为全局模式，GLOBAL置顶并显示其它代理组`);
-        }
-        
-        try {
-          // 使用mihomoAPI获取GLOBAL代理组信息，不再直接用fetch
-          const globalData = data.proxies['GLOBAL'];
-          
-          if (globalData && globalData.all && Array.isArray(globalData.all)) {
-            const isHiddenGlobal = (globalData as any)?.hidden === true || hiddenGroups.has('GLOBAL');
-            if (isHiddenGlobal) {
-              hiddenGroups.add('GLOBAL');
-              if (isDev) {
-                console.log('[调试] GLOBAL 代理组设置了 hidden:true，跳过展示');
-              }
-              if (globalData.now) {
-                nextSelectedNode = globalData.now;
-              }
-            } else {
 
+      // 始终构建完整组目录（含 GLOBAL），展示层再按 mode 过滤。
+      // 这样切规则/全局只改过滤结果，不会先闪空列表。
+      try {
+        const globalData = data.proxies['GLOBAL'];
+        if (globalData && globalData.all && Array.isArray(globalData.all)) {
+          const isHiddenGlobal = (globalData as any)?.hidden === true || hiddenGroups.has('GLOBAL');
+          if (isHiddenGlobal) {
+            hiddenGroups.add('GLOBAL');
+            if (isDev) {
+              console.log('[调试] GLOBAL 代理组设置了 hidden:true，跳过展示');
+            }
+            if (globalData.now) {
+              nextSelectedNode = globalData.now;
+            }
+          } else {
             const runtimeNodeNames = globalData.all as string[];
             const nodesOrder = orderedRuntimeNodes(
               runtimeNodeNames,
@@ -1605,7 +1636,7 @@ export default function ProxyNodes() {
                   return null;
                 }
                 const isGroup = isGroupType(node.type);
-              
+
                 return {
                   name: nodeName,
                   type: node.type,
@@ -1616,11 +1647,10 @@ export default function ProxyNodes() {
                 };
               })
               .filter((n: ProxyNode | null): n is ProxyNode => n !== null);
-            
+
             const globalConfigGroup = configOrder?.proxyGroups?.find((g) => g.name === 'GLOBAL');
             const globalConfigIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
 
-            // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
             let globalIcon = globalConfigIcon;
             try {
               const result = await window.electronAPI?.proxyIcon?.getGroupIcon('GLOBAL', globalConfigIcon);
@@ -1638,38 +1668,21 @@ export default function ProxyNodes() {
               now: globalData.now,
               icon: globalIcon,
             });
-            }
           }
-        } catch (error) {
-          if (isDev) {
-            console.error('[调试] 获取GLOBAL代理组失败:', error);
-          }
-          showError(`获取GLOBAL代理组失败: ${String(error)}`);
+        }
+      } catch (error) {
+        if (isDev) {
+          console.error('[调试] 获取GLOBAL代理组失败:', error);
         }
       }
 
-      // 直连模式已在上方提前返回；规则模式下不显示 GLOBAL，全局模式下 GLOBAL 已置顶。
-      if (isDev) {
-        console.log(
-          currentProxyMode === 'global'
-            ? `[调试] 当前为全局模式，继续显示GLOBAL之外的代理组`
-            : `[调试] 当前为规则模式，不显示GLOBAL代理组`,
-        );
-      }
       // 使用配置文件顺序构建其余代理组
       const selectorGroups: {[key: string]: any} = {};
       let groupsOrder: string[] = []; // 记录组的原始顺序
 
-      // 提取所有selector类型的组；GLOBAL由全局模式置顶逻辑单独处理，规则模式也不展示
+      // 提取所有 selector 类型的组；GLOBAL 已单独构建
       for (const [name, proxy] of Object.entries<any>(data.proxies)) {
         if (name === 'GLOBAL') {
-          if (isDev) {
-            console.log(
-              currentProxyMode === 'global'
-                ? '[调试] 全局模式下GLOBAL已置顶，跳过重复构建'
-                : '[调试] 规则模式下忽略GLOBAL代理组',
-            );
-          }
           continue;
         }
 
@@ -1887,6 +1900,22 @@ export default function ProxyNodes() {
         });
       }
 
+      // 按当前模式决定“当前节点”优先读哪个组
+      if (currentProxyMode === 'global') {
+        const globalGroup = groupsData.find((group) => group.name === 'GLOBAL');
+        if (globalGroup?.now) {
+          nextSelectedNode = globalGroup.now;
+        }
+      } else {
+        for (const group of groupsData) {
+          if (group.name === 'GLOBAL') continue;
+          if (group.now) {
+            nextSelectedNode = group.now;
+            break;
+          }
+        }
+      }
+
       // 从localStorage读取收藏节点
       try {
         const savedFavorites = localStorage.getItem('favoriteNodes');
@@ -1896,13 +1925,14 @@ export default function ProxyNodes() {
       } catch (error) {
         console.error('读取收藏节点失败:', error);
       }
-      
-      // 记录当前选中的节点，无需关注是哪个组
-      // 遍历所有组找出被选中的节点
-      for (const group of groupsData) {
-        if (group.now) {
-          nextSelectedNode = group.now;
-          break;
+
+      // 兜底：如果上面没解析到，再扫一遍完整列表
+      if (!nextSelectedNode) {
+        for (const group of groupsData) {
+          if (group.now) {
+            nextSelectedNode = group.now;
+            break;
+          }
         }
       }
       
@@ -2649,25 +2679,64 @@ export default function ProxyNodes() {
     );
   };
 
-  // 处理模式切换
+  // 处理模式切换：先本地切换展示，后台静默同步，避免空列表闪一下
   const handleModeChange = async (mode: string) => {
     const nextMode = normalizeProxyMode(mode, currentModeRef.current);
+    if (nextMode === currentModeRef.current || isModeSwitching) return;
+    const previousMode = currentModeRef.current;
+
+    // 立刻切换 UI 模式；groups 是完整目录，modeGroups 会瞬时过滤出正确内容
+    setCurrentMode(nextMode);
+    writeProxyModeCache(nextMode);
+    setIsModeSwitching(true);
+
     try {
-      // 更新UI状态
-      setCurrentMode(nextMode);
-      writeProxyModeCache(nextMode, { broadcast: false });
-      
+      // 切入全局前先同步 GLOBAL 出口，避免 GLOBAL.now 仍是 DIRECT/旧节点导致全站超时
+      if (nextMode === 'global') {
+        try {
+          const proxiesPayload: any = await mihomoClient.getProxies();
+          const proxies = proxiesPayload?.proxies || proxiesPayload || {};
+          const preferredGroups = [
+            ...groupsRef.current.map((group) => group.name),
+            'PROXY',
+            'Auto',
+            'AUTO',
+          ];
+          const synced = await syncGlobalOutboundFromPrimary(proxies, preferredGroups);
+          if (synced) {
+            setSelectedNode(synced);
+            // 同步本地 GLOBAL.now，立刻反映到 UI
+            setGroups((prev) =>
+              prev.map((group) =>
+                group.name === 'GLOBAL' ? { ...group, now: synced } : group,
+              ),
+            );
+          }
+        } catch (error) {
+          console.warn('同步 GLOBAL 出口失败:', error);
+        }
+      }
+
       // 更新Mihomo配置
       await mihomoAPI.patchConfigs({ mode: nextMode });
-      
-      // 清除连接是后续清理动作，失败不代表模式切换失败
+
+      // 持久化代理模式，重启后由 runtime 合并恢复
+      try {
+        if (typeof window !== 'undefined' && window.electronAPI?.saveProxySettings) {
+          await window.electronAPI.saveProxySettings({ mode: nextMode });
+        }
+      } catch (error) {
+        console.warn('持久化代理模式失败:', error);
+      }
+
+      // 模式切换后断开旧连接，避免旧会话继续按原模式走
       try {
         await mihomoAPI.deleteConnections();
       } catch (error) {
         console.warn('切换模式后清除连接失败:', error);
       }
 
-      // 在模式切换后立即刷新节点列表
+      // 后台刷新完整组数据；已有列表不先清空
       try {
         await fetchProxies();
       } catch (error) {
@@ -2679,21 +2748,22 @@ export default function ProxyNodes() {
           detail: { source: 'proxy-nodes', action: 'mode-changed', mode: nextMode },
         }));
       }
-      
-      // 显示成功提示
-      const modeText = nextMode === 'rule' ? t('nodes.ruleMode') : nextMode === 'global' ? t('nodes.globalMode') : t('nodes.directMode');
-      showSuccess(t('nodes.switchedToMode', { mode: modeText }));
     } catch (error) {
       console.error('切换模式失败:', error);
       showError(t('nodes.switchModeFailed', { error: formatNodesError(error) }));
-      
+
       // 失败时恢复UI状态
       try {
         const config = await mihomoAPI.configs();
-        const restoredMode = normalizeProxyMode(config.mode, currentModeRef.current);
+        const restoredMode = normalizeProxyMode(config.mode, previousMode);
         setCurrentMode(restoredMode);
-        writeProxyModeCache(restoredMode, { broadcast: false });
-      } catch {}
+        writeProxyModeCache(restoredMode);
+      } catch {
+        setCurrentMode(previousMode);
+        writeProxyModeCache(previousMode);
+      }
+    } finally {
+      setIsModeSwitching(false);
     }
   };
   
@@ -2845,38 +2915,42 @@ export default function ProxyNodes() {
       showError(t('nodes.switchFailed'));
       return;
     }
-    
+
+    // 全局模式真实出口只有 GLOBAL，强制写到 GLOBAL
+    const effectiveGroupName =
+      currentModeRef.current === 'global' ? 'GLOBAL' : groupName;
+
     // 检查选择的是当前组内相同的节点
-    const group = groups.find(g => g.name === groupName);
+    const group = groups.find(g => g.name === effectiveGroupName) || groups.find(g => g.name === groupName);
     if (!group) return;
-    
+
     // 如果在当前组中已经选中了该节点，则不需要再次切换
-    if (group.now === nodeName) {
+    if (group.now === nodeName && effectiveGroupName === groupName) {
       if (isDev) {
-        console.log(`节点 ${nodeName} 已在组 ${groupName} 中被选中，无需切换`);
+        console.log(`节点 ${nodeName} 已在组 ${effectiveGroupName} 中被选中，无需切换`);
       }
       return;
     }
-    
+
     // 保存旧节点，用于恢复
     const oldNode = group.now;
-    
+
     // 乐观更新UI
-    setGroups(prev => prev.map(g => 
-      g.name === groupName 
+    setGroups(prev => prev.map(g =>
+      g.name === effectiveGroupName
         ? {...g, now: nodeName}
         : g
     ));
-    
+
     // 判断是否是主要代理组(PROXY或GLOBAL)
-    const isMainGroup = groupName === 'PROXY' || groupName === 'GLOBAL';
+    const isMainGroup = effectiveGroupName === 'PROXY' || effectiveGroupName === 'GLOBAL';
     if (isMainGroup) {
       setSelectedNode(nodeName);
     }
 
     pendingNodeSelectionRef.current = {
       nodeName,
-      groupName,
+      groupName: effectiveGroupName,
       oldNode,
       isMainGroup,
     };
@@ -3190,25 +3264,13 @@ export default function ProxyNodes() {
                           </div>
                         </div>
                       </button>
-
-                      <div className="flex items-center gap-2 pr-3">
+                      <div className="flex items-center gap-1 pr-1">
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!isCollapsed) {
-                              handleTestGroup(group.name);
-                            }
-                          }}
-                          disabled={isCollapsed || isTestingGroup}
-                          aria-hidden={isCollapsed}
-                          tabIndex={isCollapsed ? -1 : 0}
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition-[opacity,transform,color,background-color] duration-200 ease-out hover:bg-slate-100 hover:text-gray-700 disabled:cursor-not-allowed dark:text-gray-400 dark:hover:bg-slate-800 dark:hover:text-gray-200 ${
-                            isCollapsed
-                              ? 'pointer-events-none scale-95 opacity-0'
-                              : 'scale-100 opacity-100 disabled:opacity-50'
-                          }`}
-                          title={t('nodes.testAllNodes')}
+                          onClick={() => handleTestGroup(group.name)}
+                          className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition p-1"
+                          title={t('nodes.testGroup')}
+                          disabled={isTestingGroup}
                         >
                           <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
                         </button>
@@ -3246,6 +3308,10 @@ export default function ProxyNodes() {
                 );
               })}
             </>
+          ) : isModeSwitching || isLoading ? (
+            <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">
+              {t('common.loading')}
+            </div>
           ) : (
             <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">
               {t('nodes.noMatchingNodes')}

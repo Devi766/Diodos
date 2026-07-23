@@ -836,20 +836,24 @@ module.exports = function initTunManager(context) {
 
       const updatePayload = { tun: baseTun };
 
+      // 仅在开启 DNS 覆写时注入 TUN 默认 DNS，避免静默覆盖订阅私有 DNS
       if (enabled) {
-        const currentSettings = context.getUserSettings();
-        const currentDns = currentSettings.dns || {};
-        const currentMode = currentDns['enhanced-mode'];
+        const currentSettings = context.getUserSettings ? context.getUserSettings() : {};
+        const dnsOverrideEnabled = currentSettings.dnsOverrideEnabled === true;
+        if (dnsOverrideEnabled) {
+          const currentDns = currentSettings.dns || {};
+          const currentMode = currentDns['enhanced-mode'];
 
-        if (!currentMode || currentMode === 'fake-ip') {
-          const ipv6 = currentSettings.ipv6 || false;
-          updatePayload.dns = {
-            enable: true,
-            ipv6: ipv6,
-            'enhanced-mode': 'fake-ip',
-            'fake-ip-range': '198.18.0.1/16',
-            ...currentDns
-          };
+          if (!currentMode || currentMode === 'fake-ip') {
+            const ipv6 = currentSettings.ipv6 || false;
+            updatePayload.dns = {
+              enable: true,
+              ipv6: ipv6,
+              'enhanced-mode': 'fake-ip',
+              'fake-ip-range': '198.18.0.1/16',
+              ...currentDns
+            };
+          }
         }
       }
 
