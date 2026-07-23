@@ -86,7 +86,6 @@ async fn run_stream(
     let timeout_ms = options.timeout.unwrap_or(60_000).max(1);
     let client = match reqwest::Client::builder()
         .connect_timeout(Duration::from_millis(timeout_ms))
-        .danger_accept_invalid_certs(true)
         .build()
     {
         Ok(client) => client,

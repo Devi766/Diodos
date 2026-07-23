@@ -46,11 +46,7 @@ pub(crate) fn proxy_icon_default_config() -> Value {
 }
 
 pub(crate) fn proxy_icon_config(app: &AppHandle) -> Result<Value, String> {
-    Ok(setting(
-        app,
-        "proxyIconConfig",
-        proxy_icon_default_config(),
-    )?)
+    setting(app, "proxyIconConfig", proxy_icon_default_config())
 }
 
 fn save_proxy_icon_config(app: &AppHandle, config: Value) -> CompatResult {
@@ -220,7 +216,6 @@ async fn cached_icon_data_url(
     }
 
     let response = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()

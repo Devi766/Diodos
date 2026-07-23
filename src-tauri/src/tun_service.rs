@@ -32,8 +32,8 @@ use crate::{
 type CompatResult = Result<Value, String>;
 
 const WINDOWS_ELEVATED_TASK_NAME: &str = "FlyClash-Elevated";
-const REQUIRED_HELPER_VERSION: &str = "1.0.3";
-/// Keep the system kernel path compatible with the Electron main branch.
+const REQUIRED_HELPER_VERSION: &str = "1.0.4";
+/// System kernel path used after macOS authorization.
 const MACOS_SYSTEM_KERNEL_DIR: &str = "/Library/Application Support/Flycast";
 const MACOS_SYSTEM_KERNEL_NAME: &str = "mihomo";
 #[cfg(target_os = "windows")]
@@ -377,7 +377,9 @@ fn revoke_macos_core_permission(app: &AppHandle) -> CompatResult {
     let system_path = macos_system_kernel_path();
     if !system_path.exists() {
         set_setting(app, "tunElevateTask", json!(false))?;
-        return Ok(success(json!({ "deleted": false, "message": "未找到已授权内核" })));
+        return Ok(success(
+            json!({ "deleted": false, "message": "未找到已授权内核" }),
+        ));
     }
 
     let shell = format!(
@@ -419,11 +421,7 @@ fn grant_linux_tun_permissions(app: &AppHandle) -> CompatResult {
     let path = kernel.to_string_lossy().to_string();
     // Prefer capabilities; fall back to setuid root.
     let setcap = Command::new("pkexec")
-        .args([
-            "setcap",
-            "cap_net_admin,cap_net_bind_service=+eip",
-            &path,
-        ])
+        .args(["setcap", "cap_net_admin,cap_net_bind_service=+eip", &path])
         .output();
     let ok = match setcap {
         Ok(output) if output.status.success() => true,
@@ -537,7 +535,7 @@ fn revoke_linux_core_permission(app: &AppHandle) -> CompatResult {
     })))
 }
 
-/// Windows TUN enable permission check that mirrors Electron tun-manager.
+/// Windows TUN enable permission check.
 /// Returns Ok(()) when the selected elevation mode can run TUN, otherwise an
 /// error message suitable for UI display.
 fn ensure_windows_tun_enable_permission(app: &AppHandle) -> Result<(), String> {
@@ -1276,10 +1274,8 @@ async fn dispatch_compat_call(
                 // (UI "修复 IPC" reuses this method).
                 match core_service::ensure_helper_service_ipc_ready() {
                     Ok(outcome) => {
-                        let repaired = matches!(
-                            outcome,
-                            core_service::HelperEnsureOutcome::RepairedIpc
-                        );
+                        let repaired =
+                            matches!(outcome, core_service::HelperEnsureOutcome::RepairedIpc);
                         let message = match outcome {
                             core_service::HelperEnsureOutcome::AlreadyReady => {
                                 "service already ready"
@@ -1378,7 +1374,7 @@ async fn dispatch_compat_call(
                 set_setting(app, "pendingTunEnable", json!(false))?;
             }
             if enabled && cfg!(target_os = "windows") {
-                // Mirror Electron: hard-check service/task elevation before enable.
+                // Check service/task elevation before enabling TUN.
                 if let Err(error) = ensure_windows_tun_enable_permission(app) {
                     set_setting(app, "tunModeEnabled", json!(previous_enabled))?;
                     let _ = window.emit("tun-status", previous_enabled);

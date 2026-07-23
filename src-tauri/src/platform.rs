@@ -12,15 +12,18 @@ use std::os::windows::process::CommandExt;
 
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
+#[cfg(target_os = "macos")]
+use tauri::window::EffectState;
 use tauri::{
     window::{Color, Effect, EffectsBuilder},
     AppHandle, Emitter, Manager, Theme, WebviewWindow,
 };
-#[cfg(target_os = "macos")]
-use tauri::window::EffectState;
 use tauri_plugin_deep_link::DeepLinkExt;
 
-use crate::storage::{set_setting, setting};
+use crate::{
+    resources::find_tool_path,
+    storage::{set_setting, setting},
+};
 
 type CompatResult = Result<Value, String>;
 
@@ -133,9 +136,23 @@ unsafe fn set_win_icons_from_resource(hwnd: isize) {
     let res_name = IDI_APPICON as *const u16;
 
     // ICON_SMALL: 32x32 is the common taskbar size at 100% DPI.
-    let small = LoadImageW(module, res_name, IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR | LR_SHARED);
+    let small = LoadImageW(
+        module,
+        res_name,
+        IMAGE_ICON,
+        32,
+        32,
+        LR_DEFAULTCOLOR | LR_SHARED,
+    );
     // ICON_BIG: 256 for high-DPI taskbar / alt-tab.
-    let big = LoadImageW(module, res_name, IMAGE_ICON, 256, 256, LR_DEFAULTCOLOR | LR_SHARED);
+    let big = LoadImageW(
+        module,
+        res_name,
+        IMAGE_ICON,
+        256,
+        256,
+        LR_DEFAULTCOLOR | LR_SHARED,
+    );
 
     if small != 0 {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, small as LPARAM);
@@ -171,7 +188,6 @@ fn next_lightweight_timer_token() -> u64 {
     *gen = gen.saturating_add(1);
     *gen
 }
-
 
 fn now_millis() -> u128 {
     SystemTime::now()
@@ -518,7 +534,7 @@ pub(crate) fn schedule_auto_lightweight_timer(app: &AppHandle, delay_secs: u64) 
 fn apply_solid_appearance(window: &WebviewWindow, is_dark: bool) -> Result<(), String> {
     // Clear any previous system effect first so a failed acrylic/mica path can recover.
     let _ = window.set_effects(None);
-    // Match main Electron solid colors: dark #1a1a1a / light #e5e7eb
+    // Solid colors: dark #1a1a1a / light #e5e7eb.
     let color = if is_dark {
         Color(26, 26, 26, 255)
     } else {
@@ -535,7 +551,7 @@ fn theme_setting(app: Option<&AppHandle>) -> String {
         .unwrap_or_else(|| "system".to_string())
 }
 
-/// Mirror Electron `nativeTheme.themeSource` so Windows DWM backdrop follows the app theme.
+/// Keep the Windows DWM backdrop aligned with the app theme.
 fn apply_native_theme_source(window: &WebviewWindow, theme: &str) {
     let source = match theme {
         "dark" => Some(Theme::Dark),
@@ -568,21 +584,19 @@ fn apply_effectful_appearance(
         Err(error) => {
             // Windows/WebView2 can reject acrylic/mica on some builds. Fall back to a
             // solid surface so the UI never becomes a fully invisible transparent pane.
-            eprintln!(
-                "[appearance] {label} effect failed, falling back to solid: {error}"
-            );
+            eprintln!("[appearance] {label} effect failed, falling back to solid: {error}");
             apply_solid_appearance(window, is_dark)
         }
     }
 }
 
-/// Electron `applyMacOSBackdrop`: always `under-window` vibrancy for non-solid modes.
+/// Apply `under-window` vibrancy for non-solid macOS modes.
 ///
 /// Also applies a macOS-only corner radius so the window chrome matches the
 /// system rounded look instead of a hard rectangle over vibrancy.
 #[cfg(target_os = "macos")]
 fn apply_macos_vibrancy(window: &WebviewWindow, is_dark: bool) -> Result<(), String> {
-    // Clear any previous material first (Electron calls setVibrancy(null)).
+    // Clear any previous material before applying a new one.
     let _ = window.set_effects(None);
     window
         .set_background_color(Some(Color(0, 0, 0, 0)))
@@ -619,7 +633,7 @@ fn apply_macos_vibrancy(window: &WebviewWindow, is_dark: bool) -> Result<(), Str
         }
     }
 
-    // Match Electron fallback tint when vibrancy is unavailable.
+    // Fallback tint when vibrancy is unavailable.
     // dark  => #e60f172a, light => #fcffffff
     let fallback = if is_dark {
         Color(15, 23, 42, 0xe6)
@@ -661,7 +675,7 @@ fn apply_appearance_mode_for_theme(
 
     let is_dark = current_is_dark(window, app);
 
-    // Main Electron acrylic tint:
+    // Acrylic tint:
     // dark  => rgba(0xf0, 24, 32, 68)
     // light => rgba(0x99, 255, 255, 255)
     let acrylic_color = if is_dark {
@@ -670,7 +684,7 @@ fn apply_appearance_mode_for_theme(
         Color(255, 255, 255, 0x99)
     };
 
-    // macOS vibrancy: match Electron `setVibrancy('under-window')`.
+    // Use the under-window vibrancy material on macOS.
     // Requires macos-private-api. Keep the webview fully transparent so the
     // system material can show through the glass UI layers.
     #[cfg(target_os = "macos")]
@@ -685,7 +699,7 @@ fn apply_appearance_mode_for_theme(
                     .map_err(|err| err.to_string())
             }
             // dynamic / acrylic share the same under-window vibrancy on macOS
-            // (Electron does not distinguish them for NSVisualEffectView).
+            // (NSVisualEffectView renders these modes with the same material.)
             _ => apply_macos_vibrancy(window, is_dark),
         };
     }
@@ -714,11 +728,7 @@ fn apply_appearance_mode_for_theme(
             // and are the root cause of "dark UI on light window background".
             _ if is_dark => apply_effectful_appearance(
                 window,
-                EffectsBuilder::new().effects([
-                    Effect::TabbedDark,
-                    Effect::MicaDark,
-                    Effect::Blur,
-                ]),
+                EffectsBuilder::new().effects([Effect::TabbedDark, Effect::MicaDark, Effect::Blur]),
                 "dynamic-dark",
                 true,
             ),
@@ -754,7 +764,6 @@ pub(crate) fn resolved_theme(window: &WebviewWindow, theme: &str) -> String {
         })
         .unwrap_or_else(|| "light".to_string())
 }
-
 
 pub(crate) fn window_state_payload(window: &WebviewWindow) -> Value {
     let maximized = window.is_maximized().unwrap_or(false);
@@ -1533,6 +1542,68 @@ fn loopback_clear_all(app: &AppHandle) -> CompatResult {
     loopback_set(app, Vec::new())
 }
 
+fn loopback_tool_path(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    if !cfg!(target_os = "windows") {
+        return Ok(None);
+    }
+    find_tool_path(app, "EnableLoopback.exe")
+}
+
+fn loopback_tool_available(app: &AppHandle) -> CompatResult {
+    let available = loopback_tool_path(app)?.is_some();
+    Ok(success(json!({ "available": available })))
+}
+
+fn loopback_open_tool(app: &AppHandle) -> CompatResult {
+    let Some(path) = loopback_tool_path(app)? else {
+        return Ok(json!({
+            "success": false,
+            "error": "未找到 EnableLoopback.exe，请确认工具已随应用安装"
+        }));
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let escaped_path = path.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$ErrorActionPreference='Stop'; Start-Process -FilePath '{escaped_path}' -Verb RunAs"
+        );
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ]);
+        command.creation_flags(CREATE_NO_WINDOW);
+        let output = command.output().map_err(|err| err.to_string())?;
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Ok(json!({
+                "success": false,
+                "path": path.to_string_lossy(),
+                "error": if error.is_empty() { "启动 EnableLoopback 失败" } else { &error }
+            }));
+        }
+        return Ok(success(json!({
+            "launched": true,
+            "elevated": true,
+            "path": path.to_string_lossy()
+        })));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Ok(json!({
+            "success": false,
+            "error": "EnableLoopback 仅支持 Windows"
+        }))
+    }
+}
+
 fn loopback_current_exempt_sids(app: &AppHandle) -> Result<Vec<String>, String> {
     let result = loopback_apps(app)?;
     if !result
@@ -1963,6 +2034,10 @@ async fn dispatch_compat_call(
         }
         "loopback.exemptAll" | "loopback:exempt-all" => loopback_exempt_all(app),
         "loopback.clearAll" | "loopback:clear-all" => loopback_clear_all(app),
+        "loopback.openTool" | "loopback:open-tool" | "loopback.launchEnableLoopback" => {
+            loopback_open_tool(app)
+        }
+        "loopback.toolAvailable" | "loopback:tool-available" => loopback_tool_available(app),
         _ => Err(format!("Unsupported loopback method: {method}")),
     }
 }

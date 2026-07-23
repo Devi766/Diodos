@@ -1,14 +1,11 @@
 //! Native Windows system-proxy control.
 //!
-//! Aligns with Clash Party / Clash Verge:
-//! [`sysproxy-rs` Windows implementation](https://github.com/zzzgydi/sysproxy-rs/blob/main/src/windows.rs)
-//!
 //! Critical path is **not** registry-only. Setting must go through WinINet:
 //! 1. `InternetSetOptionW(INTERNET_OPTION_PER_CONNECTION_OPTION, …)`
 //! 2. `InternetSetOptionW(INTERNET_OPTION_PROXY_SETTINGS_CHANGED, …)`
 //! 3. `InternetSetOptionW(INTERNET_OPTION_REFRESH, …)`
 //!
-//! Registry is only used for querying current status (same as sysproxy-rs).
+//! Registry is only used for querying current status.
 
 #![cfg(windows)]
 
@@ -110,7 +107,7 @@ fn to_wide_null(value: &str) -> Vec<u16> {
         .collect()
 }
 
-/// Apply per-connection options then propagate + refresh — same sequence as sysproxy-rs.
+/// Apply per-connection options, then propagate and refresh the system state.
 fn apply(options: &InternetPerConnOptionListW) -> Result<(), String> {
     unsafe {
         let opts = options as *const InternetPerConnOptionListW as *mut core::ffi::c_void;
@@ -134,12 +131,7 @@ fn apply(options: &InternetPerConnOptionListW) -> Result<(), String> {
             return Err("INTERNET_OPTION_PROXY_SETTINGS_CHANGED 失败".to_string());
         }
 
-        let ok = InternetSetOptionW(
-            ptr::null_mut(),
-            INTERNET_OPTION_REFRESH,
-            ptr::null_mut(),
-            0,
-        );
+        let ok = InternetSetOptionW(ptr::null_mut(), INTERNET_OPTION_REFRESH, ptr::null_mut(), 0);
         if ok == 0 {
             return Err("INTERNET_OPTION_REFRESH 失败".to_string());
         }
@@ -147,7 +139,7 @@ fn apply(options: &InternetPerConnOptionListW) -> Result<(), String> {
     Ok(())
 }
 
-/// Enable global/manual proxy (Clash Party `triggerManualProxy(true, …)`).
+/// Enable global/manual proxy.
 pub fn set_global_proxy(server: &str, bypass: &str) -> Result<(), String> {
     // Keep wide strings alive until after apply().
     let mut server_w = ManuallyDrop::new(to_wide_null(server));
@@ -191,7 +183,7 @@ pub fn set_global_proxy(server: &str, bypass: &str) -> Result<(), String> {
     result
 }
 
-/// Disable system proxy (Clash Party `triggerManualProxy(false, …)`).
+/// Disable system proxy.
 pub fn disable_proxy() -> Result<(), String> {
     let mut options = [InternetPerConnOptionW {
         dw_option: INTERNET_PER_CONN_FLAGS,
@@ -211,7 +203,7 @@ pub fn disable_proxy() -> Result<(), String> {
     apply(&list)
 }
 
-/// Optional PAC mode (Clash Party auto mode).
+/// Optional PAC mode.
 #[allow(dead_code)]
 pub fn set_pac_proxy(pac_url: &str) -> Result<(), String> {
     let mut pac_w = ManuallyDrop::new(to_wide_null(pac_url));
@@ -220,9 +212,7 @@ pub fn set_pac_proxy(pac_url: &str) -> Result<(), String> {
         InternetPerConnOptionW {
             dw_option: INTERNET_PER_CONN_FLAGS,
             value: InternetPerConnOptionValue {
-                dw_value: PROXY_TYPE_AUTO_DETECT
-                    | PROXY_TYPE_AUTO_PROXY_URL
-                    | PROXY_TYPE_DIRECT,
+                dw_value: PROXY_TYPE_AUTO_DETECT | PROXY_TYPE_AUTO_PROXY_URL | PROXY_TYPE_DIRECT,
             },
         },
         InternetPerConnOptionW {
@@ -259,17 +249,11 @@ pub struct ProxyQuery {
 fn open_internet_settings(access: DWORD) -> Result<HKEY, String> {
     let subkey = to_wide_null(INTERNET_SETTINGS_SUBKEY);
     let mut hkey: HKEY = 0;
-    let status = unsafe {
-        RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            subkey.as_ptr(),
-            0,
-            access,
-            &mut hkey,
-        )
-    };
+    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, access, &mut hkey) };
     if status != ERROR_SUCCESS {
-        return Err(format!("无法打开注册表键 Internet Settings: 错误码 {status}"));
+        return Err(format!(
+            "无法打开注册表键 Internet Settings: 错误码 {status}"
+        ));
     }
     Ok(hkey)
 }
@@ -342,7 +326,7 @@ fn get_reg_string(hkey: HKEY, name: &str) -> Result<String, String> {
     ))
 }
 
-/// Query current proxy from registry (same approach as sysproxy-rs get).
+/// Query the current proxy state from the registry.
 pub fn query_proxy() -> Result<ProxyQuery, String> {
     let hkey = open_internet_settings(KEY_READ)?;
     let enabled = get_reg_dword(hkey, "ProxyEnable").unwrap_or(0) == 1;
@@ -369,14 +353,13 @@ pub fn query_proxy() -> Result<ProxyQuery, String> {
 
 /// High-level enable/disable used by the app.
 ///
-/// Clash Party always disables first when enabling (`triggerSysProxy(true)`),
-/// so stale PAC / per-connection flags do not linger.
+/// Clear stale PAC and per-connection flags before enabling a manual proxy.
 pub fn set_proxy(enabled: bool, host: &str, port: u16, bypass: Option<&str>) -> Result<(), String> {
     if enabled {
         if host.trim().is_empty() || port == 0 {
             return Err("系统代理 host/port 无效".to_string());
         }
-        // Clear previous state first (matches Clash Party triggerSysProxy).
+        // Clear previous state before applying the new manual proxy.
         let _ = disable_proxy();
         let server = format!("{host}:{port}");
         set_global_proxy(server.as_str(), bypass.unwrap_or(DEFAULT_BYPASS))
@@ -398,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "changes the live system proxy; run explicitly in an isolated Windows environment"]
     fn set_and_disable_roundtrip_restores_previous_state() {
         let before = query_proxy().expect("query before");
         set_proxy(true, "127.0.0.1", 17890, Some(DEFAULT_BYPASS)).expect("enable test proxy");

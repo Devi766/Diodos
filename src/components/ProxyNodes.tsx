@@ -845,8 +845,7 @@ export default function ProxyNodes() {
   const messageTimeoutRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef(false);
 
-  // 导出调试函数到window对象，可在控制台访问
-  if (typeof window !== 'undefined') {
+  if (isDev && typeof window !== 'undefined') {
     (window as any).debugCollapsedGroups = {
       getCollapsed: () => Array.from(collapsedGroups),
       getLocalStorage: () => {

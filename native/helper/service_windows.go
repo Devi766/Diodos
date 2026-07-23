@@ -5,14 +5,97 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
+
+const (
+	helperRegistryPath       = `SOFTWARE\FlyClash`
+	helperClientSIDValueName = "HelperClientSID"
+)
+
+func isValidClientSID(value string) bool {
+	parts := strings.Split(strings.TrimSpace(value), "-")
+	if len(parts) < 4 || !strings.EqualFold(parts[0], "S") || parts[1] != "1" {
+		return false
+	}
+	for _, part := range parts[2:] {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+
+	// Desktop users are local/domain accounts (S-1-5-21-...) or Microsoft
+	// account identities (S-1-12-1-...). Do not accept well-known group SIDs
+	// such as Everyone, which would make the helper pipe globally accessible.
+	return (len(parts) == 8 && parts[2] == "5" && parts[3] == "21") ||
+		(len(parts) == 8 && parts[2] == "12" && parts[3] == "1")
+}
+
+func resolveClientSID(requested string) (string, error) {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		if !isValidClientSID(requested) {
+			return "", fmt.Errorf("invalid client SID")
+		}
+		return requested, nil
+	}
+	current, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve current user SID: %v", err)
+	}
+	if !isValidClientSID(current.Uid) {
+		return "", fmt.Errorf("invalid current user SID")
+	}
+	return current.Uid, nil
+}
+
+func persistClientSID(sid string) error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, helperRegistryPath, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("failed to open helper registry key: %v", err)
+	}
+	defer key.Close()
+	if err := key.SetStringValue(helperClientSIDValueName, sid); err != nil {
+		return fmt.Errorf("failed to persist helper client SID: %v", err)
+	}
+	return nil
+}
+
+func authorizedClientSID() (string, error) {
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, helperRegistryPath, registry.QUERY_VALUE)
+	if err != nil {
+		return "", fmt.Errorf("failed to read helper client SID: %v", err)
+	}
+	defer key.Close()
+	sid, _, err := key.GetStringValue(helperClientSIDValueName)
+	if err != nil {
+		return "", fmt.Errorf("failed to read helper client SID: %v", err)
+	}
+	if !isValidClientSID(sid) {
+		return "", fmt.Errorf("stored helper client SID is invalid")
+	}
+	return sid, nil
+}
+
+func helperPipeSecurityDescriptor() (string, error) {
+	sid, err := authorizedClientSID()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;%s)", sid), nil
+}
 
 func isServiceAlreadyExists(err error) bool {
 	if err == nil {
@@ -88,7 +171,18 @@ func stopAndDeleteService(s *mgr.Service) error {
 	return nil
 }
 
-func installService() error {
+func installService(requestedClientSID string) error {
+	clientSID, err := resolveClientSID(requestedClientSID)
+	if err != nil {
+		return err
+	}
+	if err := persistClientSID(clientSID); err != nil {
+		return err
+	}
+	if err := ensureServiceCoreDirectory(); err != nil {
+		return err
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)

@@ -122,8 +122,52 @@ pub(crate) fn service_compatible_core_path(
     app: &AppHandle,
     source: &Path,
 ) -> Result<PathBuf, String> {
-    let managed_dir = cores_dir(app)?;
-    core_paths::ensure_service_compatible_core(source, &managed_dir, cfg!(target_os = "windows"))
+    #[cfg(target_os = "windows")]
+    {
+        let helper = crate::tun_service::find_helper_executable(app)?;
+        let helper_dir = helper
+            .parent()
+            .ok_or_else(|| "无法确定 Helper 安装目录".to_string())?;
+        let packaged_core_dirs = [
+            helper_dir.to_path_buf(),
+            helper_dir.join("cores"),
+            helper_dir
+                .parent()
+                .map(|parent| parent.join("cores"))
+                .unwrap_or_default(),
+        ];
+        if packaged_core_dirs
+            .iter()
+            .any(|dir| core_paths::path_is_under(source, dir))
+        {
+            return Ok(source.to_path_buf());
+        }
+
+        let program_data = std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+        let managed_dir = program_data.join("FlyClash").join("service-cores");
+        let target = core_paths::service_runtime_target(&managed_dir, source);
+        let refresh_needed = core_paths::needs_service_runtime_refresh(source, &target);
+        let trusted = if refresh_needed {
+            false
+        } else {
+            core_service::service_core_is_trusted(&helper, &target)?
+        };
+        if refresh_needed || !trusted {
+            core_service::install_service_core(&helper, source, &target)?;
+        }
+        if !core_service::service_core_is_trusted(&helper, &target)? {
+            return Err("受保护服务内核完整性校验失败".to_string());
+        }
+        return Ok(target);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let managed_dir = cores_dir(app)?;
+        core_paths::ensure_service_compatible_core(source, &managed_dir, false)
+    }
 }
 
 pub(crate) fn same_existing_path(left: &Path, right: &Path) -> bool {
@@ -651,9 +695,7 @@ pub(crate) async fn download_core(
                 Err(error) => last_error = Some(error),
             }
         }
-        found.ok_or_else(|| {
-            last_error.unwrap_or_else(|| format!("未找到内核版本 {version}"))
-        })?
+        found.ok_or_else(|| last_error.unwrap_or_else(|| format!("未找到内核版本 {version}")))?
     } else {
         latest_release(core_type).await?
     };
@@ -744,8 +786,7 @@ async fn dispatch_compat_call(
 
             // Always attach helper readiness so Dashboard/TUN can share one status machine.
             let helper_flags = core_service::query_helper_service_flags();
-            let helper_snapshot =
-                core_service::helper_ipc_snapshot(helper_flags.running);
+            let helper_snapshot = core_service::helper_ipc_snapshot(helper_flags.running);
             let helper_status =
                 core_service::helper_service_status_payload(helper_flags, helper_snapshot);
             if let Some(object) = payload.as_object_mut() {
@@ -1111,10 +1152,7 @@ mod tests {
     #[test]
     fn parses_stable_version_output() {
         let output = "Mihomo Meta v1.19.12 windows amd64 with go1.24.1";
-        assert_eq!(
-            core_version_from_output(output).as_deref(),
-            Some("1.19.12")
-        );
+        assert_eq!(core_version_from_output(output).as_deref(), Some("1.19.12"));
     }
 
     #[test]

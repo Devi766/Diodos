@@ -2,8 +2,6 @@ export const RELEASES_PAGE_URL = 'https://github.com/GtxFury/FlyClash/releases';
 
 const RELEASE_API_ENDPOINTS = [
   'https://api.github.com/repos/GtxFury/FlyClash/releases/latest',
-  'https://mirror.ghproxy.com/https://api.github.com/repos/GtxFury/FlyClash/releases/latest',
-  'https://gh.api.99988866.xyz/https://api.github.com/repos/GtxFury/FlyClash/releases/latest'
 ];
 export const UPDATE_AVAILABLE_EVENT = 'flyclash-update-available';
 
@@ -49,6 +47,27 @@ export interface ReleaseFetchResult {
   source?: string;
 }
 
+const officialReleaseUrl = (value: unknown, tagName: string) => {
+  if (typeof value === 'string') {
+    try {
+      const url = new URL(value);
+      if (
+        url.protocol === 'https:' &&
+        url.hostname === 'github.com' &&
+        url.pathname.startsWith('/GtxFury/FlyClash/releases/')
+      ) {
+        return url.toString();
+      }
+    } catch {
+      // Fall back to the canonical release page below.
+    }
+  }
+
+  return tagName
+    ? `${RELEASES_PAGE_URL}/tag/${encodeURIComponent(tagName)}`
+    : RELEASES_PAGE_URL;
+};
+
 export const fetchLatestRelease = async (): Promise<ReleaseFetchResult> => {
   const errors: string[] = [];
 
@@ -73,7 +92,7 @@ export const fetchLatestRelease = async (): Promise<ReleaseFetchResult> => {
         version: normalizeVersion(tagName || data?.tag_name || data?.name),
         displayVersion: tagName || data?.name || '',
         body: data?.body || '',
-        url: data?.html_url || (tagName ? `${RELEASES_PAGE_URL}/tag/${tagName}` : RELEASES_PAGE_URL),
+        url: officialReleaseUrl(data?.html_url, tagName),
         name: data?.name || '',
         publishedAt: data?.published_at || '',
       };

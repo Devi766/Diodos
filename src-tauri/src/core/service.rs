@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "windows", test))]
 use serde_json::value::RawValue;
@@ -7,7 +9,7 @@ use sha2::{Digest, Sha256};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{env, fs, path::PathBuf};
+use std::{env, fs};
 use std::{path::Path, process::Command, thread, time::Duration};
 
 #[cfg(any(target_os = "windows", test))]
@@ -314,17 +316,121 @@ pub fn install_helper_service(helper_path: &Path, elevated: bool) -> Result<(), 
         return Err("当前平台不支持 Windows Helper 服务".to_string());
     }
 
-    if elevated {
-        return elevate_helper_arg(helper_path, "-install");
+    #[cfg(target_os = "windows")]
+    {
+        let sid = windows_current_user_sid()?;
+        let elevated_arg = format!("-install --client-sid {sid}");
+        if elevated {
+            return elevate_helper_arg(helper_path, &elevated_arg);
+        }
+
+        match command_output(
+            &helper_path.to_string_lossy(),
+            &["-install", "--client-sid", &sid],
+        ) {
+            Ok(_) => Ok(()),
+            Err(error) if looks_like_access_denied(&error) => {
+                elevate_helper_arg(helper_path, &elevated_arg)
+            }
+            Err(error) => Err(error),
+        }
     }
 
-    match command_output(&helper_path.to_string_lossy(), &["-install"]) {
+    #[cfg(not(target_os = "windows"))]
+    unreachable!("platform check above must return on non-Windows builds")
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_sid(value: &str) -> bool {
+    let mut parts = value.trim().split('-');
+    if !matches!(parts.next(), Some("S" | "s")) || parts.next() != Some("1") {
+        return false;
+    }
+    let values = parts.collect::<Vec<_>>();
+    values.len() >= 2
+        && values
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_current_user_sid() -> Result<String, String> {
+    let output = command_output("whoami", &["/user", "/fo", "csv", "/nh"])?;
+    output
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+        .find(|token| is_windows_sid(token))
+        .map(ToString::to_string)
+        .ok_or_else(|| "无法确定当前 Windows 用户 SID".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn encode_existing_service_core_path(path: &Path) -> Result<String, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|err| format!("无法解析服务内核路径: {err}"))?;
+    Ok(URL_SAFE_NO_PAD.encode(path.to_string_lossy().as_bytes()))
+}
+
+#[cfg(target_os = "windows")]
+fn encode_service_core_destination(path: &Path) -> Result<String, String> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|err| format!("无法解析服务内核目标路径: {err}"))?
+            .join(path)
+    };
+    Ok(URL_SAFE_NO_PAD.encode(path.to_string_lossy().as_bytes()))
+}
+
+#[cfg(target_os = "windows")]
+pub fn service_core_is_trusted(helper_path: &Path, target: &Path) -> Result<bool, String> {
+    let target = encode_existing_service_core_path(target)?;
+    let output = command_output(
+        &helper_path.to_string_lossy(),
+        &["-service-core-status", &target],
+    )?;
+    Ok(output.trim().eq_ignore_ascii_case("trusted"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn service_core_is_trusted(_helper_path: &Path, _target: &Path) -> Result<bool, String> {
+    Err("当前平台不支持 Windows Helper 服务".to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub fn install_service_core(
+    helper_path: &Path,
+    source: &Path,
+    target: &Path,
+) -> Result<(), String> {
+    let source = encode_existing_service_core_path(source)?;
+    let target = encode_service_core_destination(target)?;
+    let elevated_arg = format!("-install-service-core {source} -service-core-target {target}");
+    match command_output(
+        &helper_path.to_string_lossy(),
+        &[
+            "-install-service-core",
+            &source,
+            "-service-core-target",
+            &target,
+        ],
+    ) {
         Ok(_) => Ok(()),
         Err(error) if looks_like_access_denied(&error) => {
-            elevate_helper_arg(helper_path, "-install")
+            elevate_helper_arg(helper_path, &elevated_arg)
         }
         Err(error) => Err(error),
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn install_service_core(
+    _helper_path: &Path,
+    _source: &Path,
+    _target: &Path,
+) -> Result<(), String> {
+    Err("当前平台不支持 Windows Helper 服务".to_string())
 }
 
 pub fn uninstall_helper_service(helper_path: &Path) -> Result<(), String> {
@@ -538,7 +644,12 @@ pub enum HelperServiceReadiness {
 }
 
 impl HelperServiceReadiness {
-    pub fn from_state(installed: bool, running: bool, ipc_available: bool, unsupported: bool) -> Self {
+    pub fn from_state(
+        installed: bool,
+        running: bool,
+        ipc_available: bool,
+        unsupported: bool,
+    ) -> Self {
         if unsupported {
             return Self::Unsupported;
         }
@@ -816,18 +927,6 @@ fn parse_response(raw: &str, expected_id: &str) -> Result<HelperResponse, String
 
 #[cfg(any(target_os = "windows", test))]
 fn secret_key() -> Vec<u8> {
-    let key_path = env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-        .join("FlyClash")
-        .join("service-key");
-
-    if let Ok(key) = fs::read(key_path) {
-        if key.len() == 32 {
-            return key;
-        }
-    }
-
     sha256_bytes(SECRET_SEED.as_bytes())
 }
 
@@ -1120,7 +1219,10 @@ mod tests {
             helper_ensure_plan(true, false, false),
             Ok(HelperEnsureOutcome::Started)
         );
-        assert_eq!(helper_ensure_plan(false, false, false), Err("not-installed"));
+        assert_eq!(
+            helper_ensure_plan(false, false, false),
+            Err("not-installed")
+        );
     }
 
     #[test]
@@ -1133,8 +1235,7 @@ mod tests {
             version: Some(json!({ "version": "1.0.2" })),
             ..Default::default()
         };
-        let payload =
-            helper_service_action_payload_with_repaired("fixed", helper, true, true);
+        let payload = helper_service_action_payload_with_repaired("fixed", helper, true, true);
 
         assert_eq!(payload["message"], json!("fixed"));
         assert_eq!(payload["ipcAvailable"], json!(true));
@@ -1268,6 +1369,8 @@ mod tests {
             "[SC] OpenService 失败 5:\n拒绝访问。"
         ));
         assert!(looks_like_access_denied("Access is denied."));
-        assert!(!looks_like_access_denied("The specified service does not exist"));
+        assert!(!looks_like_access_denied(
+            "The specified service does not exist"
+        ));
     }
 }

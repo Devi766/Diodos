@@ -60,12 +60,15 @@ pub fn managed_core_path(
     core_type: &str,
     specific_version: Option<&str>,
 ) -> PathBuf {
-    cores_dir.join(identity::managed_core_file_name(core_type, specific_version))
+    cores_dir.join(identity::managed_core_file_name(
+        core_type,
+        specific_version,
+    ))
 }
 
 /// Service-mode start decision from already-resolved settings.
 ///
-/// Match Electron: once the user selects Windows service elevation mode,
+/// Once the user selects Windows service elevation mode,
 /// always start the core through Helper (even when TUN is currently off).
 /// Gating on `tun_enabled` alone leaves a non-elevated sidecar running and
 /// makes TUN toggles appear to "do nothing" / Service Core stay stopped.
@@ -226,7 +229,7 @@ mod tests {
 
     #[test]
     fn should_start_by_service_follows_windows_service_elevation_mode() {
-        // Match Electron: service elevation mode always uses helper, even if TUN
+        // Service elevation mode always uses Helper, even if TUN
         // is currently off. Otherwise a non-elevated sidecar keeps running and
         // Service Core appears "stopped" after the helper is installed.
         assert!(should_start_by_service(true, "service", true));

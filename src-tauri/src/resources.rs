@@ -25,13 +25,15 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 fn resource_roots(app: &AppHandle) -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
-    if let Ok(current) = std::env::current_dir() {
-        push_unique_path(&mut roots, current.clone());
-        push_unique_path(&mut roots, current.join(".."));
-        push_unique_path(&mut roots, current.join("flycast-ui"));
+    // Development builds may load checked-out resources. Release builds must
+    // never trust an attacker-controlled working directory for executables.
+    if cfg!(debug_assertions) {
+        if let Ok(current) = std::env::current_dir() {
+            push_unique_path(&mut roots, current.clone());
+            push_unique_path(&mut roots, current.join(".."));
+            push_unique_path(&mut roots, current.join("flycast-ui"));
+        }
     }
-
-    push_unique_path(&mut roots, PathBuf::from("."));
 
     if let Ok(resource_dir) = app.path().resource_dir() {
         push_unique_path(&mut roots, resource_dir.clone());
@@ -55,7 +57,6 @@ fn add_resource_candidates(paths: &mut Vec<PathBuf>, app: &AppHandle, relative: 
     for root in resource_roots(app) {
         push_unique_path(paths, root.join(relative));
     }
-    push_unique_path(paths, relative.to_path_buf());
 }
 
 pub(crate) fn existing_resource_dir(app: &AppHandle, relatives: &[&str]) -> Option<PathBuf> {

@@ -208,10 +208,7 @@ impl CoreManager {
     }
 
     /// Prefer runtime-owned active config, then preferred/last config.
-    pub fn prefer_runtime_or_preferred(
-        &self,
-        preferred_config: Option<String>,
-    ) -> Option<String> {
+    pub fn prefer_runtime_or_preferred(&self, preferred_config: Option<String>) -> Option<String> {
         self.active_config_owned()
             .filter(|path| !path.trim().is_empty())
             .or_else(|| {
@@ -408,17 +405,18 @@ mod tests {
         let mut manager = CoreManager::default();
         manager.activate_config("runtime.yaml".to_string());
 
-        let recovered = manager.resolve_runtime_state(
-            false,
-            true,
-            Some("preferred.yaml".to_string()),
-        );
+        let recovered =
+            manager.resolve_runtime_state(false, true, Some("preferred.yaml".to_string()));
         assert!(recovered.effective_running);
         assert_eq!(recovered.running_mode, RunningMode::Sidecar);
-        assert_eq!(recovered.active_config.config.as_deref(), Some("runtime.yaml"));
+        assert_eq!(
+            recovered.active_config.config.as_deref(),
+            Some("runtime.yaml")
+        );
         assert_eq!(recovered.active_config.source, ActiveConfigSource::Runtime);
 
-        let stopped = manager.resolve_runtime_state(false, false, Some("preferred.yaml".to_string()));
+        let stopped =
+            manager.resolve_runtime_state(false, false, Some("preferred.yaml".to_string()));
         assert!(!stopped.effective_running);
         assert_eq!(stopped.running_mode, RunningMode::NotRunning);
         assert_eq!(stopped.active_config.config, None);

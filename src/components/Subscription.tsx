@@ -1335,18 +1335,12 @@ export default function SubscriptionManager() {
 
     setIsLoading(true);
     setAddSubmitMode(activateAfterSave ? 'activate' : 'save');
-    console.log('正在从服务器获取订阅内容...');
-    
     try {
       const configData = await api.fetchSubscription(subUrl);
-      console.log('获取订阅内容结果:', configData);
 
       // 检查是否成功获取订阅内容
       if (configData && configData.success && configData.content) {
         const customName = subName.trim() || '';
-        console.log('准备保存订阅 - URL:', subUrl);
-        console.log('准备保存订阅 - 自定义名称:', customName);
-        console.log('准备保存订阅 - 流量信息:', configData.subscriptionInfo);
 
         // 确保传递订阅信息
         const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
@@ -1358,8 +1352,6 @@ export default function SubscriptionManager() {
 
         // 检查保存是否成功
         if (saveResult.success && saveResult.filePath) {
-          console.log('订阅保存成功，文件路径:', saveResult.filePath);
-
           // 重新加载订阅列表以显示最新信息（包括流量信息）
           const reloadedSubscriptions = await loadSubscriptions();
           setSubUrl('');

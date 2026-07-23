@@ -603,6 +603,9 @@
         removeExemption: async (...args) => call("loopback.removeExemption", args),
         exemptAll: async (...args) => call("loopback.exemptAll", args),
         clearAll: async (...args) => call("loopback.clearAll", args),
+        openTool: async (...args) => call("loopback.openTool", args),
+        toolAvailable: async (...args) => call("loopback.toolAvailable", args),
+        launchEnableLoopback: async (...args) => call("loopback.launchEnableLoopback", args),
       },
       converter: {
         startServer: async (...args) => call("converter.startServer", args),

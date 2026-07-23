@@ -186,10 +186,7 @@ fn success(value: Value) -> Value {
 }
 
 fn tray_clean_label(value: &str, fallback: &str, max_chars: usize) -> String {
-    let cleaned = value
-        .replace('&', "&&")
-        .replace('\r', " ")
-        .replace('\n', " ");
+    let cleaned = value.replace('&', "&&").replace(['\r', '\n'], " ");
     let trimmed = cleaned.trim();
     let label = if trimmed.is_empty() {
         fallback
@@ -413,7 +410,10 @@ fn ordered_names(preferred: &[String], available: &[String]) -> Vec<String> {
     ordered
 }
 
-fn load_config_group_order(app: &AppHandle, active_config: Option<&str>) -> Vec<(String, Vec<String>)> {
+fn load_config_group_order(
+    app: &AppHandle,
+    active_config: Option<&str>,
+) -> Vec<(String, Vec<String>)> {
     let Some(path) = active_config
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -550,10 +550,7 @@ fn build_tray_proxy_snapshot(
             let Some(node) = proxies.get(&node_name) else {
                 continue;
             };
-            let node_type = node
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let node_type = node.get("type").and_then(Value::as_str).unwrap_or_default();
             nodes.push(TrayProxyNode {
                 name: node_name,
                 delay_ms: node_delay_ms(node),
@@ -565,10 +562,7 @@ fn build_tray_proxy_snapshot(
         }
         groups.push(TrayProxyGroup {
             name: group_name,
-            now: proxy
-                .get("now")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            now: proxy.get("now").and_then(Value::as_str).map(str::to_string),
             nodes,
         });
     }
@@ -653,23 +647,22 @@ fn schedule_tray_proxy_snapshot_refresh(app: &AppHandle) {
                     return;
                 }
                 let previous = read_tray_proxy_snapshot();
-                let changed = previous
-                    .as_ref()
-                    .map(|old| {
-                        old.mode != snapshot.mode
-                            || old.current_node != snapshot.current_node
-                            || old.groups.len() != snapshot.groups.len()
-                            || old
-                                .groups
-                                .iter()
-                                .zip(snapshot.groups.iter())
-                                .any(|(left, right)| {
-                                    left.name != right.name
-                                        || left.now != right.now
-                                        || left.nodes.len() != right.nodes.len()
-                                })
-                    })
-                    .unwrap_or(true);
+                let changed =
+                    previous
+                        .as_ref()
+                        .map(|old| {
+                            old.mode != snapshot.mode
+                                || old.current_node != snapshot.current_node
+                                || old.groups.len() != snapshot.groups.len()
+                                || old.groups.iter().zip(snapshot.groups.iter()).any(
+                                    |(left, right)| {
+                                        left.name != right.name
+                                            || left.now != right.now
+                                            || left.nodes.len() != right.nodes.len()
+                                    },
+                                )
+                        })
+                        .unwrap_or(true);
                 write_tray_proxy_snapshot(Some(snapshot));
                 if changed && !tray_menu_is_held() {
                     refresh_tray_menu_after(&app, "proxy-snapshot");
@@ -850,10 +843,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
         app,
         "status-node",
         tray_clean_label(
-            &format!(
-                "节点：{}",
-                current_node.as_deref().unwrap_or("未选择")
-            ),
+            &format!("节点：{}", current_node.as_deref().unwrap_or("未选择")),
             "节点：未选择",
             48,
         ),
@@ -942,14 +932,9 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
         None::<&str>,
     )
     .map_err(|err| err.to_string())?;
-    let lightweight = MenuItem::with_id(
-        app,
-        "enter-lightweight",
-        "进入轻量模式",
-        true,
-        None::<&str>,
-    )
-    .map_err(|err| err.to_string())?;
+    let lightweight =
+        MenuItem::with_id(app, "enter-lightweight", "进入轻量模式", true, None::<&str>)
+            .map_err(|err| err.to_string())?;
     let configs = build_tray_config_menu(
         app,
         &subscriptions,
@@ -1296,11 +1281,7 @@ fn tray_switch_node(app: &AppHandle, encoded_pair: &str) {
         )
         .await?;
 
-        if !response
-            .get("ok")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        if !response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             let error = response
                 .get("statusText")
                 .or_else(|| response.get("error"))
@@ -1409,11 +1390,7 @@ pub(crate) fn setup_tray(app: &AppHandle) -> Result<(), String> {
                             json!({ "success": false, "error": error }),
                         );
                     } else {
-                        emit_tray_action(
-                            app,
-                            "enter-lightweight",
-                            json!({ "success": true }),
-                        );
+                        emit_tray_action(app, "enter-lightweight", json!({ "success": true }));
                     }
                 }
                 "restart-core" => tray_restart_core(app),

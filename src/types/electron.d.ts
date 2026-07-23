@@ -691,6 +691,9 @@ export interface ElectronAPI {
     removeExemption: (sid: string) => Promise<{ success: boolean; error?: string; count?: number }>;
     exemptAll?: () => Promise<{ success: boolean; error?: string; count?: number }>;
     clearAll?: () => Promise<{ success: boolean; error?: string; count?: number }>;
+    openTool?: () => Promise<{ success: boolean; launched?: boolean; elevated?: boolean; path?: string; error?: string }>;
+    toolAvailable?: () => Promise<{ success: boolean; available: boolean; error?: string }>;
+    launchEnableLoopback?: () => Promise<{ success: boolean; launched?: boolean; elevated?: boolean; path?: string; error?: string }>;
   };
 }
 

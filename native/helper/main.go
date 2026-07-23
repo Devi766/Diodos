@@ -7,7 +7,6 @@ package main
 import (
 	"bufio"
 	"crypto/hmac"
-	crypto_rand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -37,7 +36,7 @@ const (
 	messageExpirySecs = 30
 	secretSeed        = "flyclash-helper-service-secret-key-v1"
 	createNoWindow    = 0x08000000
-	helperVersion     = "1.0.3"
+	helperVersion     = "1.0.4"
 )
 
 var (
@@ -101,62 +100,51 @@ type VersionData struct {
 	Version string `json:"version"`
 }
 
-const (
-	keyFileDir  = "FlyClash"
-	keyFileName = "service-key"
-	keyLength   = 32
-)
-
-func getKeyFilePath() string {
-	pd := os.Getenv("ProgramData")
-	if pd == "" {
-		pd = `C:\ProgramData`
-	}
-	return filepath.Join(pd, keyFileDir, keyFileName)
-}
-
-func loadOrCreateKey() ([]byte, error) {
-	keyPath := getKeyFilePath()
-	os.MkdirAll(filepath.Dir(keyPath), 0755)
-
-	// 尝试读取已有密钥
-	if data, err := os.ReadFile(keyPath); err == nil && len(data) == keyLength {
-		return data, nil
-	}
-
-	// 生成新密钥
-	key := make([]byte, keyLength)
-	if _, err := crypto_rand.Read(key); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(keyPath, key, 0644); err != nil {
-		return nil, err
-	}
-	log.Printf("Generated new service key at %s", keyPath)
-	return key, nil
-}
-
 func init() {
-	key, err := loadOrCreateKey()
-	if err != nil {
-		// 回退到硬编码密钥
-		log.Printf("Warning: dynamic key failed (%v), using static fallback", err)
-		h := sha256.New()
-		h.Write([]byte(secretSeed))
-		secretKey = h.Sum(nil)
-		return
-	}
-	secretKey = key
+	// Pipe ACLs, not a client-readable secret file, enforce access control.
+	// The digest only protects request/response framing from accidental corruption.
+	digest := sha256.Sum256([]byte(secretSeed))
+	secretKey = digest[:]
 }
 
 func main() {
 	install := flag.Bool("install", false, "Install service")
+	clientSID := flag.String("client-sid", "", "Authorized desktop client SID")
+	installServiceCore := flag.String("install-service-core", "", "Base64-encoded core source path")
+	serviceCoreTarget := flag.String("service-core-target", "", "Base64-encoded protected core destination")
+	serviceCoreStatus := flag.String("service-core-status", "", "Base64-encoded protected core path")
 	uninstall := flag.Bool("uninstall", false, "Uninstall service")
 	run := flag.Bool("run", false, "Run directly (debug mode)")
 	flag.Parse()
 
+	if *serviceCoreStatus != "" {
+		target, err := decodeServiceCorePath(*serviceCoreStatus)
+		if err != nil {
+			log.Fatalf("Invalid service core status path: %v", err)
+		}
+		if isTrustedServiceCore(target) {
+			fmt.Println("trusted")
+		} else {
+			fmt.Println("untrusted")
+		}
+		return
+	}
+
+	if *installServiceCore != "" || *serviceCoreTarget != "" {
+		source, sourceErr := decodeServiceCorePath(*installServiceCore)
+		target, targetErr := decodeServiceCorePath(*serviceCoreTarget)
+		if sourceErr != nil || targetErr != nil {
+			log.Fatalf("Invalid service core arguments: source=%v target=%v", sourceErr, targetErr)
+		}
+		if err := installTrustedServiceCore(source, target); err != nil {
+			log.Fatalf("Failed to install protected service core: %v", err)
+		}
+		fmt.Println(target)
+		return
+	}
+
 	if *install {
-		if err := installService(); err != nil {
+		if err := installService(*clientSID); err != nil {
 			log.Fatalf("Failed to install service: %v", err)
 		}
 		fmt.Println("Service installed successfully")
@@ -222,11 +210,15 @@ func (s *helperService) Execute(args []string, r <-chan svc.ChangeRequest, chang
 }
 
 func runServer() {
-	// 创建 Named Pipe
-	// 必须显式设置安全描述符，允许所有用户（包括普通用户）连接
-	// SDDL: D:(A;;GA;;;WD) 表示允许 Everyone (WD) 完全访问 (GA)
+	pipeACL, err := helperPipeSecurityDescriptor()
+	if err != nil {
+		log.Fatalf("Failed to resolve helper pipe ACL: %v", err)
+	}
+
+	// The installed desktop user's SID keeps the existing non-elevated IPC flow
+	// working without exposing this SYSTEM service to every local account.
 	pipeConfig := &winio.PipeConfig{
-		SecurityDescriptor: "D:(A;;GA;;;WD)",
+		SecurityDescriptor: pipeACL,
 	}
 	listener, err := winio.ListenPipe(pipeName, pipeConfig)
 	if err != nil {
@@ -366,6 +358,15 @@ func validateBinPath(binPath string) error {
 	if info.IsDir() {
 		return fmt.Errorf("path is a directory")
 	}
+	if !strings.EqualFold(filepath.Ext(realPath), ".exe") {
+		return fmt.Errorf("core executable must use the .exe extension")
+	}
+	if isServiceCorePath(realPath) {
+		if isTrustedServiceCore(realPath) {
+			return nil
+		}
+		return fmt.Errorf("service core is not trusted")
+	}
 
 	// 4. 检查路径是否在允许的目录内
 	allowed := getAllowedCoreDirs()
@@ -437,9 +438,8 @@ func candidateWindowsUsersDirs() []string {
 
 func getAllowedCoreDirs() []string {
 	var dirs []string
-	appDataNames := []string{"FlyClash", "flyclash", "com.flyclash.desktop"}
 
-	// 1. Helper 自身所在目录及其 cores 子目录
+	// Only installation-owned directories are accepted by the SYSTEM service.
 	if exePath, err := os.Executable(); err == nil {
 		exeDir := filepath.Clean(filepath.Dir(exePath))
 		dirs = append(dirs, exeDir)
@@ -449,45 +449,7 @@ func getAllowedCoreDirs() []string {
 		dirs = append(dirs, filepath.Join(parentDir, "cores"))
 	}
 
-	// 2. 当前用户的 AppData（含大小写变体）
-	if appData := os.Getenv("APPDATA"); appData != "" {
-		for _, name := range appDataNames {
-			dirs = append(dirs, filepath.Join(appData, name, "cores"))
-		}
-	}
-	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-		for _, name := range appDataNames {
-			dirs = append(dirs, filepath.Join(localAppData, name, "cores"))
-		}
-	}
-
-	// 3. 所有用户的 profile 目录下的 FlyClash/cores
-	//    SYSTEM 服务的 USERPROFILE 指向 system32\config\systemprofile，
-	//    所以直接枚举系统盘的 Users 目录
-	usersDirs := candidateWindowsUsersDirs()
-	for _, usersDir := range usersDirs {
-		if entries, err := os.ReadDir(usersDir); err == nil {
-			for _, e := range entries {
-				if e.IsDir() {
-					for _, name := range appDataNames {
-						dirs = append(dirs,
-							filepath.Join(usersDir, e.Name(), "AppData", "Roaming", name, "cores"))
-						dirs = append(dirs,
-							filepath.Join(usersDir, e.Name(), "AppData", "Local", name, "cores"))
-					}
-				}
-			}
-		}
-	}
-
-	// 4. ProgramData
-	if pd := os.Getenv("ProgramData"); pd != "" {
-		for _, name := range appDataNames {
-			dirs = append(dirs, filepath.Join(pd, name, "cores"))
-		}
-	}
-
-	// 5. macOS/Linux 系统目录
+	// macOS/Linux helper paths are kept for direct development execution.
 	if runtime.GOOS == "darwin" {
 		dirs = append(dirs, "/Library/Application Support/Flycast")
 	}
@@ -521,9 +483,25 @@ func getAllowedCoreDirs() []string {
 
 // validateConfigPaths 验证配置路径
 func validateConfigPaths(configDir, configFile string) error {
+	configDir, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve config directory: %v", err)
+	}
 	info, err := os.Stat(configDir)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("invalid config directory: %s", configDir)
+	}
+	configFile, err = filepath.EvalSymlinks(configFile)
+	if err != nil {
+		return fmt.Errorf("cannot resolve config file: %v", err)
+	}
+	fileInfo, err := os.Stat(configFile)
+	if err != nil || fileInfo.IsDir() {
+		return fmt.Errorf("invalid config file: %s", configFile)
+	}
+	relative, err := filepath.Rel(configDir, configFile)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("config file must be inside config directory")
 	}
 	lower := strings.ToLower(configFile)
 	if !strings.HasSuffix(lower, ".yaml") && !strings.HasSuffix(lower, ".yml") {
@@ -572,15 +550,6 @@ func startCore(payload *StartCorePayload) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
 		CreationFlags: createNoWindow,
-	}
-
-	// 如果指定了日志文件，重定向输出
-	if payload.LogFile != "" {
-		logFile, err := os.OpenFile(payload.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err == nil {
-			cmd.Stdout = logFile
-			cmd.Stderr = logFile
-		}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -717,9 +686,9 @@ func sendResponse(conn net.Conn, id string, success bool, data interface{}, errM
 //
 // 不能依赖固定镜像名（用户会换成 mihomo-smart / alpha / 自定义核心）。
 // 识别指纹：
-//  1) 命令行包含本应用的 work-dir（-d <configDir>）或 work-config（-f <configFile>）
-//  2) 命令行包含本应用 controller 管道前缀（FlyClash/mihomo / flycast-mihomo）
-//  3) 兜底：命令行含 -d/-f 且可执行路径位于已授权的 cores 目录
+//  1. 命令行包含本应用的 work-dir（-d <configDir>）或 work-config（-f <configFile>）
+//  2. 命令行包含本应用 controller 管道前缀（FlyClash/mihomo / flycast-mihomo）
+//  3. 兜底：命令行含 -d/-f 且可执行路径位于已授权的 cores 目录
 //
 // 永不杀：helper 自身、当前 helper 管理的 corePID。
 func killOtherMihomoProcesses() {

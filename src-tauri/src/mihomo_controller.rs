@@ -334,10 +334,7 @@ fn runtime_mode_from_configs(response: &Value) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn current_node_from_proxies_response(
-    response: &Value,
-    mode_hint: Option<&str>,
-) -> Option<String> {
+fn current_node_from_proxies_response(response: &Value, mode_hint: Option<&str>) -> Option<String> {
     let data = response.get("data").unwrap_or(response);
     let proxies = data.get("proxies").and_then(Value::as_object)?;
 

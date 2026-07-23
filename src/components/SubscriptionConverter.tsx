@@ -478,15 +478,12 @@ export default function SubscriptionConverter() {
               throw new Error(resultError(result));
             }
             sourceContent = result.content;
-            console.log('[Converter] 下载内容长度:', sourceContent.length);
-            console.log('[Converter] 下载内容预览:', sourceContent.substring(0, 500));
           } else {
             const contents: string[] = [];
             for (let i = 0; i < urls.length; i++) {
               const result = await converter.fetchUrl(urls[i]);
               if (result.success) {
                 contents.push(result.content);
-                console.log(`[Converter] URL ${i + 1} 下载内容长度:`, result.content.length);
               } else {
                 console.error(`[Converter] URL ${i + 1} 下载失败:`, resultError(result));
               }
@@ -495,7 +492,6 @@ export default function SubscriptionConverter() {
               throw new Error(t('converter.errors.fetchError'));
             }
             sourceContent = contents.join('\n');
-            console.log('[Converter] 合并后内容长度:', sourceContent.length);
           }
           setContentInput(sourceContent);
         } catch (error: any) {
@@ -520,12 +516,6 @@ export default function SubscriptionConverter() {
     await new Promise(resolve => setTimeout(resolve, 300));
 
     try {
-      console.log('[Converter] 开始转换, 内容长度:', sourceContent.length);
-      console.log('[Converter] 目标格式:', targetFormat);
-      console.log('[Converter] 过滤正则:', filterRegex);
-      console.log('[Converter] 使用模板:', useTemplate);
-      console.log('[Converter] 选择的模板:', selectedTemplate);
-
       // 执行转换
       let result;
       if (useTemplate && selectedTemplate) {
@@ -565,11 +555,8 @@ export default function SubscriptionConverter() {
         });
       }
 
-      console.log('[Converter] 转换结果:', result);
-
       if (result.success) {
         setConversionResult(result);
-        console.log('[Converter] 设置转换结果:', result);
         toast.success(t('converter.success.converted', {
           input: result.inputProxyCount,
           output: result.outputProxyCount

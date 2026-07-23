@@ -994,8 +994,7 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
         } else {
             base_json
         };
-        serde_json::from_value::<serde_yaml::Value>(config_json)
-            .unwrap_or(serde_yaml::Value::Null)
+        serde_json::from_value::<serde_yaml::Value>(config_json).unwrap_or(serde_yaml::Value::Null)
     };
 
     let top_level_proxies = yaml

@@ -1,7 +1,3 @@
-<a href="https://www.stromsend.xyz/#/register?code=tIhaARYV">
-  <img src="screenshots/unnamed.jpg" alt="友情推荐" />
-</a>
-
 # FlyClash - 简洁优雅的代理工具
 
 FlyClash是一个基于Clash内核的现代化代理客户端，拥有美观的界面和强大的功能。
@@ -38,11 +34,11 @@ cd flyclash
 # 安装依赖
 npm install
 
-# 开发模式运行
-npm run electron:dev
+# Tauri 开发模式运行
+npm run tauri:dev
 
 # 构建安装包
-npm run electron:build
+npm run tauri:build
 ```
 
 ## 使用方法

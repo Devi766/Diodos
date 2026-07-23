@@ -202,7 +202,6 @@ async fn fetch_override_remote_content(url: &str) -> Result<String, String> {
 
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|err| err.to_string())?
         .get(url)
@@ -281,21 +280,12 @@ fn enforce_single_enabled_global(items: &mut [Value], keep_enabled_id: &str) {
         let Some(object) = item.as_object_mut() else {
             continue;
         };
-        let id = object
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let id = object.get("id").and_then(Value::as_str).unwrap_or_default();
         if id == keep_enabled_id {
             continue;
         }
-        let is_global = object
-            .get("global")
-            .map(is_truthy_bool)
-            .unwrap_or(false);
-        let is_enabled = object
-            .get("enabled")
-            .map(is_truthy_bool)
-            .unwrap_or(false);
+        let is_global = object.get("global").map(is_truthy_bool).unwrap_or(false);
+        let is_enabled = object.get("enabled").map(is_truthy_bool).unwrap_or(false);
         if is_global && is_enabled {
             object.insert("enabled".to_string(), Value::Bool(false));
             object.insert("updatedAt".to_string(), Value::String(now.clone()));
@@ -371,25 +361,20 @@ pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, Stri
         }
     }
 
-    let row = db(app)?
+    let cipher = db(app)?
         .query_row(
-            "SELECT item_json, content_cipher FROM overrides WHERE id = ?1",
+            "SELECT content_cipher FROM overrides WHERE id = ?1",
             params![id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            |row| row.get::<_, Option<String>>(0),
         )
         .optional()
         .map_err(|err| err.to_string())?
         .ok_or_else(|| "覆写项不存在".to_string())?;
 
-    let content = if let Some(cipher) = row.1 {
+    let content = if let Some(cipher) = cipher {
         decrypt_text(app, &cipher)?
     } else {
-        let item = serde_json::from_str::<Value>(&row.0).unwrap_or(Value::Null);
-        if item.get("type").and_then(Value::as_str) == Some("remote") {
-            String::new()
-        } else {
-            String::new()
-        }
+        String::new()
     };
 
     if let Ok(mut guard) = override_content_cache().lock() {
@@ -473,7 +458,7 @@ fn merge_yaml_override(target: &Value, patch: &Value) -> Value {
     };
 
     for (raw_key, value) in patch_object {
-        // Force-replace (clash-party `key!`) works for objects and arrays.
+        // A `key!` suffix force-replaces objects and arrays.
         // Common for scripts/YAML that fully replace `proxy-groups`.
         if let Some(key) = raw_key.strip_suffix('!') {
             result.insert(unwrap_override_key(key), value.clone());
@@ -984,6 +969,9 @@ function main(config) {
             .cloned()
             .unwrap_or_default();
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].get("name").and_then(Value::as_str), Some("SCRIPT"));
+        assert_eq!(
+            groups[0].get("name").and_then(Value::as_str),
+            Some("SCRIPT")
+        );
     }
 }

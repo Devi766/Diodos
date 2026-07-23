@@ -296,9 +296,7 @@ fn netflix_playable_from_graphql(html: &str, title_id: &str) -> bool {
 
     let show_key = format!("Show:{{\"videoId\":{title_id}}}");
     let movie_key = format!("Movie:{{\"videoId\":{title_id}}}");
-    let video_node = graphql
-        .get(&show_key)
-        .or_else(|| graphql.get(&movie_key));
+    let video_node = graphql.get(&show_key).or_else(|| graphql.get(&movie_key));
 
     match video_node.and_then(|node| node.get("mediaTracks")) {
         Some(Value::Object(map)) => !map.is_empty(),
@@ -308,7 +306,11 @@ fn netflix_playable_from_graphql(html: &str, title_id: &str) -> bool {
 }
 
 /// Probe result: (success, playable, region, error)
-fn netflix_analyze_response(status: u16, html: &str, title_id: &str) -> (bool, bool, Option<String>, Option<String>) {
+fn netflix_analyze_response(
+    status: u16,
+    html: &str,
+    title_id: &str,
+) -> (bool, bool, Option<String>, Option<String>) {
     let region = netflix_region(html);
     let blocked = netflix_has_unavailable_signal(html);
     let page_error = netflix_has_page_error_signal(html);
@@ -337,12 +339,7 @@ fn netflix_analyze_response(status: u16, html: &str, title_id: &str) -> (bool, b
         );
     }
 
-    (
-        false,
-        false,
-        region,
-        Some(format!("HTTP {status}")),
-    )
+    (false, false, region, Some(format!("HTTP {status}")))
 }
 
 async fn test_netflix(client: &reqwest::Client, started: u128) -> Value {
@@ -588,7 +585,6 @@ pub(crate) async fn test_media_streaming(
     let started = now_millis();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
-        .danger_accept_invalid_certs(true)
         .proxy(reqwest::Proxy::all(&proxy_url).map_err(|err| err.to_string())?)
         .build()
         .map_err(|err| err.to_string())?;
@@ -650,7 +646,6 @@ async fn simple_speedtest() -> CompatResult {
     let started = now_millis();
     let bytes = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|err| err.to_string())?
         .get(url)
@@ -703,7 +698,6 @@ async fn proxy_speedtest_download(
     let proxy_url = format!("http://{proxy_host}:{proxy_port}");
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .danger_accept_invalid_certs(true)
         .proxy(reqwest::Proxy::all(&proxy_url).map_err(|err| err.to_string())?)
         .build()
         .map_err(|err| err.to_string())?

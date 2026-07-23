@@ -153,38 +153,36 @@ fn to_wide_null(value: &str) -> Vec<u16> {
 
 fn load_firewall_api() -> Result<&'static FirewallApi, String> {
     static API: OnceLock<Result<FirewallApi, String>> = OnceLock::new();
-    API.get_or_init(|| {
-        unsafe {
-            let lib_name = to_wide_null("FirewallAPI.dll");
-            let module = LoadLibraryW(lib_name.as_ptr());
-            if module == 0 {
-                return Err("加载 FirewallAPI.dll 失败".to_string());
-            }
-
-            let load = |name: &[u8]| -> Result<*const core::ffi::c_void, String> {
-                let proc = GetProcAddress(module, name.as_ptr());
-                if proc.is_null() {
-                    Err(format!(
-                        "FirewallAPI 缺少导出: {}",
-                        String::from_utf8_lossy(&name[..name.len().saturating_sub(1)])
-                    ))
-                } else {
-                    Ok(proc)
-                }
-            };
-
-            let enum_app_containers = load(b"NetworkIsolationEnumAppContainers\0")?;
-            let get_app_container_config = load(b"NetworkIsolationGetAppContainerConfig\0")?;
-            let set_app_container_config = load(b"NetworkIsolationSetAppContainerConfig\0")?;
-            let free_app_containers = load(b"NetworkIsolationFreeAppContainers\0")?;
-
-            Ok(FirewallApi {
-                enum_app_containers: std::mem::transmute(enum_app_containers),
-                get_app_container_config: std::mem::transmute(get_app_container_config),
-                set_app_container_config: std::mem::transmute(set_app_container_config),
-                free_app_containers: std::mem::transmute(free_app_containers),
-            })
+    API.get_or_init(|| unsafe {
+        let lib_name = to_wide_null("FirewallAPI.dll");
+        let module = LoadLibraryW(lib_name.as_ptr());
+        if module == 0 {
+            return Err("加载 FirewallAPI.dll 失败".to_string());
         }
+
+        let load = |name: &[u8]| -> Result<*const core::ffi::c_void, String> {
+            let proc = GetProcAddress(module, name.as_ptr());
+            if proc.is_null() {
+                Err(format!(
+                    "FirewallAPI 缺少导出: {}",
+                    String::from_utf8_lossy(&name[..name.len().saturating_sub(1)])
+                ))
+            } else {
+                Ok(proc)
+            }
+        };
+
+        let enum_app_containers = load(b"NetworkIsolationEnumAppContainers\0")?;
+        let get_app_container_config = load(b"NetworkIsolationGetAppContainerConfig\0")?;
+        let set_app_container_config = load(b"NetworkIsolationSetAppContainerConfig\0")?;
+        let free_app_containers = load(b"NetworkIsolationFreeAppContainers\0")?;
+
+        Ok(FirewallApi {
+            enum_app_containers: std::mem::transmute(enum_app_containers),
+            get_app_container_config: std::mem::transmute(get_app_container_config),
+            set_app_container_config: std::mem::transmute(set_app_container_config),
+            free_app_containers: std::mem::transmute(free_app_containers),
+        })
     })
     .as_ref()
     .map_err(|error| error.clone())
@@ -309,8 +307,8 @@ pub fn enum_app_containers() -> Result<Vec<Value>, String> {
                 let display = resolve_display_name(&raw_display, &name);
                 let work_dir = wide_to_string(container.working_directory);
                 let package_full_name = wide_to_string(container.package_full_name);
-                let package_family_name = extract_package_family_name(&package_full_name)
-                    .unwrap_or_else(|| name.clone());
+                let package_family_name =
+                    extract_package_family_name(&package_full_name).unwrap_or_else(|| name.clone());
                 let is_exempt = exempt.contains(&sid.to_ascii_uppercase());
 
                 apps.push(json!({
@@ -568,7 +566,10 @@ pub fn maybe_run_elevated_cli(args: &[String]) -> bool {
         // Best-effort write an error result next to the request.
         let fallback = request.with_extension("result.json");
         let body = json!({ "success": false, "error": error });
-        let _ = fs::write(fallback, serde_json::to_vec_pretty(&body).unwrap_or_default());
+        let _ = fs::write(
+            fallback,
+            serde_json::to_vec_pretty(&body).unwrap_or_default(),
+        );
         // Also try resultPath from file if readable.
         if let Ok(raw) = fs::read_to_string(&request) {
             if let Ok(value) = serde_json::from_str::<Value>(&raw) {
@@ -611,10 +612,7 @@ fn set_config_unlocked(api: &FirewallApi, sids: &[String]) -> Result<usize, Stri
             continue;
         }
         allocated.push(sid);
-        entries.push(SidAndAttributes {
-            sid,
-            attributes: 0,
-        });
+        entries.push(SidAndAttributes { sid, attributes: 0 });
         valid.push(sids[index].clone());
     }
 
@@ -627,9 +625,8 @@ fn set_config_unlocked(api: &FirewallApi, sids: &[String]) -> Result<usize, Stri
         return set_config_unlocked(api, &[]);
     }
 
-    let status = unsafe {
-        (api.set_app_container_config)(entries.len() as DWORD, entries.as_ptr())
-    };
+    let status =
+        unsafe { (api.set_app_container_config)(entries.len() as DWORD, entries.as_ptr()) };
 
     for allocated_sid in allocated {
         unsafe {

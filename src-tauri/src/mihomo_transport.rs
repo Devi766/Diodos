@@ -116,9 +116,7 @@ async fn request_inner(
     }
 
     let timeout = Duration::from_millis(options.timeout.unwrap_or(30_000));
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(timeout)
-        .danger_accept_invalid_certs(true);
+    let mut client_builder = reqwest::Client::builder().timeout(timeout);
     if use_proxy {
         let proxy_url = fetch_proxy_url(app, options.proxy.as_ref())?;
         client_builder =

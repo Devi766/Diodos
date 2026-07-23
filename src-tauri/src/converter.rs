@@ -1478,7 +1478,7 @@ pub(crate) fn converter_templates() -> Value {
 }
 
 fn converter_settings(app: &AppHandle) -> Result<Value, String> {
-    Ok(setting(
+    setting(
         app,
         "converterSettings",
         json!({
@@ -1486,7 +1486,7 @@ fn converter_settings(app: &AppHandle) -> Result<Value, String> {
             "autoStart": false,
             "userAgent": "FlyClash-Converter/1.0"
         }),
-    )?)
+    )
 }
 
 fn converter_port(app: &AppHandle) -> Result<u16, String> {
@@ -1588,6 +1588,10 @@ fn converter_http_response(
 }
 
 fn converter_handle_stream(mut stream: TcpStream, dir: &Path, port: u16) {
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+    let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
     let mut buffer = [0u8; 8192];
     let Ok(size) = stream.read(&mut buffer) else {
         return;
@@ -1597,11 +1601,38 @@ fn converter_handle_stream(mut stream: TcpStream, dir: &Path, port: u16) {
     }
 
     let request = String::from_utf8_lossy(&buffer[..size]);
-    let path = request
+    let mut request_parts = request
         .lines()
         .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("/");
+        .unwrap_or_default()
+        .split_whitespace();
+    let method = request_parts.next().unwrap_or_default();
+    let path = request_parts.next().unwrap_or_default();
+    let version = request_parts.next().unwrap_or_default();
+
+    if method != "GET" {
+        let _ = converter_http_response(
+            &mut stream,
+            "405 Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"Method Not Allowed",
+            &["Allow: GET".to_string()],
+        );
+        return;
+    }
+    if path.is_empty()
+        || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        || request_parts.next().is_some()
+    {
+        let _ = converter_http_response(
+            &mut stream,
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            b"Bad Request",
+            &[],
+        );
+        return;
+    }
 
     if path == "/list" {
         let body = serde_json::to_vec_pretty(&converter_list_from_dir(dir, port))
@@ -1616,7 +1647,10 @@ fn converter_handle_stream(mut stream: TcpStream, dir: &Path, port: u16) {
         return;
     }
 
-    if let Some(id) = path.strip_prefix("/sub/").filter(|id| !id.is_empty()) {
+    if let Some(id) = path
+        .strip_prefix("/sub/")
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+    {
         let file = dir.join(format!("{}.json", sanitize_file_name(id)));
         if let Some(record) = converter_read_subscription(&file) {
             let content = record
@@ -1713,7 +1747,7 @@ fn converter_start_server(app: &AppHandle, state: &State<'_, AppState>) -> Compa
 
     converter_stop_locked(&mut runtime);
 
-    let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|err| err.to_string())?;
+    let listener = TcpListener::bind(("127.0.0.1", port)).map_err(|err| err.to_string())?;
     listener
         .set_nonblocking(true)
         .map_err(|err| err.to_string())?;
@@ -1781,7 +1815,6 @@ async fn converter_source_content(params: &Value) -> Result<String, String> {
         .filter(|value| !value.trim().is_empty())
     {
         return reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|err| err.to_string())?
@@ -1906,7 +1939,6 @@ async fn converter_add_to_config(app: &AppHandle, params: Value) -> CompatResult
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("FlyClash-Converter/1.0");
         let response = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|err| err.to_string())?
@@ -1972,7 +2004,6 @@ async fn dispatch_compat_call(
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("FlyClash-Converter/1.0");
             let response = reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
                 .timeout(Duration::from_secs(30))
                 .build()
                 .map_err(|err| err.to_string())?

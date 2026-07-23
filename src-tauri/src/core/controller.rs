@@ -32,10 +32,7 @@ pub fn shared_endpoint() -> ControllerEndpoint {
         }
         ControllerEndpoint {
             arg_name: "-ext-ctl-unix",
-            path: socket_dir
-                .join("mihomo.sock")
-                .to_string_lossy()
-                .to_string(),
+            path: socket_dir.join("mihomo.sock").to_string_lossy().to_string(),
         }
     }
 }

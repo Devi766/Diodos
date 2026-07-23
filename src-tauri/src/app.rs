@@ -122,13 +122,12 @@ pub(crate) async fn handle_compat_call(
 }
 
 fn subscription_url_from_protocol_arg(raw: &str) -> Option<String> {
-    let candidate = if raw.starts_with("clash://") || raw.starts_with("flyclash://") {
-        raw.split_once("?url=")?.1
-    } else if raw.contains("?url=") {
-        raw.split_once("?url=")?.1
-    } else {
-        return None;
-    };
+    let candidate =
+        if raw.starts_with("clash://") || raw.starts_with("flyclash://") || raw.contains("?url=") {
+            raw.split_once("?url=")?.1
+        } else {
+            return None;
+        };
 
     let value = candidate.split('&').next().unwrap_or_default();
     let decoded = urlencoding::decode(value).ok()?.to_string();
@@ -221,7 +220,8 @@ fn cleanup_on_exit(app: &AppHandle) {
 
     let state = app.state::<AppState>();
     let app = app.clone();
-    let result = tauri::async_runtime::block_on(async move { stop_mihomo_process(&app, &state).await });
+    let result =
+        tauri::async_runtime::block_on(async move { stop_mihomo_process(&app, &state).await });
     if let Err(error) = result {
         eprintln!("[exit] stop core failed: {error}");
     }
@@ -319,10 +319,14 @@ pub fn run() {
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         if let Some(window) = refresh_app.get_webview_window("main") {
                             apply_windows_window_icons(&window);
-                            let mode = setting(&refresh_app, "appearanceMode", json!(refresh_mode.clone()))
-                                .ok()
-                                .and_then(|value| value.as_str().map(ToString::to_string))
-                                .unwrap_or_else(|| refresh_mode.clone());
+                            let mode = setting(
+                                &refresh_app,
+                                "appearanceMode",
+                                json!(refresh_mode.clone()),
+                            )
+                            .ok()
+                            .and_then(|value| value.as_str().map(ToString::to_string))
+                            .unwrap_or_else(|| refresh_mode.clone());
                             let _ = apply_appearance_mode_for_app(&refresh_app, &window, &mode);
                             let silent = setting(&refresh_app, "silentStart", json!(false))
                                 .ok()

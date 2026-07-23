@@ -600,7 +600,7 @@ function mergeConfigs(target = {}, patch = {}) {
   for (const rawKey of Object.keys(patch)) {
     const value = patch[rawKey];
 
-    // Force-replace (clash-party `key!`) for both objects and arrays.
+    // A `key!` suffix force-replaces both objects and arrays.
     if (rawKey.endsWith('!')) {
       const key = unwrapKey(rawKey.slice(0, -1));
       result[key] = value;

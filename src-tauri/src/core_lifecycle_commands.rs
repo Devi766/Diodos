@@ -39,9 +39,7 @@ async fn wait_for_mihomo(app: &AppHandle) -> bool {
     // switches never keep probing a stale pipe path.
     for attempt in 0..100 {
         let endpoint = crate::runtime::active_runtime_controller_endpoint(app);
-        if let Err(error) =
-            crate::runtime::sync_mihomo_plugin_endpoint(app, &endpoint).await
-        {
+        if let Err(error) = crate::runtime::sync_mihomo_plugin_endpoint(app, &endpoint).await {
             if attempt == 0 || attempt % 10 == 0 {
                 eprintln!(
                     "[core-start] controller endpoint sync failed (attempt {}): {error}",
@@ -70,19 +68,15 @@ fn kill_leftover_core_processes_windows() {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let script = r#"
 $ErrorActionPreference='SilentlyContinue'
-$names = @('mihomo.exe','mihomo-smart.exe','mihomo-alpha.exe','mihomo-meta.exe','FlyClash-Core.exe','flyclash-core.exe')
 Get-CimInstance Win32_Process |
   Where-Object {
-    $_.Name -and (
-      ($names -contains $_.Name) -or
-      ($_.CommandLine -and (
-        $_.CommandLine -match 'work-config\.yaml' -or
-        $_.CommandLine -match 'pipe\\flycast-mihomo' -or
-        $_.CommandLine -match 'pipe\\flycast-mihomo-service' -or
-        $_.CommandLine -match 'pipe\\FlyClash\\mihomo' -or
-        $_.CommandLine -match 'com\.flyclash\.desktop\\mihomo' -or
-        $_.CommandLine -match 'AppData\\Roaming\\com\.flyclash\.desktop\\cores'
-      ))
+    $_.CommandLine -and (
+      $_.CommandLine -match 'work-config\.yaml' -or
+      $_.CommandLine -match 'pipe\\flycast-mihomo' -or
+      $_.CommandLine -match 'pipe\\flycast-mihomo-service' -or
+      $_.CommandLine -match 'pipe\\FlyClash\\mihomo' -or
+      $_.CommandLine -match 'com\.flyclash\.desktop\\mihomo' -or
+      $_.CommandLine -match 'AppData\\Roaming\\com\.flyclash\.desktop\\cores'
     )
   } |
   ForEach-Object {
@@ -153,10 +147,7 @@ struct AppCoreStartPrepDeps<'a> {
 }
 
 impl core_lifecycle::CoreStartPrepDeps for AppCoreStartPrepDeps<'_> {
-    fn resolve_config_path(
-        &self,
-        raw: &str,
-    ) -> Result<String, core_lifecycle::CoreStartPrepError> {
+    fn resolve_config_path(&self, raw: &str) -> Result<String, core_lifecycle::CoreStartPrepError> {
         match core_lifecycle::start_config_path_decision(raw) {
             Some(path) => normalize_config_reference(self.app, path)
                 .map_err(core_lifecycle::CoreStartPrepError::message),
@@ -310,6 +301,16 @@ pub(crate) async fn start_mihomo(
     state: &State<'_, AppState>,
     config_path: &str,
 ) -> CompatResult {
+    // Upgrade the helper before resolving its protected service-core path.
+    // This prevents an older helper from receiving new provisioning flags.
+    if crate::tun_service::should_start_core_by_service(app) {
+        if let Err(error) = crate::tun_service::ensure_helper_service_current(app) {
+            return Ok(core_lifecycle::start_failure_completion(format!(
+                "准备 Helper 服务失败: {error}"
+            ))
+            .response);
+        }
+    }
     let prepared = match prepare_core_start_context(app, config_path) {
         Ok(prepared) => prepared,
         Err(result) => return result,
@@ -362,8 +363,7 @@ pub(crate) async fn start_mihomo(
                             );
                         }
                         let service_start = {
-                            let mut runtime =
-                                state.runtime.lock().expect("runtime mutex poisoned");
+                            let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
                             core_lifecycle::service_start_after_spawn(
                                 &mut runtime.core,
                                 controller_endpoint,
@@ -403,9 +403,7 @@ pub(crate) async fn start_mihomo(
                 }
             }
             Err(error) => {
-                eprintln!(
-                    "[core-service] helper unavailable, falling back to sidecar: {error}"
-                );
+                eprintln!("[core-service] helper unavailable, falling back to sidecar: {error}");
                 set_runtime_running_mode(app, RunningMode::NotRunning);
             }
         }

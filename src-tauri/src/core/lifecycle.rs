@@ -746,8 +746,7 @@ mod tests {
         let mut manager = CoreManager::default();
         begin_service_launch(&mut manager, controller::service_endpoint());
 
-        let failure =
-            fail_service_launch(&mut manager, "sync failed".to_string(), false);
+        let failure = fail_service_launch(&mut manager, "sync failed".to_string(), false);
 
         assert!(!failure.started);
         assert_eq!(failure.response["success"], json!(false));
@@ -772,12 +771,8 @@ mod tests {
     fn finish_service_start_aborts_and_reports_timeout() {
         let mut manager = CoreManager::default();
         let endpoint = controller::service_endpoint();
-        let success = finish_service_start(
-            &mut manager,
-            endpoint,
-            "profile.yaml".to_string(),
-            false,
-        );
+        let success =
+            finish_service_start(&mut manager, endpoint, "profile.yaml".to_string(), false);
         assert!(success.started);
         assert_eq!(success.response["success"], json!(true));
         assert_eq!(manager.running_mode(), RunningMode::Service);
@@ -788,12 +783,8 @@ mod tests {
         let mut manager = CoreManager::default();
         let endpoint = controller::service_endpoint();
 
-        let success = finish_service_start(
-            &mut manager,
-            endpoint,
-            "profile.yaml".to_string(),
-            true,
-        );
+        let success =
+            finish_service_start(&mut manager, endpoint, "profile.yaml".to_string(), true);
 
         assert!(success.started);
         assert_eq!(success.response["runningMode"], json!("service"));
@@ -817,8 +808,7 @@ mod tests {
             Some("pipe closed".to_string()),
         );
         assert!(!failure.started);
-        assert!(failure
-            .response["error"]
+        assert!(failure.response["error"]
             .as_str()
             .unwrap_or_default()
             .contains("pipe closed"));
@@ -847,14 +837,8 @@ mod tests {
 
     #[test]
     fn choose_start_path_and_prepared_paths() {
-        assert_eq!(
-            choose_start_path(true),
-            CoreStartPath::Service
-        );
-        assert_eq!(
-            choose_start_path(false),
-            CoreStartPath::Sidecar
-        );
+        assert_eq!(choose_start_path(true), CoreStartPath::Service);
+        assert_eq!(choose_start_path(false), CoreStartPath::Sidecar);
         assert_eq!(start_config_path_decision(""), None);
         assert_eq!(start_config_path_decision("  a.yaml  "), Some("a.yaml"));
 
@@ -862,7 +846,10 @@ mod tests {
             std::path::PathBuf::from("runtime.yaml"),
             std::path::PathBuf::from("work"),
         );
-        assert_eq!(prepared.log_path, std::path::PathBuf::from("work/flyclash-mihomo.log"));
+        assert_eq!(
+            prepared.log_path,
+            std::path::PathBuf::from("work/flyclash-mihomo.log")
+        );
     }
 
     struct FakePrepDeps {
@@ -964,10 +951,7 @@ mod tests {
             fn resolve_config_path(&self, _raw: &str) -> Result<String, CoreStartPrepError> {
                 Ok("profile.yaml".to_string())
             }
-            fn ensure_config_readable(
-                &self,
-                _config_path: &str,
-            ) -> Result<(), CoreStartPrepError> {
+            fn ensure_config_readable(&self, _config_path: &str) -> Result<(), CoreStartPrepError> {
                 Ok(())
             }
             fn find_core_executable(&self) -> Result<std::path::PathBuf, CoreStartPrepError> {

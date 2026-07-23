@@ -398,7 +398,7 @@ async function removeLoopbackExemption(sid) {
 }
 
 /**
- * Resolve classic EnableLoopback.exe (Clash Party / Verge style fallback).
+ * Resolve the bundled EnableLoopback.exe fallback.
  * @returns {string|null}
  */
 function findEnableLoopbackTool() {

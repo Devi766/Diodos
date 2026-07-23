@@ -67,7 +67,6 @@ async fn fetch_subscription(app: &AppHandle, url: &str) -> CompatResult {
     let ua = safe_subscription_user_agent(app)?;
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .danger_accept_invalid_certs(true)
         .build()
         .map_err(|err| err.to_string())?
         .get(valid_url)

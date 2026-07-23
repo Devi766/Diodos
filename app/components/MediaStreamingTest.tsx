@@ -36,6 +36,17 @@ import { toast } from 'sonner';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const MEDIA_API_UNAVAILABLE_MESSAGE = '媒体检测 API 不可用，请在 FlyClash 桌面端中使用此功能';
 
+const escapeReportHtml = (value: unknown) => String(value ?? '').replace(/[&<>'"]/g, (char) => {
+  const entities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  };
+  return entities[char];
+});
+
 // 定义媒体流测试API返回的结果类型
 interface MediaStreamingTestResult {
   success?: boolean;
@@ -689,11 +700,11 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         // 创建服务卡片HTML
         const cardHtml = `
           <div style="border:1px solid #e5e7eb;border-radius:16px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;background:white;">
-            <div style="font-size:14px;font-weight:500;color:#1f2937;">${service.name}</div>
+            <div style="font-size:14px;font-weight:500;color:#1f2937;">${escapeReportHtml(service.name)}</div>
             <div style="display:flex;align-items:center;gap:6px;">
               <div style="height:20px;line-height:20px;display:inline-block;background:${statusBg};border-radius:6px;padding:0 8px;color:${statusColor};font-size:12px;font-weight:600;">
                 ${service.status === 'success' ? '✓ ' : service.status === 'partial' ? '! ' : '✕ '}
-                ${service.region ? `${service.region} ` : ''}${statusText}
+                ${service.region ? `${escapeReportHtml(service.region)} ` : ''}${statusText}
               </div>
             </div>
           </div>
@@ -745,7 +756,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
               <div>
                 <div style="font-size:13px;color:#4b5563;margin-bottom:6px;display:flex;align-items:center;height:16px;">
                   <span style="color:#6b7280;margin-right:6px;line-height:16px;display:inline-block;">⦿</span>
-                  <span style="line-height:16px;">节点: <b>${currentNode || '默认'}</b></span>
+                  <span style="line-height:16px;">节点: <b>${escapeReportHtml(currentNode || '默认')}</b></span>
                 </div>
                 <div style="font-size:13px;color:#4b5563;display:flex;align-items:center;height:16px;">
                   <span style="color:#6b7280;margin-right:6px;line-height:16px;display:inline-block;">⧖</span>
@@ -798,9 +809,9 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
           backgroundColor: '#ffffff',
           scale: 2,
-          logging: true,
+          logging: false,
           useCORS: true,
-          allowTaint: true,
+          allowTaint: false,
           onclone: (clonedDoc) => {
             const clonedElement = clonedDoc.querySelector('div');
             if (clonedElement) {

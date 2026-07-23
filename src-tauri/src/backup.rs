@@ -24,6 +24,8 @@ use crate::{
 
 type CompatResult = Result<Value, String>;
 
+const MAX_WEBDAV_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
+
 fn now_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -63,6 +65,24 @@ pub(crate) fn ensure_zip_extension(path: PathBuf) -> PathBuf {
     } else {
         path.with_extension("zip")
     }
+}
+
+fn validate_backup_file_name(file_name: &str) -> Result<String, String> {
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        return Err("缺少备份文件名".to_string());
+    }
+    if file_name.len() > 255
+        || file_name == "."
+        || file_name == ".."
+        || file_name.contains(['/', '\\', ':', '\0'])
+    {
+        return Err("备份文件名无效".to_string());
+    }
+    if !file_name.to_ascii_lowercase().ends_with(".zip") {
+        return Err("备份文件必须使用 .zip 扩展名".to_string());
+    }
+    Ok(file_name.to_string())
 }
 
 fn backup_profile_uuid(source: &str) -> String {
@@ -125,7 +145,7 @@ pub(crate) fn create_backup_zip_at(
     backup_type: &str,
     path: &Path,
 ) -> CompatResult {
-    let file = fs::File::create(&path).map_err(|err| err.to_string())?;
+    let file = fs::File::create(path).map_err(|err| err.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -646,30 +666,35 @@ pub(crate) fn webdav_validate_config(config: &Value) -> Result<(), String> {
     let username = webdav_config_text(config, "username", "");
     let password = webdav_config_text(config, "password", "");
     if uri.is_empty() || username.is_empty() || password.is_empty() {
-        Err("WebDAV配置不完整".to_string())
-    } else {
-        Ok(())
+        return Err("WebDAV配置不完整".to_string());
     }
+
+    let url = reqwest::Url::parse(&uri).map_err(|_| "WebDAV地址无效".to_string())?;
+    if url.scheme() != "https" || url.host_str().is_none() {
+        return Err("WebDAV地址必须是有效的 HTTPS 地址".to_string());
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("WebDAV地址不能包含凭据、查询参数或片段".to_string());
+    }
+    Ok(())
 }
 
 fn webdav_base_url(config: &Value) -> Result<String, String> {
-    let base = config
-        .get("uri")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/');
-    if base.is_empty() {
-        return Err("WebDAV配置不完整".to_string());
-    }
-    Ok(base.to_string())
+    webdav_validate_config(config)?;
+    Ok(webdav_config_text(config, "uri", "")
+        .trim_end_matches('/')
+        .to_string())
 }
 
 pub(crate) fn webdav_root_url(config: &Value) -> Result<String, String> {
     webdav_base_url(config)
 }
 
-fn webdav_dir_segments(config: &Value) -> Vec<String> {
+fn webdav_dir_segments(config: &Value) -> Result<Vec<String>, String> {
     let dir = config
         .get("backupDirectory")
         .and_then(Value::as_str)
@@ -684,14 +709,21 @@ fn webdav_dir_segments(config: &Value) -> Vec<String> {
         .split('/')
         .filter_map(|part| {
             let part = part.trim();
-            (!part.is_empty()).then(|| urlencoding::encode(part).into_owned())
+            (!part.is_empty()).then_some(part)
+        })
+        .map(|part| {
+            if matches!(part, "." | "..") || part.contains(['\\', ':', '\0']) {
+                Err("WebDAV备份目录包含无效路径段".to_string())
+            } else {
+                Ok(urlencoding::encode(part).into_owned())
+            }
         })
         .collect()
 }
 
 fn webdav_directory_url(config: &Value, segment_count: Option<usize>) -> Result<String, String> {
     let base = webdav_base_url(config)?;
-    let segments = webdav_dir_segments(config);
+    let segments = webdav_dir_segments(config)?;
     let take = segment_count.unwrap_or(segments.len()).min(segments.len());
     if take == 0 {
         Ok(base)
@@ -703,8 +735,9 @@ fn webdav_directory_url(config: &Value, segment_count: Option<usize>) -> Result<
 pub(crate) fn webdav_url(config: &Value, file_name: Option<&str>) -> Result<String, String> {
     let mut url = webdav_directory_url(config, None)?;
     if let Some(file) = file_name {
+        let file = validate_backup_file_name(file)?;
         url.push('/');
-        url.push_str(&urlencoding::encode(file));
+        url.push_str(&urlencoding::encode(&file));
     }
     Ok(url)
 }
@@ -720,7 +753,7 @@ pub(crate) async fn webdav_request(
     let username = config.get("username").and_then(Value::as_str).unwrap_or("");
     let password = config.get("password").and_then(Value::as_str).unwrap_or("");
     let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|err| err.to_string())?;
     let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|err| err.to_string())?;
@@ -757,7 +790,7 @@ pub(crate) fn webdav_error_message(result: &Value, fallback: &str) -> String {
 }
 
 pub(crate) async fn webdav_ensure_directory(config: &Value) -> Result<(), String> {
-    let segments = webdav_dir_segments(config);
+    let segments = webdav_dir_segments(config)?;
     for index in 1..=segments.len() {
         let url = webdav_directory_url(config, Some(index))?;
         let result = webdav_request(config, "MKCOL", url, None, None).await?;
@@ -849,6 +882,7 @@ async fn dispatch_compat_call(
         }
         "backupWebDAVSaveConfig" | "backup-webdav-save-config" => {
             let config = args.first().cloned().unwrap_or_else(|| json!({}));
+            webdav_validate_config(&config)?;
             let backup_directory = config
                 .get("backupDirectory")
                 .and_then(Value::as_str)
@@ -861,6 +895,8 @@ async fn dispatch_compat_call(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .unwrap_or("flyclash_backup.zip");
+            webdav_dir_segments(&config)?;
+            let backup_file_name = validate_backup_file_name(backup_file_name)?;
             set_setting(
                 app,
                 "webdav_uri",
@@ -926,6 +962,12 @@ async fn dispatch_compat_call(
             if file_name.is_empty() {
                 file_name = "flyclash_backup.zip".to_string();
             }
+            let file_name = match validate_backup_file_name(&file_name) {
+                Ok(file_name) => file_name,
+                Err(error) => {
+                    return Ok(json!({ "success": false, "uploaded": false, "error": error }));
+                }
+            };
             if let Err(error) = webdav_ensure_directory(&config).await {
                 return Ok(json!({ "success": false, "uploaded": false, "error": error }));
             }
@@ -967,14 +1009,15 @@ async fn dispatch_compat_call(
             let file_name = arg_string(args, 0)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| webdav_config_text(&config, "fileName", "flyclash_backup.zip"));
-            if file_name.trim().is_empty() {
-                return Ok(
-                    json!({ "success": false, "error": "缺少备份文件名", "restored": false }),
-                );
-            }
+            let file_name = match validate_backup_file_name(&file_name) {
+                Ok(file_name) => file_name,
+                Err(error) => {
+                    return Ok(json!({ "success": false, "error": error, "restored": false }));
+                }
+            };
             let url = webdav_url(&config, Some(&file_name))?;
             let client = reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
+                .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .map_err(|err| err.to_string())?;
             let response = client
@@ -993,12 +1036,26 @@ async fn dispatch_compat_call(
                 }));
             }
             let total = response.content_length().unwrap_or(0);
+            if total > MAX_WEBDAV_BACKUP_BYTES {
+                return Ok(json!({
+                    "success": false,
+                    "restored": false,
+                    "error": "备份文件超过 512 MiB 限制"
+                }));
+            }
             emit_backup_progress(window, "backup-download-progress", "downloaded", 0, total);
             let mut downloaded = 0u64;
             let mut bytes = Vec::new();
             let mut response = response;
             while let Some(chunk) = response.chunk().await.map_err(|err| err.to_string())? {
                 downloaded = downloaded.saturating_add(chunk.len() as u64);
+                if downloaded > MAX_WEBDAV_BACKUP_BYTES {
+                    return Ok(json!({
+                        "success": false,
+                        "restored": false,
+                        "error": "备份文件超过 512 MiB 限制"
+                    }));
+                }
                 bytes.extend_from_slice(&chunk);
                 emit_backup_progress(
                     window,
@@ -1071,9 +1128,7 @@ async fn dispatch_compat_call(
                     let name = urlencoding::decode(&raw_name)
                         .map(|value| value.into_owned())
                         .unwrap_or(raw_name);
-                    if !name.ends_with(".zip") {
-                        return None;
-                    }
+                    let name = validate_backup_file_name(&name).ok()?;
                     let size = size_re
                         .captures(&response)
                         .and_then(|capture| capture.get(1))
@@ -1096,11 +1151,12 @@ async fn dispatch_compat_call(
         "backupWebDAVDelete" | "backup-webdav-delete" => {
             let config = webdav_config(app)?;
             let file_name = arg_string(args, 0).unwrap_or_default();
-            if file_name.trim().is_empty() {
-                return Ok(
-                    json!({ "success": false, "deleted": false, "error": "缺少备份文件名" }),
-                );
-            }
+            let file_name = match validate_backup_file_name(&file_name) {
+                Ok(file_name) => file_name,
+                Err(error) => {
+                    return Ok(json!({ "success": false, "deleted": false, "error": error }));
+                }
+            };
             let result = webdav_request(
                 &config,
                 "DELETE",
@@ -1159,4 +1215,40 @@ pub(crate) async fn handle_compat_call(
     }
 
     Some(dispatch_compat_call(app, window, state, method, args).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_file_name_must_be_a_flat_zip_file() {
+        assert_eq!(
+            validate_backup_file_name(" archive.ZIP ").unwrap(),
+            "archive.ZIP"
+        );
+        for value in [
+            "",
+            "../backup.zip",
+            "nested/backup.zip",
+            "C:\\backup.zip",
+            "backup.tar",
+        ] {
+            assert!(
+                validate_backup_file_name(value).is_err(),
+                "{value} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn webdav_url_rejects_path_traversal_segments() {
+        let config = json!({
+            "uri": "https://dav.example.test/root",
+            "username": "user",
+            "password": "password",
+            "backupDirectory": "FlyClash/../other"
+        });
+        assert!(webdav_url(&config, Some("backup.zip")).is_err());
+    }
 }
