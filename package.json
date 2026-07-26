@@ -120,6 +120,7 @@
     "@types/react-dom": "^19",
     "@types/react-virtualized-auto-sizer": "^1.0.4",
     "@types/react-window": "^1.8.8",
+    "adm-zip": "0.6.0",
     "autoprefixer": "^10.4.15",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
