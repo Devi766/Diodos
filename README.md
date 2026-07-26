@@ -1,3 +1,7 @@
+<a href="https://www.stromsend.xyz/#/register?code=tIhaARYV">
+  <img src="https://raw.githubusercontent.com/GtxFury/FlyClash-Android/main/screenshots/unnamed.jpg" alt="友情推荐" />
+</a>
+
 # FlyClash - 简洁优雅的代理工具
 
 FlyClash是一个基于Clash内核的现代化代理客户端，拥有美观的界面和强大的功能。
