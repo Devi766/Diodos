@@ -118,6 +118,54 @@ pub(crate) fn cores_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// 源内核指纹：大小 + 修改时间。用于在无法读取受保护目标副本时
+/// 判断源内核（含用户自定义内核）是否发生过更新。
+#[cfg(target_os = "windows")]
+fn service_core_source_stamp(source: &Path) -> String {
+    fs::metadata(source)
+        .map(|meta| {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .unwrap_or_default();
+            format!("{}:{}", meta.len(), mtime)
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "windows")]
+fn service_core_stamp_key(target: &Path) -> String {
+    format!(
+        "serviceCoreStamp:{}",
+        target
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default()
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn read_service_core_stamp(app: &AppHandle, target: &Path) -> Option<String> {
+    crate::storage::setting(app, &service_core_stamp_key(target), serde_json::Value::Null)
+        .ok()?
+        .as_str()
+        .map(ToString::to_string)
+}
+
+#[cfg(target_os = "windows")]
+fn write_service_core_stamp(app: &AppHandle, target: &Path, stamp: &str) {
+    if stamp.is_empty() {
+        return;
+    }
+    let _ = crate::storage::set_setting(
+        app,
+        &service_core_stamp_key(target),
+        serde_json::Value::String(stamp.to_string()),
+    );
+}
+
 pub(crate) fn service_compatible_core_path(
     app: &AppHandle,
     source: &Path,
@@ -148,7 +196,18 @@ pub(crate) fn service_compatible_core_path(
             .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
         let managed_dir = program_data.join("FlyClash").join("service-cores");
         let target = core_paths::service_runtime_target(&managed_dir, source);
-        let refresh_needed = core_paths::needs_service_runtime_refresh(source, &target);
+        let source_stamp = service_core_source_stamp(source);
+        // 服务内核目录被 ACL 加固后，用户态可能读不到目标元数据（os error 5）。
+        // 此时用「上次安装时记录的源内核指纹」判断是否需要重新安装，
+        // 保证自定义内核被替换/更新后服务副本仍会刷新，同时避免每次启动都误判。
+        let refresh_needed = match fs::metadata(&target) {
+            Ok(_) => core_paths::needs_service_runtime_refresh(source, &target),
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                read_service_core_stamp(app, &target).as_deref() != Some(source_stamp.as_str())
+                    || source_stamp.is_empty()
+            }
+            Err(_) => true,
+        };
         let trusted = if refresh_needed {
             false
         } else {
@@ -160,6 +219,7 @@ pub(crate) fn service_compatible_core_path(
         if !core_service::service_core_is_trusted(&helper, &target)? {
             return Err("受保护服务内核完整性校验失败".to_string());
         }
+        write_service_core_stamp(app, &target, &source_stamp);
         return Ok(target);
     }
 
