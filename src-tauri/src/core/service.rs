@@ -365,10 +365,14 @@ fn windows_current_user_sid() -> Result<String, String> {
 
 #[cfg(target_os = "windows")]
 fn encode_existing_service_core_path(path: &Path) -> Result<String, String> {
-    let path = path
-        .canonicalize()
-        .map_err(|err| format!("无法解析服务内核路径: {err}"))?;
-    Ok(URL_SAFE_NO_PAD.encode(path.to_string_lossy().as_bytes()))
+    let resolved = match path.canonicalize() {
+        Ok(resolved) => resolved,
+        // 服务内核目录可能被 ACL 加固，用户态进程无权打开句柄（os error 5）。
+        // 绝对路径直接透传，符号链接与归属校验由 Helper 在特权侧完成。
+        Err(_) if path.is_absolute() => path.to_path_buf(),
+        Err(err) => return Err(format!("无法解析服务内核路径: {err}")),
+    };
+    Ok(URL_SAFE_NO_PAD.encode(resolved.to_string_lossy().as_bytes()))
 }
 
 #[cfg(target_os = "windows")]
