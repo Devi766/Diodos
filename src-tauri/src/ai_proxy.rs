@@ -179,6 +179,10 @@ async fn run_stream(
         json!({ "ok": true, "status": status.as_u16() }),
     );
 
+    // 空闲超时：服务端返回响应头后中途停发数据但不关闭连接（网关半开、
+    // 模型侧卡死）时，若无超时会永久阻塞在 chunk()，前端卡在「生成中」。
+    const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
     loop {
         let chunk = tokio::select! {
             _ = &mut abort_rx => {
@@ -189,7 +193,17 @@ async fn run_stream(
                 unregister_stream(&app, &request_id);
                 return;
             }
-            chunk = response.chunk() => chunk,
+            result = tokio::time::timeout(STREAM_IDLE_TIMEOUT, response.chunk()) => match result {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    let _ = window.emit(
+                        "ai-proxy-stream-error",
+                        json!({ "requestId": request_id.as_str(), "error": "流响应超时" }),
+                    );
+                    unregister_stream(&app, &request_id);
+                    return;
+                }
+            },
         };
 
         match chunk {

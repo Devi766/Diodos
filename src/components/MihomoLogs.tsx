@@ -17,9 +17,15 @@ interface LogEntry {
   type: LogLevel;
   payload: string;
   time: string;
+  seq?: number;
 }
 
 const MAX_LOGS = 500;
+
+// 单调递增序号，作为日志渲染的稳定 key：滚动缓冲用数组 index 当 key 会在
+// 丢弃最旧条目后让所有条目整体前移，导致选中/复制跳到不相干内容。
+let logSeqCounter = 0;
+const stampLogSeq = (entry: LogEntry): LogEntry => ({ ...entry, seq: logSeqCounter++ });
 
 const logsViewCache: {
   logs: LogEntry[];
@@ -142,8 +148,9 @@ const MihomoLogs: React.FC = () => {
     const isTauriRuntime = Boolean((window as any).__TAURI__);
 
     const handleLog = (log: unknown) => {
-      const entry = normalizeLog(log);
-      if (!entry) return;
+      const normalized = normalizeLog(log);
+      if (!normalized) return;
+      const entry = stampLogSeq(normalized);
       setIsLoadingLogs(false);
       setLogs(prev => {
         const newLogs = [...prev, entry];
@@ -172,7 +179,7 @@ const MihomoLogs: React.FC = () => {
           return;
         }
         const entries = Array.isArray(result)
-          ? result.map(normalizeLog).filter((entry): entry is LogEntry => Boolean(entry))
+          ? result.map(normalizeLog).filter((entry): entry is LogEntry => Boolean(entry)).map(stampLogSeq)
           : [];
         writeLogsCache( entries.slice(-MAX_LOGS));
         setLogs(entries.slice(-MAX_LOGS));
@@ -379,7 +386,7 @@ const MihomoLogs: React.FC = () => {
           ) : (
             filteredLogs.map((log, index) => (
               <div
-                key={index}
+                key={log.seq ?? index}
                 className={`p-3 rounded-lg ${getLogLevelBg()} transition-colors`}
               >
                 <div className="flex items-center gap-3 mb-1">

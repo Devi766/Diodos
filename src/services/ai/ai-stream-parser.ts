@@ -19,6 +19,16 @@ export async function* parseOpenAIStream(
   let buffer = '';
 
   const toolCalls: Record<number, { id: string; name: string; arguments: string }> = {};
+  // finish_reason 与 [DONE] 都会尝试 flush，用标记避免同一批工具被 emit 两次
+  // （否则工具会被执行两遍，含 restart / switch 等有副作用的操作）
+  let toolCallsFlushed = false;
+  const flushToolCalls = function* () {
+    if (toolCallsFlushed) return;
+    toolCallsFlushed = true;
+    for (const idx of Object.keys(toolCalls).map(Number).sort((a, b) => a - b)) {
+      yield { type: 'tool_call_done', toolCall: toolCalls[idx] } as StreamDelta;
+    }
+  };
 
   try {
     while (true) {
@@ -34,10 +44,7 @@ export async function* parseOpenAIStream(
         if (!trimmed || !trimmed.startsWith('data: ')) continue;
         const data = trimmed.slice(6);
         if (data === '[DONE]') {
-          // Flush any pending tool calls
-          for (const idx of Object.keys(toolCalls).map(Number).sort()) {
-            yield { type: 'tool_call_done', toolCall: toolCalls[idx] };
-          }
+          yield* flushToolCalls();
           yield { type: 'done' };
           return;
         }
@@ -72,9 +79,7 @@ export async function* parseOpenAIStream(
           }
 
           if (choice.finish_reason === 'tool_calls' || choice.finish_reason === 'function_call') {
-            for (const idx of Object.keys(toolCalls).map(Number).sort()) {
-              yield { type: 'tool_call_done', toolCall: toolCalls[idx] };
-            }
+            yield* flushToolCalls();
           }
         } catch {
           // skip malformed JSON

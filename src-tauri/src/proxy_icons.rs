@@ -173,6 +173,34 @@ fn favicon_url(icon_url: &str) -> String {
         .unwrap_or_else(|_| icon_url.to_string())
 }
 
+/// 校验图标 URL 是否可安全下载。图标来自不可信的订阅/配置，
+/// 只允许 http/https，并拒绝指向本机/内网的地址，防止盲 SSRF。
+fn icon_remote_url_allowed(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return false;
+    }
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                !(v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified())
+            }
+            std::net::IpAddr::V6(v6) => !(v6.is_loopback() || v6.is_unspecified()),
+        };
+    }
+    // 普通域名放行（DNS 重定向的残余风险已由禁用本地读取 + 盲响应限制）
+    true
+}
+
 async fn cached_icon_data_url(
     app: &AppHandle,
     cache_dir_name: &str,
@@ -189,21 +217,16 @@ async fn cached_icon_data_url(
         return Ok(Some(icon_url));
     }
 
-    let direct_path = PathBuf::from(&icon_url);
-    if direct_path.exists() && direct_path.is_file() {
-        let ext = direct_path
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| format!(".{}", value.to_ascii_lowercase()))
-            .unwrap_or_else(|| ".png".to_string());
-        return icon_data_url_from_file(&direct_path, &ext).map(Some);
-    }
-
+    // 不把订阅/配置里的 icon 当本地路径读取：否则不可信订阅可让客户端
+    // 读取本机任意文件内容。仅接受可安全下载的 http/https 远程地址。
     let target_url = if !use_favicon_for_sites || is_icon_image_url(&icon_url) {
         icon_url.clone()
     } else {
         favicon_url(&icon_url)
     };
+    if !icon_remote_url_allowed(&target_url) {
+        return Ok(None);
+    }
     let initial_ext = icon_extension_from_url(&target_url);
     let cache_dir = icon_cache_dir(app, cache_dir_name)?;
     if let Some((path, ext)) = cached_icon_file(&cache_dir, cache_prefix, &icon_url, cache_seed) {

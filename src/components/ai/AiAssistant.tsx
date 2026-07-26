@@ -255,6 +255,12 @@ export default function AiAssistant() {
       };
 
       for (const tc of toolCallInfos) {
+        // 用户点停止后不再继续执行本批剩余工具（含 restart/switch 等有副作用的操作）
+        if (abortController.signal.aborted) {
+          log(`tool loop aborted before ${tc.name}`);
+          updateToolStatus(tc.id, 'failed', '已中止');
+          continue;
+        }
         let args: Record<string, any> = {};
         try { args = JSON.parse(tc.arguments); } catch { /* empty */ }
 
@@ -292,6 +298,11 @@ export default function AiAssistant() {
         }
       }
       log(`>>> processStream depth=${depth} DONE tools, total=${(performance.now() - psStart).toFixed(1)}ms, yielding...`);
+      // 中止后不再递归发起下一轮请求
+      if (abortController.signal.aborted) {
+        log(`processStream depth=${depth} aborted, skip recursion`);
+        return;
+      }
       await new Promise((r) => setTimeout(r, 0));
       await processStream(abortController, depth + 1);
     } else {

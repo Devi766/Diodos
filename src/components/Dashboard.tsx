@@ -1433,12 +1433,15 @@ export default function Dashboard() {
         const data = await mihomoClient.getConnections();
         if (!disposed && data) {
           if (data.connections && Array.isArray(data.connections)) {
+            // 截断只作用于要渲染的列表；连接数用未截断的真实长度，
+            // 否则连接 > 80 时活跃连接指标会被截断/来回跳变
+            const totalConnections = data.connections.length;
             const nextConnections = data.connections.slice(0, MAX_DASHBOARD_CONNECTIONS);
             setConnections(nextConnections);
-            setConnectionCount(nextConnections.length);
+            setConnectionCount(totalConnections);
             writeRuntimeSnapshot({
               connections: nextConnections,
-              connectionCount: nextConnections.length,
+              connectionCount: totalConnections,
             });
           }
           const patch: Partial<DashboardRuntimeSnapshot> = {};

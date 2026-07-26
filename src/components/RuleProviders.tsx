@@ -403,7 +403,7 @@ const RuleProviders: React.FC = () => {
 
               <button
                 onClick={() => updateProvider(provider.name)}
-                disabled={updating[provider.name]}
+                disabled={updating[provider.name] || updatingAll}
                 className="px-3 py-2 bg-muted hover:bg-muted/80 text-foreground rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
               >
                 <ReloadIcon className={updating[provider.name] ? 'animate-spin' : ''} />
