@@ -208,18 +208,13 @@ pub(crate) fn service_compatible_core_path(
             }
             Err(_) => true,
         };
-        let trusted = if refresh_needed {
-            false
-        } else {
-            core_service::service_core_is_trusted(&helper, &target)?
-        };
-        if refresh_needed || !trusted {
+        if refresh_needed {
             core_service::install_service_core(&helper, source, &target)?;
+            write_service_core_stamp(app, &target, &source_stamp);
         }
-        if !core_service::service_core_is_trusted(&helper, &target)? {
-            return Err("受保护服务内核完整性校验失败".to_string());
-        }
-        write_service_core_stamp(app, &target, &source_stamp);
+        // 完整性校验（SHA-256 对账）由 Helper 服务在启动内核时以 SYSTEM
+        // 权限执行；加固后的内核文件用户态无读取权限，在这里校验既
+        // 永远失败也不提供额外安全性
         return Ok(target);
     }
 

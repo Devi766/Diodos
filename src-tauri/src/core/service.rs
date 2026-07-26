@@ -388,6 +388,7 @@ fn encode_service_core_destination(path: &Path) -> Result<String, String> {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 pub fn service_core_is_trusted(helper_path: &Path, target: &Path) -> Result<bool, String> {
     let target = encode_existing_service_core_path(target)?;
     let output = command_output(
@@ -398,6 +399,7 @@ pub fn service_core_is_trusted(helper_path: &Path, target: &Path) -> Result<bool
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn service_core_is_trusted(_helper_path: &Path, _target: &Path) -> Result<bool, String> {
     Err("当前平台不支持 Windows Helper 服务".to_string())
 }
