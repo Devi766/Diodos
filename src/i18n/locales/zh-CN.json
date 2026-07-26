@@ -1203,9 +1203,27 @@
     "deleteSuccess": "备份已删除",
     "deleteFailed": "删除备份失败"
   },
+  "codeEditor": {
+    "searchPlaceholder": "搜索",
+    "replacePlaceholder": "替换为",
+    "caseSensitive": "区分大小写",
+    "prevMatch": "上一个",
+    "nextMatch": "下一个",
+    "replace": "替换",
+    "replaceAll": "全部替换",
+    "close": "关闭"
+  },
   "configEditor": {
     "title": "配置编辑",
     "subtitle": "可视化编辑内核运行参数、DNS、域名嗅探和 Hosts 配置",
+    "source": "源码",
+    "invalidYaml": "YAML 语法错误",
+    "providerNameExists": "同名 Provider 已存在",
+    "validateEmptyProxyName": "存在未命名的节点",
+    "validateEmptyGroupName": "存在未命名的代理组",
+    "validateDuplicateProxy": "节点名称重复: {{name}}",
+    "validateDuplicateGroup": "代理组名称重复: {{name}}",
+    "validateBadPort": "节点 {{name}} 端口无效（需为 1-65535）",
     "general": "常规设置",
     "dns": "DNS 设置",
     "sniffer": "域名嗅探",

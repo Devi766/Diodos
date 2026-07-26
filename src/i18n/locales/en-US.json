@@ -1205,9 +1205,27 @@
     "deleteSuccess": "Backup deleted successfully",
     "deleteFailed": "Failed to delete backup"
   },
+  "codeEditor": {
+    "searchPlaceholder": "Search",
+    "replacePlaceholder": "Replace with",
+    "caseSensitive": "Match case",
+    "prevMatch": "Previous",
+    "nextMatch": "Next",
+    "replace": "Replace",
+    "replaceAll": "Replace all",
+    "close": "Close"
+  },
   "configEditor": {
     "title": "Config Editor",
     "subtitle": "Visually edit kernel parameters, DNS, sniffer and Hosts configuration",
+    "source": "Source",
+    "invalidYaml": "Invalid YAML syntax",
+    "providerNameExists": "A provider with this name already exists",
+    "validateEmptyProxyName": "There is an unnamed proxy node",
+    "validateEmptyGroupName": "There is an unnamed proxy group",
+    "validateDuplicateProxy": "Duplicate proxy name: {{name}}",
+    "validateDuplicateGroup": "Duplicate group name: {{name}}",
+    "validateBadPort": "Node {{name}} has an invalid port (must be 1-65535)",
     "general": "General",
     "dns": "DNS",
     "sniffer": "Sniffer",

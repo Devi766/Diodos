@@ -5,6 +5,7 @@ import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Switch } from './ui/switch';
+import { StyledSelect } from './ui/styled-select';
 import OverrideSettings, { OverrideSettingsRef } from './OverrideSettings';
 import { Button } from './ui/button';
 import TunSettings from './TunSettings';
@@ -1412,30 +1413,30 @@ export default function Settings() {
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.language')}</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.languageDesc')}</p>
-                  <select
-                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                  <StyledSelect
                     value={language}
-                    onChange={(e) => handleLanguageChange(e.target.value)}
-                  >
-                    <option value="zh-CN">{t('settings.simplifiedChinese')}</option>
-                    <option value="en-US">{t('settings.english')}</option>
-                  </select>
+                    onChange={(v) => handleLanguageChange(v)}
+                    options={[
+                      { value: 'zh-CN', label: t('settings.simplifiedChinese') },
+                      { value: 'en-US', label: t('settings.english') },
+                    ]}
+                  />
                 </div>
 
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.subscriptionUA')}</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">{t('settings.subscriptionUADesc')}</p>
-                  <select
-                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+                  <StyledSelect
                     value={subscriptionUA}
-                    onChange={(e) => { void handleSubscriptionUAChange(e.target.value); }}
-                  >
-                    <option value="FlyClash">FlyClash</option>
-                    <option value="Clash">{t('settings.clashForWindows')}</option>
-                    <option value="Mihomo">{t('settings.mihomo')}</option>
-                    <option value="MihomoParty">{t('settings.clashMetaDefault')}</option>
-                    <option value="Chrome">{t('settings.chromeBrowser')}</option>
-                  </select>
+                    onChange={(v) => { void handleSubscriptionUAChange(v); }}
+                    options={[
+                      { value: 'FlyClash', label: 'FlyClash' },
+                      { value: 'Clash', label: t('settings.clashForWindows') },
+                      { value: 'Mihomo', label: t('settings.mihomo') },
+                      { value: 'MihomoParty', label: t('settings.clashMetaDefault') },
+                      { value: 'Chrome', label: t('settings.chromeBrowser') },
+                    ]}
+                  />
                 </div>
 
                 <div>

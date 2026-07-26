@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ConfirmDialog } from './ConfirmDialog';
+import { StyledSelect } from './ui/styled-select';
 import { showToast as showGlobalToast } from '@/components/ui/toast';
 
 type CoreType = 'mihomo' | 'mihomo-alpha' | 'mihomo-smart' | 'mihomo-specific';
@@ -836,18 +837,18 @@ export default function CoreManager() {
         <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-3">
           {t('core.selectCoreType')}
         </h3>
-        <select
-          className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+        <StyledSelect
           value={selectedCoreType}
-          onChange={(e) => {
-            setSelectedCoreType(e.target.value as CoreType);
+          onChange={(v) => {
+            setSelectedCoreType(v as CoreType);
             setSelectedVersion('latest');
           }}
-        >
-          <option value="mihomo">{t('core.stable')}</option>
-          <option value="mihomo-alpha">{t('core.alpha')}</option>
-          <option value="mihomo-smart">{t('core.smart')}</option>
-        </select>
+          options={[
+            { value: 'mihomo', label: t('core.stable') },
+            { value: 'mihomo-alpha', label: t('core.alpha') },
+            { value: 'mihomo-smart', label: t('core.smart') },
+          ]}
+        />
       </div>
 
       {selectedCoreType === 'mihomo' && (
@@ -865,19 +866,18 @@ export default function CoreManager() {
               {loadingVersions ? t('core.loadingVersions') : '↻'}
             </button>
           </div>
-          <select
-            className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+          <StyledSelect
             value={selectedVersion}
-            onChange={(e) => setSelectedVersion(e.target.value)}
+            onChange={(v) => setSelectedVersion(v)}
             disabled={loadingVersions}
-          >
-            <option value="latest">{t('core.latestVersion')}</option>
-            {availableVersions.map((v) => (
-              <option key={v.version} value={v.version}>
-                v{v.version} ({formatDate(v.publishedAt)}){v.prerelease ? ' [Pre-release]' : ''}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: 'latest', label: t('core.latestVersion') },
+              ...availableVersions.map((v) => ({
+                value: v.version,
+                label: `v${v.version} (${formatDate(v.publishedAt)})${v.prerelease ? ' [Pre-release]' : ''}`,
+              })),
+            ]}
+          />
           {!loadingVersions && availableVersions.length === 0 && (
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
               {t('core.noVersionsFound')}

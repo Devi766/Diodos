@@ -44,11 +44,13 @@ async fn dispatch_compat_call(
 ) -> CompatResult {
     match method {
         "readConfigFile" => {
-            let active =
-                current_active_config(app, state).ok_or_else(|| "没有当前配置".to_string())?;
+            let target = arg_string(args, 0)
+                .filter(|path| !path.trim().is_empty())
+                .or_else(|| current_active_config(app, state))
+                .ok_or_else(|| "没有当前配置".to_string())?;
             Ok(success(json!({
-                "path": active,
-                "content": config_content(app, &active)?
+                "path": target,
+                "content": config_content(app, &target)?
             })))
         }
         "validateConfig" => {
@@ -60,10 +62,12 @@ async fn dispatch_compat_call(
         }
         "writeConfigFile" => {
             let content = arg_string(args, 0).unwrap_or_default();
-            let active =
-                current_active_config(app, state).ok_or_else(|| "没有当前配置".to_string())?;
-            save_config_content(app, &active, &content)?;
-            Ok(success(json!({ "path": active })))
+            let target = arg_string(args, 1)
+                .filter(|path| !path.trim().is_empty())
+                .or_else(|| current_active_config(app, state))
+                .ok_or_else(|| "没有当前配置".to_string())?;
+            save_config_content(app, &target, &content)?;
+            Ok(success(json!({ "path": target })))
         }
         "editConfigAtomic" => {
             let old = arg_string(args, 0).unwrap_or_default();
@@ -101,16 +105,21 @@ async fn dispatch_compat_call(
         "getDnsConfig" => {
             if let Some(config_path) = arg_string(args, 0) {
                 let yaml = config_yaml(app, &config_path)?;
-                let dns = yaml.get("dns").cloned().unwrap_or_else(|| {
-                    serde_yaml::to_value(default_dns_config()).unwrap_or(serde_yaml::Value::Null)
-                });
+                // 订阅文件缺 dns 段时不要塞默认值：否则一次无修改的保存
+                // 会把完整默认 DNS 块写进用户订阅，改变解析行为
+                let dns_present = yaml.get("dns").is_some();
+                let dns = yaml
+                    .get("dns")
+                    .cloned()
+                    .unwrap_or(serde_yaml::Value::Mapping(Default::default()));
                 let hosts = yaml
                     .get("hosts")
                     .cloned()
                     .unwrap_or(serde_yaml::Value::Mapping(Default::default()));
                 Ok(success(json!({
-                    "config": serde_json::to_value(dns).unwrap_or_else(|_| default_dns_config()),
+                    "config": serde_json::to_value(dns).unwrap_or_else(|_| json!({})),
                     "hosts": serde_json::to_value(hosts).unwrap_or_else(|_| json!({})),
+                    "sectionExists": dns_present,
                     // 订阅 YAML 路径没有独立覆写开关，始终视为该文件自身 DNS 生效
                     "overrideEnabled": true
                 })))
@@ -131,7 +140,14 @@ async fn dispatch_compat_call(
         "saveDnsConfig" => {
             let config = args.first().cloned().unwrap_or_else(|| json!({}));
             if let Some(config_path) = arg_string(args, 1) {
-                save_yaml_section_value(app, &config_path, "dns", config)?;
+                // 空 DNS 且文件原本没有 dns 段时跳过写入，避免注入空段落
+                let is_empty = config.as_object().map(|o| o.is_empty()).unwrap_or(true);
+                let section_absent = config_yaml(app, &config_path)
+                    .map(|yaml| yaml.get("dns").is_none())
+                    .unwrap_or(false);
+                if !(is_empty && section_absent) {
+                    save_yaml_section_value(app, &config_path, "dns", config)?;
+                }
                 Ok(success(json!({
                     "restarted": false,
                     "message": "dns config saved to YAML"
@@ -152,7 +168,13 @@ async fn dispatch_compat_call(
             let hosts = args.first().cloned().unwrap_or_else(|| json!([]));
             let hosts = hosts_to_map(hosts);
             if let Some(config_path) = arg_string(args, 1) {
-                save_yaml_section_value(app, &config_path, "hosts", hosts)?;
+                let is_empty = hosts.as_object().map(|o| o.is_empty()).unwrap_or(true);
+                let section_absent = config_yaml(app, &config_path)
+                    .map(|yaml| yaml.get("hosts").is_none())
+                    .unwrap_or(false);
+                if !(is_empty && section_absent) {
+                    save_yaml_section_value(app, &config_path, "hosts", hosts)?;
+                }
                 Ok(success(json!({
                     "restarted": false,
                     "message": "hosts config saved to YAML"
@@ -224,17 +246,26 @@ async fn dispatch_compat_call(
             if !matches!(yaml, serde_yaml::Value::Mapping(_)) {
                 yaml = serde_yaml::Value::Mapping(Default::default());
             }
+            let proxy_providers = args.first().cloned().unwrap_or_else(|| json!({}));
+            let rule_providers = args.get(1).cloned().unwrap_or_else(|| json!({}));
+            let proxy_empty = proxy_providers.as_object().map(|o| o.is_empty()).unwrap_or(true);
+            let rule_empty = rule_providers.as_object().map(|o| o.is_empty()).unwrap_or(true);
             if let serde_yaml::Value::Mapping(map) = &mut yaml {
-                map.insert(
-                    yaml_key("proxy-providers"),
-                    serde_yaml::to_value(args.first().cloned().unwrap_or_else(|| json!({})))
-                        .map_err(|err| err.to_string())?,
-                );
-                map.insert(
-                    yaml_key("rule-providers"),
-                    serde_yaml::to_value(args.get(1).cloned().unwrap_or_else(|| json!({})))
-                        .map_err(|err| err.to_string())?,
-                );
+                // 空的 provider 段落且文件原本就没有时不写入，避免注入空键
+                let proxy_key = yaml_key("proxy-providers");
+                let rule_key = yaml_key("rule-providers");
+                if !(proxy_empty && !map.contains_key(&proxy_key)) {
+                    map.insert(
+                        proxy_key,
+                        serde_yaml::to_value(proxy_providers).map_err(|err| err.to_string())?,
+                    );
+                }
+                if !(rule_empty && !map.contains_key(&rule_key)) {
+                    map.insert(
+                        rule_key,
+                        serde_yaml::to_value(rule_providers).map_err(|err| err.to_string())?,
+                    );
+                }
             }
             save_config_yaml(app, &path, &yaml)?;
             Ok(success(json!({})))

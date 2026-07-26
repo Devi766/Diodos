@@ -8,6 +8,7 @@ import { testConnection, type AiApiConfig, type ApiFormat } from '@/services/ai/
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { StyledSelect } from '@/components/ui/styled-select';
 import { showToast } from '@/components/ui/toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OpenAIMark, ClaudeMark, OpenAIIcon, ClaudeIcon } from './AiIcons';
@@ -356,16 +357,14 @@ export default function AiSettings() {
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-foreground">{t('ai.maxRetries')}</div>
             </div>
-            <select
+            <StyledSelect
+              size="sm"
               disabled={!store.settings.autoRetry}
-              value={store.settings.maxRetries}
-              onChange={(e) => store.updateSettings({ maxRetries: Number(e.target.value) })}
-              className="text-sm bg-muted/50 border border-border/50 rounded-lg px-2 py-1 text-foreground"
-            >
-              {[1, 2, 3, 5, 10].map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
+              value={String(store.settings.maxRetries)}
+              onChange={(v) => store.updateSettings({ maxRetries: Number(v) })}
+              options={[1, 2, 3, 5, 10].map((n) => ({ value: String(n), label: String(n) }))}
+              className="w-20"
+            />
           </div>
         </div>
       </div>

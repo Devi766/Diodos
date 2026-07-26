@@ -21,7 +21,10 @@ import {
   Plus, Trash2, Network, Shield, Fingerprint, Cable,
   Server, Lock, ChevronRight, Users, List,
   Database, Search, ChevronDown, GripVertical, Zap, Link2,
+  FileCode2,
 } from 'lucide-react';
+import { CodeEditor } from './ui/code-editor';
+import { StyledSelect as ThemedSelect } from './ui/styled-select';
 
 interface KernelConfig {
   mode?: 'rule' | 'global' | 'direct';
@@ -80,7 +83,7 @@ interface HostsConfig {
   hosts?: Array<{ domain: string; value: string | string[] }>;
 }
 
-type TabKey = 'general' | 'dns' | 'proxies' | 'proxy-groups' | 'rules' | 'providers';
+type TabKey = 'general' | 'dns' | 'proxies' | 'proxy-groups' | 'rules' | 'providers' | 'source';
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
@@ -128,6 +131,7 @@ const TAB_ICONS: Record<TabKey, React.ReactNode> = {
   'proxy-groups': <Users className="w-4 h-4" />,
   rules: <List className="w-4 h-4" />,
   providers: <Database className="w-4 h-4" />,
+  source: <FileCode2 className="w-4 h-4" />,
 };
 
 // Section card wrapper
@@ -164,15 +168,7 @@ function SettingRow({ label, desc, children }: { label: string; desc?: string; c
 
 // Styled select
 function StyledSelect({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
-  return (
-    <select
-      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 transition-all"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  );
+  return <ThemedSelect value={value} onChange={onChange} options={options} className="min-w-[9rem]" />;
 }
 
 // Styled textarea
@@ -236,6 +232,29 @@ interface ConfigEditorProps {
   onSaved?: () => void;
 }
 
+/** 保存前的基础校验，返回错误信息（null 表示通过）。 */
+function validateBeforeSave(proxies: any[], groups: any[], t: any): string | null {
+  const proxyNames = new Set<string>();
+  for (const proxy of proxies) {
+    const name = (proxy?.name ?? '').toString().trim();
+    if (!name) return t('configEditor.validateEmptyProxyName', '存在未命名的节点');
+    if (proxyNames.has(name)) return t('configEditor.validateDuplicateProxy', { name }) || `节点名称重复: ${name}`;
+    proxyNames.add(name);
+    const port = Number(proxy?.port);
+    if (proxy?.server && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+      return t('configEditor.validateBadPort', { name }) || `节点 ${name} 端口无效`;
+    }
+  }
+  const groupNames = new Set<string>();
+  for (const group of groups) {
+    const name = (group?.name ?? '').toString().trim();
+    if (!name) return t('configEditor.validateEmptyGroupName', '存在未命名的代理组');
+    if (groupNames.has(name)) return t('configEditor.validateDuplicateGroup', { name }) || `代理组名称重复: ${name}`;
+    groupNames.add(name);
+  }
+  return null;
+}
+
 export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>('general');
@@ -251,6 +270,12 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
   const [ruleProviders, setRuleProviders] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [sourceText, setSourceText] = useState('');
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceDirty, setSourceDirty] = useState(false);
+  // 各 section 加载时的快照：保存时只回写发生过变化的部分，
+  // 避免"零修改保存"也全量重写 YAML、注入默认 DNS/hosts/providers 段
+  const initialSnapshots = useRef<Record<string, string>>({});
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'general', label: t('configEditor.general') },
@@ -260,6 +285,7 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
       { key: 'proxy-groups' as TabKey, label: t('configEditor.proxyGroups') },
       { key: 'rules' as TabKey, label: t('configEditor.rules') },
       { key: 'providers' as TabKey, label: t('configEditor.providers') },
+      { key: 'source' as TabKey, label: t('configEditor.source', '源码') },
     ] : []),
   ];
 
@@ -282,6 +308,74 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
   useEffect(() => {
     loadAllConfigs();
   }, [configPath]);
+
+  // 切到源码标签时拉取原文（未被编辑过才刷新，避免覆盖用户输入）
+  useEffect(() => {
+    if (activeTab !== 'source' || !configPath || sourceDirty) return;
+    const api = window.electronAPI;
+    if (!api || !hasElectronMethod(api, 'readConfigFile')) return;
+    let cancelled = false;
+    setSourceLoading(true);
+    api.readConfigFile(configPath)
+      .then((res: any) => {
+        if (cancelled) return;
+        if (res?.success && typeof res.content === 'string') {
+          setSourceText(res.content);
+        } else if (res?.success === false) {
+          showToast({ message: `${t('configEditor.loadFailed')}: ${formatEditorError(res?.error, t('configEditor.loadFailed'))}`, type: 'error' });
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          showToast({ message: `${t('configEditor.loadFailed')}: ${formatEditorError(err, t('configEditor.loadFailed'))}`, type: 'error' });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSourceLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, configPath]);
+
+  const handleSaveSource = async () => {
+    if (!configPath) return;
+    setSaving(true);
+    try {
+      const api = window.electronAPI;
+      if (!api || !hasElectronMethod(api, 'writeConfigFile')) {
+        throw new Error(t('configEditor.apiUnavailable'));
+      }
+      if (hasElectronMethod(api, 'validateConfig')) {
+        const validation = await api.validateConfig(sourceText);
+        if (validation && validation.valid === false) {
+          throw new Error(validation.error || t('configEditor.invalidYaml', 'YAML 语法错误'));
+        }
+      }
+      ensureSuccess(await api.writeConfigFile(sourceText, configPath), t('configEditor.saveFailed'));
+      setSourceDirty(false);
+
+      const activeConfig = hasElectronMethod(api, 'getActiveConfig') ? await api.getActiveConfig() : null;
+      const isActiveConfig = isSameConfigPath(activeConfig, configPath);
+      const runningResult = isActiveConfig && hasElectronMethod(api, 'isMihomoRunning')
+        ? await api.isMihomoRunning()
+        : false;
+      if (isActiveConfig && runningResult === true && hasElectronMethod(api, 'reloadMihomoConfig')) {
+        await api.reloadMihomoConfig(configPath);
+        try {
+          window.dispatchEvent(new CustomEvent('profile-updated', { detail: { filePath: configPath, source: 'config-editor' } }));
+        } catch {}
+      }
+      showToast({ message: t('configEditor.saveSuccess'), type: 'success' });
+      // 让表单标签页与最新原文保持一致
+      loadAllConfigs();
+      onSaved?.();
+    } catch (err) {
+      showToast({ message: `${t('configEditor.saveFailed')}: ${formatEditorError(err, t('configEditor.saveFailed'))}`, type: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const loadAllConfigs = async () => {
     setLoading(true);
@@ -389,6 +483,12 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
         ];
         if (requiredMethods.some((method) => !hasElectronMethod(api, method))) {
           throw new Error(t('configEditor.apiUnavailable'));
+        }
+
+        // 保存前基础校验：非法数据一旦写入活动配置且 reload 失败会让内核起不来
+        const validationError = validateBeforeSave(proxies, proxyGroups, t);
+        if (validationError) {
+          throw new Error(validationError);
         }
 
         // All sections write to the subscription YAML file
@@ -603,11 +703,30 @@ export default function ConfigEditor({ configPath, onSaved }: ConfigEditorProps)
         {activeTab === 'proxy-groups' && <ProxyGroupsTab groups={proxyGroups} setGroups={setProxyGroups} t={t} />}
         {activeTab === 'rules' && <RulesTab rules={rules} setRules={setRules} t={t} />}
         {activeTab === 'providers' && <ProvidersTab proxyProviders={proxyProviders} setProxyProviders={setProxyProviders} ruleProviders={ruleProviders} setRuleProviders={setRuleProviders} t={t} />}
+        {activeTab === 'source' && (
+          sourceLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+            </div>
+          ) : (
+            <div className="h-[62vh]">
+              <CodeEditor
+                value={sourceText}
+                onChange={(next) => {
+                  setSourceText(next);
+                  setSourceDirty(true);
+                }}
+                language="yaml"
+                placeholder="# YAML"
+              />
+            </div>
+          )
+        )}
       </div>
 
       {/* Floating save button */}
       <button
-        onClick={handleSaveAll}
+        onClick={activeTab === 'source' ? handleSaveSource : handleSaveAll}
         disabled={saving}
         className="sticky bottom-4 float-right mr-0 w-12 h-12 rounded-full bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white shadow-lg flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         title={saving ? t('configEditor.saving') : t('configEditor.saveAll')}
@@ -675,13 +794,13 @@ function GeneralTab({ config, updateConfig, updateProfileConfig, t }: {
       {/* Port Settings */}
       <SectionCard icon={<Network className="w-4 h-4" />} title={t('overrideSettings.port')}>
         <SettingRow label={t('overrideSettings.mixedPort')} desc={t('overrideSettings.mixedPortDesc')}>
-          <Input type="number" className="w-28 text-gray-700 dark:text-gray-200" value={config['mixed-port'] || 7890} onChange={(e) => updateConfig('mixed-port', parseInt(e.target.value))} />
+          <Input type="number" className="w-28 text-gray-700 dark:text-gray-200" value={config['mixed-port'] || 7890} onChange={(e) => { const n = parseInt(e.target.value); updateConfig('mixed-port', Number.isFinite(n) ? n : 7890); }} />
         </SettingRow>
         <SettingRow label={t('overrideSettings.socksPort')} desc={t('overrideSettings.socksPortDesc')}>
-          <Input type="number" className="w-28 text-gray-700 dark:text-gray-200" value={config['socks-port'] || 0} onChange={(e) => updateConfig('socks-port', parseInt(e.target.value))} />
+          <Input type="number" className="w-28 text-gray-700 dark:text-gray-200" value={config['socks-port'] || 0} onChange={(e) => { const n = parseInt(e.target.value); updateConfig('socks-port', Number.isFinite(n) ? n : 0); }} />
         </SettingRow>
         <SettingRow label={t('overrideSettings.httpPort')} desc={t('overrideSettings.httpPortDesc')}>
-          <Input type="number" className="w-28 text-gray-700 dark:text-gray-200" value={config.port || 0} onChange={(e) => updateConfig('port', parseInt(e.target.value))} />
+          <Input type="number" className="w-28 text-gray-700 dark:text-gray-200" value={config.port || 0} onChange={(e) => { const n = parseInt(e.target.value); updateConfig('port', Number.isFinite(n) ? n : 0); }} />
         </SettingRow>
       </SectionCard>
 
@@ -972,9 +1091,27 @@ function ProxyGroupsTab({ groups, setGroups, t }: {
   };
   const removeGroup = (idx: number) => {
     setGroups((prev) => prev.filter((_, i) => i !== idx));
-    if (expandedIdx === idx) setExpandedIdx(null);
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (prev === idx) return null;
+      return prev > idx ? prev - 1 : prev;
+    });
   };
   const updateGroup = (idx: number, key: string, value: any) => {
+    // 分组改名时同步其他分组对它的引用，避免悬空引用导致内核加载失败
+    if (key === 'name') {
+      const oldName = groups[idx]?.name;
+      if (oldName && oldName !== value) {
+        setGroups((prev) => prev.map((g, i) => {
+          const next = i === idx ? { ...g, name: value } : { ...g };
+          if (i !== idx && Array.isArray(next.proxies) && next.proxies.includes(oldName)) {
+            next.proxies = next.proxies.map((name: string) => (name === oldName ? value : name));
+          }
+          return next;
+        }));
+        return;
+      }
+    }
     setGroups((prev) => prev.map((g, i) => (i === idx ? { ...g, [key]: value } : g)));
   };
   const handleDragEnd = (event: DragEndEvent) => {
@@ -1552,7 +1689,9 @@ function ProxiesTab({ proxies, setProxies, proxyGroups, setProxyGroups, t }: {
   const ids = useMemo(() => filtered.map(({ idx }) => `proxy-${idx}`), [filtered]);
 
   const addProxy = () => {
-    setProxies((prev) => [{ name: '', type: 'ss', server: '', port: 443, password: '' }, ...prev]);
+    // cipher 需随模板落盘：下拉框只显示默认值，不写入的话保存后内核报 unsupport cipher
+    setProxies((prev) => [{ name: '', type: 'ss', server: '', port: 443, cipher: 'aes-256-gcm', password: '' }, ...prev]);
+    setSearchQuery('');
     setExpandedIdx(0);
   };
   const importFromLinks = () => {
@@ -1564,6 +1703,7 @@ function ProxiesTab({ proxies, setProxies, proxyGroups, setProxyGroups, t }: {
     }
     if (parsed.length > 0) {
       setProxies((prev) => [...parsed, ...prev]);
+      setSearchQuery('');
       setExpandedIdx(0);
       showToast({ message: t('configEditor.importSuccess', { count: parsed.length }), type: 'success' });
     } else {
@@ -1573,10 +1713,34 @@ function ProxiesTab({ proxies, setProxies, proxyGroups, setProxyGroups, t }: {
     setImportOpen(false);
   };
   const removeProxy = (idx: number) => {
+    const removedName = proxies[idx]?.name;
     setProxies((prev) => prev.filter((_, i) => i !== idx));
-    if (expandedIdx === idx) setExpandedIdx(null);
+    // 同步移除分组中对该节点的引用，避免保存后内核报 proxy not found
+    if (removedName) {
+      setProxyGroups((prev) => prev.map((group) => (
+        Array.isArray(group.proxies) && group.proxies.includes(removedName)
+          ? { ...group, proxies: group.proxies.filter((name: string) => name !== removedName) }
+          : group
+      )));
+    }
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (prev === idx) return null;
+      return prev > idx ? prev - 1 : prev;
+    });
   };
   const updateProxy = (idx: number, key: string, value: any) => {
+    // 节点改名时同步更新分组引用
+    if (key === 'name') {
+      const oldName = proxies[idx]?.name;
+      if (oldName && oldName !== value) {
+        setProxyGroups((prev) => prev.map((group) => (
+          Array.isArray(group.proxies) && group.proxies.includes(oldName)
+            ? { ...group, proxies: group.proxies.map((name: string) => (name === oldName ? value : name)) }
+            : group
+        )));
+      }
+    }
     setProxies((prev) => prev.map((p, i) => (i === idx ? { ...p, [key]: value } : p)));
   };
   const handleDragEnd = (event: DragEndEvent) => {
@@ -1586,6 +1750,13 @@ function ProxiesTab({ proxies, setProxies, proxyGroups, setProxyGroups, t }: {
       const newRealIdx = filtered[ids.indexOf(over.id as string)]?.idx;
       if (oldRealIdx !== undefined && newRealIdx !== undefined) {
         setProxies((prev) => arrayMove(prev, oldRealIdx, newRealIdx));
+        setExpandedIdx((prev) => {
+          if (prev === null) return null;
+          if (prev === oldRealIdx) return newRealIdx;
+          if (oldRealIdx < prev && newRealIdx >= prev) return prev - 1;
+          if (oldRealIdx > prev && newRealIdx <= prev) return prev + 1;
+          return prev;
+        });
       }
     }
   };
@@ -2014,10 +2185,21 @@ function ProxyEditForm({ proxy, idx, updateProxy, proxyGroups, setProxyGroups, t
         {proxy.tls && (
           <div className="grid grid-cols-2 gap-3">
             <FieldLabel label="SNI / Servername">
-              <Input type="text" className={ic} value={proxy.sni || proxy.servername || ''} onChange={(e) => { up('sni', e.target.value); up('servername', e.target.value); }} placeholder={proxy.server || ''} />
+              {/* vmess/vless 用 servername，其余协议用 sni；双写会污染字段 */}
+              <Input
+                type="text"
+                className={ic}
+                value={proxy.sni || proxy.servername || ''}
+                onChange={(e) => {
+                  const key = proxy.type === 'vmess' || proxy.type === 'vless' ? 'servername' : 'sni';
+                  up(key, e.target.value);
+                }}
+                placeholder={proxy.server || ''}
+              />
             </FieldLabel>
             <FieldLabel label="Client Fingerprint">
-              <StyledSelect value={proxy['client-fingerprint'] || proxy.fingerprint || ''} onChange={(v) => { up('client-fingerprint', v); up('fingerprint', v); }} options={fpOpts} />
+              {/* fingerprint 是证书 pinning 字段，误写会让内核拒绝加载 */}
+              <StyledSelect value={proxy['client-fingerprint'] || ''} onChange={(v) => up('client-fingerprint', v)} options={fpOpts} />
             </FieldLabel>
             <FieldLabel label="ALPN">
               <Input type="text" className={ic} value={(proxy.alpn || []).join(',')} onChange={(e) => up('alpn', e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean))} placeholder="h2,http/1.1" />
@@ -2052,7 +2234,7 @@ function ProxyEditForm({ proxy, idx, updateProxy, proxyGroups, setProxyGroups, t
 
       {/* === Common switches === */}
       <div className="flex flex-wrap gap-x-6 gap-y-2">
-        {tp !== 'wireguard' && <MiniSwitch label="UDP" checked={proxy.udp !== false} onChange={(v) => up('udp', v)} />}
+        {tp !== 'wireguard' && <MiniSwitch label="UDP" checked={proxy.udp === true} onChange={(v) => up('udp', v)} />}
         {(tp === 'ss' || tp === 'vmess' || tp === 'vless' || tp === 'trojan' || tp === 'anytls') && (
           <MiniSwitch label="TFO" checked={proxy.tfo || false} onChange={(v) => up('tfo', v)} />
         )}
@@ -2112,12 +2294,12 @@ function ProvidersTab({ proxyProviders, setProxyProviders, ruleProviders, setRul
   const addPP = () => { const n = `provider-${Date.now()}`; setProxyProviders((p) => ({ ...p, [n]: { type: 'http', url: '', path: '', interval: 3600, 'health-check': { enable: true, url: 'http://www.gstatic.com/generate_204', interval: 300 } } })); setExpandedPP(n); };
   const removePP = (n: string) => { setProxyProviders((p) => { const c = { ...p }; delete c[n]; return c; }); if (expandedPP === n) setExpandedPP(null); };
   const updatePP = (n: string, k: string, v: any) => { setProxyProviders((p) => ({ ...p, [n]: { ...p[n], [k]: v } })); };
-  const renamePP = (o: string, n: string) => { if (!n.trim() || n === o) return; setProxyProviders((p) => { const c: Record<string, any> = {}; Object.entries(p).forEach(([k, v]) => { c[k === o ? n : k] = v; }); return c; }); if (expandedPP === o) setExpandedPP(n); };
+  const renamePP = (o: string, n: string) => { if (!n.trim() || n === o) return; if (Object.prototype.hasOwnProperty.call(proxyProviders, n)) { showToast({ message: t('configEditor.providerNameExists', '同名 Provider 已存在'), type: 'error' }); return; } setProxyProviders((p) => { const c: Record<string, any> = {}; Object.entries(p).forEach(([k, v]) => { c[k === o ? n : k] = v; }); return c; }); if (expandedPP === o) setExpandedPP(n); };
 
   const addRP = () => { const n = `rule-provider-${Date.now()}`; setRuleProviders((p) => ({ ...p, [n]: { type: 'http', behavior: 'domain', format: 'yaml', url: '', path: '', interval: 86400 } })); setExpandedRP(n); };
   const removeRP = (n: string) => { setRuleProviders((p) => { const c = { ...p }; delete c[n]; return c; }); if (expandedRP === n) setExpandedRP(null); };
   const updateRP = (n: string, k: string, v: any) => { setRuleProviders((p) => ({ ...p, [n]: { ...p[n], [k]: v } })); };
-  const renameRP = (o: string, n: string) => { if (!n.trim() || n === o) return; setRuleProviders((p) => { const c: Record<string, any> = {}; Object.entries(p).forEach(([k, v]) => { c[k === o ? n : k] = v; }); return c; }); if (expandedRP === o) setExpandedRP(n); };
+  const renameRP = (o: string, n: string) => { if (!n.trim() || n === o) return; if (Object.prototype.hasOwnProperty.call(ruleProviders, n)) { showToast({ message: t('configEditor.providerNameExists', '同名 Provider 已存在'), type: 'error' }); return; } setRuleProviders((p) => { const c: Record<string, any> = {}; Object.entries(p).forEach(([k, v]) => { c[k === o ? n : k] = v; }); return c; }); if (expandedRP === o) setExpandedRP(n); };
 
   return (
     <>

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useImperativeHandle, forwardRef } from 'rea
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
+import { StyledSelect } from './ui/styled-select';
 import { useTranslation } from 'react-i18next';
 
 export interface OverrideSettingsRef {
@@ -498,17 +499,18 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.logLevel')}</label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.logLevelDesc')}</p>
               </div>
-              <select
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+              <StyledSelect
+                className="w-36"
                 value={config['log-level'] || 'info'}
-                onChange={(e) => updateConfig('log-level', e.target.value)}
-              >
-                <option value="silent">{t('overrideSettings.silent')}</option>
-                <option value="error">{t('overrideSettings.error')}</option>
-                <option value="warning">{t('overrideSettings.warning')}</option>
-                <option value="info">{t('overrideSettings.info')}</option>
-                <option value="debug">{t('overrideSettings.debug')}</option>
-              </select>
+                onChange={(v) => updateConfig('log-level', v)}
+                options={[
+                  { value: 'silent', label: t('overrideSettings.silent') },
+                  { value: 'error', label: t('overrideSettings.error') },
+                  { value: 'warning', label: t('overrideSettings.warning') },
+                  { value: 'info', label: t('overrideSettings.info') },
+                  { value: 'debug', label: t('overrideSettings.debug') },
+                ]}
+              />
             </div>
         </div>
       )}
@@ -746,15 +748,16 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
               <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enhancedMode')}</label>
               <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enhancedModeDesc')}</p>
             </div>
-            <select
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+            <StyledSelect
+              className="w-40"
               value={dnsConfig['enhanced-mode'] || 'fake-ip'}
-              onChange={(e) => updateDnsConfig('enhanced-mode', e.target.value)}
-            >
-              <option value="normal">{t('overrideSettings.normal')}</option>
-              <option value="fake-ip">{t('overrideSettings.fakeIp')}</option>
-              <option value="redir-host">{t('overrideSettings.redirHost')}</option>
-            </select>
+              onChange={(v) => updateDnsConfig('enhanced-mode', v)}
+              options={[
+                { value: 'normal', label: t('overrideSettings.normal') },
+                { value: 'fake-ip', label: t('overrideSettings.fakeIp') },
+                { value: 'redir-host', label: t('overrideSettings.redirHost') },
+              ]}
+            />
           </div>
 
           {/* Fake-IP 范围 */}
@@ -1209,22 +1212,23 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.globalClientFingerprint')}</label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.globalClientFingerprintDesc')}</p>
               </div>
-              <select
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+              <StyledSelect
+                className="w-36"
                 value={config['global-client-fingerprint'] || ''}
-                onChange={(e) => updateConfig('global-client-fingerprint', e.target.value)}
-              >
-                <option value="">{t('overrideSettings.disabled')}</option>
-                <option value="random">{t('overrideSettings.random')}</option>
-                <option value="chrome">Chrome</option>
-                <option value="firefox">Firefox</option>
-                <option value="safari">Safari</option>
-                <option value="ios">iOS</option>
-                <option value="android">Android</option>
-                <option value="edge">Edge</option>
-                <option value="360">360</option>
-                <option value="qq">QQ</option>
-              </select>
+                onChange={(v) => updateConfig('global-client-fingerprint', v)}
+                options={[
+                  { value: '', label: t('overrideSettings.disabled') },
+                  { value: 'random', label: t('overrideSettings.random') },
+                  { value: 'chrome', label: 'Chrome' },
+                  { value: 'firefox', label: 'Firefox' },
+                  { value: 'safari', label: 'Safari' },
+                  { value: 'ios', label: 'iOS' },
+                  { value: 'android', label: 'Android' },
+                  { value: 'edge', label: 'Edge' },
+                  { value: '360', label: '360' },
+                  { value: 'qq', label: 'QQ' },
+                ]}
+              />
             </div>
 
             {/* 查找进程模式 */}
@@ -1233,15 +1237,16 @@ const OverrideSettings = forwardRef<OverrideSettingsRef>((props, ref) => {
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.findProcessMode')}</label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.findProcessModeDesc')}</p>
               </div>
-              <select
-                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+              <StyledSelect
+                className="w-36"
                 value={config['find-process-mode'] || 'strict'}
-                onChange={(e) => updateConfig('find-process-mode', e.target.value)}
-              >
-                <option value="off">{t('overrideSettings.off')}</option>
-                <option value="strict">{t('overrideSettings.strict')}</option>
-                <option value="always">{t('overrideSettings.always')}</option>
-              </select>
+                onChange={(v) => updateConfig('find-process-mode', v)}
+                options={[
+                  { value: 'off', label: t('overrideSettings.off') },
+                  { value: 'strict', label: t('overrideSettings.strict') },
+                  { value: 'always', label: t('overrideSettings.always') },
+                ]}
+              />
             </div>
 
             {/* 指定出站接口 */}

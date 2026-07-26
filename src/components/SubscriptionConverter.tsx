@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
+import { StyledSelect } from './ui/styled-select';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import {
@@ -869,17 +870,11 @@ export default function SubscriptionConverter() {
         {/* 目标格式 */}
         <div className="space-y-2">
           <label className="text-xs text-gray-600 dark:text-gray-400">{t('converter.settings.targetFormat')}</label>
-          <select
+          <StyledSelect
             value={targetFormat}
-            onChange={(e) => setTargetFormat(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {formatOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => setTargetFormat(v)}
+            options={formatOptions.map((option) => ({ value: option.value, label: option.label }))}
+          />
         </div>
 
         {/* 过滤正则 */}
@@ -913,17 +908,14 @@ export default function SubscriptionConverter() {
           {(useTemplate || requiresTemplate()) && (
             <div className="space-y-2">
               <label className="text-xs text-gray-600 dark:text-gray-400">{t('converter.settings.template')}</label>
-              <select
+              <StyledSelect
                 value={selectedTemplate}
-                onChange={(e) => setSelectedTemplate(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name} - {template.description}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setSelectedTemplate(v)}
+                options={templates.map((template) => ({
+                  value: template.id,
+                  label: `${template.name} - ${template.description}`,
+                }))}
+              />
             </div>
           )}
         </div>

@@ -585,8 +585,8 @@ export interface ElectronAPI {
   saveProxiesConfig: (proxies: any[], configPath: string) => Promise<{ success: boolean; error?: string }>;
 
   // AI Assistant: raw config file read/write/validate
-  readConfigFile: () => Promise<{ success: boolean; content?: string; path?: string; error?: string }>;
-  writeConfigFile: (content: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  readConfigFile: (configPath?: string) => Promise<{ success: boolean; content?: string; path?: string; error?: string }>;
+  writeConfigFile: (content: string, configPath?: string) => Promise<{ success: boolean; path?: string; error?: string }>;
   validateConfig: (content: string) => Promise<{ valid: boolean; error?: string }>;
   editConfigAtomic: (oldString: string, newString: string) => Promise<{ success: boolean; error?: string; matchCount?: number; yamlError?: string; content?: string }>;
 

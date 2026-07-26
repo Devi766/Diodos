@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { StyledSelect } from './ui/styled-select';
 import { showToast } from '@/components/ui/toast';
 import { useTranslation } from 'react-i18next';
 
@@ -275,15 +276,16 @@ const DnsSettings = forwardRef<DnsSettingsRef>((props, ref) => {
             <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('overrideSettings.enhancedMode')}</label>
             <p className="text-xs text-gray-500 dark:text-gray-400">{t('overrideSettings.enhancedModeDesc')}</p>
           </div>
-          <select
-            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200"
+          <StyledSelect
+            className="w-40"
             value={config['enhanced-mode'] || 'fake-ip'}
-            onChange={(e) => updateConfig('enhanced-mode', e.target.value)}
-          >
-            <option value="normal">{t('overrideSettings.normal')}</option>
-            <option value="fake-ip">{t('overrideSettings.fakeIp')}</option>
-            <option value="redir-host">{t('overrideSettings.redirHost')}</option>
-          </select>
+            onChange={(v) => updateConfig('enhanced-mode', v)}
+            options={[
+              { value: 'normal', label: t('overrideSettings.normal') },
+              { value: 'fake-ip', label: t('overrideSettings.fakeIp') },
+              { value: 'redir-host', label: t('overrideSettings.redirHost') },
+            ]}
+          />
         </div>
 
         <div>

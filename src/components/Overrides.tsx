@@ -7,6 +7,7 @@ import * as Toast from '@radix-ui/react-toast';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
+import { CodeEditor } from './ui/code-editor';
 import { useTranslation } from 'react-i18next';
 import { useThemeColor } from '../hooks/useThemeColor';
 import {
@@ -1452,11 +1453,12 @@ function EditFileDialog({
               <ReloadIcon className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : (
-            <textarea
+            <CodeEditor
               value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="h-full w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-slate-700 dark:bg-[#2a2a2a]"
+              onChange={setContent}
+              language={item.ext === 'js' ? 'javascript' : 'yaml'}
               placeholder={item.ext === 'js' ? t('overrides.jsPlaceholder') : t('overrides.yamlPlaceholder')}
+              autoFocus
             />
           )}
         </div>
