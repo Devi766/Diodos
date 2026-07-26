@@ -238,7 +238,9 @@ export default function LoopbackManager() {
     }
     setBulkSaving(false);
     persistLockedRef.current = false;
-  }, [bulkSaving, filteredApps, persistExemptions]);
+    // 多 SID 写入时系统可能裁剪部分 SID；成功后回读校正显示
+    if (ok) void loadApps();
+  }, [bulkSaving, filteredApps, persistExemptions, loadApps]);
 
   const deselectAllVisible = useCallback(async () => {
     if (bulkSaving || persistLockedRef.current) return;
@@ -258,16 +260,21 @@ export default function LoopbackManager() {
     }
     setBulkSaving(false);
     persistLockedRef.current = false;
-  }, [bulkSaving, filteredApps, persistExemptions]);
+    if (ok) void loadApps();
+  }, [bulkSaving, filteredApps, persistExemptions, loadApps]);
 
   const applyBulk = useCallback(
     async (mode: 'all' | 'none') => {
       if (bulkSaving || persistLockedRef.current) return;
-      const confirmed = window.confirm(
+      let message =
         mode === 'all'
           ? t('tools.loopback.confirmExemptAll')
-          : t('tools.loopback.confirmClearAll')
-      );
+          : t('tools.loopback.confirmClearAll');
+      // 有筛选时明确告知作用范围是全部 app，而非当前可见的几个
+      if (searchQuery.trim() || exemptOnly) {
+        message += `\n${t('tools.loopback.bulkIgnoresFilter', { total: stats.total })}`;
+      }
+      const confirmed = window.confirm(message);
       if (!confirmed) return;
 
       const api = getLoopbackApi();
@@ -295,9 +302,15 @@ export default function LoopbackManager() {
             );
             await loadApps();
           } else {
+            const rawError = friendlyError(result?.error, t('tools.loopback.loadError'));
+            const needsElevation =
+              result?.needsElevation === true ||
+              /拒绝访问|ACCESS_DENIED|failed:\s*5|管理员|UAC|提权/i.test(rawError);
             toast.error(
               t('tools.loopback.saveError', {
-                error: friendlyError(result?.error, t('tools.loopback.loadError')),
+                error: needsElevation
+                  ? t('tools.loopback.needsElevation', { error: rawError })
+                  : rawError,
               })
             );
           }
@@ -325,7 +338,7 @@ export default function LoopbackManager() {
         persistLockedRef.current = false;
       }
     },
-    [bulkSaving, friendlyError, loadApps, persistExemptions, t]
+    [bulkSaving, exemptOnly, friendlyError, loadApps, persistExemptions, searchQuery, stats.total, t]
   );
 
   if (loading) {

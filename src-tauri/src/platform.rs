@@ -1322,7 +1322,7 @@ fn loopback_icon_data_url(path: &str) -> Option<String> {
     ))
 }
 
-fn loopback_apps(app: &AppHandle) -> CompatResult {
+fn loopback_apps(_app: &AppHandle) -> CompatResult {
     if !cfg!(target_os = "windows") {
         return Ok(success(json!({
             "apps": [],
@@ -1451,7 +1451,7 @@ fn loopback_apps(app: &AppHandle) -> CompatResult {
             .collect::<Vec<_>>();
         let total = apps.len();
         let exempt = exempt_sids.len();
-        set_setting(app, "loopbackExemptSids", json!(exempt_sids))?;
+        let _ = &exempt_sids;
 
         return Ok(success(json!({
             "apps": apps,
@@ -1473,15 +1473,14 @@ fn loopback_apps(app: &AppHandle) -> CompatResult {
     }
 }
 
-fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
+fn loopback_set(_app: &AppHandle, sids: Vec<String>) -> CompatResult {
     if !cfg!(target_os = "windows") {
-        set_setting(app, "loopbackExemptSids", json!(sids))?;
+        let _ = &sids;
         return Ok(success(json!({ "count": 0 })));
     }
 
     // Pre-filter to valid AppContainer SIDs. set_config also re-filters against
-    // the live container list and serializes writes, but doing it here keeps the
-    // persisted setting list clean.
+    // the live container list and serializes writes.
     let mut filtered = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for sid in sids {
@@ -1498,13 +1497,10 @@ fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
     #[cfg(windows)]
     {
         match crate::win_loopback::set_config(&filtered) {
-            Ok(count) => {
-                set_setting(app, "loopbackExemptSids", json!(filtered))?;
-                Ok(success(json!({
-                    "count": count,
-                    "elevated": crate::win_loopback::is_process_elevated()
-                })))
-            }
+            Ok(count) => Ok(success(json!({
+                "count": count,
+                "elevated": crate::win_loopback::is_process_elevated()
+            }))),
             Err(error) => Ok(json!({
                 "success": false,
                 "error": error,
@@ -1515,7 +1511,6 @@ fn loopback_set(app: &AppHandle, sids: Vec<String>) -> CompatResult {
 
     #[cfg(not(windows))]
     {
-        let _ = app;
         Ok(success(json!({ "count": 0 })))
     }
 }

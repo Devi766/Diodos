@@ -615,6 +615,7 @@
       "clearAllSuccess": "已清除全部回环豁免",
       "confirmExemptAll": "确定豁免全部 UWP 应用？",
       "confirmClearAll": "确定清除全部回环豁免？",
+      "bulkIgnoresFilter": "此操作作用于全部 {{total}} 个应用，而非当前筛选结果。",
       "needsElevation": "需要管理员权限。请在弹出的 UAC 对话框中选择“是”：{{error}}"
     },
     "mediaTest": {

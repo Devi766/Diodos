@@ -263,14 +263,19 @@ fn extract_package_family_name(package_full_name: &str) -> Option<String> {
     }
 }
 
-fn current_exempt_sid_set(api: &FirewallApi) -> HashSet<String> {
+fn current_exempt_sid_set(api: &FirewallApi) -> Result<HashSet<String>, String> {
     let mut set = HashSet::new();
     unsafe {
         let mut count: DWORD = 0;
         let mut sids: *mut SidAndAttributes = ptr::null_mut();
         let status = (api.get_app_container_config)(&mut count, &mut sids);
-        if status != ERROR_SUCCESS || sids.is_null() || count == 0 {
-            return set;
+        // 读取失败必须报错，不能与「确实没有豁免」混为空集：
+        // 否则调用方会在未知状态下全量覆盖，清空其他 app 的豁免
+        if status != ERROR_SUCCESS {
+            return Err(format!("GetAppContainerConfig failed with code: {status}"));
+        }
+        if sids.is_null() || count == 0 {
+            return Ok(set);
         }
         for index in 0..count as usize {
             let entry = &*sids.add(index);
@@ -280,7 +285,30 @@ fn current_exempt_sid_set(api: &FirewallApi) -> HashSet<String> {
         }
         let _ = HeapFree(GetProcessHeap(), 0, sids.cast());
     }
-    set
+    Ok(set)
+}
+
+/// 仅枚举 AppContainer 的 SID（不解析显示名/豁免状态），用于写入前的合并判断。
+fn enum_container_sids(api: &FirewallApi) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    unsafe {
+        let mut count: DWORD = 0;
+        let mut containers: *mut InetFirewallAppContainer = ptr::null_mut();
+        let status = (api.enum_app_containers)(0, &mut count, &mut containers);
+        if status != ERROR_SUCCESS {
+            return Err(format!("EnumAppContainers failed with code: {status}"));
+        }
+        if !containers.is_null() {
+            for index in 0..count as usize {
+                let container = &*containers.add(index);
+                if let Some(sid) = sid_to_string(container.app_container_sid) {
+                    out.push(sid);
+                }
+            }
+            (api.free_app_containers)(containers);
+        }
+    }
+    Ok(out)
 }
 
 pub fn enum_app_containers() -> Result<Vec<Value>, String> {
@@ -293,7 +321,7 @@ pub fn enum_app_containers() -> Result<Vec<Value>, String> {
             return Err(format!("EnumAppContainers failed with code: {status}"));
         }
 
-        let exempt = current_exempt_sid_set(api);
+        let exempt = current_exempt_sid_set(api)?;
         let mut apps = Vec::with_capacity(count as usize);
 
         if !containers.is_null() {
@@ -408,21 +436,37 @@ pub fn set_config_direct(sids: &[String]) -> Result<usize, String> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let api = load_firewall_api()?;
-    let unique = {
-        // Caller may already have normalized; do a light dedupe again.
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        for sid in sids {
-            let trimmed = sid.trim();
-            if trimmed.is_empty() || !is_app_container_sid(trimmed) {
-                continue;
-            }
-            if seen.insert(trimmed.to_ascii_uppercase()) {
-                out.push(trimmed.to_string());
+
+    // Caller may already have normalized; do a light dedupe again.
+    let mut unique = Vec::new();
+    let mut seen = HashSet::new();
+    for sid in sids {
+        let trimmed = sid.trim();
+        if trimmed.is_empty() || !is_app_container_sid(trimmed) {
+            continue;
+        }
+        if seen.insert(trimmed.to_ascii_uppercase()) {
+            unique.push(trimmed.to_string());
+        }
+    }
+
+    // SetAppContainerConfig 是全量覆盖语义。写入前先读出系统当前豁免集合，
+    // 把「本工具枚举不到、但系统已豁免」的 SID（如已卸载 app、外部工具豁免的
+    // 容器）原样并入，避免任何一次 toggle 静默抹掉这些配置。
+    // 读取失败一律报错，绝不在未知状态下覆盖。
+    let current = current_exempt_sid_set(api)?;
+    if !current.is_empty() {
+        let known: HashSet<String> = enum_container_sids(api)?
+            .into_iter()
+            .map(|sid| sid.trim().to_ascii_uppercase())
+            .collect();
+        for sid_upper in current {
+            if !known.contains(&sid_upper) && seen.insert(sid_upper.clone()) {
+                // SID 字符串大小写不敏感，规范形式即大写
+                unique.push(sid_upper);
             }
         }
-        out
-    };
+    }
 
     set_config_unlocked(api, &unique)
 }

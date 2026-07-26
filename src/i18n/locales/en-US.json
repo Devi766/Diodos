@@ -615,6 +615,7 @@
       "clearAllSuccess": "Cleared all loopback exemptions",
       "confirmExemptAll": "Exempt all UWP apps?",
       "confirmClearAll": "Clear all loopback exemptions?",
+      "bulkIgnoresFilter": "This affects all {{total}} apps, not just the current filter.",
       "needsElevation": "Administrator permission required. Accept the UAC prompt to continue: {{error}}"
     },
     "mediaTest": {
