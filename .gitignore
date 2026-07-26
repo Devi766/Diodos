@@ -102,6 +102,7 @@ electron/fix.js
 # docs (auto-generated)
 /docs/
 
-# *.md except README
+# *.md except README and CHANGELOG
 /*.md
 !README.md
+!CHANGELOG.md

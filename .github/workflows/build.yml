@@ -359,20 +359,36 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
 
-          {
-            echo "## FlyClash Desktop v${VERSION} 测试版"
-            echo
-            echo "相对 main（Electron）切到 tarui（Tauri）的主要变化："
-            echo
-            echo "- 桌面框架由 **Electron 迁移至 Tauri**"
-            echo "- **安装包体积显著减小**（示例：Windows 安装包约 145MB → 33MB，macOS DMG 约 170MB → 46MB）"
-            echo "- 提供 Windows / macOS / Linux 多平台安装包"
-            echo "- 保留订阅管理、代理组、系统代理、TUN、连接统计等核心能力"
-            echo "- macOS TUN 授权与界面适配；Windows 原生系统代理 / Helper 服务"
-            echo
-            echo "> 当前为测试版，可能存在兼容性问题，欢迎到 Issues / 交流群反馈。"
-            echo
-          } > release-notes.md
+          # 优先取 CHANGELOG.md 中当前版本的章节作为发布说明
+          if [ -f CHANGELOG.md ] && grep -q "^## ${TAG}" CHANGELOG.md; then
+            {
+              echo "## FlyClash Desktop ${TAG} 测试版"
+              echo
+              awk -v tag="^## ${TAG}" '
+                $0 ~ tag { found = 1; next }
+                found && /^## / { exit }
+                found { print }
+              ' CHANGELOG.md
+              echo
+              echo "> 当前为测试版，可能存在兼容性问题，欢迎到 Issues / 交流群反馈。"
+              echo
+            } > release-notes.md
+          else
+            {
+              echo "## FlyClash Desktop v${VERSION} 测试版"
+              echo
+              echo "相对 main（Electron）切到 tarui（Tauri）的主要变化："
+              echo
+              echo "- 桌面框架由 **Electron 迁移至 Tauri**"
+              echo "- **安装包体积显著减小**（示例：Windows 安装包约 145MB → 33MB，macOS DMG 约 170MB → 46MB）"
+              echo "- 提供 Windows / macOS / Linux 多平台安装包"
+              echo "- 保留订阅管理、代理组、系统代理、TUN、连接统计等核心能力"
+              echo "- macOS TUN 授权与界面适配；Windows 原生系统代理 / Helper 服务"
+              echo
+              echo "> 当前为测试版，可能存在兼容性问题，欢迎到 Issues / 交流群反馈。"
+              echo
+            } > release-notes.md
+          fi
 
           {
             echo "name=FlyClash Desktop v${VERSION} 测试版"
