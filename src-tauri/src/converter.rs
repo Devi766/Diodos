@@ -208,7 +208,32 @@ fn converter_parse_ss(line: &str) -> Option<Value> {
     object.insert("port".to_string(), json!(port));
     object.insert("cipher".to_string(), json!(cipher));
     object.insert("password".to_string(), json!(password));
-    converter_insert_string(&mut object, "plugin", query.get("plugin"));
+    // SIP003 plugin 参数形如 "obfs-local;obfs=http;obfs-host=x"，
+    // 需要拆成 plugin 名 + plugin-opts，整串塞进 plugin 会让 mihomo 拒绝加载
+    if let Some(raw_plugin) = query.get("plugin").filter(|value| !value.trim().is_empty()) {
+        let mut parts = raw_plugin.split(';');
+        let plugin_name = parts.next().unwrap_or_default().trim();
+        let plugin_name = match plugin_name {
+            "obfs-local" | "simple-obfs" => "obfs",
+            other => other,
+        };
+        let mut opts = Map::new();
+        for part in parts {
+            let Some((key, value)) = part.split_once('=') else {
+                continue;
+            };
+            let key = match key.trim() {
+                "obfs" => "mode",
+                "obfs-host" => "host",
+                other => other,
+            };
+            opts.insert(key.to_string(), json!(value.trim()));
+        }
+        object.insert("plugin".to_string(), json!(plugin_name));
+        if !opts.is_empty() {
+            object.insert("plugin-opts".to_string(), Value::Object(opts));
+        }
+    }
     converter_insert_bool_param(&mut object, "udp-over-tcp", &query, "uot");
     Some(Value::Object(object))
 }
@@ -347,8 +372,19 @@ fn converter_parse_vless(line: &str) -> Option<Value> {
     converter_insert_string(&mut object, "servername", query.get("sni"));
     converter_insert_string(&mut object, "flow", query.get("flow"));
     converter_insert_string(&mut object, "client-fingerprint", query.get("fp"));
-    if let Some(short_id) = query.get("sid").filter(|value| !value.trim().is_empty()) {
-        object.insert("reality-opts".to_string(), json!({ "short-id": short_id }));
+    {
+        let public_key = query.get("pbk").filter(|value| !value.trim().is_empty());
+        let short_id = query.get("sid").filter(|value| !value.trim().is_empty());
+        if public_key.is_some() || short_id.is_some() {
+            let mut reality = Map::new();
+            if let Some(public_key) = public_key {
+                reality.insert("public-key".to_string(), json!(public_key));
+            }
+            if let Some(short_id) = short_id {
+                reality.insert("short-id".to_string(), json!(short_id));
+            }
+            object.insert("reality-opts".to_string(), Value::Object(reality));
+        }
     }
     converter_insert_bool_param(&mut object, "skip-cert-verify", &query, "allowInsecure");
     if network == "ws" {
@@ -390,6 +426,8 @@ fn converter_parse_hysteria2(line: &str) -> Option<Value> {
     object.insert("port".to_string(), json!(port));
     object.insert("password".to_string(), json!(password));
     converter_insert_string(&mut object, "sni", query.get("sni"));
+    converter_insert_string(&mut object, "obfs", query.get("obfs"));
+    converter_insert_string(&mut object, "obfs-password", query.get("obfs-password"));
     converter_insert_bool_param(&mut object, "skip-cert-verify", &query, "insecure");
     Some(Value::Object(object))
 }
@@ -1709,7 +1747,12 @@ fn converter_server_loop(listener: TcpListener, dir: PathBuf, port: u16, stop: m
             break;
         }
         match listener.accept() {
-            Ok((stream, _)) => converter_handle_stream(stream, &dir, port),
+            Ok((stream, _)) => {
+                // accept 出的 socket 会继承监听端的非阻塞模式，
+                // 请求字节未到时首次 read 会 WouldBlock 导致连接被静默丢弃
+                let _ = stream.set_nonblocking(false);
+                converter_handle_stream(stream, &dir, port)
+            }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(100));
             }

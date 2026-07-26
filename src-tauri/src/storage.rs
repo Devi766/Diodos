@@ -212,11 +212,18 @@ pub(crate) fn read_settings(app: &AppHandle) -> Result<Map<String, Value>, Strin
     for row in rows {
         let (key, raw, kind) = row.map_err(|err| err.to_string())?;
         let value = match kind.as_str() {
+            // 整数优先按 i64/u64 还原：f64 变体的 Number 会让
+            // as_u64()/as_i64() 返回 None，整型设置将静默回退默认值
             "number" => raw
-                .parse::<f64>()
+                .parse::<i64>()
                 .ok()
-                .and_then(serde_json::Number::from_f64)
-                .map(Value::Number)
+                .map(|value| Value::Number(value.into()))
+                .or_else(|| {
+                    raw.parse::<f64>()
+                        .ok()
+                        .and_then(serde_json::Number::from_f64)
+                        .map(Value::Number)
+                })
                 .unwrap_or(Value::Null),
             "boolean" => Value::Bool(raw == "true"),
             "json" => serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null),

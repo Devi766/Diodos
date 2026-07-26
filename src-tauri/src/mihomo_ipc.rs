@@ -44,6 +44,7 @@ pub(crate) async fn request(
         &method,
         &endpoint_target(&endpoint),
         &body,
+        options.timeout,
     )
     .await
 }
@@ -89,10 +90,16 @@ async fn local_socket_response(
     method: &str,
     target: &str,
     body: &Value,
+    timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
-    let (status, text) =
-        crate::mihomo_local_socket::request_json(&controller_endpoint.path, method, target, body)
-            .await?;
+    let (status, text) = crate::mihomo_local_socket::request_json_with_timeout(
+        &controller_endpoint.path,
+        method,
+        target,
+        body,
+        timeout_ms.map(std::time::Duration::from_millis),
+    )
+    .await?;
 
     if (200..300).contains(&status) {
         let data = if text.trim().is_empty() {

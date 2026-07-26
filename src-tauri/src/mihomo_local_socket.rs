@@ -13,10 +13,24 @@ fn request_timeout_for(method: &str, path: &str) -> Duration {
     if method.eq_ignore_ascii_case("PUT")
         && (path_only == "/configs" || path_only == "configs" || path_only.ends_with("/configs"))
     {
-        CONFIG_RELOAD_TIMEOUT
-    } else {
-        REQUEST_TIMEOUT
+        return CONFIG_RELOAD_TIMEOUT;
     }
+    // /delay 类测速端点自带 timeout 参数（毫秒），内核会等到该时限才回包；
+    // 读超时需要在其基础上留余量，否则死节点测速总是先触发传输层超时
+    if path_only.ends_with("/delay") {
+        let url_timeout = path
+            .split_once('?')
+            .map(|(_, query)| query)
+            .and_then(|query| {
+                query.split('&').find_map(|pair| {
+                    pair.strip_prefix("timeout=")
+                        .and_then(|value| value.parse::<u64>().ok())
+                })
+            })
+            .unwrap_or(5000);
+        return Duration::from_millis(url_timeout.saturating_add(3000));
+    }
+    REQUEST_TIMEOUT
 }
 
 pub(crate) async fn request_json(
@@ -25,7 +39,17 @@ pub(crate) async fn request_json(
     path: &str,
     body: &Value,
 ) -> Result<(u16, String), String> {
-    let request_timeout = request_timeout_for(method, path);
+    request_json_with_timeout(socket_path, method, path, body, None).await
+}
+
+pub(crate) async fn request_json_with_timeout(
+    socket_path: &str,
+    method: &str,
+    path: &str,
+    body: &Value,
+    explicit_timeout: Option<Duration>,
+) -> Result<(u16, String), String> {
+    let request_timeout = explicit_timeout.unwrap_or_else(|| request_timeout_for(method, path));
 
     #[cfg(unix)]
     {
