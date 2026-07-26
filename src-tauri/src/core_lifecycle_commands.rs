@@ -305,10 +305,9 @@ pub(crate) async fn start_mihomo(
     // This prevents an older helper from receiving new provisioning flags.
     if crate::tun_service::should_start_core_by_service(app) {
         if let Err(error) = crate::tun_service::ensure_helper_service_current(app) {
-            return Ok(core_lifecycle::start_failure_completion(format!(
-                "准备 Helper 服务失败: {error}"
-            ))
-            .response);
+            // 前置升级失败（如用户取消 UAC）不应直接判死刑：
+            // 服务分支会再次尝试，届时失败仍可回退 sidecar 启动
+            eprintln!("[core] helper pre-check failed, will retry in service branch: {error}");
         }
     }
     let prepared = match prepare_core_start_context(app, config_path) {
@@ -915,7 +914,10 @@ pub(crate) async fn apply_tun_runtime_change(
                 .and_then(Value::as_str)
                 .unwrap_or("内核重启失败，请检查配置")
                 .to_string();
-            if rollback_on_failure {
+            // 只有「开启失败」才回滚为原状态；「关闭失败」时内核已被停掉，
+            // 回滚成开启会让设置与实际状态双双错位
+            let should_rollback = rollback_on_failure && enabled && !previous_enabled;
+            if should_rollback {
                 set_setting(app, "tunModeEnabled", json!(previous_enabled))?;
                 let _ = window.emit("tun-status", previous_enabled);
             }
@@ -925,14 +927,15 @@ pub(crate) async fn apply_tun_runtime_change(
             );
             Ok(json!({
                 "success": false,
-                "enabled": if rollback_on_failure { previous_enabled } else { enabled },
+                "enabled": if should_rollback { previous_enabled } else { enabled },
                 "pending": false,
                 "restarted": false,
                 "error": error
             }))
         }
         Err(error) => {
-            if rollback_on_failure {
+            let should_rollback = rollback_on_failure && enabled && !previous_enabled;
+            if should_rollback {
                 set_setting(app, "tunModeEnabled", json!(previous_enabled))?;
                 let _ = window.emit("tun-status", previous_enabled);
             }
@@ -942,7 +945,7 @@ pub(crate) async fn apply_tun_runtime_change(
             );
             Ok(json!({
                 "success": false,
-                "enabled": if rollback_on_failure { previous_enabled } else { enabled },
+                "enabled": if should_rollback { previous_enabled } else { enabled },
                 "pending": false,
                 "restarted": false,
                 "error": error

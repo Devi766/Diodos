@@ -61,8 +61,16 @@ pub(crate) fn today_key() -> String {
         .ok()
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| (now_millis() / 86_400_000).to_string())
+        .filter(|value| value.len() == 10 && value.matches('-').count() == 2)
+        .unwrap_or_else(utc_date_key)
+}
+
+/// powershell 不可用时的回退：UTC 日期，保持 yyyy-MM-dd 格式。
+/// 旧回退返回的天数序号（如 "20661"）会让按月/年前缀的统计查询漏掉这些行。
+fn utc_date_key() -> String {
+    let days = (now_millis() / 86_400_000) as i64;
+    let (year, month, day) = civil_from_unix_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 fn extract_quoted_field(line: &str, key: &str) -> Option<String> {

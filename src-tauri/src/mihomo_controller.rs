@@ -514,12 +514,29 @@ pub(crate) async fn fetch_connections_info(app: &AppHandle, state: &State<'_, Ap
         "connections": connections,
         "currentNode": current_node,
         "downloadTotal": data.get("downloadTotal").and_then(Value::as_u64).unwrap_or(0),
-        "uploadTotal": data.get("uploadTotal").and_then(Value::as_u64).unwrap_or(0)
+        "uploadTotal": data.get("uploadTotal").and_then(Value::as_u64).unwrap_or(0),
+        // 区分「请求失败」与「计数器真实归零」，供流量统计判断
+        "statsValid": data.get("downloadTotal").is_some() || data.get("uploadTotal").is_some()
     })
 }
 
 async fn get_traffic_stats(app: &AppHandle, state: &State<'_, AppState>) -> Value {
     let snapshot = fetch_connections_info(app, state).await;
+    // 请求失败时不能把假 0 写进 last_traffic：下一次成功响应会以 0 为基准
+    // 把内核启动以来的全部流量重复累加进当日统计
+    if !snapshot
+        .get("statsValid")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return json!({
+            "up": 0,
+            "down": 0,
+            "upSpeed": 0,
+            "downSpeed": 0,
+            "timestamp": now_millis()
+        });
+    }
     let up = snapshot
         .get("uploadTotal")
         .and_then(Value::as_u64)

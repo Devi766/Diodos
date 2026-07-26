@@ -949,7 +949,16 @@ async fn test_udp_connectivity(default_mixed_port: u16, options: Value) -> Compa
             .unwrap_or_default()
             .to_string();
         let port = value_u16(server.get("port")).unwrap_or(53);
-        let result = socks5_udp_probe(&proxy_host, proxy_port, &address, port);
+        // 阻塞式 socket 探测放到阻塞线程池，避免占用 tokio worker
+        let result = {
+            let proxy_host = proxy_host.clone();
+            let probe_address = address.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                socks5_udp_probe(&proxy_host, proxy_port, &probe_address, port)
+            })
+            .await
+            .unwrap_or_else(|err| Err(err.to_string()))
+        };
         match result {
             Ok(latency) => {
                 success_count += 1;
@@ -1304,7 +1313,15 @@ async fn dispatch_compat_call(
                     "progress": 15
                 }),
             );
-            if let Some(result) = run_ookla_speedtest(app, window) {
+            // speedtest 子进程轮询最长 120 秒，放到阻塞线程池执行
+            let ookla_result = {
+                let app = app.clone();
+                let window = window.clone();
+                tauri::async_runtime::spawn_blocking(move || run_ookla_speedtest(&app, &window))
+                    .await
+                    .unwrap_or(None)
+            };
+            if let Some(result) = ookla_result {
                 return result;
             }
             emit_speedtest_output(

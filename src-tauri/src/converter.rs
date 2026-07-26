@@ -340,6 +340,11 @@ fn converter_parse_trojan(line: &str) -> Option<Value> {
                 "headers": { "Host": query.get("host").map(String::as_str).unwrap_or("") }
             }),
         );
+    } else if query.get("type").map(String::as_str) == Some("grpc") {
+        object.insert(
+            "grpc-opts".to_string(),
+            json!({ "grpc-service-name": query.get("serviceName").map(String::as_str).unwrap_or("") }),
+        );
     }
     Some(Value::Object(object))
 }
@@ -1092,14 +1097,19 @@ fn converter_quantumult_x_line(proxy: &Value) -> Option<String> {
                 "vmess={server}:{port}, method=chacha20-poly1305, password={}",
                 proxy_str(proxy, "uuid").unwrap_or("")
             );
-            if proxy_bool(proxy, "tls") {
+            // ws 传输必须声明 obfs=ws/wss；仅 TCP+TLS 才是 over-tls
+            let is_ws = proxy_str(proxy, "network") == Some("ws");
+            let tls = proxy_bool(proxy, "tls");
+            if is_ws {
+                line.push_str(if tls { ", obfs=wss" } else { ", obfs=ws" });
+                if let Some(path) = converter_ws_path(proxy) {
+                    line.push_str(&format!(", obfs-uri={path}"));
+                }
+                if let Some(host) = converter_ws_host(proxy) {
+                    line.push_str(&format!(", obfs-host={host}"));
+                }
+            } else if tls {
                 line.push_str(", obfs=over-tls");
-            }
-            if let Some(path) = converter_ws_path(proxy) {
-                line.push_str(&format!(", obfs-uri={path}"));
-            }
-            if let Some(host) = converter_ws_host(proxy) {
-                line.push_str(&format!(", obfs-host={host}"));
             }
             line
         }

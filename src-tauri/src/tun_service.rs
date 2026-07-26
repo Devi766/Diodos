@@ -1186,7 +1186,14 @@ async fn dispatch_compat_call(
                 } else {
                     create_windows_elevated_task(app)?;
                     set_setting(app, "tunElevateTask", json!(true))?;
-                    set_setting(app, "pendingTunEnable", json!(true))?;
+                    // 仅当 TUN 原本就处于开启偏好时才在重启后恢复开启；
+                    // 单纯「授权」不应升级成「开启 TUN」
+                    let tun_was_enabled = setting(app, "tunModeEnabled", json!(false))?
+                        .as_bool()
+                        .unwrap_or(false);
+                    if tun_was_enabled {
+                        set_setting(app, "pendingTunEnable", json!(true))?;
+                    }
                     schedule_windows_elevated_restart(app)?;
                     Ok(success(json!({
                         "message": "正在请求管理员权限创建任务并重启应用...",

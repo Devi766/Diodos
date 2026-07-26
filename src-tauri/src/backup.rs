@@ -150,6 +150,7 @@ pub(crate) fn create_backup_zip_at(
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
+    let mut skipped_profiles = 0usize;
     let subscriptions = read_subscriptions(app)?;
     let active_config = read_last_config(app)?;
     let mut active_profile = Value::Null;
@@ -159,7 +160,12 @@ pub(crate) fn create_backup_zip_at(
     for sub in subscriptions {
         let content = match config_content(app, &sub.path) {
             Ok(content) => content,
-            Err(_) => continue,
+            Err(error) => {
+                // 解密失败的订阅进不了备份，静默丢弃会让用户误以为备份完整
+                eprintln!("[backup] 跳过无法读取的订阅 {}: {error}", sub.path);
+                skipped_profiles += 1;
+                continue;
+            }
         };
         let uuid = backup_profile_uuid(&sub.path);
         if active_config.as_deref() == Some(sub.path.as_str()) {
@@ -177,10 +183,16 @@ pub(crate) fn create_backup_zip_at(
             .and_then(parse_traffic_string)
             .unwrap_or(0);
         let total = upload.saturating_add(remaining);
+        // expiry_date 是格式化后的 "YYYY-MM-DD"，直接 parse u64 必然失败
         let expire = sub
             .expiry_date
             .as_deref()
-            .and_then(|value| value.parse::<u64>().ok())
+            .and_then(|value| {
+                value
+                    .parse::<u64>()
+                    .ok()
+                    .or_else(|| expiry_timestamp_from_date(value))
+            })
             .unwrap_or(0);
         let source = sub.url.clone().unwrap_or_else(|| sub.path.clone());
         let profile_type = if sub
@@ -268,7 +280,36 @@ pub(crate) fn create_backup_zip_at(
     )
     .map_err(|err| err.to_string())?;
     zip.finish().map_err(|err| err.to_string())?;
-    Ok(success(json!({ "filePath": path.to_string_lossy() })))
+    Ok(success(json!({
+        "filePath": path.to_string_lossy(),
+        "skippedProfiles": skipped_profiles
+    })))
+}
+
+/// 把 "YYYY-MM-DD" 转成 Unix 秒级时间戳（UTC 零点）。
+fn expiry_timestamp_from_date(value: &str) -> Option<u64> {
+    let mut parts = value.trim().split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let adjusted_year = if month <= 2 { year - 1 } else { year };
+    let era = if adjusted_year >= 0 {
+        adjusted_year
+    } else {
+        adjusted_year - 399
+    } / 400;
+    let year_of_era = adjusted_year - era * 400;
+    let month_index = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    if days < 0 {
+        return None;
+    }
+    Some(days as u64 * 86_400)
 }
 
 pub(crate) fn create_backup_zip(app: &AppHandle, backup_type: &str) -> CompatResult {
@@ -588,6 +629,19 @@ pub(crate) fn restore_backup_zip(app: &AppHandle, path: &Path) -> CompatResult {
     }
 
     let mut restored = 0;
+    // db 与 .runtime-key 必须成对恢复：只写 db 不写 key（或反之）
+    // 会让所有 config_cipher 永久不可解密，且恢复仍显示"成功"
+    let has_db = archive.by_name("flyclash.db").is_ok();
+    let has_key = archive.by_name(".runtime-key").is_ok();
+    if has_db != has_key {
+        return Ok(json!({
+            "success": false,
+            "error": "备份包缺少数据库或密钥文件，无法安全恢复（db 与 .runtime-key 必须成对）"
+        }));
+    }
+
+    // 先全部读入内存，确认完整后再落盘，避免写到一半留下错配状态
+    let mut staged: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
     for (name, target) in [
         ("flyclash.db", database_path(app)?),
         (".runtime-key", encryption_key_path(app)?),
@@ -597,9 +651,12 @@ pub(crate) fn restore_backup_zip(app: &AppHandle, path: &Path) -> CompatResult {
             source
                 .read_to_end(&mut bytes)
                 .map_err(|err| err.to_string())?;
-            fs::write(target, bytes).map_err(|err| err.to_string())?;
-            restored += 1;
+            staged.push((target, bytes));
         }
+    }
+    for (target, bytes) in staged {
+        fs::write(target, bytes).map_err(|err| err.to_string())?;
+        restored += 1;
     }
     Ok(success(
         json!({ "stats": { "restored": restored, "failed": 0, "errors": [] } }),

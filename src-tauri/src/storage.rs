@@ -262,7 +262,14 @@ pub(crate) fn setting(app: &AppHandle, key: &str, fallback: Value) -> Result<Val
 }
 
 pub(crate) fn set_setting(app: &AppHandle, key: &str, value: Value) -> Result<(), String> {
-    let mut settings = read_settings(app)?;
-    settings.insert(key.to_string(), value);
-    write_settings(app, &settings)
+    // 单键直写。此前的「全量读出→改一键→整表回写」在并发保存两个不同
+    // 设置时会互相覆盖，还会把解析失败读成 Null 的旧值固化回库
+    let (raw, kind) = serialize_setting_value(&value);
+    db(app)?
+        .execute(
+            "INSERT OR REPLACE INTO settings (key, value, type) VALUES (?1, ?2, ?3)",
+            params![key, raw, kind],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
