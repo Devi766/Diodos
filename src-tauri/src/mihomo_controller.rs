@@ -667,6 +667,8 @@ async fn dispatch_compat_call(
                         .current_node = Some(node.clone());
                 }
                 let _ = window.emit("node-changed", payload.clone());
+                // 主界面切换节点后同步刷新托盘快照，避免下次右键显示旧节点
+                crate::tray::schedule_tray_proxy_snapshot_refresh(app);
                 Ok(success(payload))
             } else {
                 Ok(

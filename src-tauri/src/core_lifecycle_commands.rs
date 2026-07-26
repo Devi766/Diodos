@@ -376,7 +376,10 @@ pub(crate) async fn start_mihomo(
                         };
 
                         if service_start.started {
-                            persist_started_config(app, &config_path)?;
+                            // 核心已在运行，持久化失败不应把启动整体报为失败
+                            if let Err(error) = persist_started_config(app, &config_path) {
+                                eprintln!("[core] persist started config failed: {error}");
+                            }
                             // Continue probing controller in background without
                             // blocking the UI start success path.
                             let probe_app = app.clone();
@@ -452,7 +455,9 @@ pub(crate) async fn start_mihomo(
     };
 
     if sidecar_start.started {
-        persist_started_config(app, &config_path)?;
+        if let Err(error) = persist_started_config(app, &config_path) {
+            eprintln!("[core] persist started config failed: {error}");
+        }
         Ok(sidecar_start.response)
     } else {
         set_runtime_running_mode(app, RunningMode::NotRunning);
@@ -620,12 +625,27 @@ pub(crate) async fn reload_mihomo_config(
         }
     };
     let reload_request = core_lifecycle::reload_config_request(&runtime_config);
-    let response = crate::mihomo_transport::request(
+    let response = match crate::mihomo_transport::request(
         app,
         Some(reload_request.endpoint.to_string()),
         Some(reload_request.options),
     )
-    .await?;
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            // 传输失败时内核仍在跑旧配置，把 work-config 恢复为旧配置，
+            // 避免磁盘配置与运行态不一致（崩溃自恢复会加载错误配置）
+            if let Some(previous) = previous_active
+                .as_deref()
+                .map(str::trim)
+                .filter(|path| !path.is_empty() && *path != config_path.as_str())
+            {
+                let _ = prepare_runtime_config_for_reload(app, previous);
+            }
+            return Err(error);
+        }
+    };
 
     let reload_completion = {
         let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");

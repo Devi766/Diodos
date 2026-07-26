@@ -35,6 +35,28 @@ pub(crate) fn invalidate_runtime_work_config_cache() {
     }
 }
 
+/// 本次进程内最近一次生成 work-config.yaml 所用的源配置路径。
+/// 用于判断磁盘上的 work 配置是否属于当前配置（跨进程残留视为不可信）。
+fn work_config_source() -> &'static Mutex<Option<String>> {
+    static SOURCE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    SOURCE.get_or_init(|| Mutex::new(None))
+}
+
+fn record_work_config_source(config_path: &str) {
+    if let Ok(mut guard) = work_config_source().lock() {
+        *guard = Some(config_path.to_string());
+    }
+}
+
+fn work_config_source_matches(config_path: &str) -> bool {
+    work_config_source()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .map(|source| source == config_path)
+        .unwrap_or(false)
+}
+
 fn hash_bytes(hasher: &mut std::collections::hash_map::DefaultHasher, bytes: &[u8]) {
     bytes.hash(hasher);
 }
@@ -914,13 +936,20 @@ pub(crate) fn prepare_runtime_config(
         .map_err(core_config::RuntimeConfigPrepareError::prepare_failed)?;
     let work_dir =
         mihomo_dir(app).map_err(core_config::RuntimeConfigPrepareError::prepare_failed)?;
-    core_config::prepare_validated_runtime_config(
+    let result = core_config::prepare_validated_runtime_config(
         &content,
         &runtime_settings,
         core_executable,
         &work_dir,
         |config| crate::overrides::apply_overrides(app, config_path, config),
-    )
+    );
+    if result.is_ok() {
+        // 启动路径重写了 work-config.yaml，reload 缓存里的旧条目必须失效，
+        // 否则之后热切换回旧配置会命中陈旧缓存、跳过文件重写
+        invalidate_runtime_work_config_cache();
+        record_work_config_source(config_path);
+    }
+    result
 }
 
 pub(crate) fn prepare_runtime_config_for_reload(
@@ -964,6 +993,7 @@ pub(crate) fn prepare_runtime_config_for_reload(
             runtime_path: runtime_path.clone(),
         });
     }
+    record_work_config_source(config_path);
 
     Ok(runtime_path)
 }
@@ -973,13 +1003,19 @@ pub(crate) fn parse_config_order(app: &AppHandle, config_path: Option<String>) -
         return success(json!({ "data": { "proxyGroups": [] } }));
     };
 
-    let work_yaml = mihomo_dir(app)
-        .ok()
-        .and_then(|dir| {
-            let work_path = dir.join(core_config::RUNTIME_CONFIG_FILE_NAME);
-            std::fs::read_to_string(work_path).ok()
-        })
-        .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok());
+    // 只有本进程为当前配置生成过 work 配置时才信任它；
+    // 跨进程残留或属于其他配置的 work 文件一律走源配置解析
+    let work_yaml = if work_config_source_matches(&path) {
+        mihomo_dir(app)
+            .ok()
+            .and_then(|dir| {
+                let work_path = dir.join(core_config::RUNTIME_CONFIG_FILE_NAME);
+                std::fs::read_to_string(work_path).ok()
+            })
+            .and_then(|content| serde_yaml::from_str::<serde_yaml::Value>(&content).ok())
+    } else {
+        None
+    };
 
     let yaml = if let Some(work) = work_yaml {
         work

@@ -150,7 +150,9 @@ async fn refresh_subscription_by_path(
         return Ok(fetched);
     }
 
-    let previous_content = config_content(app, &file_path)?;
+    // 旧内容仅用于失败回滚；读不出（密文损坏等）不应中止刷新，
+    // 让新下载的内容直接覆盖成为自愈路径
+    let previous_content = config_content(app, &file_path).ok();
     let mut content_updated = false;
 
     let update_result: Result<(), String> = (|| {
@@ -168,7 +170,9 @@ async fn refresh_subscription_by_path(
 
     if let Err(error) = update_result {
         if content_updated {
-            let _ = save_config_content(app, &file_path, &previous_content);
+            if let Some(previous_content) = previous_content.as_deref() {
+                let _ = save_config_content(app, &file_path, previous_content);
+            }
         }
         return Ok(json!({
             "success": false,

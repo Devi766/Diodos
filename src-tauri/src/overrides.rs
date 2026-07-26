@@ -1,6 +1,7 @@
 use boa_engine::{Context as JsContext, Source};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -20,7 +21,28 @@ fn override_items_cache() -> &'static Mutex<Option<Vec<Value>>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+struct AppliedOverridesCacheEntry {
+    key: u64,
+    result: Value,
+}
+
+/// 按配置路径缓存「覆写应用后的完整配置」。
+/// 托盘快照、parse_config_order 与运行时配置准备都会重复调用
+/// apply_overrides，缓存后相同输入不再重跑 JS/YAML 覆写。
+fn applied_overrides_cache() -> &'static Mutex<HashMap<String, AppliedOverridesCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, AppliedOverridesCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 每次写操作递增；读线程回填缓存前校验代数未变，
+/// 防止「锁外读到旧数据 → 写操作清缓存 → 旧数据回填」的竞态。
+fn override_cache_generation() -> &'static AtomicU64 {
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    &GENERATION
+}
+
 fn invalidate_override_caches(id: Option<&str>) {
+    override_cache_generation().fetch_add(1, AtomicOrdering::SeqCst);
     if let Ok(mut guard) = override_content_cache().lock() {
         if let Some(id) = id {
             guard.remove(id);
@@ -30,6 +52,9 @@ fn invalidate_override_caches(id: Option<&str>) {
     }
     if let Ok(mut guard) = override_items_cache().lock() {
         *guard = None;
+    }
+    if let Ok(mut guard) = applied_overrides_cache().lock() {
+        guard.clear();
     }
     crate::runtime_config::invalidate_runtime_work_config_cache();
 }
@@ -135,6 +160,7 @@ pub(crate) fn all_overrides(app: &AppHandle) -> Result<Vec<Value>, String> {
         }
     }
 
+    let generation = override_cache_generation().load(AtomicOrdering::SeqCst);
     let conn = db(app)?;
     let mut stmt = conn
         .prepare("SELECT item_json FROM overrides ORDER BY sort_order ASC, created_at ASC")
@@ -148,8 +174,10 @@ pub(crate) fn all_overrides(app: &AppHandle) -> Result<Vec<Value>, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.to_string())?;
 
-    if let Ok(mut guard) = override_items_cache().lock() {
-        *guard = Some(items.clone());
+    if generation == override_cache_generation().load(AtomicOrdering::SeqCst) {
+        if let Ok(mut guard) = override_items_cache().lock() {
+            *guard = Some(items.clone());
+        }
     }
     Ok(items)
 }
@@ -160,9 +188,11 @@ fn save_override_item(app: &AppHandle, item: &Value, content: Option<&str>) -> R
         .and_then(Value::as_str)
         .ok_or_else(|| "missing override id".to_string())?;
     let order = db(app)?
-        .query_row("SELECT COUNT(*) FROM overrides", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order) + 1, 0) FROM overrides",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
         .unwrap_or(0);
     let encrypted = content.map(|value| encrypt_text(app, value)).transpose()?;
     db(app)?
@@ -186,6 +216,10 @@ fn save_override_item(app: &AppHandle, item: &Value, content: Option<&str>) -> R
         if let Ok(mut guard) = override_content_cache().lock() {
             guard.insert(id.to_string(), content.to_string());
         }
+    }
+    override_cache_generation().fetch_add(1, AtomicOrdering::SeqCst);
+    if let Ok(mut guard) = applied_overrides_cache().lock() {
+        guard.clear();
     }
     crate::runtime_config::invalidate_runtime_work_config_cache();
     Ok(())
@@ -263,8 +297,28 @@ async fn override_add(app: &AppHandle, item: Value) -> Result<Value, String> {
         content = Some(fetch_override_remote_content(url).await?);
     }
     object.remove("file");
+    let is_enabled_global = object.get("global").map(is_truthy_bool).unwrap_or(false)
+        && object.get("enabled").map(is_truthy_bool).unwrap_or(false);
+    let new_id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let value = Value::Object(object);
     save_override_item(app, &value, content.as_deref())?;
+
+    // 新增即启用的全局覆写同样要执行全局互斥
+    if is_enabled_global {
+        let mut items = all_overrides(app)?;
+        let before: Vec<Value> = items.clone();
+        enforce_single_enabled_global(&mut items, &new_id);
+        for (index, item) in items.iter().enumerate() {
+            if before.get(index) != Some(item) {
+                save_override_item(app, item, None)?;
+            }
+        }
+        invalidate_override_caches(None);
+    }
     Ok(value)
 }
 
@@ -361,6 +415,7 @@ pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, Stri
         }
     }
 
+    let generation = override_cache_generation().load(AtomicOrdering::SeqCst);
     let cipher = db(app)?
         .query_row(
             "SELECT content_cipher FROM overrides WHERE id = ?1",
@@ -377,8 +432,10 @@ pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, Stri
         String::new()
     };
 
-    if let Ok(mut guard) = override_content_cache().lock() {
-        guard.insert(id.to_string(), content.clone());
+    if generation == override_cache_generation().load(AtomicOrdering::SeqCst) {
+        if let Ok(mut guard) = override_content_cache().lock() {
+            guard.insert(id.to_string(), content.clone());
+        }
     }
     Ok(content)
 }
@@ -540,8 +597,31 @@ fn subscription_override_ids(app: &AppHandle, config_path: &str) -> Result<Vec<S
         .unwrap_or_default())
 }
 
+/// 把任意文本编码成 JS 双引号字符串字面量。
+/// JSON 文本里可能出现未转义的 U+2028/U+2029，直接内联会破坏 JS 语法。
+fn js_string_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn run_js_override(config: &Value, script_content: &str, item_name: &str) -> Result<Value, String> {
     let config_json = serde_json::to_string(config).map_err(|err| err.to_string())?;
+    // 配置以 JSON.parse 注入而不是内联对象字面量：
+    // 大配置走对象字面量会让引擎逐节点解析求值，耗时可达数秒。
+    let config_literal = js_string_literal(&config_json);
     let code = format!(
         r#"
 globalThis.console = globalThis.console || {{
@@ -555,7 +635,7 @@ globalThis.console = globalThis.console || {{
 if (typeof main !== 'function') {{
   throw new Error('JS override must define main(config)');
 }}
-const __flyclash_input = {config_json};
+const __flyclash_input = JSON.parse({config_literal});
 const __flyclash_result = main(__flyclash_input);
 const __flyclash_output =
   __flyclash_result && typeof __flyclash_result === 'object'
@@ -568,7 +648,7 @@ JSON.stringify(__flyclash_output);
     let mut context = JsContext::default();
     context
         .runtime_limits_mut()
-        .set_loop_iteration_limit(5_000_000);
+        .set_loop_iteration_limit(50_000_000);
     context.runtime_limits_mut().set_recursion_limit(1024);
 
     let result = context
@@ -627,7 +707,8 @@ pub(crate) fn apply_overrides(
         }
     }
 
-    let mut result = config;
+    // 先收集实际会生效的覆写步骤，用于计算缓存键
+    let mut steps: Vec<(String, String, String)> = Vec::new();
     for id in ordered_ids {
         let Some(item) = enabled_items
             .iter()
@@ -643,20 +724,56 @@ pub(crate) fn apply_overrides(
         if content.trim().is_empty() {
             continue;
         }
+        let ext = item
+            .get("ext")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if ext != "js" && ext != "yaml" {
+            continue;
+        }
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(&id)
+            .to_string();
+        steps.push((ext, name, content));
+    }
 
-        match item.get("ext").and_then(Value::as_str) {
-            Some("js") => {
-                let name = item.get("name").and_then(Value::as_str).unwrap_or(&id);
-                match run_js_override(&result, &content, name) {
-                    Ok(next) => result = next,
-                    Err(error) => eprintln!("[overrides] {}", error),
-                }
+    if steps.is_empty() {
+        return Ok(config);
+    }
+
+    let input_json = serde_json::to_string(&config).map_err(|err| err.to_string())?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input_json.hash(&mut hasher);
+    for (ext, name, content) in &steps {
+        ext.hash(&mut hasher);
+        name.hash(&mut hasher);
+        content.hash(&mut hasher);
+    }
+    let cache_key = hasher.finish();
+
+    if let Ok(guard) = applied_overrides_cache().lock() {
+        if let Some(entry) = guard.get(config_path) {
+            if entry.key == cache_key {
+                return Ok(entry.result.clone());
             }
-            Some("yaml") => {
-                let patch_yaml = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+        }
+    }
+
+    let started = std::time::Instant::now();
+    let mut result = config;
+    for (ext, name, content) in &steps {
+        match ext.as_str() {
+            "js" => match run_js_override(&result, content, name) {
+                Ok(next) => result = next,
+                Err(error) => eprintln!("[overrides] {}", error),
+            },
+            "yaml" => {
+                let patch_yaml = match serde_yaml::from_str::<serde_yaml::Value>(content) {
                     Ok(value) => value,
                     Err(error) => {
-                        let name = item.get("name").and_then(Value::as_str).unwrap_or(&id);
                         eprintln!("[overrides] YAML覆写解析失败 [{}]: {}", name, error);
                         continue;
                     }
@@ -666,8 +783,24 @@ pub(crate) fn apply_overrides(
                     result = merge_yaml_override(&result, &patch);
                 }
             }
-            _ => continue,
+            _ => {}
         }
+    }
+
+    eprintln!(
+        "[overrides] applied {} override step(s) in {:?}",
+        steps.len(),
+        started.elapsed()
+    );
+
+    if let Ok(mut guard) = applied_overrides_cache().lock() {
+        guard.insert(
+            config_path.to_string(),
+            AppliedOverridesCacheEntry {
+                key: cache_key,
+                result: result.clone(),
+            },
+        );
     }
 
     Ok(result)
@@ -712,11 +845,19 @@ async fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> 
                     .map(|content| content.trim().is_empty())
                     .unwrap_or(true);
             if should_fetch_remote {
-                result = override_update_remote(
-                    app,
-                    result.get("id").and_then(Value::as_str).unwrap_or(""),
-                )
-                .await?;
+                let id = result
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                match override_update_remote(app, &id).await {
+                    Ok(item) => result = item,
+                    Err(error) => {
+                        // 拉取失败时回滚启用状态，避免出现「已启用但内容为空」的僵尸项
+                        let _ = override_update(app, &id, json!({ "enabled": false }));
+                        return Err(format!("获取远程覆写内容失败，已取消启用: {error}"));
+                    }
+                }
             }
             Ok(CompatOutcome::attach_reload(result))
         }
@@ -787,6 +928,8 @@ async fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> 
                 }
             }
             if !missing.is_empty() {
+                // 前面若干条 UPDATE 已落库，缓存必须同步失效
+                invalidate_override_caches(None);
                 return Ok(CompatOutcome::ready(json!({
                     "success": false,
                     "missing": missing,
@@ -892,6 +1035,79 @@ function main(config) {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn js_override_roundtrips_special_characters() {
+        let config = json!({
+            "proxies": [
+                { "name": "节点 \"A\"\\path\nline\u{2028}sep" },
+                { "name": "emoji 🚀 mixed 'quote'" }
+            ]
+        });
+        let script = r#"
+function main(config) {
+  config.checked = config.proxies.length;
+  return config;
+}
+"#;
+
+        let result = run_js_override(&config, script, "special-chars").unwrap();
+
+        assert_eq!(result.get("checked").and_then(Value::as_i64), Some(2));
+        assert_eq!(
+            result["proxies"][0].get("name").and_then(Value::as_str),
+            Some("节点 \"A\"\\path\nline\u{2028}sep")
+        );
+        assert_eq!(
+            result["proxies"][1].get("name").and_then(Value::as_str),
+            Some("emoji 🚀 mixed 'quote'")
+        );
+    }
+
+    #[test]
+    fn js_string_literal_escapes_js_breaking_characters() {
+        let literal = js_string_literal("a\"b\\c\nd\u{2028}e\u{2029}f\r");
+        assert_eq!(literal, "\"a\\\"b\\\\c\\nd\\u2028e\\u2029f\\r\"");
+    }
+
+    #[test]
+    fn js_override_handles_large_config_quickly() {
+        let proxies: Vec<Value> = (0..2000)
+            .map(|index| {
+                json!({
+                    "name": format!("node-{index}"),
+                    "type": "ss",
+                    "server": format!("host-{index}.example.com"),
+                    "port": 443,
+                    "cipher": "aes-128-gcm",
+                    "password": format!("secret-{index}")
+                })
+            })
+            .collect();
+        let config = json!({ "proxies": proxies, "proxy-groups": [], "rules": [] });
+        let script = r#"
+function main(config) {
+  config.proxies = config.proxies.filter(p => !p.name.includes('-1999'));
+  return config;
+}
+"#;
+
+        let started = std::time::Instant::now();
+        let result = run_js_override(&config, script, "large-config").unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            result
+                .get("proxies")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1999)
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "large config took {elapsed:?}"
         );
     }
 

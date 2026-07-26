@@ -775,6 +775,12 @@ pub(crate) fn delete_subscription(app: &AppHandle, file_path: &str) -> Result<Va
     if changed == 0 {
         return Ok(json!({ "success": false, "error": "订阅不存在" }));
     }
+    // 同步清理明文导出文件，避免删除后节点凭据残留磁盘
+    if let Ok(exported) = exported_config_path(app, &file_path) {
+        if exported.is_file() {
+            let _ = fs::remove_file(&exported);
+        }
+    }
     Ok(success(json!({ "deleted": true, "filePath": file_path })))
 }
 

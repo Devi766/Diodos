@@ -629,7 +629,7 @@ async fn fetch_tray_proxy_snapshot(app: &AppHandle) -> Option<TrayProxySnapshot>
     Some(build_tray_proxy_snapshot(&mode, &proxies, &config_groups))
 }
 
-fn schedule_tray_proxy_snapshot_refresh(app: &AppHandle) {
+pub(crate) fn schedule_tray_proxy_snapshot_refresh(app: &AppHandle) {
     if tray_menu_is_held() {
         return;
     }
@@ -1320,6 +1320,8 @@ fn tray_switch_node(app: &AppHandle, encoded_pair: &str) {
         }
 
         // Optimistically update local snapshot so the next menu open is current.
+        // 作废进行中的快照拉取，防止旧数据覆盖这次乐观更新
+        tray_snapshot_refresh_token().fetch_add(1, Ordering::SeqCst);
         if let Some(mut snapshot) = read_tray_proxy_snapshot() {
             for group in &mut snapshot.groups {
                 if group.name == group_name {
