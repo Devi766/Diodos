@@ -187,7 +187,7 @@ function resolveHelper() {
       stdio: 'inherit'
     })
 
-    // 将最新构建同步到 tools 目录，供 electron-builder extraResources 使用
+    // 将最新构建同步到 tools 目录，供 Tauri 打包 resources 使用
     const builtHelperPath = path.join(helperDir, 'flyclash-helper.exe')
     fs.mkdirSync(path.dirname(toolsHelperPath), { recursive: true })
     fs.copyFileSync(builtHelperPath, toolsHelperPath)
