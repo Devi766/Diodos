@@ -617,41 +617,6 @@
       "confirmClearAll": "Clear all loopback exemptions?",
       "needsElevation": "Administrator permission required. Accept the UAC prompt to continue: {{error}}"
     },
-    "speedtest": {
-      "title": "Network Speed Test",
-      "description": "Test network connection speed and latency",
-      "detail": "Use Speedtest CLI to test your network download and upload speeds and latency.",
-      "start": "Start Test",
-      "dialogTitle": "Network Speed Test",
-      "dialogDescription": "Test your network download and upload speeds and latency",
-      "clickToStart": "Click the button below to start testing your network speed",
-      "preparing": "Preparing speed test...",
-      "testingPing": "Testing latency...",
-      "testingDownload": "Testing download speed...",
-      "testingUpload": "Testing upload speed...",
-      "failed": "Speed test failed",
-      "errorDetail": "Please ensure your computer is connected to the network and speedtest.exe is correctly placed in the tools directory.",
-      "retry": "Retry",
-      "downloadSpeed": "Download Speed",
-      "uploadSpeed": "Upload Speed",
-      "ping": "Ping Latency",
-      "jitter": "Jitter",
-      "server": "Test Server",
-      "showLogs": "Show Raw Output",
-      "hideLogs": "Hide Raw Output",
-      "retest": "Retest",
-      "share": "Share Results",
-      "starting": "Starting speed test tool...",
-      "completed": "Speed test completed",
-      "error": "Error occurred during speed test",
-      "testError": "Speed test failed: {{error}}",
-      "unknownError": "Unknown error",
-      "unavailable": "Speed test is unavailable in this environment. Please use it in the FlyClash desktop app.",
-      "noResult": "Speed test completed but returned no result",
-      "executeError": "Error occurred while executing speed test",
-      "checkConsole": "Error occurred while executing speed test, please check console logs",
-      "completeFirst": "Please complete speed test first before sharing results"
-    },
     "mediaTest": {
       "title": "Media Service Detection",
       "description": "Detect streaming platform availability and supported regions",
@@ -660,27 +625,9 @@
       "dialogTitle": "Media Service Detection",
       "dialogDescription": "Detect availability and unlock status of major streaming platforms"
     },
-    "batchTest": {
-      "title": "Batch Speed Test",
-      "description": "Batch test all nodes in configuration file and generate test report",
-      "testing": "Testing in background ({{progress}}%)",
-      "currentNode": "Current node: {{node}}",
-      "preparing": "Preparing...",
-      "testPhase": "Test phase: {{phase}}",
-      "goToPage": "Go to Test Page",
-      "detail": "Test all nodes in the first proxy group of current configuration file and generate test report",
-      "start": "Start Batch Test",
-      "dialogTitle": "Batch Speed Test",
-      "dialogDescription": "Test all nodes in the first proxy group of current configuration file and generate test report",
-      "close": "Close"
-    },
     "converter": {
       "detail": "Supports subscription conversion for Clash, Clash Meta, Sing-box and more formats",
       "open": "Open Converter"
-    },
-    "shareDialog": {
-      "title": "Share Speed Test Results",
-      "description": "Generate and share your network speed test results"
     },
     "unknownNode": "Unknown Node"
   },

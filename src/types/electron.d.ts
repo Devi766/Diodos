@@ -11,20 +11,6 @@ interface TrafficStats {
   timestamp: number;
 }
 
-interface SpeedtestResult {
-  download: number;
-  downloadSpeed?: number;
-  upload: number;
-  uploadSpeed?: number;
-  ping: number;
-  jitter?: number;
-  server: {
-    host: string;
-    name: string;
-    country: string;
-  };
-}
-
 type LogEntry = {
   id: number;
   type: 'info' | 'error';
@@ -487,49 +473,6 @@ export interface ElectronAPI {
     region?: string; 
     checkTime?: number;
   }>;
-  
-  // 测速工具
-  runSpeedtest: () => Promise<{ success: boolean, data?: SpeedtestResult, error?: string }>;
-  runSpeedtestDirect: () => Promise<{ success: boolean, data?: SpeedtestResult, error?: string }>;
-  runProxySpeedtest: (options: { 
-    url?: string,
-    proxy?: {
-      host: string,
-      port: number,
-      nodeName?: string
-    }
-  }) => Promise<{ 
-    success: boolean, 
-    data?: { 
-      downloadSpeed: number,
-      bytesReceived: number,
-      duration: number,
-      url: string
-    }, 
-    error?: string 
-  }>;
-  
-  // UDP连通性测试
-  testUdpConnectivity: (options: {
-    proxy: {
-      host: string,
-      port: number,
-      nodeName: string
-    },
-    testServers?: Array<{
-      address: string,
-      port: number,
-      name: string
-    }>
-  }) => Promise<{
-    success: boolean,
-    udpType?: string,
-    successCount?: number,
-    details?: Array<any>,
-    error?: string
-  }>;
-  onSpeedtestProgress: (callback: (progressData: SpeedtestProgress) => void) => (() => void);
-  onSpeedtestOutput: (callback: (outputData: SpeedtestOutput) => void) => (() => void);
 
   openFileInDefaultApp: (filePath: string) => Promise<{
   readLocalTextFile?: (filePath: string) => Promise<{ success: boolean; path?: string; fileName?: string; name?: string; content?: string; error?: string; value?: { path?: string; fileName?: string; name?: string; content?: string } }>;
@@ -705,31 +648,6 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
   }
-}
-
-// 添加speedtest进度接口
-interface SpeedtestProgress {
-  phase?: 'preparing' | 'ping' | 'download' | 'upload' | 'error';
-  percent?: number;
-  downloadSpeed?: number;
-  uploadSpeed?: number;
-  ping?: number;
-  jitter?: number;
-  error?: string;
-}
-
-// 添加speedtest实时输出接口
-interface SpeedtestOutput {
-  type: 'stdout' | 'stderr' | 'status' | 'progress';
-  message?: string;
-  phase?: 'start' | 'ping' | 'download' | 'upload' | 'complete' | 'error';
-  progress?: number;
-  downloadSpeed?: number;
-  uploadSpeed?: number;
-  ping?: number;
-  jitter?: number;
-  exitCode?: number;
-  error?: string;
 }
 
 // UWP 回环豁免应用信息

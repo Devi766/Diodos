@@ -617,41 +617,6 @@
       "confirmClearAll": "确定清除全部回环豁免？",
       "needsElevation": "需要管理员权限。请在弹出的 UAC 对话框中选择“是”：{{error}}"
     },
-    "speedtest": {
-      "title": "网络测速",
-      "description": "测试网络连接速度和延迟",
-      "detail": "使用Speedtest CLI测试您的网络下载和上传速度以及延迟。",
-      "start": "开始测速",
-      "dialogTitle": "网络测速",
-      "dialogDescription": "测试您的网络下载和上传速度以及延迟",
-      "clickToStart": "点击下方按钮开始测试您的网络速度",
-      "preparing": "正在准备测速...",
-      "testingPing": "测试延迟中...",
-      "testingDownload": "测试下载速度中...",
-      "testingUpload": "测试上传速度中...",
-      "failed": "测速失败",
-      "errorDetail": "请确保您的电脑已连接网络,并且tools目录中已正确放置speedtest.exe文件。",
-      "retry": "重试",
-      "downloadSpeed": "下载速度",
-      "uploadSpeed": "上传速度",
-      "ping": "Ping延迟",
-      "jitter": "抖动",
-      "server": "测速服务器",
-      "showLogs": "显示原始输出",
-      "hideLogs": "隐藏原始输出",
-      "retest": "重新测速",
-      "share": "分享结果",
-      "starting": "正在启动测速工具...",
-      "completed": "测速完成",
-      "error": "测速过程中出现错误",
-      "testError": "测速失败: {{error}}",
-      "unknownError": "未知错误",
-      "unavailable": "当前环境无法启动测速，请在 FlyClash 桌面端中使用此功能",
-      "noResult": "测速完成但没有返回结果",
-      "executeError": "执行测速时发生错误",
-      "checkConsole": "执行测速时发生错误,请查看控制台日志",
-      "completeFirst": "请先完成测速才能分享结果"
-    },
     "mediaTest": {
       "title": "媒体服务检测",
       "description": "检测流媒体平台可用性和支持区域",
@@ -660,27 +625,9 @@
       "dialogTitle": "媒体服务检测",
       "dialogDescription": "检测各大流媒体平台的可用性和解锁情况"
     },
-    "batchTest": {
-      "title": "批量测速",
-      "description": "批量测试配置文件中的所有节点并生成测试报告",
-      "testing": "正在后台测速中 ({{progress}}%)",
-      "currentNode": "当前节点: {{node}}",
-      "preparing": "准备中...",
-      "testPhase": "测试阶段: {{phase}}",
-      "goToPage": "前往测速页面",
-      "detail": "测试当前配置文件中的第一个代理组的所有节点,并生成测试报告",
-      "start": "开始批量测速",
-      "dialogTitle": "批量测速",
-      "dialogDescription": "测试当前配置文件中的第一个代理组的所有节点,并生成测试报告",
-      "close": "关闭"
-    },
     "converter": {
       "detail": "支持 Clash、Clash Meta、Sing-box 等多种格式的订阅转换",
       "open": "打开转换器"
-    },
-    "shareDialog": {
-      "title": "分享测速结果",
-      "description": "生成并分享您的网络测速结果"
     },
     "unknownNode": "未知节点"
   },
