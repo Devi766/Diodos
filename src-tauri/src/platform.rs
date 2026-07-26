@@ -1463,7 +1463,6 @@ fn loopback_apps(_app: &AppHandle) -> CompatResult {
 
     #[cfg(not(windows))]
     {
-        let _ = app;
         Ok(success(json!({
             "apps": [],
             "isAdmin": false,
