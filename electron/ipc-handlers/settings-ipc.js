@@ -197,7 +197,21 @@ function registerSettingsIpcHandlers(deps) {
       if (!url || typeof url !== 'string') {
         throw new Error('Invalid URL');
       }
-      await shell.openExternal(url);
+      // shell.openExternal 会把 file:// / UNC 路径 / 自定义协议交给系统处理，
+      // 等同于启动任意程序。这里只放行 http/https。
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch {
+        throw new Error('Invalid URL');
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('Only http/https links can be opened');
+      }
+      if (!parsed.hostname) {
+        throw new Error('Invalid URL');
+      }
+      await shell.openExternal(parsed.href);
       return { success: true };
     } catch (error) {
       console.error('Failed to open external link:', error);

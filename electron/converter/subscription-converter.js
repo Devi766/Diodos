@@ -1,6 +1,5 @@
 /**
  * 订阅转换器核心逻辑
- * 对应安卓端的 SubscriptionConverter.kt
  */
 
 const { ProxyParsers } = require('./proxy-parser');

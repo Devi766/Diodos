@@ -4,8 +4,6 @@
  */
 
 const yaml = require('js-yaml');
-const SurgeParser = require('./surge-parser');
-const QXParser = require('./qx-parser');
 
 class SubscriptionPreprocessor {
   /**
@@ -502,155 +500,19 @@ class SubscriptionPreprocessor {
   }
 
   /**
-   * 从完整配置中提取代理部分 (Surge/QuantumultX)
+   * Surge / QuantumultX 完整配置的代理段提取。
+   *
+   * 该能力原先依赖两份 peggy 语法文件实现 [Proxy] / [server_local] 段的逐行解析，
+   * 因其许可证与本项目 MIT 不兼容已被移除，故此分支不再支持该格式，直接返回空串
+   * 交由调用方走后续检测分支。
+   *
+   * Tauri 分支的转换器（src-tauri/src/converter.rs）为独立实现，不受影响。
    */
   static extractProxiesFromConfig(content) {
-    try {
-      console.log('[SubscriptionPreprocessor] Detected Full Config format (Surge/QuantumultX)');
-      const lines = content.split('\n');
-      const headerRegex = /^\s*\[(.+?)]/;
-      const extracted = [];
-      let inTargetSection = false;
-      let collectedSection = false;
-      let isSurge = false;
-      let isQX = false;
-
-      for (const originalLine of lines) {
-        const line = originalLine.trimEnd();
-        const headerMatch = line.match(headerRegex);
-
-        if (headerMatch) {
-          const sectionName = headerMatch[1].trim().toLowerCase();
-          if (sectionName === 'proxy') {
-            // Surge 格式
-            if (!collectedSection) {
-              inTargetSection = true;
-              isSurge = true;
-              isQX = false;
-              extracted.length = 0; // 清空之前的内容
-            } else {
-              inTargetSection = false;
-            }
-          } else if (sectionName === 'server_local') {
-            // QuantumultX 格式
-            if (!collectedSection) {
-              inTargetSection = true;
-              isQX = true;
-              isSurge = false;
-              extracted.length = 0; // 清空之前的内容
-            } else {
-              inTargetSection = false;
-            }
-          } else {
-            if (inTargetSection) {
-              collectedSection = true;
-            }
-            inTargetSection = false;
-          }
-          continue;
-        }
-
-        if (inTargetSection && line.trim()) {
-          extracted.push(line);
-        }
-      }
-
-      if (extracted.length === 0) {
-        return '';
-      }
-
-      console.log(`[SubscriptionPreprocessor] Extracted ${extracted.length} lines from Full Config`);
-
-      // 解析并转换为 JSON 行格式
-      const jsonLines = [];
-      for (const line of extracted) {
-        try {
-          let proxy = null;
-          if (isSurge) {
-            console.log('[SubscriptionPreprocessor] Parsing Surge line:', line.substring(0, 100));
-            proxy = SurgeParser.parseLine(line);
-          } else if (isQX) {
-            console.log('[SubscriptionPreprocessor] Parsing QX line:', line.substring(0, 100));
-            proxy = QXParser.parseLine(line);
-          }
-
-          if (proxy) {
-            // 转换为 Clash JSON 格式
-            const clashJson = this.convertProxyToClashJson(proxy);
-            if (clashJson) {
-              jsonLines.push(JSON.stringify(clashJson));
-              console.log('[SubscriptionPreprocessor] Successfully converted proxy:', proxy.name);
-            }
-          }
-        } catch (e) {
-          console.warn('[SubscriptionPreprocessor] Failed to parse line:', line.substring(0, 100), e.message);
-        }
-      }
-
-      if (jsonLines.length > 0) {
-        console.log(`[SubscriptionPreprocessor] Converted ${jsonLines.length} proxies from Full Config`);
-        return jsonLines.join('\n');
-      }
-    } catch (e) {
-      console.log('[SubscriptionPreprocessor] Failed to extract from Full Config:', e.message);
-    }
+    console.log(
+      '[SubscriptionPreprocessor] Surge/QuantumultX full-config parsing is not supported in this build'
+    );
     return '';
-  }
-
-  /**
-   * 将代理对象转换为 Clash JSON 格式
-   */
-  static convertProxyToClashJson(proxy) {
-    if (!proxy) return null;
-
-    const json = {
-      name: proxy.name,
-      type: proxy.type,
-      server: proxy.server,
-      port: proxy.port
-    };
-
-    // 复制所有其他属性,但要转换属性名
-    for (const key in proxy) {
-      if (['name', 'type', 'server', 'port'].includes(key)) {
-        continue;
-      }
-
-      const value = proxy[key];
-      if (value === null || value === undefined) {
-        continue;
-      }
-
-      // 转换属性名: camelCase -> kebab-case
-      const clashKey = this.toKebabCase(key);
-      json[clashKey] = value;
-    }
-
-    return json;
-  }
-
-  /**
-   * 将 camelCase 转换为 kebab-case
-   */
-  static toKebabCase(str) {
-    // 特殊映射
-    const specialMappings = {
-      'skipCertVerify': 'skip-cert-verify',
-      'pluginOpts': 'plugin-opts',
-      'wsOpts': 'ws-opts',
-      'grpcOpts': 'grpc-opts',
-      'h2Opts': 'h2-opts',
-      'httpOpts': 'http-opts',
-      'alterId': 'alterId', // VMess 保持原样
-      'servername': 'servername' // 保持原样
-    };
-
-    if (specialMappings[str]) {
-      return specialMappings[str];
-    }
-
-    // 默认转换
-    return str.replace(/([A-Z])/g, '-$1').toLowerCase();
   }
 
   /**

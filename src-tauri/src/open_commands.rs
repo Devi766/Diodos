@@ -23,6 +23,23 @@ fn arg_string(args: &[Value], index: usize) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 校验交给系统默认浏览器打开的链接。
+///
+/// `open::that` 在 Windows 上等价于 ShellExecute，若不加限制，任意本地可执行文件
+/// 路径、UNC 路径（\\host\share\payload.exe）或自定义协议都会被直接启动。此处只
+/// 放行 http/https，其余一律拒绝。
+fn validate_external_url(target: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(target).map_err(|_| "链接格式无效".to_string())?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return Err("仅支持打开 http/https 链接".to_string()),
+    }
+    if url.host_str().unwrap_or_default().is_empty() {
+        return Err("链接缺少主机名".to_string());
+    }
+    Ok(url.to_string())
+}
+
 fn is_yaml_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -95,7 +112,11 @@ fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> Compat
                 }));
             };
             if method == "openExternal" {
-                open::that(target).map_err(|err| err.to_string())?;
+                let url = match validate_external_url(&target) {
+                    Ok(url) => url,
+                    Err(error) => return Ok(json!({ "success": false, "error": error })),
+                };
+                open::that(url).map_err(|err| err.to_string())?;
             } else {
                 let path = materialize_config_for_open(app, &target)?;
                 open::that(path).map_err(|err| err.to_string())?;
@@ -147,4 +168,32 @@ pub(crate) async fn handle_compat_call(
     }
 
     Some(dispatch_compat_call(app, method, args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_external_url;
+
+    #[test]
+    fn external_url_allows_http_and_https() {
+        assert!(validate_external_url("https://example.test/a").is_ok());
+        assert!(validate_external_url("http://example.test").is_ok());
+    }
+
+    #[test]
+    fn external_url_rejects_executables_and_custom_schemes() {
+        for target in [
+            r"C:\Windows\System32\calc.exe",
+            r"\\attacker.test\share\payload.exe",
+            "file:///C:/Windows/System32/calc.exe",
+            "ms-msdt:/id",
+            "javascript:alert(1)",
+            "smb://attacker.test/share",
+        ] {
+            assert!(
+                validate_external_url(target).is_err(),
+                "{target} must be rejected"
+            );
+        }
+    }
 }

@@ -1,6 +1,5 @@
 /**
  * 模板管理器
- * 对应安卓端的 TemplateManager.kt
  */
 
 const { ConfigTemplate, ProxyGroup, DnsConfig, AdvancedConfig, TemplateCategory } = require('./config-template');

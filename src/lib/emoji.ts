@@ -1,15 +1,35 @@
 import twemoji from 'twemoji';
 
+const HTML_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
+/**
+ * 转义 HTML 元字符。
+ *
+ * twemoji.parse() 接收字符串时只会替换其中的 emoji 码位，非 emoji 部分原样返回，
+ * 它内部的 escapeHTML() 仅用于自己生成的 <img> 标签属性。因此传入的文本必须在
+ * 调用前自行转义——本模块的输出会经由 dangerouslySetInnerHTML 注入 DOM，而输入
+ * 通常是订阅下发的节点名，属于外部不可信数据。
+ */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+}
+
 /**
  * 将文本中的emoji转换为Twemoji图片
- * @param text 包含emoji的文本
+ * @param text 包含emoji的文本（会先做 HTML 转义）
  * @param options Twemoji配置选项
- * @returns 转换后的HTML字符串
+ * @returns 转换后的HTML字符串，可安全用于 dangerouslySetInnerHTML
  */
 export function parseEmoji(text: string, options?: any): string {
   if (!text) return '';
 
-  return twemoji.parse(text, {
+  return twemoji.parse(escapeHtml(text), {
     folder: 'svg',
     ext: '.svg',
     base: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/',

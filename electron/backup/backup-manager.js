@@ -1,6 +1,6 @@
 /**
  * 备份管理器
- * 实现与安卓端兼容的备份和还原功能
+ * 实现跨平台互通的备份和还原功能
  */
 
 const fs = require('fs');
@@ -69,7 +69,7 @@ class BackupManager {
   }
 
   /**
-   * 将桌面端订阅转换为安卓端格式的配置
+   * 将桌面端订阅转换为备份包通用格式的配置
    */
   async convertSubscriptionsToProfiles(subscriptions) {
     const profiles = [];
@@ -494,12 +494,12 @@ class BackupManager {
 
       // 检测备份类型
       // 1. 如果有version字段且为2.0，是增强版备份
-      // 2. 如果没有version字段但有importedProfiles，可能是安卓端的备份（缺少version字段）
+      // 2. 没有 version 字段但有 importedProfiles：早期版本备份（缺少 version 字段）
       // 3. 如果有version字段且为1.2，是标准备份
 
       if (!data.version && data.importedProfiles) {
-        // 安卓端备份可能缺少version字段，添加默认值
-        console.log('[BackupManager] 检测到安卓端备份（缺少version字段），添加默认值');
+        // 早期版本备份可能缺少 version 字段，添加默认值
+        console.log('[BackupManager] 检测到早期版本备份（缺少 version 字段），添加默认值');
         data.version = '2.0'; // 假设是增强版备份
         data.backupType = 'CONFIG_ONLY'; // 默认类型
       }
@@ -540,13 +540,12 @@ class BackupManager {
 
   /**
    * 创建备份ZIP文件
-   * 输出格式严格对齐安卓端 EnhancedBackupData (v2.1)：
+   * 输出增强版备份结构 (v2.1)：
    *   - enhanced_backup_metadata.json：元数据 JSON
    *   - profiles/{uuid}.yaml：每个配置文件的 yaml 文本（冗余，便于离线检阅）
    *   - profiles/{uuid}/{providerFile}：providers 子文件
    *   - icons/{filename}：图标缓存二进制
-   * 这样 Android 端会走 BackupRestoreManager.loadEnhancedBackupFromZip 的主路径，
-   * 而不是已弃用的 backup_metadata.json 兼容分支。
+   * 该结构为跨平台还原的主路径，backup_metadata.json 仅作为已弃用的兼容分支保留。
    */
   async createBackupZip(backupData, outputPath) {
     try {
@@ -593,7 +592,7 @@ class BackupManager {
   }
 
   /**
-   * 使用流式读取ZIP文件（类似安卓端的ZipInputStream）
+   * 使用流式读取ZIP文件（逐条扫描本地文件头）
    * 这种方法不依赖中央目录，可以读取"损坏"的ZIP文件
    * @param {string} zipPath - ZIP文件路径
    * @returns {Object|null} 包含文件名和内容的对象，如果失败则返回null
@@ -754,7 +753,7 @@ class BackupManager {
       } catch (error) {
         console.warn('[BackupManager] AdmZip读取失败，尝试流式读取:', error.message);
 
-        // 使用流式方法读取（类似安卓端的ZipInputStream）
+        // 使用流式方法读取（不依赖中央目录）
         files = this.readZipStreamBased(zipPath);
         useStreamMethod = true;
 
@@ -765,8 +764,8 @@ class BackupManager {
 
       // 支持多种备份文件名，按优先级尝试
       const possibleFileNames = [
-        'enhanced_backup_metadata.json',  // 安卓端增强版备份
-        'backup_metadata.json',           // 安卓端标准备份
+        'enhanced_backup_metadata.json',  // 增强版备份 (v2.1)
+        'backup_metadata.json',           // 标准备份（已弃用）
         'backup.json'                     // PC端旧版备份
       ];
 

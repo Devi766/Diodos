@@ -1,6 +1,6 @@
 /**
  * WebDAV客户端
- * 与安卓端保持兼容的WebDAV备份实现
+ * WebDAV 备份实现，目录布局与移动端一致以便互通
  */
 
 const { createClient } = require('webdav');
@@ -40,7 +40,7 @@ class WebDAVClient {
   }
 
   /**
-   * 获取服务器URL（确保以/结尾）- 与安卓版本保持一致
+   * 获取服务器URL（确保以/结尾）
    */
   getServerUrl() {
     const uri = this.config.uri || '';

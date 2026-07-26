@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file: asset: http://asset.localhost https:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https: http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
       "capabilities": [
         "main-capability"
       ]
@@ -59,7 +59,7 @@
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/henry.w@example.net",
+      "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico",
       "icons/icon.png"

@@ -518,43 +518,25 @@ async function applyOverrides(manager, config, configFilePath) {
   }
 }
 
+/**
+ * JS 覆写在本分支中不再执行。
+ *
+ * 早期实现使用 Node 的 vm 模块运行覆写脚本，但 vm 不是安全边界（Node 官方文档已
+ * 明确说明）：脚本可以通过 this.constructor.constructor('return process')() 取回
+ * 宿主 realm 的 process 并获得主进程完整权限。由于覆写项支持 type: 'remote'，脚本
+ * 内容可以来自任意 URL，这条路径等同于远程代码执行。
+ *
+ * Tauri 分支使用 boa_engine（无宿主绑定的纯 Rust 解释器）实现同一功能，见
+ * src-tauri/src/overrides.rs 的 run_js_override。本分支若要恢复该能力，应改用
+ * isolated-vm 之类具备真实 V8 isolate 隔离的方案，而不是 vm。
+ *
+ * YAML 覆写不受影响，仍然正常工作。
+ */
 function runJSOverride(config, scriptContent, item) {
-  const vm = require('vm');
-
-  try {
-    console.log(`[JS覆写 ${item.name}] 开始执行`);
-    console.log(`[JS覆写 ${item.name}] 脚本内容前100字符:`, scriptContent.substring(0, 100));
-
-    const sandbox = {
-      console: {
-        log: (...args) => console.log(`[覆写 ${item.name}]`, ...args),
-        error: (...args) => console.error(`[覆写 ${item.name}]`, ...args),
-        warn: (...args) => console.warn(`[覆写 ${item.name}]`, ...args),
-      }
-    };
-
-    // 先运行覆写脚本，再执行 main 函数获取结果
-    const code = `${scriptContent}\nmain(${JSON.stringify(config)})`;
-
-    const context = vm.createContext(sandbox);
-    const result = vm.runInContext(code, context, { timeout: 5000 });
-
-    console.log(`[JS覆写 ${item.name}] 执行成功，返回结果类型:`, typeof result);
-
-    // 检查是否有重复的proxy名称
-    if (result && result.proxies && Array.isArray(result.proxies)) {
-      const proxyNames = result.proxies.map(p => p.name);
-      const duplicates = proxyNames.filter((name, index) => proxyNames.indexOf(name) !== index);
-      if (duplicates.length > 0) {
-        console.error(`[JS覆写 ${item.name}] 发现重复的proxy名称:`, [...new Set(duplicates)]);
-      }
-    }
-
-    return result || config;
-  } catch (error) {
-    console.error(`执行JS覆写失败 [${item.name}]:`, error);
-    return config;
-  }
+  throw new Error(
+    `JS 覆写「${item.name}」未被执行：当前分支已停用不安全的 vm 沙箱。` +
+    `请改用 YAML 覆写，或在 Tauri 版本中使用 JS 覆写。`
+  );
 }
 
 function applyYAMLOverride(config, yamlContent) {

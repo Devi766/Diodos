@@ -1,6 +1,6 @@
 /**
  * 备份数据类型定义
- * 与安卓端的 BackupData.kt 保持一致，实现跨平台兼容
+ * 定义 FlyClash 备份包的跨平台数据结构，与移动端备份格式互通
  */
 
 /**
@@ -12,11 +12,11 @@ const BackupType = {
 };
 
 /**
- * 备份数据主结构（兼容安卓端）
+ * 备份数据主结构（跨平台通用）
  */
 class BackupData {
   constructor() {
-    // 与安卓端 EnhancedBackupData 保持一致，让 Android 走 loadEnhancedBackupFromZip 主路径
+    // 采用增强版（v2.1）结构，以便移动端能走完整还原流程
     this.version = '2.1';
     this.timestamp = Date.now();
     this.backupType = BackupType.CONFIG_ONLY;
