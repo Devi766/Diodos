@@ -352,7 +352,8 @@ pub(crate) fn save_proxy_settings(app: &AppHandle, settings: Value) -> Result<bo
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let mut kernel_changed = false;
+    let mut kernel_updated = false;
+    let mut restart_required = false;
 
     for (key, value) in object {
         let Some(value) = normalize_user_setting(key, value)? else {
@@ -361,17 +362,24 @@ pub(crate) fn save_proxy_settings(app: &AppHandle, settings: Value) -> Result<bo
 
         if KERNEL_FIELDS.contains(&key.as_str()) {
             kernel.insert(key.clone(), value.clone());
-            kernel_changed = true;
+            kernel_updated = true;
+            // Mihomo supports changing the proxy mode through PATCH /configs.
+            // The caller already applies that runtime patch before persisting the
+            // preference, so restarting the core here only tears down the IPC
+            // pipe and makes immediately-following operations fail.
+            if key != "mode" {
+                restart_required = true;
+            }
         }
         stored.insert(key.clone(), value);
     }
 
-    if kernel_changed {
+    if kernel_updated {
         stored.insert("kernel".to_string(), Value::Object(kernel));
     }
 
     write_settings(app, &stored)?;
-    Ok(kernel_changed)
+    Ok(restart_required)
 }
 
 fn kernel_config_from_settings(app: &AppHandle) -> Result<Value, String> {

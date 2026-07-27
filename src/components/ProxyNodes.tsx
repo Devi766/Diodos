@@ -36,7 +36,10 @@ import {
   writeProxyGroupsCache,
   writeProxyModeCache,
 } from '@/services/app-data-hooks';
-import { mihomoClient } from '@/services/mihomo-client';
+import {
+  isMihomoRuntimeUnavailableError,
+  mihomoClient,
+} from '@/services/mihomo-client';
 // 引入虚拟化列表库
 import { FixedSizeGrid as Grid } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -46,6 +49,7 @@ const isDev = process.env.NODE_ENV === 'development';
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 const PROXY_GROUPS_CACHE_SOURCE = 'proxy-nodes-config-order';
 const PROXY_GROUPS_CACHE_VERSION = 9;
+const LATENCY_RETRY_DELAYS_MS = [150, 300, 600, 900] as const;
 
 // 定义类型
 type ProxyNode = {
@@ -844,6 +848,7 @@ export default function ProxyNodes() {
   const scrollIdleTimeoutRef = useRef<number | null>(null);
   const messageTimeoutRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef(false);
+  const modeSwitchBarrierRef = useRef<Promise<void> | null>(null);
 
   if (isDev && typeof window !== 'undefined') {
     (window as any).debugCollapsedGroups = {
@@ -1042,6 +1047,29 @@ export default function ProxyNodes() {
       : response.data?.message || response.error || response.message || response.statusText;
     return formatNodesError(detail, fallback);
   }, [formatNodesError, t]);
+
+  const runLatencyTestWithRetry = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    // A click made while the mode request is still in flight should naturally
+    // queue behind it instead of racing the controller update.
+    const pendingModeSwitch = modeSwitchBarrierRef.current;
+    if (pendingModeSwitch) {
+      await pendingModeSwitch;
+    }
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        const retryDelay = LATENCY_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined || !isMihomoRuntimeUnavailableError(error)) {
+          throw error;
+        }
+        // Core/service transitions briefly recreate the local pipe. Keep the
+        // test spinner active and retry silently during that expected window.
+        await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelay));
+      }
+    }
+  }, []);
 
   const cachePreference = useCallback((key: string, value: string, failureMessage: string) => {
     if (typeof window === 'undefined') {
@@ -2109,13 +2137,15 @@ export default function ProxyNodes() {
       const api = window.electronAPI;
 
       if (typeof api?.testNodeDelay === 'function') {
-        const result = await api.testNodeDelay(nodeName);
+        const result = await runLatencyTestWithRetry(() => api.testNodeDelay(nodeName));
         delayValue = typeof result === 'number' ? result : 0;
       } else {
         // 使用统一的 Mihomo API 进行延迟测试
-        const result = await mihomoAPI.proxiesDelay(nodeName, {
-          timeout: 5000,
-        });
+        const result = await runLatencyTestWithRetry(() =>
+          mihomoAPI.proxiesDelay(nodeName, {
+            timeout: 5000,
+          }),
+        );
         delayValue = typeof result?.delay === 'number' ? result.delay : 0;
       }
 
@@ -2184,9 +2214,11 @@ export default function ProxyNodes() {
 
     try {
       // 使用 /group/{name}/delay 一次性测试组内所有节点
-      const result = await mihomoAPI.groupDelay(groupName, {
-        timeout: 5000,
-      });
+      const result = await runLatencyTestWithRetry(() =>
+        mihomoAPI.groupDelay(groupName, {
+          timeout: 5000,
+        }),
+      );
 
       setGroups(prevGroups => {
         return prevGroups.map(g => {
@@ -2683,6 +2715,18 @@ export default function ProxyNodes() {
     const nextMode = normalizeProxyMode(mode, currentModeRef.current);
     if (nextMode === currentModeRef.current || isModeSwitching) return;
     const previousMode = currentModeRef.current;
+    let releaseModeSwitchBarrier: (() => void) | null = null;
+    const modeSwitchBarrier = new Promise<void>((resolve) => {
+      releaseModeSwitchBarrier = resolve;
+    });
+    modeSwitchBarrierRef.current = modeSwitchBarrier;
+    const releaseLatencyTests = () => {
+      releaseModeSwitchBarrier?.();
+      releaseModeSwitchBarrier = null;
+      if (modeSwitchBarrierRef.current === modeSwitchBarrier) {
+        modeSwitchBarrierRef.current = null;
+      }
+    };
 
     // 立刻切换 UI 模式；groups 是完整目录，modeGroups 会瞬时过滤出正确内容
     setCurrentMode(nextMode);
@@ -2735,6 +2779,10 @@ export default function ProxyNodes() {
         console.warn('切换模式后清除连接失败:', error);
       }
 
+      // Runtime mode and persistence are ready. Latency tests no longer need to
+      // wait for the slower proxy-tree refresh below.
+      releaseLatencyTests();
+
       // 后台刷新完整组数据；已有列表不先清空
       try {
         await fetchProxies();
@@ -2762,6 +2810,7 @@ export default function ProxyNodes() {
         writeProxyModeCache(previousMode);
       }
     } finally {
+      releaseLatencyTests();
       setIsModeSwitching(false);
     }
   };
