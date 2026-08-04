@@ -62,10 +62,11 @@ pub(crate) fn apply_windows_window_icons(_window: &WebviewWindow) {}
 /// reflow after startup makes the dashboard appear without interaction.
 ///
 /// `force_show` 为 false 时（静默启动）只做 webview 重绘，不 show/focus 窗口。
+/// 已最小化的窗口也只重绘，不能在 resize/延迟刷新时把用户刚最小化的窗口恢复。
 pub(crate) fn kick_window_paint(window: &WebviewWindow, force_show: bool) {
-    if force_show {
+    let is_minimized = window.is_minimized().unwrap_or(false);
+    if force_show && !is_minimized {
         let _ = window.show();
-        let _ = window.unminimize();
         let _ = window.set_focus();
     }
     // Tiny reflow: WebView2 often composites the first transparent frame only
