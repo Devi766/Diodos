@@ -627,10 +627,6 @@ fn windows_is_admin() -> bool {
     command_output("net", &["session"]).is_ok()
 }
 
-pub(crate) fn windows_desktop_process_is_elevated() -> bool {
-    cfg!(target_os = "windows") && windows_is_admin()
-}
-
 fn windows_elevated_task_exists() -> bool {
     if !cfg!(target_os = "windows") {
         return false;
@@ -1396,6 +1392,9 @@ mod tests {
         }
         assert!(!windows_account_is_service_account(r"CONTOSO\alice"));
         assert!(!windows_account_is_service_account("GtxFury"));
+        assert!(!windows_account_is_service_account(
+            r"CONTOSO\Administrator"
+        ));
     }
 
     #[test]

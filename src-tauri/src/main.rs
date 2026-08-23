@@ -59,17 +59,6 @@ fn main() {
                 .show();
             return;
         }
-
-        if tun_service::windows_desktop_process_is_elevated() {
-            let _ = rfd::MessageDialog::new()
-                .set_title("FlyClash 无需以管理员身份运行")
-                .set_description(
-                    "请直接从开始菜单或桌面启动 FlyClash，不要选择“以管理员身份运行”。\n\n需要管理员权限的 TUN 操作将由 FlyClash Helper Service 单独处理。",
-                )
-                .set_level(rfd::MessageLevel::Warning)
-                .show();
-            return;
-        }
     }
 
     app::run();
