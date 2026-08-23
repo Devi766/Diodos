@@ -2,12 +2,18 @@
 
 本文件记录 FlyClash Desktop（Tauri）各版本的重要变更。
 
+## v0.3.2 (2026-08-23)
+
+### Windows WebView2
+- 允许交互用户通过 UAC 以管理员身份运行 FlyClash，并继续使用该用户的个人 WebView2 数据目录
+- 保持对 SYSTEM、LocalService、NetworkService 及 `systemprofile` 服务身份的启动拦截，TUN 仍默认由 FlyClash Helper Service 提权处理
+
 ## v0.3.1 (2026-08-23)
 
 ### Windows TUN 与 WebView2
 - 移除会以管理员权限重新启动整个桌面界面的计划任务模式，TUN 提权统一交由最小权限的 FlyClash Helper Service 处理
 - 启动时自动迁移旧的计划任务配置，并清理遗留的 `FlyClash-Elevated` 任务
-- 阻止 FlyClash 桌面界面以 SYSTEM、LocalService 或 NetworkService 身份承载 WebView2，避免数据目录落入 `systemprofile`；交互用户通过 UAC 以管理员身份启动时继续使用其个人数据目录
+- 阻止 FlyClash 桌面界面以 SYSTEM、LocalService、NetworkService 或管理员身份承载 WebView2，避免数据目录落入 `systemprofile` 以及高权限 WebView 风险
 - TUN 设置页只展示 Helper 服务的安装、运行与 IPC 状态，避免用户重新选择不安全的提权方式
 
 ## v0.3.0-ver2 (2026-07-26)
