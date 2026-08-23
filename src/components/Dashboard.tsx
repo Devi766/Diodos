@@ -1709,74 +1709,57 @@ export default function Dashboard() {
     }
 
     // 开启 TUN 模式
-    // Windows: 检查服务状态或计划任务，根据模式决定是否需要显示确认对话框
-    if (isWindowsPlatform && electron?.getTunElevationMode) {
-      console.log('[Dashboard] Windows platform detected, checking elevation mode');
+    // Windows: 桌面进程不提权，所有管理员操作统一委托给 Helper 服务。
+    if (isWindowsPlatform && electron?.getTunServiceStatus) {
+      console.log('[Dashboard] Windows platform detected, checking helper service');
       try {
-        const modeResult = await electron.getTunElevationMode();
-        const elevationMode = modeResult?.mode || 'service';
-        console.log('[Dashboard] Windows elevation mode:', elevationMode);
+        let serviceStatus = await electron.getTunServiceStatus();
+        console.log('[Dashboard] Service status:', serviceStatus);
 
-        if (elevationMode === 'service') {
-          // 服务模式：检查服务状态
-          let serviceStatus = await electron.getTunServiceStatus?.();
-          console.log('[Dashboard] Service status:', serviceStatus);
+        if (!isWindowsTunServiceReady(serviceStatus)) {
+          console.log('[Dashboard] Service is not ready, preparing TUN helper service');
+          showBanner({ type: 'info', message: t('dashboard.requestingTunAuthorization') });
 
-          if (!isWindowsTunServiceReady(serviceStatus)) {
-            console.log('[Dashboard] Service is not ready, preparing TUN helper service');
-            showBanner({ type: 'info', message: t('dashboard.requestingTunAuthorization') });
+          const prepareResult = electron.grantTunPermissions
+            ? await electron.grantTunPermissions()
+            : await electron.startTunService?.();
 
-            const prepareResult = electron.grantTunPermissions
-              ? await electron.grantTunPermissions()
-              : await electron.startTunService?.();
-
-            if (!prepareResult?.success) {
-              const fallbackMessage = serviceStatus?.installed
-                ? t('dashboard.tunServiceNotRunning')
-                : t('dashboard.tunServiceNotInstalled');
-              const message = formatDashboardError(
-                prepareResult?.error || tunServiceStatusError(serviceStatus),
-                fallbackMessage,
-              );
-              showBanner({ type: 'error', message });
-              await refreshTunStatus();
-              return;
-            }
-
-            serviceStatus = await electron.getTunServiceStatus?.();
-            console.log('[Dashboard] Service status after preparation:', serviceStatus);
-
-            if (!isWindowsTunServiceReady(serviceStatus)) {
-              const fallbackMessage = serviceStatus?.installed
-                ? t('dashboard.tunServiceNotRunning')
-                : t('dashboard.tunServiceNotInstalled');
-              const message = formatDashboardError(
-                tunServiceStatusError(serviceStatus) || prepareResult?.message,
-                fallbackMessage,
-              );
-              showBanner({ type: 'error', message });
-              await refreshTunStatus();
-              return;
-            }
+          if (!prepareResult?.success) {
+            const fallbackMessage = serviceStatus?.installed
+              ? t('dashboard.tunServiceNotRunning')
+              : t('dashboard.tunServiceNotInstalled');
+            const message = formatDashboardError(
+              prepareResult?.error || tunServiceStatusError(serviceStatus),
+              fallbackMessage,
+            );
+            showBanner({ type: 'error', message });
+            await refreshTunStatus();
+            return;
           }
 
-          // 服务可用，直接启用 TUN 模式
-          console.log('[Dashboard] Service is ready, enabling TUN mode');
-          await runTunToggle(true);
-          return;
-        } else {
-          // 计划任务模式：检查计划任务
-          const taskResult = await electron.checkElevateTask?.();
-          const hasTask = typeof taskResult === 'boolean' ? taskResult : false;
-          console.log('[Dashboard] Windows checkElevateTask result:', hasTask);
-          setHasAdminPermission(hasTask);
-          setTunConfirmOpen(true);
-          return;
+          serviceStatus = await electron.getTunServiceStatus();
+          console.log('[Dashboard] Service status after preparation:', serviceStatus);
+
+          if (!isWindowsTunServiceReady(serviceStatus)) {
+            const fallbackMessage = serviceStatus?.installed
+              ? t('dashboard.tunServiceNotRunning')
+              : t('dashboard.tunServiceNotInstalled');
+            const message = formatDashboardError(
+              tunServiceStatusError(serviceStatus) || prepareResult?.message,
+              fallbackMessage,
+            );
+            showBanner({ type: 'error', message });
+            await refreshTunStatus();
+            return;
+          }
         }
+
+        console.log('[Dashboard] Service is ready, enabling TUN mode');
+        await runTunToggle(true);
+        return;
       } catch (error) {
-        console.error('Failed to check TUN permission:', error);
-        setHasAdminPermission(false);
-        setTunConfirmOpen(true);
+        console.error('Failed to prepare TUN helper service:', error);
+        showBanner({ type: 'error', message: formatDashboardError(error, t('dashboard.toggleTunModeFailed')) });
       }
       return;
     } else if (isWindowsPlatform && electron?.checkElevateTask) {

@@ -2,7 +2,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    thread,
     time::Duration,
 };
 
@@ -25,7 +24,7 @@ use crate::{
         user_settings_view,
     },
     state::AppState,
-    storage::{app_data_dir, set_setting, setting},
+    storage::{set_setting, setting},
     tray::refresh_tray_menu_after,
 };
 
@@ -538,240 +537,76 @@ fn revoke_linux_core_permission(app: &AppHandle) -> CompatResult {
 /// Windows TUN enable permission check.
 /// Returns Ok(()) when the selected elevation mode can run TUN, otherwise an
 /// error message suitable for UI display.
-fn ensure_windows_tun_enable_permission(app: &AppHandle) -> Result<(), String> {
+fn ensure_windows_tun_enable_permission() -> Result<(), String> {
     if !cfg!(target_os = "windows") {
         return Ok(());
     }
 
-    let mode = windows_tun_elevation_mode(app);
-    let is_admin = windows_is_admin();
-    let has_task = windows_elevated_task_exists();
     let flags = core_service::query_helper_service_flags();
     let helper = core_service::helper_ipc_snapshot(flags.running);
     let service_ready = flags.running && helper.ipc_available();
 
-    if mode == "service" {
-        if service_ready || is_admin {
-            // Prefer a fully ready helper service; repair/install if needed.
-            if !service_ready {
-                ensure_helper_service_current(app)?;
-            }
-            return Ok(());
-        }
-        if !flags.installed {
-            return Err(
-                "TUN 服务未安装，请在 TUN 设置页面安装服务，或以管理员身份运行 FlyClash"
-                    .to_string(),
-            );
-        }
-        if flags.installed && !flags.running {
-            return Err(
-                "TUN 服务未运行，请在 TUN 设置页面启动服务，或以管理员身份运行 FlyClash"
-                    .to_string(),
-            );
-        }
-        if flags.running && !helper.ipc_available() {
-            // Try one repair pass before failing.
-            match core_service::ensure_helper_service_ipc_ready() {
-                Ok(_) => return Ok(()),
-                Err(error) => {
-                    return Err(format!(
-                        "Helper 服务运行中但 IPC 不可用，请在 TUN 设置中点击“修复 IPC” ({error})"
-                    ));
-                }
-            }
-        }
-        return Err("TUN 模式缺少必要权限，请先完成授权".to_string());
-    }
-
-    // Task mode: elevated scheduled task or already-admin process.
-    if is_admin || has_task {
+    if service_ready {
         return Ok(());
     }
-    Err("TUN 计划任务未创建，请先在 TUN 设置中授权（将请求管理员权限）".to_string())
+    if !flags.installed {
+        return Err("TUN 服务未安装，请在 TUN 设置页面安装 Helper 服务".to_string());
+    }
+    if flags.installed && !flags.running {
+        return Err("TUN 服务未运行，请在 TUN 设置页面启动 Helper 服务".to_string());
+    }
+    if flags.running && !helper.ipc_available() {
+        // Try one repair pass before failing.
+        match core_service::ensure_helper_service_ipc_ready() {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                return Err(format!(
+                    "Helper 服务运行中但 IPC 不可用，请在 TUN 设置中点击“修复 IPC” ({error})"
+                ));
+            }
+        }
+    }
+    Err("TUN 模式缺少必要权限，请先完成授权".to_string())
 }
 
-fn powershell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-fn windows_batch_quote(path: &Path) -> String {
-    format!("\"{}\"", path.to_string_lossy().replace('"', "\"\""))
-}
-
-fn windows_task_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app_data_dir(app)?.join("task");
-    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    Ok(dir)
-}
-
-fn windows_current_user_id() -> String {
-    command_output("whoami.exe", &[])
-        .map(|value| value.trim().to_string())
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var("USERNAME").ok())
+fn windows_account_is_service_account(account: &str) -> bool {
+    let normalized = account
+        .trim()
+        .rsplit(['\\', '/'])
+        .next()
         .unwrap_or_default()
-}
-
-fn elevated_task_xml(exe_path: &Path, user_id: &str) -> String {
-    let user_block = if user_id.is_empty() {
-        String::new()
-    } else {
-        format!("      <UserId>{}</UserId>\n", xml_escape(user_id))
-    };
-
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>FlyClash Elevated Task</Description>
-  </RegistrationInfo>
-  <Triggers />
-  <Principals>
-    <Principal id="Author">
-{user_block}      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>false</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>4</Priority>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>{}</Command>
-    </Exec>
-  </Actions>
-</Task>"#,
-        xml_escape(&exe_path.to_string_lossy())
+        .replace([' ', '_', '-'], "")
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "system" | "localsystem" | "localservice" | "networkservice"
     )
 }
 
-fn write_utf16le_with_bom(path: &Path, content: &str) -> Result<(), String> {
-    let mut bytes = vec![0xFF, 0xFE];
-    for unit in content.encode_utf16() {
-        bytes.extend_from_slice(&unit.to_le_bytes());
-    }
-    fs::write(path, bytes).map_err(|err| err.to_string())
+fn windows_profile_is_service_profile(profile: &str) -> bool {
+    let normalized = profile.trim().replace('/', "\\").to_ascii_lowercase();
+    normalized.ends_with("\\system32\\config\\systemprofile")
+        || normalized.ends_with("\\serviceprofiles\\localservice")
+        || normalized.ends_with("\\serviceprofiles\\networkservice")
 }
 
-fn create_windows_elevated_task(app: &AppHandle) -> Result<bool, String> {
+/// Desktop WebViews must never run under a Windows service identity. Apart from
+/// giving web content an unnecessarily privileged host, WebView2 resolves its
+/// data directory below systemprofile where its sandboxed children cannot write.
+pub(crate) fn windows_desktop_process_is_service_account() -> bool {
     if !cfg!(target_os = "windows") {
-        return Ok(false);
+        return false;
     }
 
-    let task_dir = windows_task_dir(app)?;
-    let exe_path = std::env::current_exe().map_err(|err| err.to_string())?;
-    let xml_path = task_dir.join(format!("{WINDOWS_ELEVATED_TASK_NAME}.xml"));
-    let xml = elevated_task_xml(&exe_path, &windows_current_user_id());
-    write_utf16le_with_bom(&xml_path, &xml)?;
-
-    if windows_is_admin() {
-        command_output(
-            "schtasks.exe",
-            &[
-                "/create",
-                "/tn",
-                WINDOWS_ELEVATED_TASK_NAME,
-                "/xml",
-                &xml_path.to_string_lossy(),
-                "/f",
-            ],
-        )?;
-    } else {
-        let batch_path = task_dir.join("create-elevated-task.bat");
-        let marker_path = task_dir.join("grant-success.marker");
-        let _ = fs::remove_file(&marker_path);
-        let script = format!(
-            r#"@echo off
-chcp 65001 >nul
-schtasks.exe /create /tn "{task_name}" /xml {xml_path} /f
-if %errorlevel% neq 0 exit /b %errorlevel%
-echo success > {marker_path}
-exit /b 0
-"#,
-            task_name = WINDOWS_ELEVATED_TASK_NAME,
-            xml_path = windows_batch_quote(&xml_path),
-            marker_path = windows_batch_quote(&marker_path),
-        );
-        fs::write(&batch_path, script).map_err(|err| err.to_string())?;
-
-        let ps_command = format!(
-            "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', {}) -Verb RunAs -Wait -PassThru; if ($null -eq $p) {{ exit 1 }}; exit $p.ExitCode",
-            powershell_quote(&batch_path.to_string_lossy())
-        );
-        command_output(
-            "powershell.exe",
-            &[
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &ps_command,
-            ],
-        )?;
-    }
-
-    if windows_elevated_task_exists() {
-        Ok(true)
-    } else {
-        Err("计划任务创建后未能查询到，请检查系统任务计划程序权限".to_string())
-    }
-}
-
-fn schedule_windows_elevated_restart(app: &AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "windows") {
-        return Ok(());
-    }
-
-    let ps_command = format!(
-        "Start-Sleep -Milliseconds 1200; schtasks.exe /run /tn {} | Out-Null",
-        powershell_quote(WINDOWS_ELEVATED_TASK_NAME)
-    );
-    let mut command = Command::new("powershell.exe");
-    command.args([
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        &ps_command,
-    ]);
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
-    command.spawn().map_err(|err| err.to_string())?;
-
-    let app_handle = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(500));
-        app_handle.exit(0);
-    });
-
-    Ok(())
+    command_output("whoami.exe", &[])
+        .map(|account| windows_account_is_service_account(&account))
+        .unwrap_or(false)
+        || std::env::var("USERNAME")
+            .map(|account| windows_account_is_service_account(&account))
+            .unwrap_or(false)
+        || std::env::var("USERPROFILE")
+            .map(|profile| windows_profile_is_service_profile(&profile))
+            .unwrap_or(false)
 }
 
 fn windows_is_admin() -> bool {
@@ -790,6 +625,10 @@ fn windows_is_admin() -> bool {
     }
 
     command_output("net", &["session"]).is_ok()
+}
+
+pub(crate) fn windows_desktop_process_is_elevated() -> bool {
+    cfg!(target_os = "windows") && windows_is_admin()
 }
 
 fn windows_elevated_task_exists() -> bool {
@@ -838,18 +677,47 @@ fn windows_tun_elevation_mode(app: &AppHandle) -> String {
         .and_then(|value| value.as_str().map(ToString::to_string))
         .unwrap_or_else(|| "service".to_string());
 
-    mode
+    if cfg!(target_os = "windows") {
+        "service".to_string()
+    } else {
+        mode
+    }
+}
+
+/// Remove the legacy task that elevated the complete desktop process. TUN
+/// elevation is now exclusively delegated to the narrow Helper service.
+pub(crate) fn migrate_legacy_windows_elevation(app: &AppHandle) {
+    if !cfg!(target_os = "windows") {
+        return;
+    }
+
+    let stored_mode = setting(app, "tunElevationMode", json!("service"))
+        .ok()
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| "service".to_string());
+    if !stored_mode.eq_ignore_ascii_case("service") {
+        if let Err(error) = set_setting(app, "tunElevationMode", json!("service")) {
+            eprintln!("[TUN] failed to migrate elevation mode to Helper service: {error}");
+        }
+    }
+    if windows_elevated_task_exists() {
+        match delete_windows_elevated_task() {
+            Ok(true) => eprintln!("[TUN] removed legacy elevated desktop task"),
+            Ok(false) => {}
+            Err(error) => eprintln!("[TUN] failed to remove legacy elevated task: {error}"),
+        }
+    }
+    let _ = set_setting(app, "tunElevateTask", json!(false));
 }
 
 fn windows_core_permission_status(app: &AppHandle) -> Value {
     let mode = windows_tun_elevation_mode(app);
     let is_admin = windows_is_admin();
-    let has_task = windows_elevated_task_exists();
     let flags = core_service::query_helper_service_flags();
     let helper = core_service::helper_ipc_snapshot(flags.running);
 
     success(core_service::windows_permission_status_payload(
-        mode, is_admin, has_task, flags, helper,
+        mode, is_admin, false, flags, helper,
     ))
 }
 
@@ -928,44 +796,24 @@ pub(crate) fn schedule_pending_tun_enable(app: &AppHandle) {
         let state = app.state::<AppState>();
 
         if cfg!(target_os = "windows") {
-            let mode = windows_tun_elevation_mode(&app);
-            if mode == "service" {
-                match ensure_helper_service_current(&app) {
-                    Ok(()) => {
-                        eprintln!("[TUN] pendingTunEnable: helper service is ready");
-                    }
-                    Err(error) => {
-                        eprintln!("[TUN] pendingTunEnable: helper not ready: {error}");
-                        // 恢复失败不抹掉用户偏好；保留 tunModeEnabled，下次可再试
-                        let _ = window.emit("tun-status", false);
-                        let _ = window.emit(
-                            "service-restarted",
-                            json!({
-                                "success": false,
-                                "error": format!("TUN 恢复失败: Helper 不可用 ({error})")
-                            }),
-                        );
-                        refresh_tray_menu_after(&app, "pendingTunEnable");
-                        return;
-                    }
+            match ensure_helper_service_current(&app) {
+                Ok(()) => {
+                    eprintln!("[TUN] pendingTunEnable: helper service is ready");
                 }
-            } else {
-                // Task mode: elevated task / admin process is enough; do not require helper.
-                if !windows_is_admin() && !windows_elevated_task_exists() {
-                    eprintln!("[TUN] pendingTunEnable: task mode has no elevate task/admin");
-                    // 恢复失败不抹掉用户偏好
+                Err(error) => {
+                    eprintln!("[TUN] pendingTunEnable: helper not ready: {error}");
+                    // 恢复失败不抹掉用户偏好；保留 tunModeEnabled，下次可再试
                     let _ = window.emit("tun-status", false);
                     let _ = window.emit(
                         "service-restarted",
                         json!({
                             "success": false,
-                            "error": "TUN 恢复失败: 计划任务不可用，请重新授权"
+                            "error": format!("TUN 恢复失败: Helper 不可用 ({error})")
                         }),
                     );
                     refresh_tray_menu_after(&app, "pendingTunEnable");
                     return;
                 }
-                eprintln!("[TUN] pendingTunEnable: task mode elevation is available");
             }
         }
 
@@ -1149,7 +997,7 @@ async fn dispatch_compat_call(
 ) -> CompatResult {
     match method {
         "checkElevateTask" => Ok(Value::Bool(if cfg!(target_os = "windows") {
-            windows_elevated_task_exists()
+            false
         } else {
             setting(app, "tunElevateTask", json!(false))?
                 .as_bool()
@@ -1166,41 +1014,7 @@ async fn dispatch_compat_call(
         }
         "grantTunPermissions" => {
             if cfg!(target_os = "windows") {
-                let mode = setting(app, "tunElevationMode", json!("service"))?
-                    .as_str()
-                    .unwrap_or("service")
-                    .to_string();
-                if mode == "service" {
-                    install_or_start_windows_tun_service(app)
-                } else if windows_elevated_task_exists() || windows_is_admin() {
-                    set_setting(app, "tunElevateTask", json!(true))?;
-                    Ok(success(json!({
-                        "message": if windows_elevated_task_exists() {
-                            "计划任务已存在"
-                        } else {
-                            "当前进程已具备管理员权限"
-                        },
-                        "mode": "task",
-                        "needRestart": false
-                    })))
-                } else {
-                    create_windows_elevated_task(app)?;
-                    set_setting(app, "tunElevateTask", json!(true))?;
-                    // 仅当 TUN 原本就处于开启偏好时才在重启后恢复开启；
-                    // 单纯「授权」不应升级成「开启 TUN」
-                    let tun_was_enabled = setting(app, "tunModeEnabled", json!(false))?
-                        .as_bool()
-                        .unwrap_or(false);
-                    if tun_was_enabled {
-                        set_setting(app, "pendingTunEnable", json!(true))?;
-                    }
-                    schedule_windows_elevated_restart(app)?;
-                    Ok(success(json!({
-                        "message": "正在请求管理员权限创建任务并重启应用...",
-                        "mode": "task",
-                        "needRestart": true
-                    })))
-                }
+                install_or_start_windows_tun_service(app)
             } else if cfg!(target_os = "macos") {
                 grant_macos_tun_permissions(app)
             } else if cfg!(target_os = "linux") {
@@ -1241,10 +1055,16 @@ async fn dispatch_compat_call(
             }
         }
         "getTunElevationMode" => Ok(success(json!({
-            "mode": setting(app, "tunElevationMode", json!("service"))?
+            "mode": windows_tun_elevation_mode(app)
         }))),
         "setTunElevationMode" => {
             let mode = arg_string(args, 0).unwrap_or_else(|| "service".to_string());
+            if cfg!(target_os = "windows") && !mode.eq_ignore_ascii_case("service") {
+                return Ok(json!({
+                    "success": false,
+                    "error": "为避免以管理员权限运行 WebView，Windows 仅支持 Helper 服务提权模式"
+                }));
+            }
             set_setting(app, "tunElevationMode", json!(mode))?;
             Ok(success(json!({})))
         }
@@ -1382,7 +1202,7 @@ async fn dispatch_compat_call(
             }
             if enabled && cfg!(target_os = "windows") {
                 // Check service/task elevation before enabling TUN.
-                if let Err(error) = ensure_windows_tun_enable_permission(app) {
+                if let Err(error) = ensure_windows_tun_enable_permission() {
                     set_setting(app, "tunModeEnabled", json!(previous_enabled))?;
                     let _ = window.emit("tun-status", previous_enabled);
                     refresh_tray_menu_after(app, "toggleTunMode");
@@ -1554,4 +1374,42 @@ pub(crate) async fn handle_compat_call(
     }
 
     Some(dispatch_compat_call(app, window, state, method, args).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{windows_account_is_service_account, windows_profile_is_service_profile};
+
+    #[test]
+    fn recognizes_windows_service_accounts() {
+        for account in [
+            r"NT AUTHORITY\SYSTEM",
+            r"NT AUTHORITY\LOCAL SERVICE",
+            r"NT AUTHORITY\NETWORK SERVICE",
+            "LocalSystem",
+            "local_service",
+        ] {
+            assert!(
+                windows_account_is_service_account(account),
+                "expected service account: {account}"
+            );
+        }
+        assert!(!windows_account_is_service_account(r"CONTOSO\alice"));
+        assert!(!windows_account_is_service_account("GtxFury"));
+    }
+
+    #[test]
+    fn recognizes_windows_service_profiles() {
+        for profile in [
+            r"C:\Windows\System32\config\systemprofile",
+            r"D:\WINDOWS\ServiceProfiles\LocalService",
+            r"C:/Windows/ServiceProfiles/NetworkService",
+        ] {
+            assert!(
+                windows_profile_is_service_profile(profile),
+                "expected service profile: {profile}"
+            );
+        }
+        assert!(!windows_profile_is_service_profile(r"C:\Users\alice"));
+    }
 }

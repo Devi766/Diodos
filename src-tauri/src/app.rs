@@ -250,6 +250,7 @@ pub fn run() {
             handle_protocol_args(app, &args);
         }))
         .setup(|app| {
+            crate::tun_service::migrate_legacy_windows_elevation(app.handle());
             setup_tray(app.handle())?;
             crate::subscription_commands::start_subscription_scheduler(app.handle());
             schedule_mihomo_autostart(app.handle());

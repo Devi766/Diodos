@@ -138,8 +138,7 @@ const TunSettings: React.FC = () => {
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
   const [platform, setPlatform] = useState<string>(() => getBrowserPlatform());
 
-  // Windows 服务模式相关状态
-  const [elevationMode, setElevationMode] = useState<'service' | 'task'>('service');
+  // Windows Helper 服务相关状态
   const [serviceStatus, setServiceStatus] = useState<TunServiceStatus>(defaultServiceStatus);
   const [serviceLoading, setServiceLoading] = useState(false);
 
@@ -208,9 +207,7 @@ const TunSettings: React.FC = () => {
       }
 
       const modeResult = await api.getTunElevationMode();
-      if (modeResult.success && modeResult.mode) {
-        setElevationMode(modeResult.mode);
-      } else {
+      if (!modeResult.success || !modeResult.mode) {
         showError(`${t('tunSettings.loadElevationModeFailed')}: ${resultFailed(modeResult, 'tunSettings.loadElevationModeFailed')}`);
         if (formatError(modeResult.error).includes(t('tunSettings.apiUnavailable'))) return;
       }
@@ -229,29 +226,6 @@ const TunSettings: React.FC = () => {
     } catch (error) {
       console.error('[TunSettings] Failed to load elevation mode:', error);
       showError(`${t('tunSettings.loadElevationModeFailed')}: ${formatError(error)}`);
-    }
-  };
-
-  const handleElevationModeChange = async (mode: 'service' | 'task') => {
-    const api = getTunApi();
-    if (!hasMethod(api, 'setTunElevationMode')) {
-      showApiUnavailable();
-      return;
-    }
-
-    setServiceLoading(true);
-    try {
-      const result = await api.setTunElevationMode(mode);
-      if (result.success) {
-        setElevationMode(mode);
-        showToast(t('tunSettings.success'), t(mode === 'service' ? 'tunSettings.serviceModeEnabled' : 'tunSettings.taskModeEnabled'), 'success');
-      } else {
-        showError(`${t('tunSettings.setElevationModeFailed')}: ${resultFailed(result, 'tunSettings.setElevationModeFailed')}`);
-      }
-    } catch (error) {
-      showError(`${t('tunSettings.setElevationModeFailed')}: ${formatError(error)}`);
-    } finally {
-      setServiceLoading(false);
     }
   };
 
@@ -567,10 +541,7 @@ const TunSettings: React.FC = () => {
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
             {isMac && 'macOS 需要授予内核 root 权限才能启用 TUN 模式。'}
             {isLinux && 'Linux 需要授予内核 root 权限才能启用 TUN 模式。'}
-            {isWindows &&
-              (elevationMode === 'service'
-                ? 'Windows 服务模式通过后台 Helper 服务以管理员权限运行 TUN 内核，首次安装/配置服务需要管理员权限。'
-                : 'Windows 需要创建计划任务以管理员权限运行，首次授权后应用会自动重启。')}
+            {isWindows && 'Windows 通过后台 Helper 服务以管理员权限运行 TUN 内核，首次安装/配置服务需要管理员权限。'}
           </p>
 
           <div className="flex items-center gap-3">
@@ -581,10 +552,7 @@ const TunSettings: React.FC = () => {
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
                   <span className="text-xs">
-                    {isWindows &&
-                      (elevationMode === 'service'
-                        ? '已启用服务模式：后台 Helper 服务已安装并具备管理员权限。'
-                        : '已启用计划任务模式：已通过计划任务授予管理员权限。')}
+                    {isWindows && '后台 Helper 服务已安装并具备管理员权限。'}
                     {isMac && '已授权（内核已获得 root 权限）'}
                     {isLinux && '已授权（内核已获得 root 权限）'}
                   </span>
@@ -596,10 +564,7 @@ const TunSettings: React.FC = () => {
                     <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                   </svg>
                   <span className="text-xs">
-                    {isWindows &&
-                      (elevationMode === 'service'
-                        ? '未启用服务模式权限，请在下方安装/启动服务，或以管理员身份运行应用。'
-                        : '未授权 TUN 模式权限，请退出应用，然后用管理员权限启动。')}
+                    {isWindows && 'Helper 服务尚未就绪，请在下方安装或启动服务。'}
                     {isMac && '未授权（需要授予内核 root 权限）'}
                     {isLinux && '未授权（需要授予内核 root 权限）'}
                   </span>
@@ -636,44 +601,17 @@ const TunSettings: React.FC = () => {
           </div>
         </div>
 
-        {/* Windows 权限提升模式 */}
+        {/* Windows 权限提升 */}
         {isWindows && (
           <div>
             <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-              TUN 权限提升方式
+              TUN 权限提升
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-              选择 TUN 模式的权限提升方式。服务模式只需一次安装，后续无需每次确认；计划任务模式每次需要 UAC 确认。
+              管理员操作由最小权限的 Helper 服务处理，桌面界面始终保持普通用户权限。
             </p>
 
-            <div className="flex gap-2 mb-4">
-              <button
-                className={`py-1.5 px-3 text-sm rounded-lg transition-colors ${
-                  elevationMode === 'service'
-                    ? 'bg-blue-500 text-white shadow-sm'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                }`}
-                onClick={() => handleElevationModeChange('service')}
-                disabled={serviceLoading}
-              >
-                服务模式（推荐）
-              </button>
-              <button
-                className={`py-1.5 px-3 text-sm rounded-lg transition-colors ${
-                  elevationMode === 'task'
-                    ? 'bg-blue-500 text-white shadow-sm'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
-                }`}
-                onClick={() => handleElevationModeChange('task')}
-                disabled={serviceLoading}
-              >
-                计划任务模式
-              </button>
-            </div>
-
-            {/* 服务模式状态和操作 */}
-            {elevationMode === 'service' && (
-              <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
+            <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-gray-600 dark:text-gray-300">{t('tunSettings.helperService')}</span>
                   <span className={`text-xs font-medium ${statusClass(serviceReady, needsIpcRepair || serviceStatus.installed)}`}>
@@ -787,17 +725,7 @@ const TunSettings: React.FC = () => {
                 <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
                   服务模式需要管理员权限安装，安装后可在后台运行 TUN 核心。
                 </p>
-              </div>
-            )}
-
-            {/* 计划任务模式说明 */}
-            {elevationMode === 'task' && (
-              <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
-                <p className="text-xs text-gray-600 dark:text-gray-300">
-                  计划任务模式使用 Windows 计划任务在后台以管理员权限运行应用。每次切换 TUN 模式时可能需要 UAC 确认。
-                </p>
-              </div>
-            )}
+            </div>
           </div>
         )}
 

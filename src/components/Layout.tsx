@@ -49,7 +49,7 @@ declare global {
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.3.0';
+const FALLBACK_APP_VERSION = '0.3.1';
 const ENABLE_IDLE_ROUTE_MODULE_PRELOAD = false;
 
 const normalizeVersionLabel = (value: unknown): string => {

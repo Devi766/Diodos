@@ -44,6 +44,32 @@ fn main() {
         if win_loopback::maybe_run_elevated_cli(&args) {
             return;
         }
+
+        // Never host WebView2 inside LocalSystem/LocalService/NetworkService.
+        // Privileged work belongs in the narrow helper processes above; a
+        // service-hosted WebView is both unsafe and unable to use systemprofile's
+        // LocalAppData with its normal sandbox permissions.
+        if tun_service::windows_desktop_process_is_service_account() {
+            let _ = rfd::MessageDialog::new()
+                .set_title("FlyClash 无法以系统服务账户启动")
+                .set_description(
+                    "请从当前登录用户的开始菜单或桌面启动 FlyClash。\n\nTUN 管理员权限将由 FlyClash Helper Service 单独处理，桌面界面不能以 SYSTEM、LocalService 或 NetworkService 身份运行。",
+                )
+                .set_level(rfd::MessageLevel::Error)
+                .show();
+            return;
+        }
+
+        if tun_service::windows_desktop_process_is_elevated() {
+            let _ = rfd::MessageDialog::new()
+                .set_title("FlyClash 无需以管理员身份运行")
+                .set_description(
+                    "请直接从开始菜单或桌面启动 FlyClash，不要选择“以管理员身份运行”。\n\n需要管理员权限的 TUN 操作将由 FlyClash Helper Service 单独处理。",
+                )
+                .set_level(rfd::MessageLevel::Warning)
+                .show();
+            return;
+        }
     }
 
     app::run();
