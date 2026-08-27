@@ -440,6 +440,95 @@ pub(crate) fn override_content(app: &AppHandle, id: &str) -> Result<String, Stri
     Ok(content)
 }
 
+/// Serialize the real override table (metadata plus decrypted content) for a
+/// cross-platform backup. Legacy js_override_* settings do not contain the
+/// override manager's scripts and therefore are not sufficient here.
+pub(crate) fn backup_items(app: &AppHandle) -> Result<Vec<Value>, String> {
+    all_overrides(app)?
+        .into_iter()
+        .map(|mut item| {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "覆写项缺少 id".to_string())?
+                .to_string();
+            let content = override_content(app, &id)?;
+            if let Some(object) = item.as_object_mut() {
+                object.insert("content".to_string(), Value::String(content));
+                let scope = if object
+                    .get("global")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    "GLOBAL"
+                } else {
+                    "CURRENT_ONLY"
+                };
+                object
+                    .entry("scope".to_string())
+                    .or_insert_with(|| Value::String(scope.to_string()));
+            }
+            Ok(item)
+        })
+        .collect()
+}
+
+/// Restore cross-platform override items into the desktop override table.
+pub(crate) fn restore_backup_items(app: &AppHandle, items: &[Value]) -> Result<usize, String> {
+    let mut restored = 0usize;
+    for source in items {
+        let Some(source_object) = source.as_object() else {
+            continue;
+        };
+        let content = source_object
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let mut object = source_object.clone();
+        object.remove("content");
+        object.remove("scope");
+        object.remove("selectedProfiles");
+        object.remove("isLinkedOverride");
+        object.remove("linkedProfileUuid");
+        object.remove("linkedProfileName");
+
+        let id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("{:x}", now_millis()));
+        object.insert("id".to_string(), Value::String(id));
+        object
+            .entry("name".to_string())
+            .or_insert_with(|| Value::String("Imported override".to_string()));
+        object
+            .entry("type".to_string())
+            .or_insert_with(|| Value::String("local".to_string()));
+        object
+            .entry("ext".to_string())
+            .or_insert_with(|| Value::String("yaml".to_string()));
+        object
+            .entry("enabled".to_string())
+            .or_insert(Value::Bool(false));
+        object
+            .entry("global".to_string())
+            .or_insert(Value::Bool(false));
+        let today = crate::telemetry::today_key();
+        object
+            .entry("createdAt".to_string())
+            .or_insert_with(|| Value::String(today.clone()));
+        object
+            .entry("updatedAt".to_string())
+            .or_insert_with(|| Value::String(today));
+
+        save_override_item(app, &Value::Object(object), Some(content))?;
+        restored += 1;
+    }
+    invalidate_override_caches(None);
+    Ok(restored)
+}
+
 pub(crate) fn override_fingerprint_for_config(
     app: &AppHandle,
     config_path: &str,

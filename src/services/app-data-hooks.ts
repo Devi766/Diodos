@@ -124,6 +124,19 @@ export const writeProxyModeCache = (
   writeAppDataCache(APP_DATA_CACHE_KEYS.proxyMode, value, options);
 };
 
+export const hasMihomoConfigCache = (): boolean =>
+  hasAppDataCache(APP_DATA_CACHE_KEYS.mihomoConfig);
+
+export const readMihomoConfigCache = <T extends Record<string, unknown> = Record<string, unknown>>(): T | null => {
+  const value = readAppDataCache<unknown>(APP_DATA_CACHE_KEYS.mihomoConfig);
+  return isRecord(value) ? (value as T) : null;
+};
+
+export const writeMihomoConfigCache = (
+  value: Record<string, unknown>,
+  options?: { persist?: boolean; broadcast?: boolean },
+) => writeAppDataCache(APP_DATA_CACHE_KEYS.mihomoConfig, value, options);
+
 export const readMihomoRunningCache = (): boolean | null => {
   return normalizeBooleanCache(readAppDataCache(APP_DATA_CACHE_KEYS.mihomoRunning));
 };

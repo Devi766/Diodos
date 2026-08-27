@@ -72,6 +72,68 @@ interface AiStore {
 }
 
 const STORAGE_KEY = 'flyclash-ai-store';
+const BACKUP_SETTING_KEY = 'ai_assistant_settings';
+const BACKUP_TIMESTAMP_KEY = 'flyclash-ai-backup-updated-at';
+
+type AiAssistantBackupSettings = {
+  updatedAt: number;
+  apiProvider: 'openai' | 'claude';
+  activeConfigId: string | null;
+  configs: Array<{
+    id: string;
+    alias: string;
+    provider: 'openai' | 'claude';
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+    toolCallCompatMode: boolean;
+    active: boolean;
+  }>;
+  autoRetryEnabled: boolean;
+  retryCount: number;
+  autoScrollEnabled: boolean;
+};
+
+function buildBackupSettings(
+  state: Pick<AiStore, 'apiConfigs' | 'settings'>,
+  updatedAt = Date.now(),
+): AiAssistantBackupSettings {
+  const active = state.apiConfigs.find((config) => config.active) || state.apiConfigs[0];
+  return {
+    updatedAt,
+    apiProvider: active?.format === 'claude' ? 'claude' : 'openai',
+    activeConfigId: active?.id || null,
+    configs: state.apiConfigs.map((config) => ({
+      id: config.id,
+      alias: config.alias,
+      provider: config.format,
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      toolCallCompatMode: config.compatMode,
+      active: config.active,
+    })),
+    autoRetryEnabled: state.settings.autoRetry,
+    retryCount: Math.max(1, state.settings.maxRetries),
+    autoScrollEnabled: true,
+  };
+}
+
+let lastBackupFingerprint = '';
+async function persistBackupSettings(
+  state: Pick<AiStore, 'apiConfigs' | 'settings'>,
+  force = false,
+) {
+  if (typeof window === 'undefined' || !window.electronAPI?.setSetting) return;
+  const fingerprint = JSON.stringify({ apiConfigs: state.apiConfigs, settings: state.settings });
+  if (!force && fingerprint === lastBackupFingerprint) return;
+  const snapshot = buildBackupSettings(state);
+  const result = await window.electronAPI.setSetting(BACKUP_SETTING_KEY, snapshot);
+  if (result?.success !== false) {
+    lastBackupFingerprint = fingerprint;
+    localStorage.setItem(BACKUP_TIMESTAMP_KEY, String(snapshot.updatedAt));
+  }
+}
 
 function loadState(): Partial<Pick<AiStore, 'conversations' | 'apiConfigs' | 'settings' | 'currentConversationId'>> {
   try {
@@ -92,6 +154,7 @@ function saveState(state: Pick<AiStore, 'conversations' | 'apiConfigs' | 'settin
     });
     const t1 = performance.now();
     localStorage.setItem(STORAGE_KEY, json);
+    void persistBackupSettings(state);
     const t2 = performance.now();
     if (typeof window !== 'undefined' && window.electronAPI?.debugLog) {
       window.electronAPI.debugLog(`saveState: stringify=${(t1 - t0).toFixed(1)}ms, setItem=${(t2 - t1).toFixed(1)}ms, size=${(json.length / 1024).toFixed(1)}KB`);
@@ -297,3 +360,51 @@ export const useAiStore = create<AiStore>((set, get) => {
     },
   };
 });
+
+/** Flushes the current AI configuration to the native settings DB before Rust creates a backup. */
+export async function syncAiSettingsForBackup() {
+  await persistBackupSettings(useAiStore.getState(), true);
+}
+
+/** Applies AI configuration restored by Rust to Zustand/localStorage immediately. */
+export async function restoreAiSettingsFromBackup(force = false) {
+  if (typeof window === 'undefined' || !window.electronAPI?.getSetting) return false;
+  const result = await window.electronAPI.getSetting(BACKUP_SETTING_KEY, null);
+  const backup = result?.value as Partial<AiAssistantBackupSettings> | null | undefined;
+  if (!backup || !Array.isArray(backup.configs)) return false;
+
+  const remoteTimestamp = Number(backup.updatedAt || 0);
+  const localTimestamp = Number(localStorage.getItem(BACKUP_TIMESTAMP_KEY) || 0);
+  if (!force && remoteTimestamp <= localTimestamp) return false;
+
+  const configs: AiApiConfig[] = backup.configs.map((config) => ({
+    id: String(config.id || `cfg_${Date.now()}`),
+    alias: String(config.alias || config.model || ''),
+    format: config.provider === 'claude' ? 'claude' : 'openai',
+    apiKey: String(config.apiKey || ''),
+    baseUrl: String(config.baseUrl || ''),
+    model: String(config.model || ''),
+    compatMode: Boolean(config.toolCallCompatMode),
+    active: Boolean(config.active || config.id === backup.activeConfigId),
+  }));
+  if (configs.length > 0 && !configs.some((config) => config.active)) {
+    configs[0].active = true;
+  }
+  const current = useAiStore.getState();
+  const nextSettings = {
+    autoRetry: backup.autoRetryEnabled ?? true,
+    maxRetries: Math.max(1, Number(backup.retryCount || 2)),
+  };
+  useAiStore.setState({ apiConfigs: configs, settings: nextSettings });
+  saveState({ ...current, apiConfigs: configs, settings: nextSettings });
+  localStorage.setItem(BACKUP_TIMESTAMP_KEY, String(remoteTimestamp || Date.now()));
+  return true;
+}
+
+if (typeof window !== 'undefined') {
+  queueMicrotask(() => {
+    void restoreAiSettingsFromBackup(false).then((restored) => {
+      if (!restored) void syncAiSettingsForBackup();
+    });
+  });
+}

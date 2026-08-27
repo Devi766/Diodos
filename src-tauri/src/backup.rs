@@ -136,8 +136,88 @@ fn backup_override_settings(app: &AppHandle) -> Result<Value, String> {
         "jsOverrideEnabled": setting(app, "js_override_enabled", json!(false))?,
         "jsOverrideContent": setting(app, "js_override_content", json!(""))?,
         "yamlOverrideEnabled": setting(app, "yaml_override_enabled", json!(false))?,
-        "yamlOverrideContent": setting(app, "yaml_override_content", json!(""))?
+        "yamlOverrideContent": setting(app, "yaml_override_content", json!(""))?,
+        "items": crate::overrides::backup_items(app)?
     }))
+}
+
+fn backup_ai_assistant_settings(app: &AppHandle) -> Result<Value, String> {
+    setting(app, "ai_assistant_settings", Value::Null)
+}
+
+/// Read the shared override item list. This also upgrades Android backups
+/// produced before the explicit `items` field was introduced, where the
+/// complete JsScript list lived inside yamlOverrideContent -> { scripts: "[...]" }.
+fn cross_platform_override_items(settings: &Value) -> Vec<Value> {
+    if let Some(items) = settings.get("items").and_then(Value::as_array) {
+        if !items.is_empty() {
+            return items.clone();
+        }
+    }
+
+    let Some(metadata) = settings
+        .get("yamlOverrideContent")
+        .and_then(Value::as_str)
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(scripts) = metadata
+        .get("scripts")
+        .and_then(Value::as_str)
+        .and_then(|value| serde_json::from_str::<Vec<Value>>(value).ok())
+    else {
+        return Vec::new();
+    };
+
+    scripts
+        .into_iter()
+        .filter_map(|script| {
+            let id = script.get("id")?.as_str()?.to_string();
+            let name = script
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Imported override");
+            let content = script
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let ext = if script.get("type").and_then(Value::as_str) == Some("JAVASCRIPT") {
+                "js"
+            } else {
+                "yaml"
+            };
+            let source_url = script
+                .get("sourceUrl")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty());
+            let scope = script
+                .get("overrideScope")
+                .and_then(|value| value.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or("CURRENT_ONLY");
+            let selected_profiles = script
+                .get("overrideScope")
+                .and_then(|value| value.get("selectedProfiles"))
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            Some(json!({
+                "id": id,
+                "name": name,
+                "content": content,
+                "type": if source_url.is_some() { "remote" } else { "local" },
+                "ext": ext,
+                "enabled": script.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+                "global": scope == "GLOBAL",
+                "url": source_url,
+                "scope": scope,
+                "selectedProfiles": selected_profiles,
+                "isLinkedOverride": script.get("isLinkedOverride").and_then(Value::as_bool).unwrap_or(false),
+                "linkedProfileUuid": script.get("linkedProfileUuid").cloned().unwrap_or(Value::Null),
+                "linkedProfileName": script.get("linkedProfileName").cloned().unwrap_or(Value::Null)
+            }))
+        })
+        .collect()
 }
 
 pub(crate) fn create_backup_zip_at(
@@ -243,7 +323,8 @@ pub(crate) fn create_backup_zip_at(
         "appLockSettings": Value::Null,
         "dashboardConfig": if backup_type == "FULL_BACKUP" { backup_dashboard_config(app)? } else { Value::Null },
         "trafficData": Value::Null,
-        "overrideSettings": if backup_type == "FULL_BACKUP" { backup_override_settings(app)? } else { Value::Null }
+        "overrideSettings": if backup_type == "FULL_BACKUP" { backup_override_settings(app)? } else { Value::Null },
+        "aiAssistantSettings": if backup_type == "FULL_BACKUP" { backup_ai_assistant_settings(app)? } else { Value::Null }
     });
 
     zip.start_file("enhanced_backup_metadata.json", options)
@@ -410,6 +491,10 @@ fn restore_backup_settings(app: &AppHandle, backup_data: &Value) -> Result<(), S
         .get("overrideSettings")
         .filter(|value| !value.is_null())
     {
+        let override_items = cross_platform_override_items(settings);
+        if !override_items.is_empty() {
+            crate::overrides::restore_backup_items(app, &override_items)?;
+        }
         set_setting(
             app,
             "js_override_enabled",
@@ -442,6 +527,13 @@ fn restore_backup_settings(app: &AppHandle, backup_data: &Value) -> Result<(), S
                 .cloned()
                 .unwrap_or(json!("")),
         )?;
+    }
+
+    if let Some(settings) = backup_data
+        .get("aiAssistantSettings")
+        .filter(|value| !value.is_null())
+    {
+        set_setting(app, "ai_assistant_settings", settings.clone())?;
     }
 
     Ok(())
@@ -1326,5 +1418,37 @@ mod tests {
                 "{uri} must be accepted"
             );
         }
+    }
+
+    #[test]
+    fn reads_override_scripts_from_legacy_android_metadata() {
+        let scripts = json!([{
+            "id": "51f90509-348f-4f26-b2d2-d0e82d119bee",
+            "name": "Android JS",
+            "content": "function main(config) { return config; }",
+            "type": "JAVASCRIPT",
+            "enabled": true,
+            "overrideScope": { "type": "GLOBAL", "selectedProfiles": [] },
+            "sourceUrl": null,
+            "isLinkedOverride": false
+        }]);
+        let metadata = json!({ "scripts": scripts.to_string() });
+        let settings = json!({
+            "items": [],
+            "yamlOverrideContent": metadata.to_string()
+        });
+        let items = cross_platform_override_items(&settings);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].get("name").and_then(Value::as_str),
+            Some("Android JS")
+        );
+        assert_eq!(items[0].get("ext").and_then(Value::as_str), Some("js"));
+        assert_eq!(items[0].get("global").and_then(Value::as_bool), Some(true));
+        assert!(items[0]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("function main"));
     }
 }

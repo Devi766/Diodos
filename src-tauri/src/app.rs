@@ -79,6 +79,11 @@ pub(crate) async fn handle_compat_call(
         return result;
     }
     if let Some(result) =
+        crate::lan_backup::handle_compat_call(&app, &window, &state, method, &args).await
+    {
+        return result;
+    }
+    if let Some(result) =
         crate::backup::handle_compat_call(&app, &window, &state, method, &args).await
     {
         return result;

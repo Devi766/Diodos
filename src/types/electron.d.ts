@@ -379,6 +379,12 @@ export interface ElectronAPI {
   backupWebDAVDownload: (fileName?: string) => Promise<BackupRestoreResult>;
   backupWebDAVList: () => Promise<{ success: boolean; backups?: BackupFileInfo[]; error?: string }>;
   backupWebDAVDelete: (fileName: string) => Promise<{ success: boolean; deleted?: boolean; error?: string }>;
+  backupLanDiscover: () => Promise<{ success: boolean; devices?: Array<{ id: string; name: string; hostName?: string; deviceType?: string; platform?: string; address: string; port: number; sessionKey: string }>; error?: string }>;
+  backupLanStartReceiver: () => Promise<{ success: boolean; port?: number; deviceName?: string; hostName?: string; deviceType?: string; platform?: string; pairingCode?: string; error?: string }>;
+  backupLanStatus: () => Promise<{ success: boolean; status?: { state: 'idle' | 'waiting' | 'receiving' | 'received' | 'error'; senderName?: string; senderDeviceType?: string; senderPlatform?: string; progress?: number; size?: number; error?: string }; error?: string }>;
+  backupLanStopReceiver: () => Promise<{ success: boolean; error?: string }>;
+  backupLanSend: (device: { id: string; name: string; hostName?: string; deviceType?: string; platform?: string; address: string; port: number; sessionKey: string }, backupType?: 'CONFIG_ONLY' | 'FULL_BACKUP' | string, pairingCode?: string) => Promise<{ success: boolean; sent?: number; error?: string }>;
+  backupLanRestoreReceived: () => Promise<BackupRestoreResult>;
   onBackupUploadProgress: (callback: (progress: BackupProgress) => void) => (() => void);
   onBackupDownloadProgress: (callback: (progress: BackupProgress) => void) => (() => void);
   

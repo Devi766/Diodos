@@ -22,7 +22,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const [theme, setTheme] = useState<string>('light');
+  const [theme, setTheme] = useState<string>('');
 
   useEffect(() => {
     let removeThemeListener: (() => void) | undefined;
@@ -126,6 +126,7 @@ export default function RootLayout({
             }
 
             setTheme(actualTheme);
+            window.localStorage.setItem('flyclash-resolved-theme', actualTheme);
             // 使用 classList 来添加/移除主题类，而不是替换整个 className
             if (actualTheme === 'dark') {
               document.documentElement.classList.add('dark');
@@ -148,6 +149,7 @@ export default function RootLayout({
                   ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
                   : newTheme;
               setTheme(actualTheme);
+              window.localStorage.setItem('flyclash-resolved-theme', actualTheme);
               if (actualTheme === 'dark') {
                 document.documentElement.classList.add('dark');
                 document.documentElement.classList.remove('light');
@@ -185,6 +187,7 @@ export default function RootLayout({
         // 默认情况下跟随系统设置
         const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         setTheme(systemTheme);
+        window.localStorage.setItem('flyclash-resolved-theme', systemTheme);
         if (systemTheme === 'dark') {
           document.documentElement.classList.add('dark');
           document.documentElement.classList.remove('light');
@@ -201,6 +204,7 @@ export default function RootLayout({
         if (disposed) return;
         // 出错时默认使用浅色主题
         setTheme('light');
+        window.localStorage.setItem('flyclash-resolved-theme', 'light');
         document.documentElement.classList.add('light');
         document.documentElement.classList.remove('dark');
         document.body.classList.add('theme-light');
@@ -224,14 +228,19 @@ export default function RootLayout({
   }, []);
 
   return (
-    <html lang="zh-CN" className={theme}>
+    <html lang="zh-CN" className={theme} suppressHydrationWarning>
       <head>
         <title>FlyClash</title>
         <meta name="description" content="现代、美观的 Clash 客户端，基于 FlyClash Core" />
         <link rel="icon" href="/favicon.ico" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('flyclash-resolved-theme');if(t!=='dark'&&t!=='light'){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.classList.add(t);document.documentElement.style.colorScheme=t;document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('theme-'+t)},{once:true})}catch(e){}})();`,
+          }}
+        />
         <Script src={`/tauri-compat.js?v=${TAURI_COMPAT_VERSION}`} strategy="beforeInteractive" />
       </head>
-      <body className="antialiased min-h-screen text-foreground">
+      <body className="antialiased min-h-screen text-foreground" suppressHydrationWarning>
         <AppDataWarmup />
         <Layout>
           {children}

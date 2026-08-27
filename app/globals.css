@@ -34,6 +34,7 @@
     --control-surface: 0 0% 100% / 0.78;
     --panel-hover: 212 80% 96% / 0.9;
     --glass-blur: 18px;
+    --motion-standard: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .dark {
@@ -250,6 +251,12 @@
     transition: background 0.2s ease;
   }
 
+  button,
+  a,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   .custom-scrollbar:hover::-webkit-scrollbar-thumb {
     background: rgba(148, 163, 184, 0.35);
     border-radius: 999px;
@@ -272,6 +279,10 @@
 }
 
 @layer components {
+  .motion-standard {
+    transition-timing-function: var(--motion-standard);
+  }
+
   /* app-window-surface overlay removed — match main branch (no wash layer). */
 
   /* 性能优化 - 滚动容器和节点渲染 */
@@ -377,12 +388,46 @@
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     box-shadow: 0 28px 40px -30px hsl(var(--glass-shadow));
-    transition: transform 160ms ease, box-shadow 160ms ease;
+    transition: transform 200ms var(--motion-standard), box-shadow 200ms var(--motion-standard);
   }
 
   .glass-panel[data-hoverable="true"]:hover {
-    transform: translateY(-3px);
+    transform: translateY(-1px);
     box-shadow: 0 32px 44px -28px hsl(var(--glass-shadow));
+  }
+
+  .route-fallback-block {
+    background: linear-gradient(
+      100deg,
+      rgb(148 163 184 / 0.1) 20%,
+      rgb(148 163 184 / 0.17) 42%,
+      rgb(148 163 184 / 0.1) 64%
+    );
+    background-size: 220% 100%;
+    border: 1px solid rgb(148 163 184 / 0.06);
+    animation: route-fallback-shimmer 1.65s linear infinite;
+  }
+
+  .dark .route-fallback-block {
+    background: linear-gradient(
+      100deg,
+      rgb(255 255 255 / 0.045) 20%,
+      rgb(255 255 255 / 0.075) 42%,
+      rgb(255 255 255 / 0.045) 64%
+    );
+    background-size: 220% 100%;
+    border-color: rgb(255 255 255 / 0.025);
+  }
+
+  @keyframes route-fallback-shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -100% 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .route-fallback-block {
+      animation: none;
+    }
   }
 
   .glass-sidebar {

@@ -10,6 +10,12 @@ import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
 import { isMihomoRuntimeUnavailableError } from '@/services/mihomo-client';
+import { ExternalResourcesSkeleton } from '@/components/RouteContentFallback';
+import {
+  hasMihomoConfigCache,
+  readMihomoConfigCache,
+  writeMihomoConfigCache,
+} from '@/services/app-data-hooks';
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
@@ -34,6 +40,22 @@ const toMihomoGeoxUrl = (config: GeoDataConfig) => ({
   asn: config.asn,
 });
 
+const normalizeConfig = (rawConfig: Record<string, any> | null | undefined) => {
+  const source = rawConfig || {};
+  const geoxUrlConfig = source.geoxUrl || source['geox-url'] || {};
+  return {
+    geoxUrl: {
+      geoip: geoxUrlConfig.geoIp || geoxUrlConfig['geo-ip'] || geoxUrlConfig.geoip || DEFAULT_GEOX_URL.geoip,
+      geosite: geoxUrlConfig.geoSite || geoxUrlConfig['geo-site'] || geoxUrlConfig.geosite || DEFAULT_GEOX_URL.geosite,
+      mmdb: geoxUrlConfig.mmdb || DEFAULT_GEOX_URL.mmdb,
+      asn: geoxUrlConfig.asn || DEFAULT_GEOX_URL.asn,
+    } as GeoDataConfig,
+    geoMode: (source.geodataMode ?? source['geodata-mode']) ? 'dat' as const : 'db' as const,
+    geoAutoUpdate: Boolean(source.geoAutoUpdate ?? source['geo-auto-update'] ?? false),
+    geoUpdateInterval: Number(source.geoUpdateInterval ?? source['geo-update-interval'] ?? 24),
+  };
+};
+
 const notifyProfileUpdated = () => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('profile-updated', { detail: { source: 'external-resources' } }));
@@ -44,22 +66,23 @@ export default function ExternalResources() {
   const { t } = useTranslation();
   const mihomoAPI = useMihomoAPI();
   const mihomoAPIRef = useRef(mihomoAPI);
-  const [isLoading, setIsLoading] = useState(true);
+  const initialConfigRef = useRef(normalizeConfig(readMihomoConfigCache<Record<string, any>>()));
+  const [isLoading, setIsLoading] = useState(() => !hasMihomoConfigCache());
   const [isUpdating, setIsUpdating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [hasLoadedConfig, setHasLoadedConfig] = useState(false);
+  const [hasLoadedConfig, setHasLoadedConfig] = useState(() => hasMihomoConfigCache());
 
   // GeoData配置
-  const [geoxUrl, setGeoxUrl] = useState<GeoDataConfig>(DEFAULT_GEOX_URL);
+  const [geoxUrl, setGeoxUrl] = useState<GeoDataConfig>(initialConfigRef.current.geoxUrl);
 
   const [geoipInput, setGeoipInput] = useState(geoxUrl.geoip);
   const [geositeInput, setGeositeInput] = useState(geoxUrl.geosite);
   const [mmdbInput, setMmdbInput] = useState(geoxUrl.mmdb);
   const [asnInput, setAsnInput] = useState(geoxUrl.asn);
 
-  const [geoMode, setGeoMode] = useState<'dat' | 'db'>('db');
-  const [geoAutoUpdate, setGeoAutoUpdate] = useState(false);
-  const [geoUpdateInterval, setGeoUpdateInterval] = useState(24);
+  const [geoMode, setGeoMode] = useState<'dat' | 'db'>(initialConfigRef.current.geoMode);
+  const [geoAutoUpdate, setGeoAutoUpdate] = useState(initialConfigRef.current.geoAutoUpdate);
+  const [geoUpdateInterval, setGeoUpdateInterval] = useState(initialConfigRef.current.geoUpdateInterval);
 
   useEffect(() => {
     mihomoAPIRef.current = mihomoAPI;
@@ -77,21 +100,16 @@ export default function ExternalResources() {
   }, [t]);
 
   const fetchConfig = useCallback(async () => {
-    setIsLoading(true);
+    const coldLoad = !hasMihomoConfigCache();
+    if (coldLoad) setIsLoading(true);
     setErrorMessage(null);
 
     try {
       const config = await mihomoAPIRef.current.configs();
       const rawConfig = config as any;
-      const geoxUrlConfig = rawConfig.geoxUrl || rawConfig['geox-url'] || {};
-
-      // 确保每个字段都有默认值
-      const mergedGeoxUrl = {
-        geoip: geoxUrlConfig.geoIp || geoxUrlConfig['geo-ip'] || geoxUrlConfig.geoip || DEFAULT_GEOX_URL.geoip,
-        geosite: geoxUrlConfig.geoSite || geoxUrlConfig['geo-site'] || geoxUrlConfig.geosite || DEFAULT_GEOX_URL.geosite,
-        mmdb: geoxUrlConfig.mmdb || DEFAULT_GEOX_URL.mmdb,
-        asn: geoxUrlConfig.asn || DEFAULT_GEOX_URL.asn
-      };
+      const normalized = normalizeConfig(rawConfig);
+      const mergedGeoxUrl = normalized.geoxUrl;
+      writeMihomoConfigCache(rawConfig);
 
       setGeoxUrl(mergedGeoxUrl);
       setGeoipInput(mergedGeoxUrl.geoip);
@@ -99,9 +117,9 @@ export default function ExternalResources() {
       setMmdbInput(mergedGeoxUrl.mmdb);
       setAsnInput(mergedGeoxUrl.asn);
 
-      setGeoMode((rawConfig.geodataMode ?? rawConfig['geodata-mode']) ? 'dat' : 'db');
-      setGeoAutoUpdate(Boolean(rawConfig.geoAutoUpdate ?? rawConfig['geo-auto-update'] ?? false));
-      setGeoUpdateInterval(Number(rawConfig.geoUpdateInterval ?? rawConfig['geo-update-interval'] ?? 24));
+      setGeoMode(normalized.geoMode);
+      setGeoAutoUpdate(normalized.geoAutoUpdate);
+      setGeoUpdateInterval(normalized.geoUpdateInterval);
       setHasLoadedConfig(true);
     } catch (error: any) {
       const message = errorToMessage(error);
@@ -251,11 +269,7 @@ export default function ExternalResources() {
   }, [fetchConfig]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <ReloadIcon className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <ExternalResourcesSkeleton />;
   }
 
   if (!hasLoadedConfig) {

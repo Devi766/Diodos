@@ -629,6 +629,12 @@
       backupWebDAVDelete: async (...args) => call("backupWebDAVDelete", args),
       backupWebDAVSaveConfig: async (...args) => call("backupWebDAVSaveConfig", args),
       backupWebDAVGetConfig: async (...args) => call("backupWebDAVGetConfig", args),
+      backupLanDiscover: async (...args) => call("backupLanDiscover", args),
+      backupLanStartReceiver: async (...args) => call("backupLanStartReceiver", args),
+      backupLanStatus: async (...args) => call("backupLanStatus", args),
+      backupLanStopReceiver: async (...args) => call("backupLanStopReceiver", args),
+      backupLanSend: async (...args) => call("backupLanSend", args),
+      backupLanRestoreReceived: async (...args) => call("backupLanRestoreReceived", args),
       onAiProxyStreamChunk: (callback) => listen("ai-proxy-stream-chunk", (payload) => {
         callback(payload.requestId, new Uint8Array(payload.chunk || []));
       }),

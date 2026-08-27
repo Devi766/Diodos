@@ -6,7 +6,20 @@ import {
   invalidateAppDataCache,
   type AppDataInvalidationScope,
 } from '@/services/app-data-cache';
-import { preloadCommonAppData } from '@/services/app-data-preload';
+import { preloadCommonAppData, preloadRouteData } from '@/services/app-data-preload';
+
+const routesForScope = (scope: AppDataInvalidationScope): string[] => {
+  switch (scope) {
+    case 'all': return ['/', '/nodes', '/subscriptions', '/connections', '/match-rules', '/providers', '/overrides', '/logs', '/external-resources'];
+    case 'providers': return ['/providers'];
+    case 'network': return ['/connections'];
+    case 'runtime': return ['/', '/nodes', '/connections'];
+    case 'active-config':
+    case 'profile': return ['/', '/nodes', '/match-rules', '/providers', '/connections'];
+    case 'backup': return ['/', '/nodes', '/subscriptions', '/match-rules', '/providers', '/overrides'];
+    default: return [];
+  }
+};
 
 const asScope = (value: unknown): AppDataInvalidationScope => {
   if (
@@ -44,17 +57,21 @@ export default function AppDataWarmup() {
       idleHandle = null;
     };
 
-    const runWarmup = (force: boolean) => {
+    const runWarmup = (force: boolean, routes: string[] = []) => {
       if (disposed) return;
-      void preloadCommonAppData({
+      const options = {
         force,
-        idle: true,
+        idle: force,
         idleTimeoutMs: force ? 1200 : 1800,
-        timeoutMs: force ? 4000 : 3000,
-      });
+        timeoutMs: force ? 5000 : 6000,
+      };
+      void Promise.all([
+        preloadCommonAppData(options),
+        ...routes.map((href) => preloadRouteData(href, options)),
+      ]);
     };
 
-    const scheduleWarmup = (force: boolean, delay: number) => {
+    const scheduleWarmup = (force: boolean, delay: number, routes: string[] = []) => {
       if (refreshTimer !== null) {
         window.clearTimeout(refreshTimer);
       }
@@ -69,13 +86,13 @@ export default function AppDataWarmup() {
         if (typeof requestIdle === 'function') {
           idleHandle = requestIdle(() => {
             idleHandle = null;
-            runWarmup(force);
-          }, { timeout: force ? 500 : 1800 });
+            runWarmup(force, routes);
+          }, { timeout: force ? 500 : 600 });
         } else {
           idleHandle = window.setTimeout(() => {
             idleHandle = null;
-            runWarmup(force);
-          }, force ? 0 : 350);
+            runWarmup(force, routes);
+          }, force ? 0 : 50);
         }
       }, delay);
     };
@@ -86,10 +103,10 @@ export default function AppDataWarmup() {
       delay = 250,
     ) => {
       invalidateAppDataCache(scope);
-      scheduleWarmup(force, delay);
+      scheduleWarmup(force, delay, routesForScope(scope));
     };
 
-    scheduleWarmup(false, 1800);
+    scheduleWarmup(false, 0);
 
     const onProfileUpdated = (event: Event) => {
       const detail = event instanceof CustomEvent ? event.detail : null;

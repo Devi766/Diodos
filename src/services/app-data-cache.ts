@@ -16,6 +16,7 @@ export const APP_DATA_CACHE_KEYS = {
   logs: 'logsCache',
   activeConfig: 'activeConfigCache',
   proxyMode: 'proxyModeCache',
+  mihomoConfig: 'mihomoConfigCache',
   systemProxyEnabled: 'systemProxyEnabledCache',
   tunEnabled: 'tunEnabledCache',
   ipInfo: 'ipInfoCache',
@@ -28,6 +29,7 @@ export type AppDataCacheKey =
 type Listener = () => void;
 
 const memoryCache = new Map<AppDataCacheKey, unknown>();
+const staleKeys = new Set<AppDataCacheKey>();
 const listeners = new Map<AppDataCacheKey, Set<Listener>>();
 
 const canUseSessionStorage = () => {
@@ -85,6 +87,20 @@ export const hasAppDataCache = (key: AppDataCacheKey): boolean => {
   }
 };
 
+export const isAppDataCacheStale = (key: AppDataCacheKey): boolean => staleKeys.has(key);
+
+export const markAppDataCacheStale = (
+  key: AppDataCacheKey,
+  options: { broadcast?: boolean } = {},
+) => {
+  staleKeys.add(key);
+  if (options.broadcast !== false && typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent(APP_DATA_CACHE_UPDATED_EVENT, { detail: { key, stale: true } }),
+    );
+  }
+};
+
 export const writeAppDataCache = <T,>(
   key: AppDataCacheKey,
   value: T,
@@ -99,6 +115,7 @@ export const writeAppDataCache = <T,>(
   }
 
   memoryCache.set(key, value);
+  staleKeys.delete(key);
 
   if (persist && canUseSessionStorage()) {
     try {
@@ -132,6 +149,7 @@ export const removeAppDataCache = (
 ) => {
   const { broadcast = true } = options;
   memoryCache.delete(key);
+  staleKeys.delete(key);
 
   if (canUseSessionStorage()) {
     try {
@@ -191,6 +209,7 @@ const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
     APP_DATA_CACHE_KEYS.activeConfig,
     APP_DATA_CACHE_KEYS.proxyGroups,
     APP_DATA_CACHE_KEYS.proxyMode,
+    APP_DATA_CACHE_KEYS.mihomoConfig,
     APP_DATA_CACHE_KEYS.matchRules,
     APP_DATA_CACHE_KEYS.proxyProviders,
     APP_DATA_CACHE_KEYS.ruleProviders,
@@ -205,6 +224,7 @@ const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
     APP_DATA_CACHE_KEYS.activeConfig,
     APP_DATA_CACHE_KEYS.proxyGroups,
     APP_DATA_CACHE_KEYS.proxyMode,
+    APP_DATA_CACHE_KEYS.mihomoConfig,
     APP_DATA_CACHE_KEYS.matchRules,
     APP_DATA_CACHE_KEYS.proxyProviders,
     APP_DATA_CACHE_KEYS.ruleProviders,
@@ -220,6 +240,7 @@ const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
   runtime: [
     APP_DATA_CACHE_KEYS.mihomoRunning,
     APP_DATA_CACHE_KEYS.proxyMode,
+    APP_DATA_CACHE_KEYS.mihomoConfig,
     APP_DATA_CACHE_KEYS.systemProxyEnabled,
     APP_DATA_CACHE_KEYS.tunEnabled,
     APP_DATA_CACHE_KEYS.dashboardRuntime,
@@ -235,12 +256,16 @@ const INVALIDATION_MAP: Record<AppDataInvalidationScope, AppDataCacheKey[]> = {
 
 export const invalidateAppDataCache = (
   scope: AppDataInvalidationScope | AppDataCacheKey[] = 'profile',
-  options: { broadcast?: boolean } = {},
+  options: { broadcast?: boolean; hard?: boolean } = {},
 ) => {
   const keys = Array.isArray(scope) ? scope : INVALIDATION_MAP[scope] || INVALIDATION_MAP.profile;
   const uniqueKeys = Array.from(new Set(keys));
   uniqueKeys.forEach((key) => {
-    removeAppDataCache(key, { broadcast: options.broadcast ?? true });
+    if (options.hard || !hasAppDataCache(key)) {
+      removeAppDataCache(key, { broadcast: options.broadcast ?? true });
+    } else {
+      markAppDataCacheStale(key, { broadcast: options.broadcast ?? true });
+    }
   });
   return uniqueKeys;
 };

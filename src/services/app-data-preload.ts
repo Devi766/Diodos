@@ -3,12 +3,14 @@
 import {
   APP_DATA_CACHE_KEYS,
   hasAppDataCache,
+  isAppDataCacheStale,
 } from '@/services/app-data-cache';
 import {
   writeActiveConfigCache,
   writeConnectionsCache,
   writeLogsCache,
   writeMatchRulesCache,
+  writeMihomoConfigCache,
   writeOverridesCache,
   writeProxyModeCache,
   writeProxyProvidersCache,
@@ -110,7 +112,9 @@ const normalizeOverrides = (value: any) => {
 };
 
 const shouldSkip = (keys: string[], force?: boolean) => {
-  return !force && keys.length > 0 && keys.every((key) => hasAppDataCache(key as any));
+  return !force && keys.length > 0 && keys.every((key) =>
+    hasAppDataCache(key as any) && !isAppDataCacheStale(key as any),
+  );
 };
 
 const runTask = async (task: PreloadTask, options: PreloadOptions) => {
@@ -212,9 +216,10 @@ const preloadActiveConfig: PreloadTask = {
 
 const preloadProxyMode: PreloadTask = {
   id: 'proxy-mode',
-  keys: [APP_DATA_CACHE_KEYS.proxyMode],
+  keys: [APP_DATA_CACHE_KEYS.proxyMode, APP_DATA_CACHE_KEYS.mihomoConfig],
   run: async () => {
     const result = await requestMihomo('/configs');
+    if (isRecord(result)) writeMihomoConfigCache(result);
     const mode = normalizeProxyMode(result);
     if (mode === 'rule' || mode === 'global' || mode === 'direct') {
       writeProxyModeCache(mode);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import classNames from 'classnames';
@@ -33,6 +33,7 @@ import {
 } from '@/utils/update-check';
 import { preloadRouteData } from '@/services/app-data-preload';
 import { preloadRouteModule } from '@/services/route-preload';
+import PageTransition from '@/components/PageTransition';
 
 type CompatWarningDetail = {
   method?: string;
@@ -49,8 +50,7 @@ declare global {
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.3.2';
-const ENABLE_IDLE_ROUTE_MODULE_PRELOAD = false;
+const FALLBACK_APP_VERSION = '0.3.3';
 
 const normalizeVersionLabel = (value: unknown): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -77,6 +77,8 @@ export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
   const router = useRouter();
+  const [isRoutePending, startRouteTransition] = useTransition();
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') {
@@ -311,11 +313,22 @@ export default function Layout({ children }: LayoutProps) {
     }
 
     if (pathname === href) {
+      event.preventDefault();
       setMobileMenuOpen(false);
       return;
     }
 
+    event.preventDefault();
+    setPendingPath(href);
     setMobileMenuOpen(false);
+    warmRouteData(href, true);
+    startRouteTransition(() => {
+      router.push(href);
+    });
+  }, [pathname, router, warmRouteData]);
+
+  useEffect(() => {
+    setPendingPath(null);
   }, [pathname]);
   
   const menuItems = useMemo(() => {
@@ -343,77 +356,6 @@ export default function Layout({ children }: LayoutProps) {
 
     return items;
   }, [hasProviders, t]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!ENABLE_IDLE_ROUTE_MODULE_PRELOAD) return;
-
-    const routes = menuItems.map((item) => item.href);
-    let disposed = false;
-    let routeIndex = 0;
-    let timer: number | null = null;
-    let idleHandle: number | null = null;
-
-    const clearScheduled = () => {
-      if (timer !== null) {
-        window.clearTimeout(timer);
-        timer = null;
-      }
-      if (idleHandle !== null) {
-        const cancelIdle = (window as any).cancelIdleCallback as
-          | ((handle: number) => void)
-          | undefined;
-        if (typeof cancelIdle === 'function') {
-          cancelIdle(idleHandle);
-        } else {
-          window.clearTimeout(idleHandle);
-        }
-        idleHandle = null;
-      }
-    };
-
-    const scheduleNext = (delay: number) => {
-      clearScheduled();
-      timer = window.setTimeout(() => {
-        timer = null;
-        if (disposed) return;
-
-        const run = () => {
-          idleHandle = null;
-          if (disposed) return;
-
-          const href = routes[routeIndex];
-          routeIndex += 1;
-          if (href) {
-            void preloadRouteModule(href);
-            try {
-              router.prefetch(href);
-            } catch {}
-          }
-
-          if (routeIndex < routes.length) {
-            scheduleNext(320);
-          }
-        };
-
-        const requestIdle = (window as any).requestIdleCallback as
-          | ((callback: () => void, options?: { timeout?: number }) => number)
-          | undefined;
-        if (typeof requestIdle === 'function') {
-          idleHandle = requestIdle(run, { timeout: 2400 });
-        } else {
-          idleHandle = window.setTimeout(run, 180);
-        }
-      }, delay);
-    };
-
-    scheduleNext(2200);
-
-    return () => {
-      disposed = true;
-      clearScheduled();
-    };
-  }, [menuItems, router]);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -1183,14 +1125,15 @@ export default function Layout({ children }: LayoutProps) {
   }, []);
 
   const isActivePath = (href: string) => {
-    if (!pathname) return false;
-    if (pathname === href) return true;
-    return href !== '/' && pathname.startsWith(href);
+    const activePath = pendingPath || pathname;
+    if (!activePath) return false;
+    if (activePath === href) return true;
+    return href !== '/' && activePath.startsWith(href);
   };
 
   const getNavLinkClass = (href: string, collapsed: boolean) =>
     classNames(
-      'group relative flex items-center rounded-lg text-[13px] font-medium transition-all duration-150',
+      'group relative flex items-center rounded-lg text-[13px] font-medium transition-all duration-200 motion-standard active:scale-[0.985]',
       collapsed ? 'justify-center px-0 py-2.5' : 'gap-2.5 px-3 py-2',
       isActivePath(href)
         ? 'bg-primary text-primary-foreground'
@@ -1263,7 +1206,10 @@ export default function Layout({ children }: LayoutProps) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  prefetch={false}
+                  prefetch
+                  aria-current={isActivePath(item.href) ? 'page' : undefined}
+                  aria-busy={isRoutePending && pendingPath === item.href ? true : undefined}
+                  onPointerDown={() => warmRouteData(item.href, true)}
                   onMouseEnter={() => warmRouteData(item.href)}
                   onFocus={() => warmRouteData(item.href)}
                   onClick={(event) => handleNavigationClick(event, item.href)}
@@ -1321,7 +1267,10 @@ export default function Layout({ children }: LayoutProps) {
                   <Link
                     key={item.href}
                     href={item.href}
-                    prefetch={false}
+                    prefetch
+                    aria-current={isActivePath(item.href) ? 'page' : undefined}
+                    aria-busy={isRoutePending && pendingPath === item.href ? true : undefined}
+                    onPointerDown={() => warmRouteData(item.href, true)}
                     onMouseEnter={() => warmRouteData(item.href)}
                     onFocus={() => warmRouteData(item.href)}
                     onClick={(event) => handleNavigationClick(event, item.href)}
@@ -1355,7 +1304,7 @@ export default function Layout({ children }: LayoutProps) {
                     : 'mx-auto max-w-[1400px] pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'
                 )}
               >
-                {children}
+                <PageTransition fullHeight={isFullHeight}>{children}</PageTransition>
               </div>
             </main>
           </div>

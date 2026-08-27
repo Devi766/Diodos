@@ -10,6 +10,7 @@ mod core;
 mod core_commands;
 mod core_lifecycle_commands;
 mod fetch;
+mod lan_backup;
 mod mihomo_controller;
 mod mihomo_ipc;
 mod mihomo_local_socket;
