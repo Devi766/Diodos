@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
-    "mihomo:default"
+    "mihomo:default",
+    "core:window:allow-start-dragging"
   ]
 }

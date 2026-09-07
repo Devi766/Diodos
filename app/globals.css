@@ -168,6 +168,20 @@
     -webkit-backdrop-filter: none !important;
   }
 
+  /* WKWebView ignores -webkit-app-region; Tauri uses data-tauri-drag-region + startDragging. */
+  [data-tauri-drag-region],
+  .titlebar-drag-region {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  .titlebar-no-drag,
+  [data-tauri-drag-region] button,
+  .titlebar-drag-region button {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
   /* 其他非 Windows 平台使用渐变背景 */
   body:not(.platform-windows):not(.platform-darwin) {
     background: radial-gradient(140% 120% at 25% 0%, rgba(164, 194, 255, 0.15), transparent 70%),

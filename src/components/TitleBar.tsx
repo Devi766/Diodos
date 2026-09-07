@@ -96,16 +96,40 @@ export default function TitleBar() {
     } catch {}
   }, [electron]);
 
-  // macOS: keep a compact drag region for overlay titlebar / traffic lights.
-  // Native traffic lights are shown by Tauri (titleBarStyle=Overlay via tauri.macos.conf.json).
+  const startWindowDrag = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0 || event.detail !== 1) return;
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, a, input, textarea, select, [data-no-drag]')) return;
+
+    const tauri = (window as unknown as {
+      __TAURI__?: {
+        window?: {
+          getCurrentWindow?: () => { startDragging?: () => Promise<void> };
+        };
+      };
+    }).__TAURI__;
+    const currentWindow = tauri?.window?.getCurrentWindow?.();
+    if (typeof currentWindow?.startDragging === 'function') {
+      void currentWindow.startDragging();
+    }
+  }, []);
+
+  // macOS Overlay titlebar: native traffic lights sit on the left.
+  // The strip to their right must be a real Tauri drag region so the window can move.
   if (isMacOS) {
     return (
       <div
-        className="glass-titlebar fixed top-0 left-0 right-0 z-50 h-10"
-        data-tauri-drag-region
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        className="glass-titlebar pointer-events-none fixed inset-x-0 top-0 z-[80] flex h-10"
         aria-hidden
-      />
+      >
+        <div className="h-full w-[78px] shrink-0" />
+        <div
+          className="titlebar-drag-region pointer-events-auto h-full min-w-0 flex-1 cursor-default"
+          data-tauri-drag-region
+          onMouseDown={startWindowDrag}
+        />
+      </div>
     );
   }
 
@@ -129,11 +153,12 @@ export default function TitleBar() {
 
   return (
     <div
-      className="glass-titlebar fixed top-0 left-0 right-0 z-50 flex h-12 items-center justify-end px-2"
+      className="glass-titlebar titlebar-drag-region fixed top-0 left-0 right-0 z-50 flex h-12 items-center justify-end px-2"
+      data-tauri-drag-region
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       <div
-        className="flex items-center gap-1"
+        className="titlebar-no-drag flex items-center gap-1"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <button
