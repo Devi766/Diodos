@@ -1,75 +1,45 @@
 <a href="https://www.stromsend.xyz/#/register?code=tIhaARYV">
-  <img src="https://raw.githubusercontent.com/GtxFury/FlyClash-Android/main/screenshots/unnamed.jpg" alt="友情推荐" />
+  <img src="https://raw.githubusercontent.com/GtxFury/FlyClash-Android/main/screenshots/unnamed.jpg" alt="Recommended Service" />
 </a>
 
-# FlyClash - 简洁优雅的代理工具
+# FlyClash — A Simple and Elegant NetWork Tools
 
-FlyClash是一个基于Clash内核的现代化代理客户端，拥有美观的界面和强大的功能。
+FlyClash is a modern NetWork Tools powered by the Clash core, featuring a beautiful interface and powerful functionality.
 
-## 功能特点
+## Features
 
-- 🚀 集成最新的Clash内核
-- 📊 简洁直观的控制面板
-- 🎬 支持媒体服务检测
-- ⚡ 支持测速分享功能
-- 🔧 方便的订阅管理
-- 🌐 支持系统代理切换
-- 💡 明暗主题适配
-- 🔔 托盘图标支持
-- 🎨 基于现代设计语言
+- 🚀 Integrated with the latest Clash core
+- 📊 Clean and intuitive dashboard
+- 🎬 Media service availability checks
+- ⚡ Speed testing and result sharing
+- 🔧 Convenient subscription management
+- 🌐 System proxy toggle
+- 💡 Light and dark theme support
+- 🔔 System tray integration
+- 🎨 Modern interface design
 
-## 交流社区
+## Community
 
-加入我们的 [Telegram 交流群](https://t.me/flyclash_chat) 获取最新消息、使用帮助和与其他用户交流。
+Join our [Telegram group](https://t.me/flyclash_chat) for the latest updates, help with using the app, and discussions with other users.
 
-## 安装
+## Installation
 
-### 从发布版下载
+### Download a Release
 
-访问[发布页面](https://github.com/GtxFury/FlyClash/releases)下载最新版本的安装包。
+Visit the [Releases page](https://github.com/Devi766/FlyClash/releases) to download the latest installer.
 
-### 从源码构建
+### Build from Source
 
 ```bash
-# 克隆仓库
+# Clone the repository
 git clone https://github.com/GtxFury/FlyClash.git
-cd flyclash
+cd FlyClash
 
-# 安装依赖
+# Install dependencies
 npm install
 
-# Tauri 开发模式运行
+# Run in Tauri development mode
 npm run tauri:dev
 
-# 构建安装包
+# Build the installer
 npm run tauri:build
-```
-
-## 使用方法
-
-1. 添加订阅：在"订阅管理"页面添加您的订阅链接
-2. 选择配置：在控制面板选择添加的配置文件
-3. 启动服务：点击"启动"按钮开始代理服务
-4. 系统代理：通过系统托盘菜单启用/禁用系统代理
-
-## 常见问题
-
-### 无法启动Clash内核
-
-确保您没有其他同类软件占用了相同的端口（默认7890）。
-
-### 系统代理设置失败
-
-请尝试以管理员身份运行FlyClash，或手动设置系统代理。
-
-## 致谢
-
-- [Clash](https://github.com/MetaCubeX/mihomo) - 优秀的代理内核
-- [Next.js](https://nextjs.org) - React框架
-- [Electron](https://www.electronjs.org) - 桌面应用框架
-- [Radix UI](https://www.radix-ui.com) - 无障碍UI组件
-- [Tailwind CSS](https://tailwindcss.com) - CSS框架
-
-## 许可证
-
-[MIT License](LICENSE)
