@@ -1,7 +1,3 @@
-<a href="https://www.stromsend.xyz/#/register?code=tIhaARYV">
-  <img src="https://raw.githubusercontent.com/GtxFury/FlyClash-Android/main/screenshots/unnamed.jpg" alt="Recommended Service" />
-</a>
-
 # FlyClash — A Simple and Elegant NetWork Tools
 
 FlyClash is a modern NetWork Tools powered by the Clash core, featuring a beautiful interface and powerful functionality.
