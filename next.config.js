@@ -5,6 +5,8 @@ const createNextConfig = (phase) => {
   const isDev = phase === PHASE_DEVELOPMENT_SERVER;
 
   return {
+  // 辅助预览服务使用独立缓存目录，避免覆盖桌面开发服务的页面模块
+  distDir: isDev ? (process.env.FLYCLASH_NEXT_DIST_DIR || '.next') : '.next',
   reactStrictMode: true,
   images: {
     domains: ['localhost'],

@@ -2,6 +2,36 @@
 
 本文件记录 FlyClash Desktop（Tauri）各版本的重要变更。
 
+## v0.3.4 (2026-10-14)
+
+### Redesigned dashboard card system
+The dashboard is now a modular workspace: choose the information you need, preview each card's available layouts, and arrange a dashboard that fits your workflow.
+
+- **A consistent sizing system:** standard half-width and full-width cards share the same height, while extra-large full-width cards provide more room for detailed charts and lists. Supported sizes vary by card, keeping each layout suited to its content.
+- **A redesigned widget library:** preview cards and switch between supported layouts before adding them. Customize the dashboard with drag-and-drop ordering and add or remove cards, with layout preferences saved across sessions.
+- **A unified visual language:** consistent title icons, inner spacing, typography, rounded corners and neutral control backgrounds, with responsive layouts and light/dark theme support.
+- **Network information at a glance:** a new standard full-width card combines total traffic, active connections, download speed and upload speed. The four individual metrics remain available as compact half-width variants.
+- **Immersive traffic and subscription cards:** flowing speed visualizations and a tilted subscription usage ring bring data into the card surface. Subscription cards show usage percentage and remaining traffic, with expiry information shown only when available.
+- **Compact network controls:** combine system proxy and TUN switches in one network-control card, alongside a redesigned proxy-mode selector and an IP card with a cleaner details view for direct and proxied connections.
+- **Diagnostics on the dashboard:** add media availability, connectivity checks and route tracing. Test an individual media service directly from its item, open the complete media diagnostics from the card background, or inspect route results on an interactive globe.
+- **More personal layouts:** add image cards and mix compact summaries with larger visualizations. Existing layouts are migrated to the new card model while retaining saved ordering and enabled/disabled preferences.
+
+### Diagnostics tools
+- Preserve native parallel group latency testing and progressively display fresh results from the core's delay history, without waiting for every node to finish.
+- Add a dedicated route tracing page with target input, probe controls, an interactive globe, hop statistics and report copying.
+- Share the complete media diagnostics dialog between the tools page and dashboard cards.
+
+### Configuration management
+- Improve runtime profile switching and move tray updates and connection cleanup out of the foreground path.
+- Coalesce proxy refresh events, load icons asynchronously and use skeletons during page loading.
+- Expand imports to YAML/JSON, partial configurations, node links and Base64 subscriptions.
+- Add bounded download retries and proxy fallback; limit HTTP 5xx to one alternate-route retry.
+- Wrap long error messages and redact credentials from subscription URLs.
+
+### Performance
+- Remove overlapping route transitions and schedule route preloading during idle time.
+- Cache generated runtime configurations and serialize reloads of the shared work file.
+
 ## v0.3.3 (2026-09-07)
 
 ### 跨设备备份

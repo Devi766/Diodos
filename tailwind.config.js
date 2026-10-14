@@ -16,6 +16,9 @@ module.exports = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['var(--font-ui)'],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -55,6 +58,19 @@ module.exports = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        dialog: "var(--radius-dialog)",
+        card: "var(--radius-card)",
+        item: "var(--radius-item)",
+        nested: "var(--radius-nested)",
+        control: "var(--radius-control)",
+        pill: "9999px",
+      },
+      spacing: {
+        card: "var(--card-padding)",
+        "card-icon": "var(--card-icon-size)",
+      },
+      fontSize: {
+        "card-title": ["var(--card-title-size)", { lineHeight: "1rem", letterSpacing: "0.025em" }],
       },
       keyframes: {
         "accordion-down": {

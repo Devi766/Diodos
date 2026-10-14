@@ -169,7 +169,212 @@
     "missRules": "Miss",
     "noRuleStats": "No rule statistics available",
     "ruleType": "Type",
-    "hits": "hits"
+    "hits": "hits",
+    "widgetLibrary": {
+      "title": "Widget Library",
+      "subtitle": "Pick a card to preview its sizes and add it to the dashboard",
+      "back": "Back",
+      "addToDashboard": "Add to Dashboard",
+      "previousSize": "Previous size",
+      "nextSize": "Next size",
+      "added": "Added to dashboard",
+      "onDashboard": "Added",
+      "sizeStandard": "Standard",
+      "sizeCompact": "Compact",
+      "widthFull": "Full width",
+      "widthHalf": "Half width",
+      "sizeSpeed": "Network Speed",
+      "sizeSmall": "Small",
+      "sizeMedium": "Medium",
+      "sizeLarge": "Large",
+      "sizeList": "List",
+      "sizeHalf": "Half width",
+      "sizeFull": "Standard full width",
+      "sizeExtraLargeFull": "Extra-large full width",
+      "sizeOverview": "Overview",
+      "metricConnections": "Active connections",
+      "metricDownload": "Download speed",
+      "metricUpload": "Upload speed",
+      "metricTotal": "Total traffic",
+      "networkVariants": "Choose an information card",
+      "sizeImmersive": "Immersive"
+    },
+    "cardMeta": {
+      "metric-connections": {
+        "title": "Active Connections",
+        "description": "Live connection count"
+      },
+      "metric-download": {
+        "title": "Download Speed",
+        "description": "Current download speed"
+      },
+      "metric-upload": {
+        "title": "Upload Speed",
+        "description": "Current upload speed"
+      },
+      "metric-total": {
+        "title": "Total Traffic",
+        "description": "Accumulated traffic"
+      },
+      "system-proxy": {
+        "title": "System Proxy",
+        "description": "Toggle the system-wide proxy"
+      },
+      "tun-mode": {
+        "title": "TUN Mode",
+        "description": "Virtual adapter mode (requires administrator)"
+      },
+      "proxy-mode": {
+        "title": "Proxy Mode",
+        "description": "Switch between Rule / Global / Direct"
+      },
+      "ip-address": {
+        "title": "IP Address",
+        "description": "Current public IP information"
+      },
+      "traffic-chart": {
+        "title": "Network speed",
+        "description": "Real-time network speed in standard full-width, half-width, or extra-large form"
+      },
+      "traffic-ranking": {
+        "title": "Traffic Ranking",
+        "description": "Traffic ranked by process / domain / policy"
+      },
+      "traffic-statistics": {
+        "title": "Traffic Statistics",
+        "description": "Total traffic and connection statistics"
+      },
+      "subscription-info": {
+        "title": "Subscription",
+        "description": "Usage and expiry of the active profile"
+      },
+      "rules-overview": {
+        "title": "Rules Overview",
+        "description": "Most and least matched rules"
+      },
+      "connectivity-check": {
+        "title": "Connectivity Check",
+        "description": "Check whether popular sites are reachable and their time to first byte"
+      },
+      "image": {
+        "title": "Image",
+        "description": "Put a picture of your own on the dashboard"
+      },
+      "network-control": {
+        "title": "Network control",
+        "description": "Control system proxy and TUN mode independently in one card"
+      },
+      "network-info": {
+        "title": "Network information",
+        "description": "View traffic and speed together, or choose an individual half-width metric"
+      },
+      "media-test": {
+        "title": "Media services",
+        "description": "Switch between Netflix, ChatGPT and Disney+ and test the current connection"
+      },
+      "route-trace": {
+        "title": "Route trace",
+        "description": "Probe the node entry hop by hop and view the route and latency on a dot globe"
+      }
+    },
+    "speedLines": {
+      "title": "Network Speed"
+    },
+    "connectivity": {
+      "title": "Connectivity",
+      "check": "Check",
+      "checking": "Checking",
+      "notChecked": "Not checked",
+      "unreachable": "Unreachable",
+      "fast": "Fast",
+      "normal": "Fair",
+      "slow": "Slow",
+      "timeout": "Timeout"
+    },
+    "imageCard": {
+      "pick": "Click to choose an image",
+      "change": "Change image",
+      "remove": "Remove image",
+      "saveFailed": "Failed to save image",
+      "removeFailed": "Failed to remove image"
+    },
+    "networkControl": {
+      "title": "Network control",
+      "active": "Active",
+      "inactive": "Inactive",
+      "startCore": "Start the core to enable TUN mode",
+      "tunUnavailable": "TUN is unavailable. Check the service or permissions."
+    },
+    "networkInfo": {
+      "title": "Network information",
+      "connections": "Connections",
+      "download": "Download",
+      "upload": "Upload"
+    },
+    "mediaTest": {
+      "title": "Media services",
+      "check": "Test current service",
+      "checkAll": "Test all services",
+      "previous": "Previous service",
+      "next": "Next service",
+      "disclaimer": "Checks service reachability on the current connection. Results are indicative, not proof of account or playback access.",
+      "status": {
+        "pending": "Not tested",
+        "testing": "Testing",
+        "supported": "Fully supported",
+        "reachable": "Reachable",
+        "partial": "Partial support",
+        "restricted": "Region restricted",
+        "unknown": "Inconclusive",
+        "failed": "Test failed"
+      },
+      "testService": "Test {{service}}"
+    },
+    "routeTrace": {
+      "title": "Route trace",
+      "start": "Start trace",
+      "stop": "Stop trace",
+      "details": "View hop details",
+      "preparing": "Resolving node entry…",
+      "tracing": "Probing hop {{count}}",
+      "summary": "{{count}} hops · {{ms}}",
+      "ready": "Refresh to start tracing",
+      "targetHint": "Traces the current node’s actual entry",
+      "disclaimer": "Results are indicative",
+      "localNetwork": "Local network",
+      "columns": {
+        "hop": "Hop",
+        "ip": "IP address",
+        "location": "Location",
+        "loss": "Loss",
+        "avg": "Avg",
+        "min": "Min",
+        "max": "Max"
+      },
+      "errors": {
+        "physical_interface_unavailable": "No usable physical network interface found",
+        "permission": "ICMP probing requires system permission",
+        "ipv6_only": "The entry supports IPv6 only",
+        "no_entry": "Start the core and select a node first",
+        "failed": "Route probing failed. Try again.",
+        "route_changed": "The node or configuration changed. Start a new trace."
+      }
+    },
+    "subscriptionImmersive": {
+      "expiresOn": "Expires {{date}}",
+      "expiredOn": "Expired {{date}}",
+      "noExpiry": "Expiry date unavailable",
+      "selectSubscription": "Select a subscription",
+      "remainingPercent": "{{percentage}}% of traffic remaining",
+      "used": "Used",
+      "usedPercent": "{{percentage}}% used",
+      "unknownUsage": "Usage unavailable"
+    },
+    "proxyModeOptions": {
+      "rule": "Rule",
+      "global": "Global",
+      "direct": "Direct"
+    }
   },
   "ipInfoDialog": {
     "title": "IP Details",
@@ -189,7 +394,34 @@
     "timezone": "Timezone",
     "clickToCopy": "Click to copy",
     "clickToCopyHint": "Click any row to copy its content",
-    "copied": "Copied: {{value}}"
+    "copied": "Copied: {{value}}",
+    "entryIp": "Entry IP",
+    "node": "Current node",
+    "entryNode": "Entry node",
+    "entryHost": "Entry host",
+    "entryDnsType": "Entry DNS type",
+    "privateDns": "Private DNS",
+    "entrySource": "Entry detection",
+    "directConnection": "Entry and exit are the same; treated as direct",
+    "resolvingEntry": "Resolving node entry",
+    "entryGeoFailed": "Entry IP resolved; location lookup is temporarily unavailable",
+    "entrySources": {
+      "tcp": "Actual core connection",
+      "dns": "Configured DNS (fallback)",
+      "config": "Node configuration (fallback)"
+    },
+    "entryErrors": {
+      "core_unavailable": "Core is stopped or its controller is unavailable",
+      "config_unavailable": "Runtime configuration is unavailable",
+      "no_selection": "No active proxy group selection found",
+      "selection_cycle": "A cycle was found in proxy groups or the dialer chain",
+      "node_not_found": "The selected node is unavailable",
+      "no_entry": "The current selection has no usable entry",
+      "node_config_unavailable": "Entry configuration was not found",
+      "unroutable_address": "The entry address is not routable",
+      "ipv6_only": "The entry has only an IPv6 address",
+      "dns_failed": "Entry DNS resolution failed"
+    }
   },
   "nodes": {
     "title": "Proxy Groups",
@@ -304,6 +536,8 @@
     "addSubscription": "Add Subscription",
     "uploadConfig": "Upload Configuration",
     "subscriptionLink": "Subscription Link",
+    "importSource": "Subscription URL or configuration",
+    "importSourceHint": "Paste YAML/JSON, node links or a Base64 subscription. Formats are detected and converted automatically.",
     "customName": "Remark Name (Optional)",
     "noSubscriptions": "No subscriptions added yet",
     "clickToAdd": "Click Add Subscription button to get started",
@@ -630,7 +864,73 @@
       "detail": "Supports subscription conversion for Clash, Clash Meta, Sing-box and more formats",
       "open": "Open Converter"
     },
-    "unknownNode": "Unknown Node"
+    "unknownNode": "Unknown Node",
+    "mtr": {
+      "title": "MTR route test",
+      "subtitle": "Inspect latency, packet loss and geographic routes hop by hop",
+      "detail": "Enter a domain or IPv4 address, or test the current node entry or exit. The proxy stays running during probes.",
+      "open": "Open route test",
+      "target": "Target",
+      "placeholder": "Domain or IPv4 address, e.g. example.com",
+      "start": "Start test",
+      "stop": "Stop test",
+      "entry": "Test node entry",
+      "exit": "Test exit IP",
+      "settings": "Probe settings",
+      "maxHops": "Maximum hops",
+      "probeCount": "Probes per hop",
+      "timeout": "Probe timeout",
+      "copy": "Copy results",
+      "copied": "Copied",
+      "clear": "Clear",
+      "routeView": "Route overview",
+      "waitingTarget": "Waiting for a target",
+      "overview": "Test overview",
+      "hops": "Hops probed",
+      "responded": "Responding hops",
+      "lastRtt": "Last response RTT",
+      "methodHint": "Up to six hops are probed concurrently. Locations load in the background. Probes use the physical interface source address.",
+      "globeHint": "Drag to rotate · Scroll to zoom · Double-click to auto-fit",
+      "hopDetails": "Hop details",
+      "lossHint": "A silent hop does not imply end-to-end packet loss",
+      "preparingHint": "Preparing probes…",
+      "empty": "Enter a target or select a quick test above",
+      "disclaimer": "Results are indicative. Routers may filter or rate-limit ICMP. Intermediate-hop loss does not measure end-to-end packet loss, and public IP geolocation can be inaccurate.",
+      "status": {
+        "idle": "Idle",
+        "preparing": "Preparing",
+        "running": "Testing",
+        "reached": "Target reached",
+        "finished": "Finished",
+        "failed": "Failed"
+      },
+      "columns": {
+        "hop": "Hop",
+        "ip": "IP address",
+        "sent": "Sent",
+        "received": "Received",
+        "loss": "Loss",
+        "avg": "Avg",
+        "min": "Min",
+        "max": "Max",
+        "location": "Location / ISP"
+      },
+      "errors": {
+        "invalid_target": "Enter a valid domain or IPv4 address without a scheme, path or port.",
+        "ipv6_only": "Hop probing currently supports IPv4 only. Use an IPv4 target.",
+        "invalid_probe_address": "The address is unsuitable for probing or is a proxy fake-IP.",
+        "dns_failed": "Target DNS resolution failed. Check the address and connection.",
+        "no_entry": "No node entry is available. Start the core and select a node.",
+        "core_unavailable": "The core is unavailable. You can still enter a domain or IPv4 address directly.",
+        "physical_interface_unavailable": "No usable physical interface found. Check the network connection.",
+        "permission": "ICMP probing is not permitted by the system.",
+        "probe_unavailable": "The probing API is unavailable. Restart the desktop development process.",
+        "route_changed": "The node or configuration changed. Start a new test.",
+        "exit_failed": "Could not retrieve the exit IP. Check the core and connection.",
+        "copy_failed": "Copy failed. Check clipboard permissions.",
+        "failed": "Probing failed. Check the connection and try again."
+      }
+    }
   },
   "logs": {
     "title": "Logs",

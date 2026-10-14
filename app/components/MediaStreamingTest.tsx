@@ -973,7 +973,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       </div>
 
       {/* 滚动内容区域 */}
-      <div className="flex-grow overflow-y-auto pr-2">
+      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto pr-2">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-2">
           {getFilteredServices().map((service, index) => {
             const { color, icon, text } = getStatusInfo(service.status, service);
@@ -1055,8 +1055,8 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                               <div className="text-xs font-normal text-gray-500 mt-1">节点: {currentNode}</div>
                             </DialogTitle>
                           </DialogHeader>
-                          <div className="flex-grow overflow-auto border rounded">
-                            <pre className="text-xs p-3 bg-gray-900 text-white whitespace-pre-wrap overflow-x-auto h-full">
+                          <div className="custom-scrollbar min-h-0 flex-grow overflow-auto border rounded">
+                            <pre className="custom-scrollbar text-xs p-3 bg-gray-900 text-white whitespace-pre-wrap overflow-x-auto h-full">
                               {logContent || '加载中...'}
                             </pre>
                           </div>

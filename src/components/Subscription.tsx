@@ -8,6 +8,7 @@ import CloudOutlineIcon from '@/components/icons/CloudOutlineIcon';
 import { useProviderAvailability } from '@/hooks/use-provider-availability';
 import { useTranslation } from 'react-i18next';
 import ConfigEditor from '@/components/ConfigEditor';
+import { sanitizeSubscriptionMessage, subscriptionErrorMessage } from '@/lib/subscription-errors';
 import {
   hasSubscriptionsCache,
   readActiveConfigCache,
@@ -80,8 +81,7 @@ const normalizeSaveSubscriptionResult = (result: SaveSubscriptionResultLike): { 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
 const formatSubscriptionError = (error: unknown, fallback = '操作失败') => {
-  const message = error instanceof Error ? error.message : (error ? String(error) : fallback);
-  return message.includes(TAURI_RUNTIME_UNAVAILABLE) ? '订阅 API 不可用' : message;
+  return subscriptionErrorMessage(error, fallback);
 };
 
 const formatSubscriptionLastUpdated = (value?: string | number | null): string => {
@@ -442,6 +442,7 @@ export default function SubscriptionManager() {
   const [isServiceRunning, setIsServiceRunning] = useState<boolean>(false);
   const switchSeqRef = useRef(0);
   const switchTargetRef = useRef<string | null>(null);
+  const switchCleanupRef = useRef<Promise<void>>(Promise.resolve());
   
   // 拖拽相关状态
   const [draggedItem, setDraggedItem] = useState<Subscription | null>(null);
@@ -553,9 +554,9 @@ export default function SubscriptionManager() {
     if (window.electronAPI?.onImportSubscription) {
       console.log('设置配置导入事件监听器');
       unsubscribeImport = window.electronAPI.onImportSubscription((url: string) => {
-        console.log('收到配置导入请求，URL:', url);
+        console.log('收到配置导入请求');
         if (url && url.trim() !== '') {
-          console.log('准备导入配置，设置URL并打开对话框');
+          console.log('准备导入配置并打开对话框');
           // 设置配置URL并自动打开配置添加对话框
           setSubUrl(url);
           setIsDialogOpen(true);
@@ -603,6 +604,7 @@ export default function SubscriptionManager() {
     if (window.electronAPI?.onActiveConfigChanged) {
       unsubscribeActiveConfig = window.electronAPI.onActiveConfigChanged((configPath) => {
         const nextActiveConfig = activeConfigEventPath(configPath);
+        if (switchTargetRef.current && nextActiveConfig !== switchTargetRef.current) return;
         updateActiveConfig(nextActiveConfig);
         refreshProvidersAvailability();
         notifyProfileUpdated({
@@ -670,6 +672,9 @@ export default function SubscriptionManager() {
 
   // 新增: 加载当前活跃的配置
   const loadActiveConfig = async () => {
+    // A poll started before a switch must not restore the previous selection.
+    if (switchTargetRef.current) return;
+    const seq = switchSeqRef.current;
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'getActiveConfig')) {
       updateActiveConfig(null);
@@ -680,6 +685,7 @@ export default function SubscriptionManager() {
     try {
       // 获取用户选择的配置（独立于服务运行状态）
       const config = await api.getActiveConfig();
+      if (switchTargetRef.current || seq !== switchSeqRef.current) return;
       const nextActiveConfig = activeConfigPath(config);
       updateActiveConfig(nextActiveConfig);
 
@@ -688,9 +694,11 @@ export default function SubscriptionManager() {
         const runningResult = hasElectronMethod(api, 'isMihomoRunning')
           ? await api.isMihomoRunning()
           : false;
+        if (switchTargetRef.current || seq !== switchSeqRef.current) return;
         const running = typeof runningResult === 'boolean' ? runningResult : false;
         setIsServiceRunning(!!running);
       } catch {
+        if (switchTargetRef.current || seq !== switchSeqRef.current) return;
         setIsServiceRunning(false);
       }
 
@@ -709,7 +717,9 @@ export default function SubscriptionManager() {
       return false;
     }
 
-    if (activeConfig === configPath && switchTargetRef.current !== configPath) {
+    // Serialize writes to the shared runtime config, including same-frame clicks.
+    if (switchTargetRef.current) return false;
+    if (activeConfig === configPath) {
       if (!options.suppressSuccessToast) {
         showToast('提示', '该配置文件已经处于激活状态', 'success');
       }
@@ -720,16 +730,25 @@ export default function SubscriptionManager() {
     switchTargetRef.current = configPath;
     const previousConfig = activeConfig;
     setSwitchingConfig(configPath);
-    updateActiveConfig(configPath);
 
-    const isStale = () =>
-      seq !== switchSeqRef.current || switchTargetRef.current !== configPath;
+    // Background refresh remains valid after the foreground switch releases its lock.
+    const isStale = () => seq !== switchSeqRef.current;
 
     try {
       let result: CompatResultLike | undefined;
       let failureNotified = false;
+      // Finish the previous connection cleanup before applying another profile.
+      // Cleanup is not part of the foreground acknowledgement for this switch.
+      await switchCleanupRef.current;
+      if (isStale()) return false;
+      // The five-second UI poll is not authoritative (especially just after startup).
+      const running = hasElectronMethod(api, 'isMihomoRunning')
+        ? await api.isMihomoRunning()
+        : isServiceRunning;
+      if (isStale()) return false;
+      setIsServiceRunning(running);
 
-      if (isServiceRunning) {
+      if (running) {
         if (!hasElectronMethod(api, 'reloadMihomoConfig')) {
           if (!isStale()) updateActiveConfig(previousConfig);
           showToast('错误', '配置热重载 API 不可用', 'error');
@@ -739,25 +758,8 @@ export default function SubscriptionManager() {
         result = await api.reloadMihomoConfig(configPath);
         if (isStale()) return false;
 
-        if (!compatSuccess(result)) {
-          if (!hasElectronMethod(api, 'stopMihomo') || !hasElectronMethod(api, 'startMihomo')) {
-            if (!isStale()) updateActiveConfig(previousConfig);
-            showToast('错误', `配置热重载失败: ${compatError(result, '切换配置文件失败')}`, 'error');
-            return false;
-          }
-
-          const stopResult = await api.stopMihomo();
-          if (isStale()) return false;
-          if (!compatSuccess(stopResult)) {
-            if (!isStale()) updateActiveConfig(previousConfig);
-            showToast('错误', `停止当前服务失败，无法切换配置: ${compatError(stopResult, '停止当前服务失败')}`, 'error');
-            return false;
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          if (isStale()) return false;
-          result = await api.startMihomo(configPath);
-        }
+        // A rejected config must leave the running core and old profile intact.
+        // Do not turn a hot switch into a disruptive stop/sleep/start cycle.
       } else {
         if (!hasElectronMethod(api, 'setPreferredConfig')) {
           if (!isStale()) updateActiveConfig(previousConfig);
@@ -808,14 +810,18 @@ export default function SubscriptionManager() {
       const finalSuccess = compatSuccess(result);
 
       if (finalSuccess) {
-        if (isServiceRunning || options.startIfStopped) {
-          try {
-            const { mihomoClient } = await import('@/services/mihomo-client');
-            await mihomoClient.closeAllConnections();
-          } catch {
-            // ignore
-          }
+        updateActiveConfig(configPath);
+        if (running || options.startIfStopped) {
+          switchCleanupRef.current = (async () => {
+            try {
+              const { mihomoClient } = await import('@/services/mihomo-client');
+              await mihomoClient.closeAllConnections();
+            } catch {
+              // The profile is already applied; cleanup failure must not undo it.
+            }
+          })();
         }
+        if (isStale()) return false;
 
         notifyProfileUpdated({
           action: 'switch-config',
@@ -824,60 +830,9 @@ export default function SubscriptionManager() {
           runtimeReload: runtimeReloadFromResult(result),
         });
 
-        if (isServiceRunning || options.startIfStopped) {
-          const refreshProxies = async (attempt = 0) => {
-            if (isStale()) return;
-            try {
-              if (!hasElectronMethod(api, 'getProxies')) return;
-              const proxies = await api.getProxies();
-              if (isStale()) return;
-              const groups = Array.isArray((proxies as any)?.groups)
-                ? (proxies as any).groups
-                : Array.isArray((proxies as any)?.proxies)
-                  ? Object.values((proxies as any).proxies)
-                  : [];
-              const hasTree = groups.length > 0 || (proxies && (proxies as any).proxies);
+        // The authoritative reload acknowledgement already guarantees readiness.
+        // ProxyNodes owns one coalesced snapshot refresh; no duplicate polling here.
 
-              if (hasTree) {
-                const selectedNodeName =
-                  typeof (proxies as any)?.selected === 'string' && (proxies as any).selected
-                    ? (proxies as any).selected
-                    : (Array.isArray((proxies as any)?.groups) ? (proxies as any).groups : [])
-                        .map((group: any) => group?.now)
-                        .find((name: unknown) => typeof name === 'string' && name.length > 0);
-
-                if (selectedNodeName && hasElectronMethod(api, 'notifyNodeChanged')) {
-                  await api.notifyNodeChanged(selectedNodeName);
-                }
-
-                notifyProfileUpdated({
-                  action: 'switch-config-ready',
-                  filePath: configPath,
-                  activeConfig: configPath,
-                });
-                return;
-              }
-            } catch (error) {
-              console.error('获取节点信息失败:', error);
-            }
-
-            if (attempt < 8) {
-              window.setTimeout(() => {
-                void refreshProxies(attempt + 1);
-              }, 200 * (attempt + 1));
-            } else if (!isStale()) {
-              notifyProfileUpdated({
-                action: 'switch-config-ready',
-                filePath: configPath,
-                activeConfig: configPath,
-              });
-            }
-          };
-
-          window.setTimeout(() => {
-            void refreshProxies();
-          }, 50);
-        }
       } else {
         if (!isStale()) updateActiveConfig(previousConfig);
         if (!failureNotified) {
@@ -1318,7 +1273,7 @@ export default function SubscriptionManager() {
   const addSubscription = async (e: React.SyntheticEvent, activateAfterSave = false) => {
     e.preventDefault();
     
-    console.log('开始添加订阅，URL:', subUrl);
+    console.log('开始添加订阅');
     
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'fetchSubscription') || !hasElectronMethod(api, 'saveSubscription')) {
@@ -1328,7 +1283,7 @@ export default function SubscriptionManager() {
     }
     
     if (!subUrl.trim()) {
-      showToast('错误', '请输入有效的订阅链接', 'error');
+      showToast('错误', '请输入订阅链接或配置内容', 'error');
       console.error('订阅URL为空，取消添加');
       return;
     }
@@ -1344,7 +1299,7 @@ export default function SubscriptionManager() {
 
         // 确保传递订阅信息
         const saveResult = normalizeSaveSubscriptionResult(await api.saveSubscription(
-          subUrl,
+          configData.sourceType === 'inline' ? 'local:imported' : subUrl,
           configData.content,
           customName,
           configData.subscriptionInfo
@@ -1400,7 +1355,7 @@ export default function SubscriptionManager() {
       }
     } catch (error) {
       showToast('错误', `添加订阅失败: ${formatSubscriptionError(error)}`, 'error');
-      console.error('添加订阅失败:', error);
+      console.error('添加订阅失败:', formatSubscriptionError(error));
     } finally {
       setIsLoading(false);
       setAddSubmitMode(null);
@@ -1740,7 +1695,7 @@ export default function SubscriptionManager() {
 
   const isYamlFileName = useCallback((name: string) => {
     const lower = name.toLowerCase();
-    return lower.endsWith('.yaml') || lower.endsWith('.yml');
+    return /\.(yaml|yml|json|txt|conf)$/.test(lower);
   }, []);
 
   const finalizeImportedSubscriptions = useCallback(async (importedPaths: string[]) => {
@@ -1785,7 +1740,7 @@ export default function SubscriptionManager() {
         file.type === 'text/yaml',
     );
     if (validFiles.length === 0) {
-      showToast('错误', '请上传有效的YAML配置文件', 'error');
+      showToast('错误', '请选择 YAML、JSON、TXT 或 CONF 配置文件', 'error');
       return;
     }
 
@@ -1803,7 +1758,7 @@ export default function SubscriptionManager() {
             await api.saveSubscription(
               `local:${file.name}`,
               content,
-              file.name.replace(/\.(ya?ml)$/i, ''),
+              file.name.replace(/\.(ya?ml|json|txt|conf)$/i, ''),
               { lastUpdated: new Date().toISOString() },
             ),
           );
@@ -1844,7 +1799,7 @@ export default function SubscriptionManager() {
 
     const validPaths = paths.filter((path) => isYamlFileName(path));
     if (validPaths.length === 0) {
-      showToast('错误', '请上传有效的YAML配置文件', 'error');
+      showToast('错误', '请选择 YAML、JSON、TXT 或 CONF 配置文件', 'error');
       return;
     }
 
@@ -1868,7 +1823,7 @@ export default function SubscriptionManager() {
             'config.yaml';
           const displayName =
             (typeof payload?.name === 'string' && payload.name) ||
-            fileName.replace(/\.(ya?ml)$/i, '');
+            fileName.replace(/\.(ya?ml|json|txt|conf)$/i, '');
 
           if (!success || !content.trim()) {
             showToast(
@@ -2094,7 +2049,7 @@ export default function SubscriptionManager() {
                 type="file"
                 ref={fileInputRef}
                 className="hidden"
-                accept=".yaml,.yml,application/x-yaml,text/yaml"
+                accept=".yaml,.yml,.json,.txt,.conf,application/x-yaml,text/yaml,application/json,text/plain"
                 onChange={handleFileSelect}
                 multiple
               />
@@ -2113,7 +2068,7 @@ export default function SubscriptionManager() {
 
                 <Dialog.Portal>
                   <Dialog.Overlay className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm" />
-                  <Dialog.Content className="fixed left-1/2 top-1/2 z-[95] w-[min(420px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white/95 p-6 shadow-2xl outline-none transition-all dark:bg-[#2a2a2a] backdrop-blur-xl">
+                  <Dialog.Content className="custom-scrollbar fixed left-1/2 top-1/2 z-[95] w-[min(420px,92vw)] max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white/95 p-6 shadow-2xl outline-none transition-all dark:bg-[#2a2a2a] backdrop-blur-xl">
                     <Dialog.Title className="mb-4 flex items-center text-lg font-semibold text-slate-900 dark:text-white">
                       <GlobeIcon className="mr-2 h-5 w-5 text-blue-500" />
                       {t('subscriptions.addSubscription')}
@@ -2126,21 +2081,24 @@ export default function SubscriptionManager() {
                     <div className="mb-4">
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center">
                         <GlobeIcon className="w-4 h-4 mr-2 text-blue-500" />
-                        {t('subscriptions.subscriptionLink')}
+                        {t('subscriptions.importSource')}
                       </label>
                       <div className="relative">
-                        <input
-                          type="text"
-                          className="w-full py-2 pl-10 pr-3 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#222222] text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                        <textarea
+                          rows={3}
+                          spellCheck={false}
+                          aria-label={t('subscriptions.importSource')}
+                          className="custom-scrollbar w-full max-w-full max-h-48 resize-y py-2 pl-10 pr-3 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#222222] text-sm text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                           placeholder="https://example.com/subscription"
                           value={subUrl}
                           onChange={(e) => setSubUrl(e.target.value)}
                           required
                         />
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <div className="absolute top-2.5 left-0 pl-3 flex items-center pointer-events-none">
                           <GlobeIcon className="h-5 w-5 text-gray-400" />
                         </div>
                       </div>
+                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{t('subscriptions.importSourceHint')}</p>
                     </div>
                     
                     <div className="mb-4">
@@ -2228,15 +2186,6 @@ export default function SubscriptionManager() {
         
         {/* 卡片网格 */}
         <div>
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-white flex items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              {t('subscriptions.myConfigs')}
-            </h2>
-          </div>
-
           {isSubscriptionsLoading && subscriptions.length === 0 ? (
             <div className="min-h-[220px] rounded-2xl bg-white shadow-sm dark:bg-[#2a2a2a]" aria-busy="true" />
           ) : subscriptions.length === 0 ? (
@@ -2262,12 +2211,13 @@ export default function SubscriptionManager() {
                 <div
                   key={sub.path}
                   data-subscription-path={sub.path}
+                  aria-busy={switchingConfig === sub.path}
                   ref={draggedItem?.path === sub.path ? draggedItemRef : null}
                   className={`relative flex h-full min-h-[140px] flex-col overflow-hidden rounded-2xl border select-none ${
-                    activeConfig === sub.path
-                      ? 'bg-white dark:bg-[#2a2a2a] border-l-4 border-l-blue-500 dark:border-l-blue-400 border-slate-200 dark:border-slate-700'
+                    (switchingConfig ?? activeConfig) === sub.path
+                      ? 'bg-white dark:bg-[#2a2a2a] border-blue-500 ring-1 ring-blue-500 dark:border-blue-400 dark:ring-blue-400'
                       : 'bg-white dark:bg-[#2a2a2a] border-slate-200 dark:border-slate-700'
-                  } p-2.5 shadow-sm transition-all duration-300 group hover:-translate-y-0.5 hover:shadow-md
+                  } p-2.5 shadow-sm transition-[transform,box-shadow,background-color] duration-150 group hover:-translate-y-0.5 hover:shadow-md
                     ${draggedItem?.path === sub.path ? 'opacity-70 scale-[1.02] shadow-lg' : 'opacity-100'}
                     ${dragOverItem?.path === sub.path ? 'border-dashed border-blue-500 dark:border-blue-400 translate-y-1 shadow-md' : ''}
                     ${isDraggingCard && draggedItem?.path !== sub.path && dragOverItem?.path !== sub.path ? 'opacity-90' : ''}
@@ -2369,7 +2319,7 @@ export default function SubscriptionManager() {
                     )}
 
                     {/* 删除按钮 - 隐藏当前激活配置的删除按钮 */}
-                    {activeConfig !== sub.path && (
+                    {activeConfig !== sub.path && switchingConfig !== sub.path && (
                       <button
                         draggable="false"
                         onClick={(e) => {
@@ -2400,7 +2350,12 @@ export default function SubscriptionManager() {
                         />
                       )}
                       {sub.name}
-                      {activeConfig === sub.path ? (
+                      {switchingConfig === sub.path ? (
+                        <span role="status" aria-label={t('subscriptions.activating')} title={t('subscriptions.activating')}
+                          className="ml-1.5 inline-flex shrink-0 items-center rounded bg-blue-50 px-1.5 py-0.5 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400">
+                          <ReloadIcon aria-hidden className="size-3 animate-spin" />
+                        </span>
+                      ) : activeConfig === sub.path ? (
                         <span className="ml-1.5 py-0.5 px-1.5 text-[9px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded font-normal">
                           {t('subscriptions.current')}
                         </span>
@@ -2411,16 +2366,6 @@ export default function SubscriptionManager() {
                       )}
                     </h3>
                   </div>
-                  
-                  {/* 显示正在切换状态的加载指示器 */}
-                  {switchingConfig === sub.path && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/80 dark:bg-gray-900/80">
-                      <div className="flex flex-col items-center">
-                        <ReloadIcon className="w-8 h-8 animate-spin text-blue-500 mb-2" />
-                        <span className="text-sm text-gray-600 dark:text-gray-300">{t('subscriptions.activating')}</span>
-                      </div>
-                    </div>
-                  )}
                   
                   {/* 内容区域 - 占用主要空间 */}
                   <div className="flex flex-1 flex-col">
@@ -2563,7 +2508,7 @@ export default function SubscriptionManager() {
           open={toastOpen}
           onOpenChange={setToastOpen}
           duration={3000}
-          className="fixed bottom-6 right-6 w-80 rounded-2xl shadow-lg backdrop-blur-sm z-[9999] transition-all bg-white/95 dark:bg-[#2a2a2a]/95"
+          className="fixed bottom-6 right-6 w-80 max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl shadow-lg backdrop-blur-sm z-[9999] transition-all bg-white/95 dark:bg-[#2a2a2a]/95"
         >
           <div className="p-4">
             <div className="flex items-start gap-3">
@@ -2589,8 +2534,8 @@ export default function SubscriptionManager() {
                 <Toast.Title className="text-sm font-semibold text-foreground mb-1">
                   {toastTitle}
                 </Toast.Title>
-                <Toast.Description className="text-xs text-muted-foreground">
-                  {toastDescription}
+                <Toast.Description className="custom-scrollbar max-h-32 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] text-xs text-muted-foreground">
+                  {sanitizeSubscriptionMessage(toastDescription)}
                 </Toast.Description>
               </div>
 

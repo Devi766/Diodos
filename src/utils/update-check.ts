@@ -1,7 +1,7 @@
-export const RELEASES_PAGE_URL = 'https://github.com/GtxFury/FlyClash/releases';
+export const RELEASES_PAGE_URL = 'https://github.com/Devi766/FlyClash/releases';
 
 const RELEASE_API_ENDPOINTS = [
-  'https://api.github.com/repos/GtxFury/FlyClash/releases/latest',
+  'https://api.github.com/repos/Devi766/FlyClash/releases/latest',
 ];
 export const UPDATE_AVAILABLE_EVENT = 'flyclash-update-available';
 
@@ -54,7 +54,7 @@ const officialReleaseUrl = (value: unknown, tagName: string) => {
       if (
         url.protocol === 'https:' &&
         url.hostname === 'github.com' &&
-        url.pathname.startsWith('/GtxFury/FlyClash/releases/')
+        url.pathname.startsWith('/Devi766/FlyClash/releases/')
       ) {
         return url.toString();
       }

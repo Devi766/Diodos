@@ -15,6 +15,13 @@ import {
   ViewVerticalIcon,
   ViewHorizontalIcon
 } from '@radix-ui/react-icons';
+import { createProxyRefreshScheduler, enrichProxyIcons } from '@/lib/proxy-refresh';
+import { ProxyNodesSkeleton } from './ProxyNodesSkeleton';
+import { LatencyBoltIcon } from './icons/LatencyBoltIcon';
+import { FavoriteStarIcon } from './icons/FavoriteStarIcon';
+import { NodeLatencyBadge } from './NodeLatencyBadge';
+import { createNodeLatencyTester } from '@/lib/node-latency';
+import { createGroupLatencyTester, GROUP_LATENCY_URL } from '@/lib/group-latency';
 import { Badge } from "./ui/badge";
 import { useMihomoAPI } from '../services/mihomo-api';
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -268,9 +275,7 @@ const unpackProxyGroupsCache = (
 const clearProxyNodesOrderedCache = () => {
   proxyNodesViewCache.configOrder = null;
   proxyNodesViewCache.providerNodeOrders = null;
-  proxyNodesViewCache.groups = [];
-  proxyNodesViewCache.selectedNode = null;
-  proxyNodesViewCache.loaded = false;
+  // Invalidate identity/order, but retain the last visible snapshot until replacement.
   clearProxyGroupsCache({ broadcast: false });
 };
 
@@ -773,6 +778,8 @@ export default function ProxyNodes() {
     return [];
   });
   const [isLoading, setIsLoading] = useState(() => !proxyNodesViewCache.loaded);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSnapshotStale, setIsSnapshotStale] = useState(false);
   const [isModeSwitching, setIsModeSwitching] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNode, setSelectedNode] = useState<string | null>(() => proxyNodesViewCache.selectedNode);
@@ -924,6 +931,20 @@ export default function ProxyNodes() {
   const groupsRef = useRef(groups);
   const currentModeRef = useRef<ProxyMode>(currentMode);
   const fetchGenerationRef = useRef(0);
+  const latencyTesterRef = useRef<ReturnType<typeof createNodeLatencyTester> | null>(null);
+  const latencyGroupRunsRef = useRef(new Map<string, symbol>());
+  const groupLatencyTesterRef = useRef<ReturnType<typeof createGroupLatencyTester> | null>(null);
+  const latencySnapshotRef = useRef<unknown>(undefined);
+  const individualPendingRef = useRef(new Set<string>());
+  const groupPendingRef = useRef(new Set<string>());
+  const syncLatencyPending = () => setTestingNodes(new Set([...individualPendingRef.current, ...groupPendingRef.current]));
+  const cancelLatencyTests = () => {
+    latencyTesterRef.current?.cancel();
+    groupLatencyTesterRef.current?.cancel();
+    latencyGroupRunsRef.current.clear();
+    setTestingGroups(new Set());
+  };
+  const refreshSchedulerRef = useRef<ReturnType<typeof createProxyRefreshScheduler> | null>(null);
   const layoutModeRef = useRef<LayoutMode>(layoutMode);
   const sortModeRef = useRef<NodesSortMode>(sortMode);
   const pendingNodeSelectionRef = useRef<NodeSelectionRequest | null>(null);
@@ -1429,94 +1450,27 @@ export default function ProxyNodes() {
     const requestId = fetchGenerationRef.current + 1;
     fetchGenerationRef.current = requestId;
     const isLatestRequest = () => fetchGenerationRef.current === requestId;
-    const hasWarmProxyContent = () =>
-      groupsRef.current.length > 0 ||
-      proxyNodesViewCache.groups.length > 0 ||
-      hasTrustedProxyGroupsSessionCache();
-
     if (isInitialLoadRef.current && groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
       setIsLoading(true);
     }
 
     try {
-      // 检查Mihomo是否运行
-      const runtimeRunning = await queryRuntimeRunning();
+      // The proxy response itself proves readiness; avoid serial status/version probes.
+      const [proxyResult, modeResult] = await Promise.allSettled([
+        mihomoAPI.proxies(), mihomoAPI.configs(),
+      ]);
       if (!isLatestRequest()) return;
-      if (runtimeRunning === false) {
-        setMihomoRunning(false);
-        writeMihomoRunningCache(false);
-        writeProxyGroupsCache(proxyGroupsCacheValue(currentModeRef.current, []));
-        if (groupsRef.current.length === 0) {
-          setIsLoading(false);
-        }
-        return;
-      }
-      if (runtimeRunning === true) {
-        setMihomoRunning(true);
-        writeMihomoRunningCache(true);
-      }
-
-      try {
-        // 使用API验证mihomo是否运行
-        const versionInfo = await mihomoAPI.version();
-        if (!isLatestRequest()) return;
-        if (versionInfo) {
-          setMihomoRunning(true);
-        } else {
-          if (hasWarmProxyContent()) {
-            setMihomoRunning(true);
-            setIsLoading(false);
-            return;
-          }
-          if (groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
-            setMihomoRunning(false);
-          }
-          writeMihomoRunningCache(false);
-          writeProxyGroupsCache(proxyGroupsCacheValue(currentModeRef.current, []));
-          // 只在初始加载时才设置loading为false
-          if (groupsRef.current.length === 0) {
-            setIsLoading(false);
-          }
-          return;
-        }
-      } catch (error) {
-        if (!isLatestRequest()) return;
-        if (isDev) {
-          console.debug('Mihomo未运行:', error);
-        }
-        if (runtimeRunning === true) {
-          setMihomoRunning(true);
-          setIsLoading(false);
-          return;
-        }
-        if (hasWarmProxyContent()) {
-          setMihomoRunning(true);
-          setIsLoading(false);
-          return;
-        }
-        if (groupsRef.current.length === 0 && !proxyNodesViewCache.loaded) {
-          setMihomoRunning(false);
-        }
-        writeMihomoRunningCache(false);
-        writeProxyGroupsCache(proxyGroupsCacheValue(currentModeRef.current, []));
-        // 只在初始加载时才设置loading为false
-        if (groupsRef.current.length === 0) {
-          setIsLoading(false);
-        }
-        return;
-      }
-
-      // 获取当前模式
+      if (proxyResult.status === 'rejected') throw proxyResult.reason;
+      const data = proxyResult.value;
+      latencySnapshotRef.current = data;
+      if (!data?.proxies) throw new Error('获取代理信息失败');
+      setMihomoRunning(true);
+      writeMihomoRunningCache(true);
       let currentProxyMode = currentModeRef.current;
-      try {
-        const config = await mihomoAPI.configs();
-        if (!isLatestRequest()) return;
-        currentProxyMode = normalizeProxyMode(config.mode, currentModeRef.current);
+      if (modeResult.status === 'fulfilled') {
+        currentProxyMode = normalizeProxyMode(modeResult.value.mode, currentModeRef.current);
         setCurrentMode(currentProxyMode);
         writeProxyModeCache(currentProxyMode, { broadcast: false });
-      } catch (error) {
-        if (!isLatestRequest()) return;
-        console.error('获取当前模式失败:', error);
       }
 
       // 直连模式只隐藏列表，不丢弃已加载的完整组数据，避免切回时闪空
@@ -1526,9 +1480,7 @@ export default function ProxyNodes() {
         }
         writeMihomoRunningCache(true);
         writeProxyModeCache(currentProxyMode, { broadcast: false });
-        writeProxyGroupsCache(
-          proxyGroupsCacheValue(currentProxyMode, groupsRef.current, proxyNodesViewCache.configOrder?.configPath),
-        );
+        // Publish only the new snapshot below, never tag the old tree with the new profile.
         if (isInitialLoadRef.current) {
           setIsLoading(false);
           isInitialLoadRef.current = false;
@@ -1536,12 +1488,6 @@ export default function ProxyNodes() {
         // 仍继续拉取完整组，方便切回规则/全局时瞬时过滤展示
       }
 
-      const proxiesData = await mihomoAPI.proxies();
-      if (!isLatestRequest()) return;
-      if (!proxiesData || !proxiesData.proxies) {
-        throw new Error('获取代理信息失败');
-      }
-      const data = proxiesData;
 
       let configOrder = proxyNodesViewCache.configOrder ?? undefined;
       if (window.electronAPI) {
@@ -1678,15 +1624,7 @@ export default function ProxyNodes() {
             const globalConfigGroup = configOrder?.proxyGroups?.find((g) => g.name === 'GLOBAL');
             const globalConfigIcon = globalConfigGroup?.icon || (globalData as any)?.icon || null;
 
-            let globalIcon = globalConfigIcon;
-            try {
-              const result = await window.electronAPI?.proxyIcon?.getGroupIcon('GLOBAL', globalConfigIcon);
-              if (result?.success && result.iconPath) {
-                globalIcon = result.iconPath;
-              }
-            } catch (error) {
-              console.error('[ProxyNodes] 获取GLOBAL组图标失败:', error);
-            }
+            const globalIcon = globalConfigIcon;
 
             groupsData.push({
               name: 'GLOBAL',
@@ -1908,15 +1846,7 @@ export default function ProxyNodes() {
         const groupConfigIcon = configGroup?.icon || (proxy as any)?.icon || null;
 
         // 获取最终图标（优先使用配置中的图标，否则使用规则匹配）
-        let groupIcon = groupConfigIcon;
-        try {
-          const result = await window.electronAPI?.proxyIcon?.getGroupIcon(groupName, groupConfigIcon);
-          if (result?.success && result.iconPath) {
-            groupIcon = result.iconPath;
-          }
-        } catch (error) {
-          console.error(`[ProxyNodes] 获取${groupName}组图标失败:`, error);
-        }
+        const groupIcon = groupConfigIcon;
 
         groupsData.push({
           name: groupName,
@@ -1979,25 +1909,45 @@ export default function ProxyNodes() {
         console.error('Failed to cache proxy groups:', error);
       }
       setSelectedNode(nextSelectedNode);
+      setIsSnapshotStale(false);
+      groupsRef.current = nextGroupsData;
       setGroups(nextGroupsData);
+      // Do not await downloads (one remote icon can take 10 seconds).
+      void enrichProxyIcons(nextGroupsData,
+        (name, icon) => window.electronAPI?.proxyIcon?.getGroupIcon(name, icon) ?? Promise.resolve(undefined),
+        isLatestRequest,
+        (name, icon) => setGroups(previous => isLatestRequest()
+          ? previous.map(group => group.name === name ? { ...group, icon } : group)
+          : previous),
+      );
     } catch (error) {
       if (!isLatestRequest()) return;
+      if (isMihomoRuntimeUnavailableError(error)) {
+        const running = await queryRuntimeRunning();
+        if (!isLatestRequest()) return;
+        if (running === false) {
+          setMihomoRunning(false);
+          writeMihomoRunningCache(false);
+        }
+      }
       console.error('获取代理失败:', error);
       showError(t('nodes.fetchFailed', { error: formatNodesError(error) }));
     } finally {
-      if (isLatestRequest() && isInitialLoadRef.current) {
+      if (isLatestRequest()) {
+        setIsRefreshing(false);
         setIsLoading(false);
         isInitialLoadRef.current = false;
       }
     }
   };
 
-  const scheduleSoftRefresh = () => {
-    if (isUserScrollingRef.current) {
+  const scheduleSoftRefresh = (urgent = false) => {
+    if (!urgent && isUserScrollingRef.current) {
       pendingRefreshRef.current = true;
       return;
     }
-    fetchProxies();
+    refreshSchedulerRef.current ??= createProxyRefreshScheduler(() => fetchProxies());
+    refreshSchedulerRef.current.schedule();
   };
 
   // 初始加载以及在配置/Profile 更新时刷新
@@ -2018,15 +1968,16 @@ export default function ProxyNodes() {
       }
 
       if (isProfileSwitch) {
-        setGroups([]);
-        setSelectedNode(null);
-        setIsLoading(true);
+        cancelLatencyTests();
+        fetchGenerationRef.current += 1;
+        setIsRefreshing(true);
+        setIsSnapshotStale(true);
+        setIsLoading(groupsRef.current.length === 0);
         isInitialLoadRef.current = true;
-        groupsRef.current = [];
       }
 
       setErrorMessage(null);
-      scheduleSoftRefresh();
+      scheduleSoftRefresh(isProfileSwitch);
     };
 
     const onProxyIconChanged = () => {
@@ -2045,13 +1996,14 @@ export default function ProxyNodes() {
         writeActiveConfigCache(configPath.trim(), { broadcast: false });
       }
       clearProxyNodesOrderedCache();
-      setGroups([]);
-      setSelectedNode(null);
-      setIsLoading(true);
+      cancelLatencyTests();
+      fetchGenerationRef.current += 1;
+      setIsRefreshing(true);
+      setIsSnapshotStale(true);
+      setIsLoading(groupsRef.current.length === 0);
       isInitialLoadRef.current = true;
-      groupsRef.current = [];
       setErrorMessage(null);
-      scheduleSoftRefresh();
+      scheduleSoftRefresh(true);
     });
     const unsubscribeAutoUpdated = window.electronAPI?.onSubscriptionAutoUpdated?.(() => {
       clearProxyNodesOrderedCache();
@@ -2065,6 +2017,14 @@ export default function ProxyNodes() {
         window.removeEventListener('subscription-auto-updated', refreshCurrentProxyTree);
         window.removeEventListener('proxy-icon-changed', onProxyIconChanged);
       }
+      fetchGenerationRef.current += 1;
+      latencyTesterRef.current?.dispose();
+      latencyTesterRef.current = null;
+      groupLatencyTesterRef.current?.dispose();
+      groupLatencyTesterRef.current = null;
+      latencyGroupRunsRef.current.clear();
+      refreshSchedulerRef.current?.dispose();
+      refreshSchedulerRef.current = null;
       unsubscribeActiveConfig?.();
       unsubscribeAutoUpdated?.();
     };
@@ -2116,181 +2076,77 @@ export default function ProxyNodes() {
     }
   }, [collapsedPreferenceReady, groups, persistCollapsedGroups]); // 只在groups首次加载时触发
 
-  // 测试节点延迟
+  const getLatencyTester = () => {
+    latencyTesterRef.current ??= createNodeLatencyTester({
+      concurrency: 5,
+      probe: (name, isCurrent) => runLatencyTestWithRetry(async () => {
+        // The mode barrier/retry loop may outlive a profile switch.
+        if (!isCurrent()) throw new Error('latency_cancelled');
+        const api = window.electronAPI;
+        if (typeof api?.testNodeDelay === 'function') return api.testNodeDelay(name);
+        const result = await mihomoAPI.proxiesDelay(name, { timeout: 5000 });
+        return result?.delay ?? 0;
+      }),
+      onPending: names => { individualPendingRef.current = names; syncLatencyPending(); },
+      onResult: (name, delay) => setGroups(previous => previous.map(group => ({
+        ...group,
+        nodes: group.nodes.map(node => node.name === name ? { ...node, delay } : node),
+      }))),
+    });
+    return latencyTesterRef.current;
+  };
+
   const handleTestNode = async (nodeName: string, options?: { silent?: boolean }) => {
-    if (mihomoRunning === false) {
-      showError(t('nodes.testFailed'));
-      return;
-    }
-    
-    if (testingNodes.has(nodeName)) return;
-    
-    // 添加到测试中的节点
-    setTestingNodes(prev => {
-      const newSet = new Set(prev);
-      newSet.add(nodeName);
-      return newSet;
-    });
-    
-    try {
-      let delayValue = 0;
-      const api = window.electronAPI;
-
-      if (typeof api?.testNodeDelay === 'function') {
-        const result = await runLatencyTestWithRetry(() => api.testNodeDelay(nodeName));
-        delayValue = typeof result === 'number' ? result : 0;
-      } else {
-        // 使用统一的 Mihomo API 进行延迟测试
-        const result = await runLatencyTestWithRetry(() =>
-          mihomoAPI.proxiesDelay(nodeName, {
-            timeout: 5000,
-          }),
-        );
-        delayValue = typeof result?.delay === 'number' ? result.delay : 0;
-      }
-
-      if (delayValue <= 0) {
-        throw new Error(t('nodes.timeout'));
-      }
-
-      setGroups(prevGroups => {
-        return prevGroups.map(group => {
-          const updatedNodes = group.nodes.map(node => {
-            if (node.name === nodeName) {
-              return { ...node, delay: delayValue };
-            }
-            return node;
-          });
-          return { ...group, nodes: updatedNodes };
-        });
-      });
-    } catch (error) {
-      if (isDev) {
-        console.error('[调试] 测试节点延迟失败:', error);
-      }
-      if (!options?.silent) {
-        showError(t('nodes.testNodeFailed', { node: nodeName, error: formatNodesError(error, t('nodes.timeout')) }));
-      }
-      // 更新节点为超时状态
-      setGroups(prevGroups => {
-        return prevGroups.map(group => {
-          const updatedNodes = group.nodes.map(node => {
-            if (node.name === nodeName) {
-              return { ...node, delay: 0 }; // 使用0表示超时
-            }
-            return node;
-          });
-          return { ...group, nodes: updatedNodes };
-        });
-      });
-    } finally {
-      // 从测试集合中移除
-      setTestingNodes(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(nodeName);
-        return newSet;
-      });
+    if (mihomoRunning === false) { showError(t('nodes.testFailed')); return; }
+    const result = await getLatencyTester().test([nodeName]);
+    if (!result.cancelled && result.failCount && !options?.silent) {
+      showError(t('nodes.testNodeFailed', { node: nodeName, error: t('nodes.timeout') }));
     }
   };
 
-  // 测试代理组延迟（优先使用 Mihomo 组延迟接口）
+  const getGroupLatencyTester = () => {
+    groupLatencyTesterRef.current ??= createGroupLatencyTester({
+      probeGroup: (group, isCurrent) => runLatencyTestWithRetry(() => {
+        if (!isCurrent()) throw new Error('latency_cancelled');
+        return mihomoAPI.groupDelay(group, { timeout: 5000, url: GROUP_LATENCY_URL });
+      }),
+      baselineSnapshot: () => latencySnapshotRef.current,
+      readSnapshot: () => mihomoAPI.proxies(),
+      onPending: names => { groupPendingRef.current = names; syncLatencyPending(); },
+      onResults: values => setGroups(previous => previous.map(group => ({
+        ...group,
+        nodes: group.nodes.map(node => Object.prototype.hasOwnProperty.call(values, node.name)
+          ? { ...node, delay: values[node.name] } : node),
+      }))),
+    });
+    return groupLatencyTesterRef.current;
+  };
+
+  // Preserve native group parallelism; stream only newly recorded history into the UI.
   const handleTestGroup = async (groupName: string) => {
-    if (mihomoRunning === false) {
-      showError(t('nodes.testFailed'));
-      return;
-    }
-
-    if (testingGroups.has(groupName)) return;
-
-    const group = groups.find(g => g.name === groupName);
+    if (mihomoRunning === false) { showError(t('nodes.testFailed')); return; }
+    if (latencyGroupRunsRef.current.has(groupName)) return;
+    const group = groups.find(item => item.name === groupName);
     if (!group) return;
-
-    // 标记该组为测试中
-    setTestingGroups(prev => {
-      const newSet = new Set(prev);
-      newSet.add(groupName);
-      return newSet;
-    });
-
+    const run = Symbol(groupName);
+    latencyGroupRunsRef.current.set(groupName, run);
+    setTestingGroups(previous => new Set(previous).add(groupName));
     try {
-      // 使用 /group/{name}/delay 一次性测试组内所有节点
-      const result = await runLatencyTestWithRetry(() =>
-        mihomoAPI.groupDelay(groupName, {
-          timeout: 5000,
-        }),
-      );
-
-      setGroups(prevGroups => {
-        return prevGroups.map(g => {
-          if (g.name !== groupName) return g;
-
-          const updatedNodes = g.nodes.map(node => {
-            const value = result ? (result as any)[node.name] : undefined;
-            if (typeof value === 'number') {
-              return { ...node, delay: value };
-            }
-            return node;
-          });
-
-          return { ...g, nodes: updatedNodes };
-        });
-      });
-
-      const delays = result || {};
-      const successCount = Object.values(delays).filter(v => typeof v === 'number' && v > 0).length;
-      const failCount = group.nodes.length - successCount;
-
-      showSuccess(t('nodes.testGroupComplete', { groupName, successCount, failCount }));
-    } catch (error: any) {
-      console.error(`测试代理组 ${groupName} 失败:`, error);
-      showError(t('nodes.testGroupFailed', { groupName, error: formatNodesError(error) }));
+      const result = await getGroupLatencyTester().test(groupName, group.nodes.map(node => node.name));
+      if (!result.cancelled && latencyGroupRunsRef.current.get(groupName) === run) {
+        if (result.error) showError(t('nodes.testGroupFailed', { groupName, error: formatNodesError(result.error) }));
+        else showSuccess(t('nodes.testGroupComplete', { groupName, successCount: result.successCount, failCount: result.failCount }));
+      }
     } finally {
-      setTestingGroups(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(groupName);
-        return newSet;
-      });
+      if (latencyGroupRunsRef.current.get(groupName) === run) {
+        latencyGroupRunsRef.current.delete(groupName);
+        setTestingGroups(previous => { const next = new Set(previous); next.delete(groupName); return next; });
+      }
     }
   };
 
-  // 使用useCallback包装handleBatchTest函数，避免循环依赖
-  const handleBatchTest = useCallback(async (groupName: string) => {
-    if (mihomoRunning === false) {
-      showError(t('nodes.testFailed'));
-      return;
-    }
-
-    const group = groups.find(g => g.name === groupName);
-    if (!group) return;
-
-    // 一次最多测试5个节点，避免过载
-    const batchSize = 5;
-    const nodes = [...group.nodes];
-
-    for (let i = 0; i < nodes.length; i += batchSize) {
-      const batch = nodes.slice(i, i + batchSize);
-
-      // 将所有节点添加到测试集合
-      setTestingNodes(prev => {
-        const newSet = new Set(prev);
-        batch.forEach(node => newSet.add(node.name));
-        return newSet;
-      });
-
-      // 并行测试这批节点
-      await Promise.all(
-        batch.map(async node => {
-          try {
-            await handleTestNode(node.name, { silent: true });
-            // 添加延迟，避免同时发送太多请求
-            await new Promise(r => setTimeout(r, 300));
-          } catch (error) {
-            console.error(`测试节点 ${node.name} 失败:`, error);
-          }
-        })
-      );
-    }
-  }, [groups, mihomoRunning, handleTestNode, showError]);
+  // The tray action also uses native group tests with a shared history observer.
+  const handleBatchTest = (groupName: string) => handleTestGroup(groupName);
 
   // 单独添加一个effect来处理事件监听
   useEffect(() => {
@@ -2547,10 +2403,10 @@ export default function ProxyNodes() {
                     handleTestNode(node.name);
                   }}
                   disabled={isTesting}
-                  className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400 disabled:opacity-50"
+                  className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-gray-400 dark:text-gray-500 disabled:opacity-50"
                   title={t('nodes.testLatency')}
                 >
-                  <ReloadIcon className={`h-4 w-4 ${isTesting ? 'text-blue-500 animate-spin' : ''}`} />
+                  <LatencyBoltIcon className="h-4 w-4" />
                 </button>
 
                 <button
@@ -2561,11 +2417,7 @@ export default function ProxyNodes() {
                   className="h-6 w-6 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                   title={isFavorite ? t('nodes.removeFromFavorite') : t('nodes.addToFavorite')}
                 >
-                  {isFavorite ? (
-                    <StarFilledIcon className="h-4 w-4 text-yellow-500" />
-                  ) : (
-                    <StarIcon className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-                  )}
+                  <FavoriteStarIcon filled={isFavorite} className={`h-4 w-4 ${isFavorite ? 'text-yellow-500' : 'text-gray-400 dark:text-gray-500'}`} />
                 </button>
               </div>
             </div>
@@ -2574,19 +2426,8 @@ export default function ProxyNodes() {
               <div className="text-xs text-gray-500 dark:text-gray-400">
                 {node.type}
               </div>
-              {node.delay !== undefined && (
-                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                  node.delay === 0
-                    ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                    : node.delay < 100
-                    ? 'bg-green-100 text-green-800 dark:bg-[#2a2a2a] dark:text-green-400'
-                    : node.delay < 300
-                    ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
-                    : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                }`}>
-                  {node.delay === 0 ? t('nodes.timeout') : `${node.delay}ms`}
-                </span>
-              )}
+              <NodeLatencyBadge delay={node.delay} testing={isTesting}
+                loadingLabel={t('nodes.testLatency')} timeoutLabel={t('nodes.timeout')} />
             </div>
           </div>
         </div>
@@ -3047,8 +2888,8 @@ export default function ProxyNodes() {
     !proxyNodesViewCache.loaded &&
     !hasTrustedProxyGroupsSessionCache();
 
-  if (suppressColdEmptyState) {
-    return <div className="min-h-[260px]" aria-busy="true" />;
+  if (suppressColdEmptyState || (isSnapshotStale && isRefreshing)) {
+    return <ProxyNodesSkeleton label={t('common.loading')} />;
   }
 
   if (mihomoRunning === false) {
@@ -3072,7 +2913,14 @@ export default function ProxyNodes() {
   }
 
   return (
-    <div className="relative space-y-3">
+    <div className="relative space-y-3" aria-busy={isRefreshing}
+      onClickCapture={event => { if (isSnapshotStale && !(event.target as HTMLElement).closest('[data-proxy-refresh]')) { event.preventDefault(); event.stopPropagation(); } }}
+      onKeyDownCapture={event => { if (isSnapshotStale && !(event.target as HTMLElement).closest('[data-proxy-refresh]') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.stopPropagation(); } }}>
+      {isSnapshotStale && <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+        <ReloadIcon className="size-3" />
+        {isRefreshing ? t('common.loading') : t('nodes.checkConnection')}
+        {!isRefreshing && <button data-proxy-refresh type="button" className="text-primary" onClick={() => { setIsRefreshing(true); scheduleSoftRefresh(); }}>{t('nodes.checkConnection')}</button>}
+      </div>}
       {/* 顶部模式切换按钮：靠近标题区域右上角，尽量与标题同一水平线 */}
       <div className="absolute right-0 -top-12 md:-top-16 z-10">
         <Tabs value={currentMode} onValueChange={handleModeChange} className="w-full md:w-auto">
@@ -3320,7 +3168,7 @@ export default function ProxyNodes() {
                           title={t('nodes.testGroup')}
                           disabled={isTestingGroup}
                         >
-                          <ReloadIcon className={`h-5 w-5 ${isTestingGroup ? 'animate-spin' : ''}`} />
+                          <LatencyBoltIcon className="h-5 w-5" />
                         </button>
                         <button
                           type="button"
@@ -3357,9 +3205,7 @@ export default function ProxyNodes() {
               })}
             </>
           ) : isModeSwitching || isLoading ? (
-            <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">
-              {t('common.loading')}
-            </div>
+            <ProxyNodesSkeleton label={t('common.loading')} toolbar={false} />
           ) : (
             <div className="rounded-xl bg-slate-50 py-12 text-center text-sm text-muted-foreground dark:bg-slate-800/40">
               {t('nodes.noMatchingNodes')}

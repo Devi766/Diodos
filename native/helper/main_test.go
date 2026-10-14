@@ -52,7 +52,7 @@ func TestDecodeServiceCorePath(t *testing.T) {
 }
 
 func TestUsersRootFromProfileAcceptsNormalWindowsUsersProfile(t *testing.T) {
-	root := usersRootFromProfile(`C:\Users\GtxFury`)
+	root := usersRootFromProfile(`C:\Users\testuser`)
 	if !strings.EqualFold(root, `C:\Users`) {
 		t.Fatalf("unexpected users root: %s", root)
 	}

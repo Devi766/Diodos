@@ -20,6 +20,7 @@ pub(crate) struct RuntimeState {
 #[derive(Default)]
 pub(crate) struct AppState {
     pub(crate) runtime: Mutex<RuntimeState>,
+    pub(crate) config_reload: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone)]

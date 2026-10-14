@@ -1812,7 +1812,7 @@ export default function Settings() {
                     type="button"
                     className="flex items-center justify-center py-2 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg transition-all duration-300 transform hover:scale-105 hover:shadow-lg"
                     onClick={() => {
-                      void openExternalUrl('https://github.com/GtxFury/FlyClash');
+                      void openExternalUrl('https://github.com/Devi766/FlyClash');
                     }}
                   >
                     {t('settings.flyclashProject')}

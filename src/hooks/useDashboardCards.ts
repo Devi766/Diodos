@@ -1,10 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
+import { removeDashboardImage } from '@/lib/dashboard-images';
 import {
   DashboardCard,
+  DashboardCardType,
   DEFAULT_DASHBOARD_CARDS,
   DASHBOARD_CONFIG_KEY,
+  LEGACY_CARD_IDS,
+  cardBaseId,
+  getCardDefinition,
+  isCardCopyId,
+  isDashboardCardType,
+  isValidCardId,
+  newCardCopyId,
+  resolveCardVariant,
+  migrateLegacyControlCards,
+  migrateLegacyMetricCards,
 } from '@/types/dashboard';
 
 const getElectron = () => {
@@ -20,32 +32,40 @@ const isTauriRuntimeUnavailable = (result: unknown) =>
 
 let dashboardCardsMemoryCache: DashboardCard[] | null = null;
 
+// 把一条已保存的卡片记录规整为当前格式；无法识别时返回 null
+const normalizeCardEntry = (value: unknown): DashboardCard | null => {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || !isDashboardCardType(raw.type)) return null;
+  if (typeof raw.enabled !== 'boolean' || typeof raw.order !== 'number') return null;
+
+  const type = raw.type;
+  const id = LEGACY_CARD_IDS[raw.id] === type ? type : raw.id;
+  if (!isValidCardId(id, type)) return null;
+
+  const card: DashboardCard = { id, type, enabled: raw.enabled, order: raw.order };
+  const variant = resolveCardVariant(type, typeof raw.variant === 'string' ? raw.variant : undefined);
+  if (variant.id !== getCardDefinition(type).variants[0].id) {
+    card.variant = variant.id;
+  }
+  return card;
+};
+
 const normalizeDashboardCards = (value: unknown): DashboardCard[] | null => {
   if (!Array.isArray(value)) return null;
-  const knownTypes = new Set(DEFAULT_DASHBOARD_CARDS.map((card) => card.type));
-  const knownIds = new Set(DEFAULT_DASHBOARD_CARDS.map((card) => card.id));
   const seenIds = new Set<string>();
-  const cards = value.filter((card): card is DashboardCard => {
-    if (
-      !card ||
-      typeof card !== 'object' ||
-      typeof (card as DashboardCard).id !== 'string' ||
-      !knownTypes.has((card as DashboardCard).type) ||
-      typeof (card as DashboardCard).enabled !== 'boolean' ||
-      typeof (card as DashboardCard).order !== 'number'
-    ) {
-      return false;
-    }
-    // 过滤未知/重复 id，保留用户已删除的状态（不再把默认卡片硬塞回去）
-    if (!knownIds.has((card as DashboardCard).id)) return false;
-    if (seenIds.has((card as DashboardCard).id)) return false;
-    seenIds.add((card as DashboardCard).id);
-    return true;
-  });
+  const cards: DashboardCard[] = [];
+  for (const entry of migrateLegacyMetricCards(migrateLegacyControlCards(value))) {
+    const card = normalizeCardEntry(entry);
+    if (!card || seenIds.has(card.id)) continue;
+    // 副本只在启用时保留，删除副本即从配置中移除
+    if (isCardCopyId(card.id) && !card.enabled) continue;
+    seenIds.add(card.id);
+    cards.push(card);
+  }
   if (cards.length === 0) return null;
 
-  // 仅补齐「可添加列表」需要的元数据：缺失的默认卡片以 disabled 形式加入，
-  // 这样删除后不会自动重新显示在仪表盘上，但仍可在「添加卡片」中找回。
+  // 缺失的卡片本体以 disabled 形式补齐，删除过的卡片不会自动回到仪表盘
   const missingDefaults = DEFAULT_DASHBOARD_CARDS
     .filter((defaultCard) => !seenIds.has(defaultCard.id))
     .map((defaultCard, index) => ({
@@ -231,36 +251,49 @@ export function useDashboardCards() {
     [applyCardsUpdate],
   );
 
-  // 添加卡片
+  // 添加卡片：本体未在仪表盘上时启用本体，否则新建一张副本；新卡片放到末尾
   const addCard = useCallback(
-    async (card: DashboardCard) => {
+    async (type: DashboardCardType, variantId?: string) => {
+      // 副本 id 在更新函数外生成，保证更新函数重复执行时结果一致
+      const copyId = newCardCopyId(type);
       applyCardsUpdate((currentCards) => {
-        const existing = currentCards.find((c) => c.id === card.id);
-        if (existing) {
-          // 已存在但被禁用/删除过：重新启用并放到末尾
-          const maxOrder = Math.max(
-            ...currentCards.filter((c) => c.enabled).map((c) => c.order),
-            -1,
-          );
+        const variant = resolveCardVariant(type, variantId);
+        const isDefaultVariant = variant.id === getCardDefinition(type).variants[0].id;
+        const maxOrder = Math.max(
+          ...currentCards.filter((c) => c.enabled).map((c) => c.order),
+          -1,
+        );
+        const withVariant = (card: DashboardCard): DashboardCard => {
+          const { variant: _previous, ...rest } = card;
+          return isDefaultVariant ? rest : { ...rest, variant: variant.id };
+        };
+
+        const base = currentCards.find((c) => c.id === type);
+        if (base && !base.enabled) {
           return currentCards.map((c) =>
-            c.id === card.id ? { ...c, enabled: true, order: maxOrder + 1 } : c,
+            c.id === type ? withVariant({ ...c, enabled: true, order: maxOrder + 1 }) : c,
           );
         }
-        const maxOrder = Math.max(...currentCards.map((c) => c.order), -1);
-        const newCard = { ...card, enabled: true, order: maxOrder + 1 };
-        return [...currentCards, newCard];
+
+        const id = base ? copyId : type;
+        return [...currentCards, withVariant({ id, type, enabled: true, order: maxOrder + 1 })];
       });
     },
     [applyCardsUpdate],
   );
 
-  // 删除卡片（标记为禁用，保留配置以便「添加」时可找回，且不会在加载时被默认配置覆盖）
+  // 删除卡片：副本直接移除；本体标记为禁用，加载时不会被默认配置重新塞回仪表盘
   const removeCard = useCallback(
     async (cardId: string) => {
+      if (cardBaseId(cardId) === 'image') {
+        void removeDashboardImage(cardId).catch(() => {});
+      }
       applyCardsUpdate((currentCards) =>
-        currentCards.map((card) =>
-          card.id === cardId ? { ...card, enabled: false } : card,
-        ),
+        isCardCopyId(cardId)
+          ? currentCards.filter((card) => card.id !== cardId)
+          : currentCards.map((card) =>
+              card.id === cardId ? { ...card, enabled: false } : card,
+            ),
       );
     },
     [applyCardsUpdate],
@@ -276,15 +309,9 @@ export function useDashboardCards() {
     .filter((card) => card.enabled)
     .sort((a, b) => a.order - b.order);
 
-  // 获取可添加的卡片(未启用的)
-  const availableCards = DEFAULT_DASHBOARD_CARDS.filter(
-    (defaultCard) => !cards.some((card) => card.id === defaultCard.id && card.enabled),
-  );
-
   return {
     cards: enabledCards,
     allCards: cards,
-    availableCards,
     isEditMode,
     setIsEditMode,
     reorderCards,

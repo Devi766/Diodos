@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    --font-ui: "Bahnschrift", "Segoe UI Variable Display", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
     --background: 214 40% 96%;
     --foreground: 222 47% 16%;
     --card: 0 0% 100% / 0.88;
@@ -25,6 +26,21 @@
     --ring: 212 89% 58%;
     --radius: 1rem;
 
+    /* 卡片规范：同心圆角逐级递减，弹框 > 区块卡片 > 列表项 > 嵌套 > 控件 */
+    --radius-dialog: 28px;
+    --radius-card: 24px;
+    --radius-item: 20px;
+    --radius-nested: 16px;
+    --radius-control: 12px;
+    --card-padding: 20px;
+    --card-half-height: 144px;
+    --dashboard-control-bg: #f3f3f5;
+    --dashboard-control-selected: #e5e5e9;
+    --dashboard-control-hover: #ebebee;
+    --card-large-height: calc(var(--card-half-height) * 2 + 16px);
+    --card-title-size: 0.75rem;
+    --card-icon-size: 16px;
+
     --glass-surface: 0 0% 100% / 0.9;
     --glass-border: 210 30% 88% / 0.65;
     --glass-shadow: 217 61% 25% / 0.08;
@@ -38,6 +54,9 @@
   }
 
   .dark {
+    --dashboard-control-bg: #333336;
+    --dashboard-control-selected: #45454a;
+    --dashboard-control-hover: #3c3c40;
     --background: 222 37% 7%;
     --foreground: 210 30% 94%;
     --card: 0 0% 16% / 1;
@@ -114,7 +133,7 @@
   }
 
   body {
-    @apply text-foreground;
+    @apply font-sans text-foreground;
     min-height: 100vh;
     height: 100vh;
     background: transparent;
@@ -259,6 +278,16 @@
     background: transparent;
   }
 
+  .custom-scrollbar::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
   .custom-scrollbar::-webkit-scrollbar-thumb {
     background: transparent;
     border-radius: 999px;
@@ -293,6 +322,114 @@
 }
 
 @layer components {
+  /* 滚动内容在上下边缘淡出，直接露出窗口原有背景，不叠加主题底色 */
+  @media (min-width: 768px) {
+    .titlebar-scroll-fade {
+      mask-image: linear-gradient(
+        to bottom,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0))) 0px,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0) * 0.94)) 20px,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0) * 0.65)) 40px,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0) * 0.25)) 64px,
+        #000 96px,
+        #000 calc(100% - 96px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0) * 0.25)) calc(100% - 64px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0) * 0.65)) calc(100% - 40px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0) * 0.94)) calc(100% - 20px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0))) 100%
+      );
+      -webkit-mask-image: linear-gradient(
+        to bottom,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0))) 0px,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0) * 0.94)) 20px,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0) * 0.65)) 40px,
+        rgb(0 0 0 / calc(1 - var(--scrim-progress, 0) * 0.25)) 64px,
+        #000 96px,
+        #000 calc(100% - 96px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0) * 0.25)) calc(100% - 64px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0) * 0.65)) calc(100% - 40px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0) * 0.94)) calc(100% - 20px),
+        rgb(0 0 0 / calc(1 - var(--scrim-bottom-progress, 0))) 100%
+      );
+    }
+  }
+
+  /* 无染色的轻模糊只覆盖主内容列，四周均渐隐 */
+  .titlebar-scrim {
+    --scrim-progress: 0;
+    position: fixed;
+    top: 0;
+    z-index: 20;
+    height: 88px;
+    pointer-events: none;
+    mask-image: linear-gradient(to right, transparent, #000 96px, #000 calc(100% - 96px), transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 96px, #000 calc(100% - 96px), transparent);
+  }
+
+  .titlebar-scrim > span {
+    position: absolute;
+    inset: 0;
+    opacity: var(--scrim-progress);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    mask-image: linear-gradient(to bottom, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.3) 65%, transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.3) 65%, transparent);
+  }
+
+  .bottom-scroll-scrim {
+    top: auto;
+    bottom: 0;
+  }
+
+  .bottom-scroll-scrim > span {
+    mask-image: linear-gradient(to top, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.3) 65%, transparent);
+    -webkit-mask-image: linear-gradient(to top, #000, rgb(0 0 0 / 0.8) 30%, rgb(0 0 0 / 0.3) 65%, transparent);
+  }
+
+  /* 仪表盘卡片底板与标题 */
+  .dashboard-card {
+    @apply rounded-card bg-white shadow-sm dark:bg-[#2a2a2a];
+  }
+
+  .dashboard-card-title {
+    @apply text-card-title font-medium uppercase text-muted-foreground;
+  }
+
+  .dashboard-traffic-number {
+    font-family: var(--font-ui);
+  }
+
+  .dashboard-control-surface {
+    background-color: var(--dashboard-control-bg);
+  }
+
+  .dashboard-control-selected {
+    background-color: var(--dashboard-control-selected);
+  }
+
+  .dashboard-control-hover:not(:disabled):hover {
+    background-color: var(--dashboard-control-hover);
+  }
+
+  /* 半宽卡片与拖动占位统一高度，预览和仪表盘共用同一尺寸 */
+  .dashboard-half-card,
+  .dashboard-half-slot,
+  .dashboard-standard-full-card,
+  .dashboard-full-slot {
+    height: var(--card-half-height);
+    min-height: var(--card-half-height);
+    max-height: var(--card-half-height);
+    min-width: 0;
+  }
+
+  .dashboard-large-card,
+  .dashboard-large-slot {
+    height: var(--card-large-height);
+    min-height: var(--card-large-height);
+    max-height: var(--card-large-height);
+    min-width: 0;
+  }
+
   .motion-standard {
     transition-timing-function: var(--motion-standard);
   }

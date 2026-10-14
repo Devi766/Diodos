@@ -34,7 +34,8 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     "out/types/**/*.ts",
-    "src/types/electron.d.ts"
+    "src/types/electron.d.ts",
+    ".next-preview/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

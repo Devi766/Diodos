@@ -1937,25 +1937,25 @@ export default function Dashboard() {
         : runningStatusHydrated
           ? t('dashboard.serviceNotRunning')
           : t('common.loading'),
-      icon: <Activity className="h-4 w-4 text-primary" />
+      icon: <Activity className="size-card-icon text-primary" />
     },
     {
       label: t('dashboard.downloadSpeed'),
       value: formatSpeed(downSpeed),
       helper: `${t('dashboard.total')} ${formatBytes(totalDownload, 2)}`,
-      icon: <Download className="h-4 w-4 text-blue-500" />
+      icon: <Download className="size-card-icon text-blue-500" />
     },
     {
       label: t('dashboard.uploadSpeed'),
       value: formatSpeed(upSpeed),
       helper: `${t('dashboard.total')} ${formatBytes(totalUpload, 2)}`,
-      icon: <Upload className="h-4 w-4 text-emerald-500" />
+      icon: <Upload className="size-card-icon text-emerald-500" />
     },
     {
       label: t('dashboard.totalTraffic'),
       value: formatBytes(totalUpload + totalDownload, 2),
       helper: currentNode || t('dashboard.notSelected'),
-      icon: <BarChart3 className="h-4 w-4 text-violet-500" />
+      icon: <BarChart3 className="size-card-icon text-violet-500" />
     }
   ];
 
@@ -2327,7 +2327,7 @@ function TrafficChart({ samples, t }: { samples: TrafficSample[]; t: any }) {
 
   if (!chart) {
     return (
-      <div className="flex h-48 items-center justify-center rounded-lg border border-dashed border-slate-200 text-xs text-muted-foreground">
+      <div className="flex h-48 items-center justify-center rounded-nested border border-dashed border-slate-200 text-xs text-muted-foreground">
         {t('dashboard.waitingForTraffic')}
       </div>
     );
@@ -2356,7 +2356,7 @@ function TrafficChart({ samples, t }: { samples: TrafficSample[]; t: any }) {
       </div>
 
       {/* 图表 */}
-      <div className="relative h-48 w-full overflow-hidden rounded-xl bg-gradient-to-b from-white via-slate-50 to-white dark:bg-gradient-to-b dark:from-slate-800/40 dark:via-slate-800/20 dark:to-slate-800/40">
+      <div className="relative h-48 w-full overflow-hidden rounded-nested bg-gradient-to-b from-white via-slate-50 to-white dark:bg-gradient-to-b dark:from-slate-800/40 dark:via-slate-800/20 dark:to-slate-800/40">
         <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         <defs>
           <linearGradient id="traffic-download-fill" x1="0%" y1="0%" x2="0%" y2="100%">

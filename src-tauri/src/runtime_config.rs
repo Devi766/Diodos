@@ -1,4 +1,5 @@
 use serde_json::{json, Map, Value};
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -29,9 +30,69 @@ fn work_config_cache() -> &'static Mutex<Option<WorkConfigCacheEntry>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+// Keep a bounded set of compiled YAMLs, not just the last selected profile.
+// Keys include source bytes, runtime settings and override fingerprints.
+#[derive(Default)]
+struct PreparedRuntimeCache(VecDeque<(u64, String)>);
+
+impl PreparedRuntimeCache {
+    fn get(&self, fingerprint: u64) -> Option<String> {
+        self.0.iter().find(|entry| entry.0 == fingerprint).map(|entry| entry.1.clone())
+    }
+
+    fn insert(&mut self, fingerprint: u64, yaml: String) {
+        const MAX_BYTES: usize = 16 * 1024 * 1024;
+        self.0.retain(|entry| entry.0 != fingerprint);
+        if yaml.len() > MAX_BYTES { return; }
+        while self.0.len() >= 4 || self.0.iter().map(|entry| entry.1.len()).sum::<usize>() + yaml.len() > MAX_BYTES {
+            self.0.pop_front();
+        }
+        self.0.push_back((fingerprint, yaml));
+    }
+}
+
+fn prepared_runtime_cache() -> &'static Mutex<PreparedRuntimeCache> {
+    static CACHE: OnceLock<Mutex<PreparedRuntimeCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(PreparedRuntimeCache::default()))
+}
+
+#[cfg(test)]
+mod prepared_runtime_cache_tests {
+    use super::{PreparedRuntimeCache, work_config_fingerprint};
+    use serde_json::json;
+
+    #[test]
+    fn revisit_profiles_reuses_yaml_and_cache_is_bounded() {
+        let mut cache = PreparedRuntimeCache::default();
+        cache.insert(1, "profile-a".to_string());
+        cache.insert(2, "profile-b".to_string());
+        assert_eq!(cache.get(1).as_deref(), Some("profile-a"));
+        for index in 3..=5 { cache.insert(index, format!("profile-{index}")); }
+        assert!(cache.get(1).is_none());
+        assert_eq!(cache.0.len(), 4);
+        cache.insert(2, "updated-b".to_string());
+        assert_eq!(cache.get(2).as_deref(), Some("updated-b"));
+        assert_eq!(cache.0.len(), 4);
+    }
+
+    #[test]
+    fn all_compilation_inputs_invalidate_the_cached_yaml() {
+        let original = work_config_fingerprint("a", "rules: []", &json!({}), "v1");
+        for changed in [
+            work_config_fingerprint("b", "rules: []", &json!({}), "v1"),
+            work_config_fingerprint("a", "rules: [MATCH,DIRECT]", &json!({}), "v1"),
+            work_config_fingerprint("a", "rules: []", &json!({"mode":"global"}), "v1"),
+            work_config_fingerprint("a", "rules: []", &json!({}), "v2"),
+        ] { assert_ne!(original, changed); }
+    }
+}
+
 pub(crate) fn invalidate_runtime_work_config_cache() {
     if let Ok(mut guard) = work_config_cache().lock() {
         *guard = None;
+    }
+    if let Ok(mut guard) = prepared_runtime_cache().lock() {
+        guard.0.clear();
     }
 }
 
@@ -988,12 +1049,27 @@ pub(crate) fn prepare_runtime_config_for_reload(
         }
     }
 
-    let runtime_path = core_config::prepare_runtime_config_file(
-        &content,
-        &runtime_settings,
-        &work_dir,
-        |config| crate::overrides::apply_overrides(app, config_path, config),
-    )?;
+    let prepared = prepared_runtime_cache().lock().ok().and_then(|cache| cache.get(fingerprint));
+    let runtime_path = if let Some(yaml) = prepared {
+        // Always rewrite the shared work file: it may belong to another profile.
+        std::fs::create_dir_all(&work_dir)
+            .and_then(|_| std::fs::write(&paths.runtime_path, yaml))
+            .map_err(|error| core_config::RuntimeConfigPrepareError::prepare_failed(error.to_string()))?;
+        paths.runtime_path.clone()
+    } else {
+        let path = core_config::prepare_runtime_config_file(
+            &content,
+            &runtime_settings,
+            &work_dir,
+            |config| crate::overrides::apply_overrides(app, config_path, config),
+        )?;
+        if let Ok(yaml) = std::fs::read_to_string(&path) {
+            if let Ok(mut cache) = prepared_runtime_cache().lock() {
+                cache.insert(fingerprint, yaml);
+            }
+        }
+        path
+    };
 
     if let Ok(mut guard) = work_config_cache().lock() {
         *guard = Some(WorkConfigCacheEntry {

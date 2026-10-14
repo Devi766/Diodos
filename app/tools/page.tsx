@@ -4,7 +4,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { NetworkIcon, Play, RefreshCw } from 'lucide-react';
+import { NetworkIcon, Play, RefreshCw, Route } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import MediaStreamingTest from '../components/MediaStreamingTest';
+import MediaStreamingTestDialog from '@/components/MediaStreamingTestDialog';
 import LoopbackManager from '@/components/LoopbackManager';
 import { useTranslation } from 'react-i18next';
 import { getRuntimePlatform } from '@/utils/platform';
@@ -220,6 +220,17 @@ export default function ToolsPage() {
             </CardContent>
           </Card>
 
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="pb-6">
+              <div className="mb-2 flex items-center gap-3"><Route className="size-5 text-muted-foreground" /><CardTitle>{t('tools.mtr.title')}</CardTitle></div>
+              <CardDescription>{t('tools.mtr.subtitle')}</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="mb-4 text-sm text-muted-foreground">{t('tools.mtr.detail')}</p>
+              <Button onClick={() => router.push('/tools/mtr')} className="w-full" variant="primary">{t('tools.mtr.open')}</Button>
+            </CardContent>
+          </Card>
+
           {/* 订阅转换器 */}
           <Card className="overflow-hidden hover:shadow-sm transition-shadow">
             <CardHeader className="pb-6">
@@ -247,23 +258,7 @@ export default function ToolsPage() {
         </div>
       </div>
 
-      {/* 媒体服务检测对话框 */}
-      <Dialog open={mediaTestDialogOpen} onOpenChange={setMediaTestDialogOpen}>
-        <DialogContent className="sm:max-w-[700px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Play className="w-5 h-5" /> {t('tools.mediaTest.dialogTitle')}
-            </DialogTitle>
-            <DialogDescription>
-              {t('tools.mediaTest.dialogDescription')}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="py-4">
-            <MediaStreamingTest currentNode={currentNode} />
-          </div>
-        </DialogContent>
-      </Dialog>
+      <MediaStreamingTestDialog open={mediaTestDialogOpen} onOpenChange={setMediaTestDialogOpen} currentNode={currentNode} />
 
       {/* UWP 回环豁免管理对话框 */}
       <Dialog open={loopbackDialogOpen} onOpenChange={setLoopbackDialogOpen}>

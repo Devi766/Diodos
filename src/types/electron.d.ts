@@ -28,6 +28,7 @@ interface SubscriptionInfo {
 
 interface SubscriptionResult {
   success: boolean;
+    sourceType?: 'remote' | 'inline';
   content?: string;
   subscriptionInfo?: SubscriptionInfo;
   error?: string;
@@ -478,7 +479,39 @@ export interface ElectronAPI {
     message?: string; 
     region?: string; 
     checkTime?: number;
+    verdict?: 'reachable' | 'partial' | 'restricted' | 'unknown' | 'failed';
   }>;
+
+  prepareRouteTrace?: () => Promise<{ source: string }>;
+  resolveRouteTarget?: (target: string) => Promise<{ ip: string }>;
+  probeHop?: (options: { target: string; source: string; ttl: number; count: number; timeoutMs: number }) => Promise<{
+    ttl: number; ip: string | null; sent: number; received: number; loss: number;
+    avg: number | null; min: number | null; max: number | null; reached: boolean;
+  }>;
+
+  // 仪表盘：连通性检查（经内核 mixed 端口）
+  resolveProxyEntry?: () => Promise<{
+    node: string | null;
+    entryNode: string | null;
+    host: string | null;
+    ip: string | null;
+    privateDns: boolean;
+    source: 'tcp' | 'dns' | 'config' | 'direct' | null;
+    error: string | null;
+  }>;
+
+  checkConnectivity?: () => Promise<{
+    success: boolean;
+    results?: Array<{ id: string; delay: number | null }>;
+    checkedAt?: number;
+    error?: string;
+  }>;
+
+  // 仪表盘：图片卡片
+  pickDashboardImage?: () => Promise<{ success: boolean; dataUrl?: string; canceled?: boolean; error?: string }>;
+  saveDashboardImage?: (cardId: string, base64: string, extension: string) => Promise<{ success: boolean; error?: string }>;
+  loadDashboardImage?: (cardId: string) => Promise<{ success: boolean; dataUrl?: string | null; error?: string }>;
+  removeDashboardImage?: (cardId: string) => Promise<{ success: boolean; error?: string }>;
 
   openFileInDefaultApp: (filePath: string) => Promise<{
   readLocalTextFile?: (filePath: string) => Promise<{ success: boolean; path?: string; fileName?: string; name?: string; content?: string; error?: string; value?: { path?: string; fileName?: string; name?: string; content?: string } }>;

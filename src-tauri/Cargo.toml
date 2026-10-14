@@ -1,10 +1,10 @@
 [package]
 name = "flyclash"
-version = "0.3.3"
+version = "0.3.4"
 description = "FlyClash Desktop"
 authors = ["FlyClash"]
 license = "MIT"
-repository = "https://github.com/GtxFury/FlyClash"
+repository = "https://github.com/Devi766/FlyClash"
 edition = "2021"
 build = "build.rs"
 

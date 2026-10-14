@@ -200,6 +200,8 @@ const collectStringLiterals = (source, names) => {
 
 const extractBackendMethods = (source) => {
   const names = new Set();
+  // Small compat modules can dispatch through equality checks instead of match.
+  for (const match of source.matchAll(/\bmethod\s*(?:==|!=)\s*"([A-Za-z0-9_.:-]+)"/g)) names.add(match[1]);
   let searchIndex = 0;
 
   while (true) {
@@ -274,7 +276,8 @@ const extractLegacyBackendMethods = (source) => {
 const sort = (items) => [...items].sort((left, right) => left.localeCompare(right));
 const difference = (left, right) => sort([...left].filter((item) => !right.has(item)));
 
-const electron = extractElectronApi(readText('electron/preload.js'));
+const legacyElectronAvailable = fs.existsSync(path.join(root, 'electron/preload.js'));
+const electron = legacyElectronAvailable ? extractElectronApi(readText('electron/preload.js')) : new Set();
 const compat = extractCompatApi(readText('public/tauri-compat.js'));
 const backend = extractBackendMethodsFromFiles(listFiles('src-tauri/src', '.rs'));
 for (const name of extractLegacyBackendMethods(readText('src-tauri/src/main.rs'))) {
@@ -282,6 +285,7 @@ for (const name of extractLegacyBackendMethods(readText('src-tauri/src/main.rs')
 }
 
 const report = {
+  legacyElectronAvailable,
   counts: {
     electronApi: electron.size,
     tauriCompatApi: compat.names.size,
@@ -295,6 +299,8 @@ const report = {
   backendAliasesWithoutCompatCall: difference(backend, compat.calls),
   compatDefaultFallbacks: sort(compat.defaults),
 };
+
+if (report.compatCallsMissingBackendDispatch.length > 0) process.exitCode = 1;
 
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(report, null, 2));

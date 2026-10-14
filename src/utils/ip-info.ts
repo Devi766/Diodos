@@ -20,6 +20,7 @@ type ServiceConfig = {
   getUrl: (preferredIp?: string) => string;
   parser: (data: any) => Partial<IpInfo> | null;
   skipBrowser?: boolean;
+  supportsLookup?: boolean;
 };
 
 const USER_AGENT = 'FlyClash/1.0';
@@ -35,6 +36,7 @@ const services: ServiceConfig[] = [
   },
   {
     getUrl: (ip) => (ip ? `https://ipwho.is/${ip}` : 'https://ipwho.is/'),
+    supportsLookup: true,
     skipBrowser: true,
     parser: (data: any) => {
       if (!data?.success) return null;
@@ -71,6 +73,7 @@ const services: ServiceConfig[] = [
   },
   {
     getUrl: (ip) => (ip ? `https://ipapi.co/${ip}/json/` : 'https://ipapi.co/json/'),
+    supportsLookup: true,
     parser: (data: any) => {
       if (data?.error) return null;
       return {
@@ -138,7 +141,7 @@ const fetchJson = async (url: string, source: IpInfoSource) => {
     return parseData(response.data);
   }
 
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(DEFAULT_TIMEOUT) });
   if (!response.ok) {
     throw new Error(response.statusText || 'Browser IP request failed');
   }
@@ -221,4 +224,37 @@ export const fetchIpInfo = async (): Promise<IpInfo> => {
   }
 
   throw lastError instanceof Error ? lastError : new Error('All IP services failed');
+};
+
+const lookupCache = new Map<string, { info: IpInfo; timestamp: number }>();
+const lookupRequests = new Map<string, Promise<IpInfo>>();
+
+// 按指定 IP 查询，禁止用出口查询接口覆盖入口地址
+export const fetchIpInfoByIp = (ip: string): Promise<IpInfo> => {
+  if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip) || ip.split('.').some(part => Number(part) > 255)) {
+    return Promise.reject(new Error('Invalid IPv4 address'));
+  }
+  const cached = lookupCache.get(ip);
+  if (cached && Date.now() - cached.timestamp < 10 * 60_000) return Promise.resolve(cached.info);
+  const pending = lookupRequests.get(ip);
+  if (pending) return pending;
+  const request = (async () => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
+    const source: IpInfoSource = api?.fetchWithProxy ? 'proxy' : api?.proxyFetch ? 'direct' : 'browser';
+    for (const service of services) {
+      if (!service.supportsLookup || (source === 'browser' && service.skipBrowser)) continue;
+      try {
+        const data = await fetchJson(service.getUrl(ip), source);
+        const parsed = service.parser(data);
+        if (!parsed || parsed.ip !== ip || !hasDisplayInfo(parsed)) continue;
+        const info: IpInfo = { ...parsed, ip, source };
+        if (lookupCache.size >= 128) lookupCache.delete(lookupCache.keys().next().value!);
+        lookupCache.set(ip, { info, timestamp: Date.now() });
+        return info;
+      } catch { /* 继续尝试下一个支持指定 IP 的接口 */ }
+    }
+    throw new Error('IP lookup failed');
+  })().finally(() => lookupRequests.delete(ip));
+  lookupRequests.set(ip, request);
+  return request;
 };

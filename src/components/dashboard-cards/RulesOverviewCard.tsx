@@ -1,5 +1,6 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
-import { CheckCircle, XCircle, Scale } from 'lucide-react';
+import { CheckCircle, XCircle } from 'lucide-react';
+import { CardHeading } from './CardHeading';
 import { useTranslation } from 'react-i18next';
 import { useMihomoAPI } from '@/services/mihomo-api';
 import {
@@ -186,12 +187,11 @@ export function RulesOverviewCard() {
 
   if (loading && rules.length === 0) {
     return (
-      <div className="flex h-[260px] flex-col space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+      <div className="flex dashboard-large-card flex-col space-y-5 dashboard-card p-card">
         <div className="flex flex-shrink-0 items-center justify-between">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <CardHeading type="rules-overview">
             {t('dashboard.rulesOverview')}
-          </p>
-          <Scale className="h-4 w-4 text-muted-foreground/70" />
+          </CardHeading>
         </div>
         <div className="flex-1 space-y-3 pt-2">
           {Array.from({ length: 6 }).map((_, index) => (
@@ -209,20 +209,20 @@ export function RulesOverviewCard() {
   }
 
   return (
-    <div className="flex h-[260px] flex-col space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+    <div className="flex dashboard-large-card flex-col space-y-5 dashboard-card p-card">
       {/* 标题和切换按钮 */}
       <div className="flex flex-shrink-0 items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <CardHeading type="rules-overview">
           {t('dashboard.rulesOverview')}
-        </p>
+        </CardHeading>
         {hasExtra && (
-          <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-[#1f1f1f]">
+          <div className="flex gap-1 rounded-control bg-gray-100 p-1 dark:bg-[#1f1f1f]">
             <button
               onClick={() => {
                 setViewMode('hit');
                 try { localStorage.setItem('rulesOverviewViewMode', 'hit'); } catch {}
               }}
-              className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
                 viewMode === 'hit'
                   ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
                   : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'
@@ -236,7 +236,7 @@ export function RulesOverviewCard() {
                 setViewMode('miss');
                 try { localStorage.setItem('rulesOverviewViewMode', 'miss'); } catch {}
               }}
-              className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
                 viewMode === 'miss'
                   ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
                   : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'

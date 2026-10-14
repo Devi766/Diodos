@@ -589,6 +589,9 @@ pub(crate) async fn reload_mihomo_config(
     state: &State<'_, AppState>,
     config_path: &str,
 ) -> CompatResult {
+    let total_start = std::time::Instant::now();
+    // Protect the shared work-config.yaml until the core has consumed it.
+    let _reload_guard = state.config_reload.lock().await;
     let config_path = normalize_config_reference(app, config_path)?;
     if config_path.trim().is_empty() {
         return Ok(json!({
@@ -596,9 +599,6 @@ pub(crate) async fn reload_mihomo_config(
             "error": "配置文件路径为空，无法热重载"
         }));
     }
-
-    let _ = config_content(app, &config_path)
-        .map_err(|err| format!("配置文件不存在或无法解密: {err}"))?;
 
     if !is_mihomo_running(app) {
         return Ok(json!({
@@ -617,12 +617,20 @@ pub(crate) async fn reload_mihomo_config(
             .prefer_runtime_or_preferred(preferred)
     };
 
-    let runtime_config = match prepare_runtime_config_for_reload(app, &config_path) {
+    let prepare_start = std::time::Instant::now();
+    let prepare_app = app.clone();
+    let prepare_path = config_path.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        prepare_runtime_config_for_reload(&prepare_app, &prepare_path)
+    }).await.map_err(|error| error.to_string())?;
+    let runtime_config = match prepared {
         Ok(path) => path,
         Err(error) => {
             return Ok(runtime_config_error_response(&error, Some(false)));
         }
     };
+    let prepare_ms = prepare_start.elapsed().as_millis() as u64;
+    let reload_start = std::time::Instant::now();
     let reload_request = core_lifecycle::reload_config_request(&runtime_config);
     let response = match crate::mihomo_transport::request(
         app,
@@ -646,6 +654,8 @@ pub(crate) async fn reload_mihomo_config(
         }
     };
 
+    let reload_ms = reload_start.elapsed().as_millis() as u64;
+
     let reload_completion = {
         let mut runtime = state.runtime.lock().expect("runtime mutex poisoned");
         core_lifecycle::complete_reload_from_response(
@@ -658,7 +668,8 @@ pub(crate) async fn reload_mihomo_config(
     if reload_completion.applied {
         save_last_config(app, &config_path)?;
         emit_active_config_changed(app, Some(&config_path));
-        let _ = crate::mihomo_transport::request(app, Some("/proxies".to_string()), None).await;
+        // The caller refreshes proxies after completion; don't serialize a second
+        // full proxy-tree request onto the config-switch acknowledgement.
     } else if let Some(previous) = previous_active
         .as_deref()
         .map(str::trim)
@@ -667,7 +678,11 @@ pub(crate) async fn reload_mihomo_config(
         let _ = prepare_runtime_config_for_reload(app, previous);
     }
 
-    Ok(reload_completion.response)
+    let total_ms = total_start.elapsed().as_millis() as u64;
+    eprintln!("[config-switch] prepare={prepare_ms}ms core={reload_ms}ms total={total_ms}ms applied={}", reload_completion.applied);
+    let mut response = reload_completion.response;
+    response["timing"] = json!({ "prepareMs": prepare_ms, "reloadMs": reload_ms, "totalMs": total_ms });
+    Ok(response)
 }
 
 pub(crate) async fn refresh_active_config_after_override(

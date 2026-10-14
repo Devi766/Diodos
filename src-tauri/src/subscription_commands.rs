@@ -59,37 +59,37 @@ fn safe_subscription_user_agent(app: &AppHandle) -> Result<String, String> {
 }
 
 async fn fetch_subscription(app: &AppHandle, url: &str) -> CompatResult {
-    let mut valid_url = url.trim().to_string();
-    if !valid_url.starts_with("http://") && !valid_url.starts_with("https://") {
-        valid_url = format!("https://{valid_url}");
+    if let Some(inline) = crate::subscription_content::inline_content(url) {
+        return Ok(match inline {
+            Ok(content) => success(json!({ "content": content, "sourceType": "inline" })),
+            Err(error) => json!({ "success": false, "error": error }),
+        });
     }
-
     let ua = safe_subscription_user_agent(app)?;
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|err| err.to_string())?
-        .get(valid_url)
-        .header("User-Agent", ua)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if !response.status().is_success() {
-        return Ok(json!({
-            "success": false,
-            "error": format!("获取订阅失败: {}", response.status())
-        }));
+    // Respect the configured system proxy, then fall back to direct/local core routes.
+    let system = crate::platform::system_proxy_status(app);
+    let mut routes = Vec::new();
+    if system.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+        if let (Some(host), Some(port)) = (system.get("host").and_then(Value::as_str),
+            system.get("port").and_then(|value| value.as_u64().or_else(|| value.as_str().and_then(|text| text.parse().ok())))) {
+            if !host.is_empty() && port > 0 && port <= u16::MAX as u64 {
+                let host = if host.contains(':') && !host.starts_with('[') { format!("[{host}]") } else { host.to_string() };
+                routes.push(Some(format!("http://{host}:{port}")));
+            }
+        }
     }
-
-    let (used, remaining, expire) = subscription_info_from_headers(response.headers());
-    let content = response.text().await.map_err(|err| err.to_string())?;
-    if content.trim().is_empty() {
-        return Ok(json!({
-            "success": false,
-            "error": "订阅内容为空"
-        }));
+    routes.push(None);
+    if crate::runtime::is_mihomo_running(app) {
+        let port = crate::runtime_config::mihomo_mixed_port(app);
+        let local = Some(format!("http://127.0.0.1:{port}"));
+        if port > 0 && !routes.contains(&local) { routes.push(local); }
     }
+    let fetched = match crate::subscription_download::download(url, &ua, routes).await {
+        Ok(result) => result,
+        Err(error) => return Ok(json!({ "success": false, "error": error })),
+    };
+    let (used, remaining, expire) = subscription_info_from_headers(&fetched.headers);
+    let content = fetched.content;
 
     Ok(success(json!({
         "content": content,
@@ -327,10 +327,14 @@ async fn dispatch_compat_call(
             fetch_subscription(app, &url).await
         }
         "saveSubscription" => {
+            let content = match crate::subscription_content::normalize_content(&arg_string(args, 1).unwrap_or_default()) {
+                Ok(content) => content,
+                Err(error) => return Ok(json!({ "success": false, "error": error })),
+            };
             let result = save_subscription(
                 app,
                 arg_string(args, 0),
-                arg_string(args, 1).unwrap_or_default(),
+                content,
                 arg_string(args, 2),
                 args.get(3).cloned(),
             )?;

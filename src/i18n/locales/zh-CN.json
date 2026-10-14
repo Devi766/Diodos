@@ -169,7 +169,212 @@
     "missRules": "未命中",
     "noRuleStats": "暂无规则统计数据",
     "ruleType": "类型",
-    "hits": "次"
+    "hits": "次",
+    "widgetLibrary": {
+      "title": "小组件库",
+      "subtitle": "选择卡片，点击可查看尺寸并添加到仪表盘",
+      "back": "返回",
+      "addToDashboard": "添加到仪表盘",
+      "previousSize": "上一个尺寸",
+      "nextSize": "下一个尺寸",
+      "added": "已添加到仪表盘",
+      "onDashboard": "已添加",
+      "sizeStandard": "标准",
+      "sizeCompact": "紧凑",
+      "widthFull": "全宽",
+      "widthHalf": "半宽",
+      "sizeSpeed": "网络速度",
+      "sizeSmall": "小",
+      "sizeMedium": "中",
+      "sizeLarge": "大",
+      "sizeList": "列表",
+      "sizeHalf": "半宽",
+      "sizeFull": "标准全宽",
+      "sizeExtraLargeFull": "超大全宽",
+      "sizeOverview": "综合信息",
+      "metricConnections": "活跃连接",
+      "metricDownload": "下载速度",
+      "metricUpload": "上传速度",
+      "metricTotal": "总流量",
+      "networkVariants": "选择信息卡片",
+      "sizeImmersive": "沉浸式"
+    },
+    "cardMeta": {
+      "metric-connections": {
+        "title": "活跃连接",
+        "description": "实时连接数"
+      },
+      "metric-download": {
+        "title": "下载速度",
+        "description": "当前下载速度"
+      },
+      "metric-upload": {
+        "title": "上传速度",
+        "description": "当前上传速度"
+      },
+      "metric-total": {
+        "title": "总流量",
+        "description": "累计流量统计"
+      },
+      "system-proxy": {
+        "title": "系统代理",
+        "description": "切换系统级别代理"
+      },
+      "tun-mode": {
+        "title": "TUN 模式",
+        "description": "虚拟网卡模式（需要管理员权限）"
+      },
+      "proxy-mode": {
+        "title": "代理模式",
+        "description": "切换规则 / 全局 / 直连模式"
+      },
+      "ip-address": {
+        "title": "IP 地址",
+        "description": "当前公网 IP 地址信息"
+      },
+      "traffic-chart": {
+        "title": "网络速度",
+        "description": "实时网络速度，支持标准全宽、半宽与超大全宽"
+      },
+      "traffic-ranking": {
+        "title": "流量排行",
+        "description": "按进程 / 域名 / 策略统计流量排行"
+      },
+      "traffic-statistics": {
+        "title": "流量统计",
+        "description": "总流量和连接统计信息"
+      },
+      "subscription-info": {
+        "title": "订阅信息",
+        "description": "当前激活配置的流量和到期信息"
+      },
+      "rules-overview": {
+        "title": "规则统计",
+        "description": "规则命中和未命中排行统计"
+      },
+      "connectivity-check": {
+        "title": "连通性检查",
+        "description": "检测常用网站能否访问及首字节延迟"
+      },
+      "image": {
+        "title": "图片",
+        "description": "在仪表盘上放一张自己的图片"
+      },
+      "network-control": {
+        "title": "网络接管",
+        "description": "在一张卡片中独立控制系统代理与 TUN 模式"
+      },
+      "network-info": {
+        "title": "网络信息",
+        "description": "一览网络流量与速度，或选择单独的半宽指标卡片"
+      },
+      "media-test": {
+        "title": "媒体服务",
+        "description": "切换 Netflix、ChatGPT 与 Disney+，手动检测当前线路"
+      },
+      "route-trace": {
+        "title": "路由跟踪",
+        "description": "逐跳探测节点入口，在点阵地球上查看路线与延迟"
+      }
+    },
+    "speedLines": {
+      "title": "网络速度"
+    },
+    "connectivity": {
+      "title": "连通性检查",
+      "check": "检测",
+      "checking": "检测中",
+      "notChecked": "未检测",
+      "unreachable": "无法访问",
+      "fast": "快速",
+      "normal": "一般",
+      "slow": "较慢",
+      "timeout": "超时"
+    },
+    "imageCard": {
+      "pick": "点击选择图片",
+      "change": "更换图片",
+      "remove": "移除图片",
+      "saveFailed": "保存图片失败",
+      "removeFailed": "移除图片失败"
+    },
+    "networkControl": {
+      "title": "网络接管",
+      "active": "已接管",
+      "inactive": "未接管",
+      "startCore": "启动内核后可开启 TUN 模式",
+      "tunUnavailable": "TUN 当前不可用，请检查服务或权限"
+    },
+    "networkInfo": {
+      "title": "网络信息",
+      "connections": "活跃连接",
+      "download": "下载速度",
+      "upload": "上传速度"
+    },
+    "mediaTest": {
+      "title": "媒体服务",
+      "check": "测试当前服务",
+      "checkAll": "测试全部服务",
+      "previous": "上一个服务",
+      "next": "下一个服务",
+      "disclaimer": "检测当前线路的服务可达性；结果仅供参考，不代表账号或内容播放权限。",
+      "status": {
+        "pending": "未测试",
+        "testing": "测试中",
+        "supported": "完全支持",
+        "reachable": "可访问",
+        "partial": "部分支持",
+        "restricted": "地区受限",
+        "unknown": "结果待确认",
+        "failed": "检测失败"
+      },
+      "testService": "测试 {{service}}"
+    },
+    "routeTrace": {
+      "title": "路由跟踪",
+      "start": "开始跟踪",
+      "stop": "停止跟踪",
+      "details": "查看逐跳详情",
+      "preparing": "正在解析节点入口…",
+      "tracing": "正在探测第 {{count}} 跳",
+      "summary": "{{count}} 跳 · {{ms}}",
+      "ready": "点击刷新开始跟踪",
+      "targetHint": "目标为当前节点的真实入口",
+      "disclaimer": "结果仅供参考",
+      "localNetwork": "内网",
+      "columns": {
+        "hop": "跳数",
+        "ip": "IP 地址",
+        "location": "归属地",
+        "loss": "丢包率",
+        "avg": "平均",
+        "min": "最小",
+        "max": "最大"
+      },
+      "errors": {
+        "physical_interface_unavailable": "未找到可用的物理网卡",
+        "permission": "当前系统未授予 ICMP 探测权限",
+        "ipv6_only": "当前入口仅支持 IPv6",
+        "no_entry": "请先启动内核并选择节点",
+        "failed": "路由探测失败，请重试",
+        "route_changed": "节点或配置已更改，请重新跟踪"
+      }
+    },
+    "subscriptionImmersive": {
+      "expiresOn": "{{date}} 到期",
+      "expiredOn": "{{date}} 已到期",
+      "noExpiry": "到期时间未提供",
+      "selectSubscription": "选择订阅以查看用量",
+      "remainingPercent": "剩余流量 {{percentage}}%",
+      "used": "已使用",
+      "usedPercent": "已使用 {{percentage}}%",
+      "unknownUsage": "暂无流量数据"
+    },
+    "proxyModeOptions": {
+      "rule": "规则",
+      "global": "全局",
+      "direct": "直连"
+    }
   },
   "ipInfoDialog": {
     "title": "IP 详情",
@@ -189,7 +394,34 @@
     "timezone": "时区",
     "clickToCopy": "点击复制",
     "clickToCopyHint": "点击任意行可复制内容",
-    "copied": "已复制: {{value}}"
+    "copied": "已复制: {{value}}",
+    "entryIp": "入口 IP",
+    "node": "当前节点",
+    "entryNode": "入口节点",
+    "entryHost": "入口地址",
+    "entryDnsType": "入口 DNS 类型",
+    "privateDns": "私有 DNS",
+    "entrySource": "入口识别方式",
+    "directConnection": "入口与落地相同，视为直连",
+    "resolvingEntry": "正在解析节点入口",
+    "entryGeoFailed": "入口 IP 已确定，归属地查询暂未成功",
+    "entrySources": {
+      "tcp": "内核实际连接",
+      "dns": "配置 DNS 解析（兜底）",
+      "config": "节点配置（兜底）"
+    },
+    "entryErrors": {
+      "core_unavailable": "内核未运行或控制接口暂不可用",
+      "config_unavailable": "运行配置暂不可用",
+      "no_selection": "未找到当前生效的代理组选择",
+      "selection_cycle": "代理组或中转链存在循环",
+      "node_not_found": "当前节点暂不可用",
+      "no_entry": "当前选择没有可用入口",
+      "node_config_unavailable": "未找到节点入口配置",
+      "unroutable_address": "入口地址不可路由",
+      "ipv6_only": "入口仅有 IPv6 地址",
+      "dns_failed": "入口域名解析失败"
+    }
   },
   "nodes": {
     "title": "代理组",
@@ -304,6 +536,8 @@
     "addSubscription": "添加配置",
     "uploadConfig": "上传配置",
     "subscriptionLink": "订阅链接",
+    "importSource": "订阅链接或配置内容",
+    "importSourceHint": "支持 YAML/JSON、节点链接列表及 Base64 订阅，自动识别并转换。",
     "customName": "备注名称(可选)",
     "noSubscriptions": "还没有添加任何订阅",
     "clickToAdd": "点击添加配置按钮开始使用",
@@ -630,7 +864,73 @@
       "detail": "支持 Clash、Clash Meta、Sing-box 等多种格式的订阅转换",
       "open": "打开转换器"
     },
-    "unknownNode": "未知节点"
+    "unknownNode": "未知节点",
+    "mtr": {
+      "title": "MTR 路由测试",
+      "subtitle": "逐跳查看线路延迟、丢包与地理路径",
+      "detail": "输入域名或 IPv4，或快速测试当前节点入口、落地出口；探测期间保持代理运行。",
+      "open": "打开路由测试",
+      "target": "测试目标",
+      "placeholder": "域名或 IPv4 地址，例如 example.com",
+      "start": "开始检测",
+      "stop": "停止检测",
+      "entry": "测试节点入口",
+      "exit": "测试落地出口",
+      "settings": "探测参数",
+      "maxHops": "最大跳数",
+      "probeCount": "每跳探测次数",
+      "timeout": "单次超时",
+      "copy": "复制结果",
+      "copied": "已复制",
+      "clear": "清空",
+      "routeView": "线路概览",
+      "waitingTarget": "等待测试目标",
+      "overview": "检测概况",
+      "hops": "已探测跳数",
+      "responded": "有响应跳数",
+      "lastRtt": "最后回应延迟",
+      "methodHint": "最多六跳并行探测，归属地在后台补齐。探测通过物理网卡源地址发出。",
+      "globeHint": "拖动旋转 · 滚轮缩放 · 双击自动取景",
+      "hopDetails": "逐跳详情",
+      "lossHint": "单跳不回应不等于整条线路丢包",
+      "preparingHint": "正在准备探测，请稍候…",
+      "empty": "输入测试目标或使用上方的快捷测试",
+      "disclaimer": "结果仅供参考。部分路由器会过滤或限速 ICMP；中间跳的丢包率不代表最终连接丢包，公网 IP 归属地也可能存在偏差。",
+      "status": {
+        "idle": "待检测",
+        "preparing": "准备中",
+        "running": "检测中",
+        "reached": "已到达目标",
+        "finished": "检测结束",
+        "failed": "检测失败"
+      },
+      "columns": {
+        "hop": "跳数",
+        "ip": "IP 地址",
+        "sent": "发送",
+        "received": "接收",
+        "loss": "丢包率",
+        "avg": "平均",
+        "min": "最小",
+        "max": "最大",
+        "location": "归属地 / 运营商"
+      },
+      "errors": {
+        "invalid_target": "请输入有效的域名或 IPv4 地址，不含协议、路径或端口。",
+        "ipv6_only": "当前逐跳探测仅支持 IPv4，请使用 IPv4 目标。",
+        "invalid_probe_address": "该地址不适合作为探测目标，或是代理 fake-ip。",
+        "dns_failed": "目标域名解析失败，请检查地址和网络连接。",
+        "no_entry": "没有可用的节点入口，请先启动内核并选择节点。",
+        "core_unavailable": "内核暂不可用；也可以直接输入域名或 IPv4 测试。",
+        "physical_interface_unavailable": "未找到可用的物理网卡，请检查网络连接。",
+        "permission": "系统未授予 ICMP 探测权限。",
+        "probe_unavailable": "探测接口暂不可用，请重新启动桌面开发进程。",
+        "route_changed": "节点或配置已更改，请重新检测。",
+        "exit_failed": "获取落地出口失败，请检查内核与网络。",
+        "copy_failed": "复制失败，请检查剪贴板权限。",
+        "failed": "探测失败，请检查网络后重试。"
+      }
+    }
   },
   "logs": {
     "title": "日志",

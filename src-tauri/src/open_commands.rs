@@ -45,7 +45,7 @@ fn is_yaml_path(path: &std::path::Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| {
             let lower = ext.to_ascii_lowercase();
-            lower == "yaml" || lower == "yml"
+            matches!(lower.as_str(), "yaml" | "yml" | "json" | "txt" | "conf")
         })
         .unwrap_or(false)
 }
@@ -66,7 +66,7 @@ fn read_local_text_file(path: &str) -> CompatResult {
         return Ok(json!({ "success": false, "error": "路径不是文件" }));
     }
     if !is_yaml_path(&file_path) {
-        return Ok(json!({ "success": false, "error": "仅支持 YAML 配置文件" }));
+        return Ok(json!({ "success": false, "error": "请选择 YAML、JSON、TXT 或 CONF 配置文件" }));
     }
 
     let content = std::fs::read_to_string(&file_path).map_err(|err| err.to_string())?;

@@ -47,7 +47,7 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
 
   return (
     <div className={cn(
-      "w-full rounded-2xl bg-white/95 p-4 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.32),0_8px_22px_-18px_rgba(15,23,42,0.2)] backdrop-blur-sm animate-in slide-in-from-bottom-2 dark:bg-[#2a2a2a]/95"
+      "min-w-0 w-full max-w-full overflow-hidden rounded-2xl bg-white/95 p-4 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.32),0_8px_22px_-18px_rgba(15,23,42,0.2)] backdrop-blur-sm animate-in slide-in-from-bottom-2 dark:bg-[#2a2a2a]/95"
     )}>
       <div className="flex items-start gap-3">
         <span className={cn("flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold", tone.className)}>
@@ -55,7 +55,7 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-foreground">{title}</div>
-          <div className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+          <div className="custom-scrollbar mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] text-xs text-muted-foreground">
             {description}
           </div>
         </div>

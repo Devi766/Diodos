@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -488,11 +488,43 @@ async fn specialized_media_streaming(
 ) -> Option<Value> {
     match service_name {
         "Netflix" => Some(test_netflix(client, started).await),
+        "ChatGPT" => Some(test_chatgpt(client, started).await),
+        "Disney+" => Some(test_disney_access(client, started).await),
         "YouTube Premium" => Some(test_youtube_premium(client, started).await),
         "BBC iPlayer" => Some(test_bbc_iplayer(client, started).await),
         "AbemaTV" | "Abema TV" | "Abema" => Some(test_abema(client, started).await),
         _ => None,
     }
+}
+
+fn access_verdict(status: u16, body: &str) -> &'static str {
+    let text = body.to_ascii_lowercase();
+    if ["unsupported_country", "forbidden-location", "not available in your location", "not available in your country"].iter().any(|marker| text.contains(marker)) {
+        return "restricted";
+    }
+    if text.contains("cf-chl-") || text.contains("just a moment") || text.contains("captcha") { return "unknown"; }
+    if (200..300).contains(&status) { "reachable" } else if status == 451 { "restricted" } else { "unknown" }
+}
+
+async fn test_chatgpt(client: &reqwest::Client, started: u128) -> Value {
+    let (api, mobile) = tokio::join!(
+        media_fetch_text(client, "https://api.openai.com/compliance/cookie_requirements", &[]),
+        media_fetch_text(client, "https://ios.chat.openai.com/", &[]),
+    );
+    let verdicts: Vec<_> = [api, mobile].iter().map(|reply| reply.as_ref().map(|(status, body)| access_verdict(*status, body)).unwrap_or("failed")).collect();
+    let verdict = if verdicts.iter().all(|v| *v == "reachable") { "reachable" }
+        else if verdicts.contains(&"reachable") { "partial" }
+        else if verdicts.iter().all(|v| *v == "restricted") { "restricted" }
+        else if verdicts.iter().all(|v| *v == "failed") { "failed" } else { "unknown" };
+    json!({"available":matches!(verdict,"reachable"|"partial"),"fullSupport":false,"verdict":verdict,"checkTime":now_millis().saturating_sub(started)})
+}
+
+async fn test_disney_access(client: &reqwest::Client, started: u128) -> Value {
+    // 公开页面只证明可访问，不据此推断账号或内容播放权限
+    let verdict = match media_fetch_text(client, "https://www.disneyplus.com/", &[]).await {
+        Ok((status, body)) => access_verdict(status, &body), Err(_) => "failed",
+    };
+    json!({"available":verdict == "reachable","fullSupport":false,"verdict":verdict,"checkTime":now_millis().saturating_sub(started)})
 }
 
 pub(crate) async fn test_media_streaming(
@@ -508,8 +540,10 @@ pub(crate) async fn test_media_streaming(
         .build()
         .map_err(|err| err.to_string())?;
 
-    if let Some(result) = specialized_media_streaming(&client, service_name, started).await {
-        return Ok(result);
+    match tokio::time::timeout(Duration::from_secs(25), specialized_media_streaming(&client, service_name, started)).await {
+        Ok(Some(result)) => return Ok(result),
+        Ok(None) => {},
+        Err(_) => return Ok(json!({"available":false,"fullSupport":false,"verdict":"failed","checkTime":25000})),
     }
 
     let Some(url) = check_url.filter(|value| !value.trim().is_empty()) else {
@@ -560,6 +594,69 @@ pub(crate) async fn test_media_streaming(
     }
 }
 
+// 连通性检查的站点：收到任何 HTTP 响应即视为连通
+const CONNECTIVITY_TARGETS: [(&str, &str); 6] = [
+    ("google", "https://www.google.com/generate_204"),
+    ("youtube", "https://www.youtube.com/generate_204"),
+    ("github", "https://github.com/"),
+    ("chatgpt", "https://chatgpt.com/"),
+    ("telegram", "https://api.telegram.org/"),
+    ("cloudflare", "https://www.cloudflare.com/cdn-cgi/trace"),
+];
+const CONNECTIVITY_TIMEOUT: Duration = Duration::from_secs(6);
+
+// 从发起请求到收到响应头的耗时。每次新建客户端，不复用连接，延迟才包含建连且能发现断网
+async fn connectivity_measure(proxy_url: &str, url: &str) -> Result<u64, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(CONNECTIVITY_TIMEOUT)
+        .timeout(CONNECTIVITY_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .pool_max_idle_per_host(0)
+        .proxy(reqwest::Proxy::all(proxy_url).map_err(|err| err.to_string())?)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let started = Instant::now();
+    let response = client
+        .get(url)
+        .header("User-Agent", media_user_agent())
+        .header("Cache-Control", "no-cache")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    let elapsed = started.elapsed().as_millis() as u64;
+    drop(response);
+    Ok(elapsed)
+}
+
+// 失败时间隔 300ms 再试一次，排除偶发的握手超时
+async fn connectivity_probe(proxy_url: String, url: &'static str) -> Option<u64> {
+    for attempt in 0..2 {
+        if let Ok(delay) = connectivity_measure(&proxy_url, url).await {
+            return Some(delay);
+        }
+        if attempt == 0 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+    None
+}
+
+pub(crate) async fn check_connectivity(proxy_port: u16) -> Result<Value, String> {
+    let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+    let handles: Vec<_> = CONNECTIVITY_TARGETS
+        .iter()
+        .map(|(id, url)| {
+            let proxy_url = proxy_url.clone();
+            (*id, tauri::async_runtime::spawn(connectivity_probe(proxy_url, url)))
+        })
+        .collect();
+    let mut results = Vec::with_capacity(handles.len());
+    for (id, handle) in handles {
+        let delay = handle.await.ok().flatten();
+        results.push(json!({ "id": id, "delay": delay }));
+    }
+    Ok(json!({ "success": true, "results": results, "checkedAt": now_millis() as u64 }))
+}
 
 pub(crate) async fn handle_compat_call(
     app: &AppHandle,
@@ -568,7 +665,7 @@ pub(crate) async fn handle_compat_call(
     method: &str,
     args: &[Value],
 ) -> Option<CompatResult> {
-    if method != "testMediaStreaming" {
+    if !matches!(method, "testMediaStreaming" | "checkConnectivity") {
         return None;
     }
 
@@ -588,6 +685,7 @@ async fn dispatch_compat_call(
             let check_url = arg_string(args, 1);
             test_media_streaming(default_mixed_port, &service_name, check_url).await
         }
+        "checkConnectivity" => check_connectivity(default_mixed_port).await,
         _ => Err(format!("Unsupported network tools method: {method}")),
     }
 }

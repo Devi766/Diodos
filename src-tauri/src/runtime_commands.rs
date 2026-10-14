@@ -86,7 +86,10 @@ fn set_preferred_config(
         runtime.core.set_active_config(Some(config_path.clone()));
     }
     emit_active_config_changed(app, Some(&config_path));
-    refresh_tray_menu_after(app, "setPreferredConfig");
+    let tray_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        refresh_tray_menu_after(&tray_app, "setPreferredConfig");
+    });
     Ok(success(
         json!({ "path": config_path, "filePath": config_path }),
     ))
@@ -128,7 +131,12 @@ async fn reload_mihomo_config(
         .or_else(|| read_last_config(app).ok().flatten())
         .unwrap_or_default();
     let result = reload_core_config(app, state, &config_path).await?;
-    refresh_tray_menu_after(app, "reloadMihomoConfig");
+    // Building every subscription/node menu is ancillary UI work, not reload.
+    // In particular, do not keep the IPC caller waiting on main-thread menu creation.
+    let tray_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        refresh_tray_menu_after(&tray_app, "reloadMihomoConfig");
+    });
     Ok(result)
 }
 

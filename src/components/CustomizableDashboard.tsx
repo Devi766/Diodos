@@ -20,17 +20,27 @@ import {
 import { useDashboardCards } from '@/hooks/useDashboardCards';
 import { DraggableCard } from '@/components/DraggableCard';
 import { AddCardDialog } from '@/components/AddCardDialog';
-import { DashboardCardType, DashboardCard } from '@/types/dashboard';
+import { useTranslation } from 'react-i18next';
+import { DashboardCardType, DashboardCard, resolveCardVariant } from '@/types/dashboard';
 import { Card } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { showToast } from '@/components/ui/toast';
 
 // 卡片组件导入
-import { SystemProxyCard, TunModeCard, ProxyModeCard } from '@/components/dashboard-cards/ControlCards';
+import { ProxyModeCard } from '@/components/dashboard-cards/ControlCards';
+import { NetworkControlCard } from '@/components/dashboard-cards/NetworkControlCard';
+import { NetworkInfoCard } from '@/components/dashboard-cards/NetworkInfoCard';
+import { MediaTestCard } from '@/components/dashboard-cards/MediaTestCard';
+import { RouteTraceCard } from '@/components/dashboard-cards/RouteTraceCard';
+import { CardHeading } from '@/components/dashboard-cards/CardHeading';
+import { NETWORK_METRIC_ICONS } from '@/lib/dashboard-icons';
 import { IpAddressCard } from '@/components/dashboard-cards/IpAddressCard';
 import { TrafficRankingCard } from '@/components/dashboard-cards/TrafficRankingCard';
 import { TrafficStatisticsCard } from '@/components/dashboard-cards/TrafficStatisticsCard';
 import { SubscriptionInfoCard } from '@/components/dashboard-cards/SubscriptionInfoCard';
 import { RulesOverviewCard } from '@/components/dashboard-cards/RulesOverviewCard';
+import { SpeedLinesCard } from '@/components/dashboard-cards/SpeedLinesCard';
+import { ConnectivityCheckCard } from '@/components/dashboard-cards/ConnectivityCheckCard';
+import { ImageCard } from '@/components/dashboard-cards/ImageCard';
 
 interface CustomizableDashboardProps {
   // Metrics卡片数据
@@ -128,9 +138,9 @@ export function CustomizableDashboard({
   onShowAddDialogChange,
   TrafficChart,
 }: CustomizableDashboardProps) {
+  const { t } = useTranslation();
   const {
     cards,
-    availableCards,
     reorderCards,
     addCard,
     removeCard,
@@ -180,52 +190,47 @@ export function CustomizableDashboard({
     return (
       <Card
         data-hoverable="false"
-        className="rounded-3xl bg-white p-5 shadow-sm transition-all hover:shadow-md dark:bg-[#2a2a2a]"
+        className="dashboard-card dashboard-half-card flex flex-col p-card transition-all hover:shadow-md"
       >
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="flex h-6 shrink-0 items-center justify-between gap-2">
+          <CardHeading type="network-info" icon={NETWORK_METRIC_ICONS[index]}>
             {metric.label}
-          </div>
-          {metric.icon}
+          </CardHeading>
         </div>
-        <div className="mt-3 text-2xl font-semibold text-foreground">{metric.value}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{metric.helper}</div>
+        <div className="flex min-h-0 flex-1 flex-col justify-center gap-1">
+          <div className="truncate text-2xl font-semibold leading-7 text-foreground tabular-nums">{metric.value}</div>
+          <div className="truncate text-xs leading-4 text-muted-foreground">{metric.helper}</div>
+        </div>
       </Card>
     );
   };
 
-  // 渲染卡片内容
-  const renderCardContent = (type: DashboardCardType) => {
+  // 渲染卡片内容；variant 为尺寸变体 id，缺省时使用默认尺寸；preview 为小组件库中的只读预览
+  const renderCardContent = (
+    type: DashboardCardType,
+    variant?: string,
+    options: { cardId?: string; preview?: boolean } = {},
+  ) => {
+    const { cardId = type, preview = false } = options;
+    const variantId = resolveCardVariant(type, variant).id;
     switch (type) {
-      case 'metric-connections':
-        return getMetricCard(0);
+      case 'network-info': {
+        const metricIndex = ['connections', 'download', 'upload', 'total'].indexOf(variantId);
+        return metricIndex >= 0 ? getMetricCard(metricIndex) : <NetworkInfoCard metrics={metrics} />;
+      }
 
-      case 'metric-download':
-        return getMetricCard(1);
-
-      case 'metric-upload':
-        return getMetricCard(2);
-
-      case 'metric-total':
-        return getMetricCard(3);
-
-      case 'system-proxy':
+      case 'network-control':
         return (
-          <SystemProxyCard
-            enabled={proxyEnabled}
-            updating={isProxyUpdating}
-            onToggle={onProxyToggle}
-          />
-        );
-
-      case 'tun-mode':
-        return (
-          <TunModeCard
-            enabled={tunEnabled}
-            updating={isTunUpdating}
-            available={tunAvailable}
-            isRunning={isRunning}
-            onToggle={onTunToggle}
+          <NetworkControlCard
+            proxyEnabled={preview ? true : proxyEnabled}
+            proxyUpdating={isProxyUpdating}
+            onProxyToggle={onProxyToggle}
+            tunEnabled={preview ? false : tunEnabled}
+            tunUpdating={isTunUpdating}
+            tunAvailable={preview || tunAvailable}
+            isRunning={preview || isRunning}
+            onTunToggle={onTunToggle}
+            preview={preview}
           />
         );
 
@@ -242,8 +247,12 @@ export function CustomizableDashboard({
         return <IpAddressCard />;
 
       case 'traffic-chart':
+        if (variantId !== 'large') {
+          return <SpeedLinesCard samples={trafficSamples} preview={preview} fullWidth={variantId === 'standard'} />;
+        }
         return (
-          <div className="flex h-[260px] flex-col space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+          <div className="dashboard-card dashboard-large-card flex flex-col space-y-3 p-card">
+            <CardHeading type="traffic-chart">{t('dashboard.speedLines.title')}</CardHeading>
             <TrafficChart samples={trafficSamples} />
           </div>
         );
@@ -257,55 +266,32 @@ export function CustomizableDashboard({
         return <TrafficStatisticsCard />;
 
       case 'subscription-info':
-        return <SubscriptionInfoCard />;
+        return <SubscriptionInfoCard variant={variantId} preview={preview} />;
 
       case 'rules-overview':
         return <RulesOverviewCard />;
+
+      case 'connectivity-check':
+        return <ConnectivityCheckCard variant={variantId} preview={preview} />;
+      case 'media-test':
+        return <MediaTestCard variant={variantId} preview={preview} />;
+      case 'route-trace':
+        return <RouteTraceCard variant={variantId} preview={preview} editing={isEditMode} />;
+
+      case 'image':
+        return <ImageCard cardId={cardId} variant={variantId} preview={preview} />;
 
       default:
         return null;
     }
   };
 
-  // 根据卡片类型返回布局类名
-  const getCardLayoutClass = (type: DashboardCardType) => {
-    // 指标卡片：4列网格中的1列
-    if (type.startsWith('metric-')) {
-      return 'col-span-1';
-    }
-    // 系统代理和TUN模式：占1列（与指标卡片保持一致，可以并排放4个）
-    if (type === 'system-proxy' || type === 'tun-mode') {
-      return 'col-span-1';
-    }
-    // 代理模式：占1列（与指标卡片保持一致）
-    if (type === 'proxy-mode') {
-      return 'col-span-1';
-    }
-    // IP地址：占1列（与指标卡片保持一致）
-    if (type === 'ip-address') {
-      return 'col-span-1';
-    }
-    // 流量图表：占2列（左边大卡片，右边可以放2个小卡片）
-    if (type === 'traffic-chart') {
-      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
-    }
-    // 流量排行：占2列（左边大卡片，右边可以放2个小卡片）
-    if (type === 'traffic-ranking') {
-      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
-    }
-    // 流量统计：占2列（左边大卡片，右边可以放2个小卡片）
-    if (type === 'traffic-statistics') {
-      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
-    }
-    // 订阅信息：占2列
-    if (type === 'subscription-info') {
-      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
-    }
-    // 规则统计：占2列
-    if (type === 'rules-overview') {
-      return 'md:col-span-1 md:row-span-2 lg:col-span-2 lg:row-span-2';
-    }
-    return '';
+  // 标准全宽与半宽占一行，超大全宽占两列两行
+  const getCardLayoutClass = (card: DashboardCard) => {
+    const variant = resolveCardVariant(card.type, card.variant);
+    if (variant.size === 'large-full') return 'md:col-span-2 row-span-2 dashboard-large-slot';
+    if (variant.size === 'full') return 'md:col-span-2 dashboard-full-slot';
+    return 'col-span-1 dashboard-half-slot';
   };
 
   const activeCard = activeId ? cards.find((card) => card.id === activeId) : null;
@@ -320,7 +306,7 @@ export function CustomizableDashboard({
         onDragCancel={handleDragCancel}
       >
         <SortableContext items={cards.map((c) => c.id)} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid auto-rows-[var(--card-half-height)] grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             {cards.map((card) => (
               <DraggableCard
                 key={card.id}
@@ -328,9 +314,9 @@ export function CustomizableDashboard({
                 isEditMode={isEditMode}
                 enabled={card.enabled}
                 onRemove={() => removeCard(card.id)}
-                className={getCardLayoutClass(card.type)}
+                className={getCardLayoutClass(card)}
               >
-                {renderCardContent(card.type)}
+                {renderCardContent(card.type, card.variant, { cardId: card.id })}
               </DraggableCard>
             ))}
           </div>
@@ -350,7 +336,7 @@ export function CustomizableDashboard({
                 transform: 'scale(1.05)',
               }}
             >
-              {renderCardContent(activeCard.type)}
+              {renderCardContent(activeCard.type, activeCard.variant, { cardId: activeCard.id })}
             </div>
           ) : null}
         </DragOverlay>
@@ -360,12 +346,13 @@ export function CustomizableDashboard({
       <AddCardDialog
         open={showAddDialog}
         onOpenChange={onShowAddDialogChange}
-        availableCards={availableCards}
-        onAddCard={(card) => {
-          addCard(card);
+        cards={cards}
+        onAddCard={(type, variantId) => {
+          addCard(type, variantId);
           onShowAddDialogChange(false);
+          showToast({ message: t('dashboard.widgetLibrary.added'), type: 'success' });
         }}
-        renderCardPreview={renderCardContent}
+        renderCardPreview={(type, variant) => renderCardContent(type, variant, { preview: true })}
       />
     </>
   );

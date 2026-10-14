@@ -32,7 +32,7 @@ import {
   UpdateEventDetail,
 } from '@/utils/update-check';
 import { preloadRouteData } from '@/services/app-data-preload';
-import { preloadRouteModule } from '@/services/route-preload';
+import { preloadRouteModule, scheduleRouteModuleWarmup } from '@/services/route-preload';
 import PageTransition from '@/components/PageTransition';
 
 type CompatWarningDetail = {
@@ -50,7 +50,7 @@ declare global {
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.3.3';
+const FALLBACK_APP_VERSION = '0.3.4';
 
 const normalizeVersionLabel = (value: unknown): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -95,6 +95,10 @@ export default function Layout({ children }: LayoutProps) {
   const hasCheckedUpdatesRef = useRef(false);
   const compatWarningToastRef = useRef<Map<string, number>>(new Map());
   const routeWarmupRef = useRef<Map<string, number>>(new Map());
+  const titlebarScrimRef = useRef<HTMLDivElement>(null);
+  const bottomScrimRef = useRef<HTMLDivElement>(null);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  const mainColumnRef = useRef<HTMLDivElement>(null);
   const { hasProviders } = useProviderAvailability();
   const showUpdateDialog = useCallback((release: ReleaseInfo, currentVersion: string) => {
     setPendingUpdate({ ...release, currentVersion });
@@ -274,29 +278,28 @@ export default function Layout({ children }: LayoutProps) {
     });
   }, []);
 
-  const warmRouteData = useCallback((href: string, force = false) => {
-    void preloadRouteModule(href);
+  useEffect(() => scheduleRouteModuleWarmup(), []);
 
-    try {
-      router.prefetch(href);
-    } catch {}
+  const warmRouteData = useCallback((href: string) => {
+    void preloadRouteModule(href);
 
     if (typeof window === 'undefined') return;
     const now = Date.now();
     const lastWarmup = routeWarmupRef.current.get(href) || 0;
-    if (!force && now - lastWarmup < 30_000) return;
+    if (now - lastWarmup < 30_000) return;
     routeWarmupRef.current.set(href, now);
+    try { router.prefetch(href); } catch {}
 
     const run = () => {
-      void preloadRouteData(href, { force, timeoutMs: 450 });
+      void preloadRouteData(href, { timeoutMs: 450 });
     };
     const requestIdle = (window as any).requestIdleCallback as
       | ((callback: () => void, options?: { timeout?: number }) => number)
       | undefined;
     if (typeof requestIdle === 'function') {
-      requestIdle(run, { timeout: force ? 120 : 800 });
+      requestIdle(run, { timeout: 800 });
     } else {
-      window.setTimeout(run, force ? 0 : 120);
+      window.setTimeout(run, 120);
     }
   }, [router]);
 
@@ -321,7 +324,7 @@ export default function Layout({ children }: LayoutProps) {
     event.preventDefault();
     setPendingPath(href);
     setMobileMenuOpen(false);
-    warmRouteData(href, true);
+    warmRouteData(href);
     startRouteTransition(() => {
       router.push(href);
     });
@@ -1148,6 +1151,54 @@ export default function Layout({ children }: LayoutProps) {
         : 'text-muted-foreground group-hover:text-foreground'
     );
 
+  // 遮罩透明度跟随滚动距离：顶部完全透明，向下滚动约 32px 后完全显示
+  const syncTitlebarScrim = useCallback(() => {
+    const scrim = titlebarScrimRef.current;
+    const container = contentScrollRef.current;
+    if (!scrim || !container) return;
+    const progress = Math.min(1, Math.max(0, container.scrollTop / 32));
+    const bottomProgress = Math.min(1, Math.max(0, (container.scrollHeight - container.clientHeight - container.scrollTop) / 32));
+    scrim.style.setProperty('--scrim-progress', progress.toFixed(3));
+    container.style.setProperty('--scrim-progress', progress.toFixed(3));
+    bottomScrimRef.current?.style.setProperty('--scrim-progress', bottomProgress.toFixed(3));
+    container.style.setProperty('--scrim-bottom-progress', bottomProgress.toFixed(3));
+  }, []);
+
+  useEffect(() => {
+    syncTitlebarScrim();
+  }, [pathname, syncTitlebarScrim]);
+
+  // 遮罩仅覆盖主内容区，左右留出渐隐区域，不模糊侧边栏
+  useEffect(() => {
+    const column = mainColumnRef.current;
+    const scrim = titlebarScrimRef.current;
+    if (!column || !scrim) return;
+    const update = () => {
+      const rect = column.getBoundingClientRect();
+      scrim.style.left = `${rect.left}px`;
+      scrim.style.width = `${rect.width}px`;
+      const bottom = bottomScrimRef.current;
+      if (bottom) {
+        bottom.style.left = `${rect.left}px`;
+        bottom.style.width = `${rect.width}px`;
+      }
+      syncTitlebarScrim();
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(column);
+    const scroll = contentScrollRef.current;
+    if (scroll) {
+      observer.observe(scroll);
+      if (scroll.firstElementChild) observer.observe(scroll.firstElementChild);
+    }
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [pathname, sidebarCollapsed, syncTitlebarScrim]);
+
   const isDashboard = !pathname || pathname === '/';
   const isPlainView =
     !pathname ||
@@ -1169,11 +1220,23 @@ export default function Layout({ children }: LayoutProps) {
 
   // Pages that manage their own internal scrolling and need full height passthrough
   const isFullHeight = pathname.startsWith('/ai-assistant');
+  // 内容可滚到标题栏下方，标题栏随滚动出现半透模糊遮罩
+  const scrollsUnderTitlebar = isPlainView && !isFullHeight;
 
   return (
     <>
       <div className="relative h-screen overflow-hidden bg-transparent">
         <TitleBar />
+        {scrollsUnderTitlebar && (
+          <>
+          <div ref={titlebarScrimRef} className="titlebar-scrim hidden md:block" aria-hidden>
+            <span />
+          </div>
+          <div ref={bottomScrimRef} className="titlebar-scrim bottom-scroll-scrim hidden md:block" aria-hidden>
+            <span />
+          </div>
+          </>
+        )}
 
         <div className="relative z-10 mx-auto flex h-full w-full max-w-[1400px] min-w-0 gap-2 pl-1.5 pr-3 pb-6 pt-10 sm:gap-3 sm:pl-2 sm:pr-4 md:gap-3 md:pl-3 md:pr-5">
         {/* Sidebar - Desktop */}
@@ -1209,7 +1272,7 @@ export default function Layout({ children }: LayoutProps) {
                   prefetch
                   aria-current={isActivePath(item.href) ? 'page' : undefined}
                   aria-busy={isRoutePending && pendingPath === item.href ? true : undefined}
-                  onPointerDown={() => warmRouteData(item.href, true)}
+                  onPointerDown={() => warmRouteData(item.href)}
                   onMouseEnter={() => warmRouteData(item.href)}
                   onFocus={() => warmRouteData(item.href)}
                   onClick={(event) => handleNavigationClick(event, item.href)}
@@ -1242,7 +1305,13 @@ export default function Layout({ children }: LayoutProps) {
         </aside>
 
         {/* Main Content */}
-        <div className="flex h-full min-w-0 flex-1 flex-col gap-3 md:gap-4">
+        <div
+          ref={mainColumnRef}
+          className={classNames(
+            'flex h-full min-w-0 flex-1 flex-col gap-3 md:gap-4',
+            scrollsUnderTitlebar && 'md:-mt-10 md:h-[calc(100%+4rem)]'
+          )}
+        >
           {/* Mobile Navigation */}
           <div className="md:hidden">
             <div className="glass-panel flex items-center justify-between rounded-2xl px-4 py-3" data-hoverable="false">
@@ -1270,7 +1339,7 @@ export default function Layout({ children }: LayoutProps) {
                     prefetch
                     aria-current={isActivePath(item.href) ? 'page' : undefined}
                     aria-busy={isRoutePending && pendingPath === item.href ? true : undefined}
-                    onPointerDown={() => warmRouteData(item.href, true)}
+                    onPointerDown={() => warmRouteData(item.href)}
                     onMouseEnter={() => warmRouteData(item.href)}
                     onFocus={() => warmRouteData(item.href)}
                     onClick={(event) => handleNavigationClick(event, item.href)}
@@ -1287,8 +1356,11 @@ export default function Layout({ children }: LayoutProps) {
           </div>
 
           <div
+            ref={contentScrollRef}
+            onScroll={scrollsUnderTitlebar ? syncTitlebarScrim : undefined}
             className={classNames(
               'flex flex-1 flex-col min-w-0',
+              scrollsUnderTitlebar && 'titlebar-scroll-fade',
               isFullHeight ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar',
               { 'glass-panel card-surface rounded-2xl': !isPlainView }
             )}
@@ -1298,7 +1370,11 @@ export default function Layout({ children }: LayoutProps) {
               <div
                 className={classNames(
                   'w-full min-w-0',
-                  isFullHeight ? 'h-full flex flex-col py-3 sm:py-4 md:py-4' : 'py-5 sm:py-6 md:py-6',
+                  isFullHeight
+                    ? 'h-full flex flex-col py-3 sm:py-4 md:py-4'
+                    : scrollsUnderTitlebar
+                      ? 'py-5 sm:py-6 md:pb-6 md:pt-16'
+                      : 'py-5 sm:py-6 md:py-6',
                   isPlainView
                     ? 'pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'
                     : 'mx-auto max-w-[1400px] pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'

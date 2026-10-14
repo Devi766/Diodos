@@ -320,6 +320,10 @@ pub(crate) fn subscription_info_from_headers(
     let (mut used, mut remaining, mut expire) = parse_subscription_userinfo(
         headers
             .get("subscription-userinfo")
+            .or_else(|| headers.iter().find_map(|(key, value)| {
+                key.as_str().strip_suffix("subscription-userinfo")
+                    .filter(|prefix| prefix.ends_with('-')).map(|_| value)
+            }))
             .and_then(|value| value.to_str().ok()),
     );
 
@@ -893,4 +897,22 @@ pub(crate) fn update_subscription(
     }
 
     Ok(Value::Bool(true))
+}
+
+#[cfg(test)]
+mod subscription_metadata_tests {
+    use super::subscription_info_from_headers;
+    use reqwest::header::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn accepts_cloud_storage_metadata_prefix_and_prefers_standard_header() {
+        let mut standard = HeaderMap::new();
+        standard.insert("subscription-userinfo", HeaderValue::from_static("upload=100; download=200; total=1000; expire=2000000000"));
+        let expected = subscription_info_from_headers(&standard);
+        let mut prefixed = HeaderMap::new();
+        prefixed.insert("x-amz-meta-subscription-userinfo", standard["subscription-userinfo"].clone());
+        assert_eq!(subscription_info_from_headers(&prefixed), expected);
+        standard.insert("x-obs-meta-subscription-userinfo", HeaderValue::from_static("total=1"));
+        assert_eq!(subscription_info_from_headers(&standard), expected);
+    }
 }

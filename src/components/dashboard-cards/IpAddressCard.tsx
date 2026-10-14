@@ -1,8 +1,9 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
-import { Eye, EyeOff, RefreshCw, Globe } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { IpInfoDialog } from './IpInfoDialog';
+import { CardHeading } from './CardHeading';
 import { fetchIpInfo, type IpInfo } from '@/utils/ip-info';
 import {
   hasIpInfoCache,
@@ -115,13 +116,13 @@ export function IpAddressCard() {
     <>
     <Card
       data-hoverable="false"
-      className="rounded-3xl bg-white p-5 shadow-sm transition-all hover:shadow-md dark:bg-[#2a2a2a] cursor-pointer"
+      className="dashboard-card dashboard-half-card flex flex-col p-card transition-all hover:shadow-md cursor-pointer"
       onClick={handleCardClick}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="flex h-6 shrink-0 items-center justify-between gap-2">
+        <CardHeading type="ip-address">
           {t('dashboard.ipAddress') || 'IP 地址'}
-        </div>
+        </CardHeading>
         <div className="flex items-center gap-1.5">
           <button
             onClick={toggleVisibility}
@@ -130,9 +131,9 @@ export function IpAddressCard() {
             title={isVisible ? t('dashboard.hideIp') : t('dashboard.showIp')}
           >
             {isVisible ? (
-              <Eye className="h-4 w-4 text-muted-foreground" />
+              <Eye className="size-card-icon text-muted-foreground" />
             ) : (
-              <EyeOff className="h-4 w-4 text-muted-foreground" />
+              <EyeOff className="size-card-icon text-muted-foreground" />
             )}
           </button>
           <button
@@ -140,14 +141,13 @@ export function IpAddressCard() {
             className="rounded-lg p-1 transition-colors hover:bg-muted"
             title={t('common.refresh')}
           >
-            <RefreshCw className="h-4 w-4 text-muted-foreground" />
+            <RefreshCw className="size-card-icon text-muted-foreground" />
           </button>
-          <Globe className="h-4 w-4 text-blue-500 dark:text-blue-400" />
         </div>
       </div>
 
-      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex-1 min-w-0">
+      <div className="flex min-h-0 flex-1 items-center">
+        <div className="min-w-0 w-full">
           {/* 第一行：固定高度，放 IP 或加载/错误信息 */}
           <div className="h-7 flex items-center">
             {loading && !ipInfo ? (
@@ -157,7 +157,7 @@ export function IpAddressCard() {
                 {error}
               </div>
             ) : (
-              <div className="truncate text-lg font-semibold text-foreground">
+              <div className="truncate text-xl leading-7 font-semibold tabular-nums text-foreground">
                 {displayIp}
               </div>
             )}
@@ -177,7 +177,6 @@ export function IpAddressCard() {
           </div>
         </div>
 
-        <div className="ml-auto hidden shrink-0 items-center gap-0.5 self-end sm:flex" />
       </div>
     </Card>
 

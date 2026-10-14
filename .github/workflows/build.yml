@@ -330,9 +330,9 @@ jobs:
         with:
           tag: tarui-latest
           commit: ${{ github.sha }}
-          name: FlyClash Desktop v${{ steps.pkg.outputs.version }} 测试版 (tarui)
+          name: FlyClash Desktop v${{ steps.pkg.outputs.version }} Alpha (tarui)
           body: |
-            ## FlyClash Desktop v${{ steps.pkg.outputs.version }} 测试版
+            ## FlyClash Desktop v${{ steps.pkg.outputs.version }} Alpha
 
             tarui 开发通道滚动构建。
 
@@ -362,7 +362,7 @@ jobs:
           # 优先取 CHANGELOG.md 中当前版本的章节作为发布说明
           if [ -f CHANGELOG.md ] && grep -q "^## ${TAG}" CHANGELOG.md; then
             {
-              echo "## FlyClash Desktop ${TAG} 测试版"
+              echo "## FlyClash Desktop ${TAG} Alpha"
               echo
               awk -v tag="^## ${TAG}" '
                 $0 ~ tag { found = 1; next }
@@ -375,7 +375,7 @@ jobs:
             } > release-notes.md
           else
             {
-              echo "## FlyClash Desktop v${VERSION} 测试版"
+              echo "## FlyClash Desktop v${VERSION} Alpha"
               echo
               echo "相对 main（Electron）切到 tarui（Tauri）的主要变化："
               echo
@@ -391,7 +391,7 @@ jobs:
           fi
 
           {
-            echo "name=FlyClash Desktop v${VERSION} 测试版"
+            echo "name=FlyClash Desktop v${VERSION} Alpha"
             echo "body<<EOF"
             cat release-notes.md
             echo "EOF"
@@ -412,6 +412,6 @@ jobs:
           allowUpdates: true
           replacesArtifacts: true
           generateReleaseNotes: false
-          prerelease: true
-          makeLatest: true
+          prerelease: false
+          makeLatest: "true"
           token: ${{ secrets.GITHUB_TOKEN }}

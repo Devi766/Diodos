@@ -44,6 +44,7 @@ const TOKEN_CLASS: Record<string, string> = {
   punctuation: 'text-gray-400 dark:text-gray-500',
   anchor: 'text-pink-600 dark:text-pink-400',
   function: 'text-blue-600 dark:text-blue-400',
+  ruleType: 'text-[#007C89] dark:text-[#5ED3D0] font-medium',
 };
 
 const span = (type: string, text: string) =>
@@ -69,6 +70,24 @@ function tokenizeSegment(
   return html;
 }
 
+// Clash 规则行：TYPE,payload,policy[,option]；逻辑规则里括号后的子规则类型同样着色
+const RULE_HEAD_PATTERN = /^(\s+)([A-Z][A-Z0-9-]*)(?=,)/;
+const RULE_BODY_PATTERN = /(\()([A-Z][A-Z0-9-]*)(?=,)|(,)|([()])/g;
+
+function highlightRuleBody(segment: string): string {
+  const head = segment.match(RULE_HEAD_PATTERN);
+  if (!head) return '';
+  const rest = segment.slice(head[0].length);
+  return escapeHtml(head[1]) + span('ruleType', head[2]) + tokenizeSegment(
+    rest,
+    RULE_BODY_PATTERN,
+    ([paren, type, comma, bracket]) => {
+      if (type) return span('punctuation', paren!) + span('ruleType', type);
+      return span('punctuation', comma ?? bracket ?? '');
+    },
+  );
+}
+
 function highlightYamlLine(line: string): string {
   const commentIndex = findYamlCommentIndex(line);
   const body = commentIndex >= 0 ? line.slice(0, commentIndex) : line;
@@ -85,6 +104,10 @@ function highlightYamlLine(line: string): string {
     if (dashMatch) {
       html += escapeHtml(dashMatch[1]) + span('punctuation', '-');
       rest = body.slice(dashMatch[1].length + 1);
+      const rule = highlightRuleBody(rest);
+      if (rule) {
+        return html + rule + (comment ? span('comment', comment) : '');
+      }
     }
   }
 

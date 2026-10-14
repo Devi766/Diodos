@@ -58,6 +58,15 @@ pub(crate) async fn handle_compat_call(
     if let Some(result) = crate::proxy_icons::handle_compat_call(&app, method, &args).await {
         return result;
     }
+    if let Some(result) = crate::dashboard_images::handle_compat_call(&app, method, &args).await {
+        return result;
+    }
+    if let Some(result) = crate::proxy_entry::handle_compat_call(&app, method).await {
+        return result;
+    }
+    if let Some(result) = crate::route_trace::handle_compat_call(method, &args).await {
+        return result;
+    }
     if let Some(result) = crate::telemetry::handle_compat_call(&app, method, &args).await {
         return result;
     }

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart3, TrendingUp, TrendingDown, Monitor, Globe, Shield } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
+import { CardHeading } from './CardHeading';
 
 interface Connection {
   id: string;
@@ -194,18 +195,18 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
   const maxTotal = rankings[0]?.total || 1;
 
   return (
-    <div className="flex h-[260px] flex-col space-y-5 rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+    <div className="flex dashboard-large-card flex-col space-y-5 dashboard-card p-card">
       {/* 标题和切换按钮 */}
       <div className="flex flex-shrink-0 items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <CardHeading type="traffic-ranking">
           {t('dashboard.trafficRanking')}
-        </p>
-        <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-[#1f1f1f]">
+        </CardHeading>
+        <div className="flex gap-1 rounded-control bg-gray-100 p-1 dark:bg-[#1f1f1f]">
           <button
             onClick={() => {
               persistViewMode('process');
             }}
-            className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'process'
                 ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
                 : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'
@@ -218,7 +219,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             onClick={() => {
               persistViewMode('domain');
             }}
-            className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'domain'
                 ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
                 : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'
@@ -231,7 +232,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
             onClick={() => {
               persistViewMode('rule');
             }}
-            className={`flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
               viewMode === 'rule'
                 ? 'bg-white text-primary shadow-sm dark:bg-[#222222] dark:text-primary'
                 : 'text-gray-600 hover:text-gray-900 dark:bg-[#222222] dark:text-gray-300 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-100'

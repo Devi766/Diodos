@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,8 @@ import {
 import { useTranslation } from 'react-i18next';
 import { RefreshCw, Copy, Check } from 'lucide-react';
 import { showToast } from '@/components/ui/toast';
-import { fetchIpInfo, type IpInfo } from '@/utils/ip-info';
+import { fetchIpInfo, fetchIpInfoByIp, type IpInfo } from '@/utils/ip-info';
+import { resolveProxyEntry, readCachedProxyEntry, invalidateProxyEntry, type ProxyEntry } from '@/lib/proxy-entry';
 
 interface IpInfoDialogProps {
   open: boolean;
@@ -22,30 +23,63 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [entry, setEntry] = useState<ProxyEntry | null>(readCachedProxyEntry);
+  const [entryInfo, setEntryInfo] = useState<IpInfo | null>(null);
+  const [entryLoading, setEntryLoading] = useState(false);
+  const [entryError, setEntryError] = useState<string | null>(null);
+  const [entryGeoFailed, setEntryGeoFailed] = useState(false);
+  const requestId = useRef(0);
+  const isDirect = entry?.source === 'direct' || Boolean(entry?.ip && entry.ip === ipInfo?.ip);
 
   const loadIpInfo = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     setError(null);
-
-    try {
-      setIpInfo(await fetchIpInfo());
-      setLoading(false);
-    } catch {
-      setError(t('ipInfoDialog.fetchError'));
-      setLoading(false);
-    }
+    setEntryLoading(true);
+    setEntryError(null);
+    setEntryGeoFailed(false);
+    const exitRequest = fetchIpInfo().then(info => {
+      if (id === requestId.current) setIpInfo(info);
+    }).catch(() => {
+      if (id === requestId.current) setError(t('ipInfoDialog.fetchError'));
+    }).finally(() => {
+      if (id === requestId.current) setLoading(false);
+    });
+    const entryRequest = resolveProxyEntry().then(async result => {
+      if (id !== requestId.current) return;
+      setEntry(result);
+      setEntryInfo(null);
+      if (result.error) setEntryError(result.error);
+      if (result.ip) {
+        try {
+          const info = await fetchIpInfoByIp(result.ip);
+          if (id === requestId.current) setEntryInfo(info);
+        } catch {
+          if (id === requestId.current) setEntryGeoFailed(true);
+        }
+      }
+    }).catch(() => {
+      if (id === requestId.current) setEntryError('core_unavailable');
+    }).finally(() => {
+      if (id === requestId.current) setEntryLoading(false);
+    });
+    await Promise.allSettled([exitRequest, entryRequest]);
   }, [t]);
 
   useEffect(() => {
     if (open) {
-      loadIpInfo();
+      void loadIpInfo();
     }
+    return () => { requestId.current += 1; };
   }, [open, loadIpInfo]);
 
   useEffect(() => {
     if (!open || typeof window === 'undefined') return;
 
     const refreshIpInfo = () => {
+      invalidateProxyEntry();
+      setEntry(null);
+      setEntryInfo(null);
       void loadIpInfo();
     };
 
@@ -97,17 +131,17 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
 
     return (
       <div
-        className="flex items-center justify-between py-2 px-2 cursor-pointer hover:bg-muted/50 rounded-lg transition-colors group"
+        className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3 py-2.5 px-2 cursor-pointer hover:bg-muted/50 rounded-lg transition-colors group"
         onClick={() => copyToClipboard(value, fieldName)}
         title={t('ipInfoDialog.clickToCopy')}
       >
-        <span className="text-sm text-muted-foreground">{label}</span>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">{value}</span>
+        <span className="whitespace-nowrap text-center text-sm text-muted-foreground">{label}</span>
+        <div className="relative flex min-w-0 items-center justify-center px-4">
+          <span className="min-w-0 text-center text-sm font-medium leading-5 text-foreground break-words [overflow-wrap:anywhere]">{value}</span>
           {isCopied ? (
-            <Check className="h-3.5 w-3.5 text-green-500" />
+            <Check className="absolute right-0 h-3.5 w-3.5 text-green-500" />
           ) : (
-            <Copy className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+            <Copy className="absolute right-0 h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
           )}
         </div>
       </div>
@@ -116,17 +150,17 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto custom-scrollbar rounded-dialog">
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
+          <DialogTitle className="relative flex min-h-8 items-center justify-center text-center">
             <span>{t('ipInfoDialog.title')}</span>
             <button
-              onClick={loadIpInfo}
-              disabled={loading}
-              className="rounded-lg p-1.5 transition-colors hover:bg-muted disabled:opacity-50"
+              onClick={() => { invalidateProxyEntry(); void loadIpInfo(); }}
+              disabled={loading || entryLoading}
+              className="absolute right-0 rounded-lg p-1.5 transition-colors hover:bg-muted disabled:opacity-50"
               title={t('common.refresh')}
             >
-              <RefreshCw className={`h-4 w-4 text-muted-foreground ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 text-muted-foreground ${loading || entryLoading ? 'animate-spin' : ''}`} />
             </button>
           </DialogTitle>
           <DialogDescription className="sr-only">
@@ -134,12 +168,46 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="mt-2">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-8 gap-3">
-              <RefreshCw className="h-8 w-8 animate-spin text-primary" />
-              <span className="text-sm text-muted-foreground">{t('ipInfoDialog.loading')}</span>
+        <div className="mt-2" aria-busy={loading || entryLoading}>
+          {!isDirect && <section className="mb-5" aria-busy={entryLoading}>
+            <h3 className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+              {t('ipInfoDialog.entryIp')}
+            </h3>
+            <div className="bg-muted/30 rounded-xl p-2">
+              {entryLoading && !entry ? (
+                <div className="space-y-3 p-2 animate-pulse" aria-label={t('ipInfoDialog.resolvingEntry')}>
+                  <div className="h-4 w-3/4 bg-muted rounded" />
+                  <div className="h-4 w-1/2 bg-muted rounded" />
+                </div>
+              ) : (
+                <>
+                  <InfoRow label={t('ipInfoDialog.node')} value={entry?.node ?? undefined} fieldName="entryNodeSelection" />
+                  {entry?.entryNode !== entry?.node && <InfoRow label={t('ipInfoDialog.entryNode')} value={entry?.entryNode ?? undefined} fieldName="entryNode" />}
+                  <InfoRow label={t('ipInfoDialog.entryHost')} value={entry?.host ?? undefined} fieldName="entryHost" />
+                  <InfoRow label={t('ipInfoDialog.ipAddress')} value={entry?.ip ?? undefined} fieldName="entryIp" />
+                  <InfoRow label={t('ipInfoDialog.country')} value={entryInfo?.country} fieldName="entryCountry" />
+                  <InfoRow label={t('ipInfoDialog.region')} value={entryInfo?.region} fieldName="entryRegion" />
+                  <InfoRow label={t('ipInfoDialog.city')} value={entryInfo?.city} fieldName="entryCity" />
+                  <InfoRow label={t('ipInfoDialog.isp')} value={entryInfo?.isp} fieldName="entryIsp" />
+                  {entry?.privateDns && <InfoRow label={t('ipInfoDialog.entryDnsType')} value={t('ipInfoDialog.privateDns')} fieldName="entryDns" />}
+                  {entry?.source && <InfoRow label={t('ipInfoDialog.entrySource')} value={t(`ipInfoDialog.entrySources.${entry.source}`)} fieldName="entrySource" />}
+                  {entryError && <p role="status" className="px-2 py-2 text-sm text-muted-foreground">{t(`ipInfoDialog.entryErrors.${entryError}`, { defaultValue: t('ipInfoDialog.entryErrors.dns_failed') })}</p>}
+                  {entryGeoFailed && <p className="px-2 py-2 text-xs text-muted-foreground">{t('ipInfoDialog.entryGeoFailed')}</p>}
+                </>
+              )}
             </div>
+          </section>}
+          {loading && !ipInfo ? (
+            <section className="mb-4" aria-label={t('ipInfoDialog.loading')}>
+              {!isDirect && <h3 className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+                {t('ipInfoDialog.exitIp')}
+              </h3>}
+              <div className="space-y-4 rounded-xl bg-muted/30 p-4 animate-pulse" aria-hidden>
+                <div className="h-5 w-2/3 rounded bg-muted" />
+                <div className="h-4 w-1/2 rounded bg-muted" />
+                <div className="h-4 w-3/4 rounded bg-muted" />
+              </div>
+            </section>
           ) : error ? (
             <div className="flex flex-col items-center justify-center py-8 gap-3">
               <span className="text-sm text-destructive">{error}</span>
@@ -154,9 +222,9 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
             <div className="space-y-1">
               {/* Exit IP Section */}
               <div className="mb-4">
-                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+                {!isDirect && <h3 className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
                   {t('ipInfoDialog.exitIp')}
-                </h3>
+                </h3>}
                 <div className="bg-muted/30 rounded-xl p-2">
                   <InfoRow
                     label={t('ipInfoDialog.ipAddress')}
@@ -166,7 +234,9 @@ export function IpInfoDialog({ open, onOpenChange }: IpInfoDialogProps) {
                   <InfoRow
                     label={t('ipInfoDialog.source')}
                     value={
-                      ipInfo.source === 'proxy'
+                      isDirect
+                        ? t('dashboard.directExit')
+                        : ipInfo.source === 'proxy'
                         ? t('dashboard.proxyExit')
                         : ipInfo.source === 'direct'
                           ? t('dashboard.directExit')

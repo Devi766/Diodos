@@ -469,6 +469,9 @@ fn converter_parse_tuic(line: &str) -> Option<Value> {
 
 fn converter_proxy_from_line(line: &str) -> Option<Value> {
     let line = line.trim();
+    let (scheme, body) = line.split_once("://")?;
+    let normalized = format!("{}://{body}", scheme.to_ascii_lowercase());
+    let line = normalized.as_str();
     if line.starts_with("ss://") {
         converter_parse_ss(line)
     } else if line.starts_with("vmess://") {
@@ -510,6 +513,37 @@ fn converter_parse_proxies(input: &str) -> Vec<Value> {
         .lines()
         .filter_map(converter_proxy_from_line)
         .collect()
+}
+
+/// Import all recognized nodes locally without silently discarding unsupported lines.
+pub(crate) fn convert_import_nodes(input: &str) -> Result<String, String> {
+    let mut proxies = if let Ok(serde_yaml::Value::Sequence(items)) = serde_yaml::from_str(input) {
+        items.into_iter().enumerate().map(|(index, item)| {
+            if let Some(line) = item.as_str() {
+                converter_proxy_from_line(line).ok_or_else(|| format!("第 {} 个节点格式未识别", index + 1))
+            } else {
+                serde_json::to_value(item).map_err(|_| format!("第 {} 个节点格式无效", index + 1))
+            }
+        }).collect::<Result<Vec<_>, _>>()?
+    } else {
+        input.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .enumerate().map(|(index, line)| converter_proxy_from_line(line)
+                .ok_or_else(|| format!("第 {} 行节点格式未识别，请检查节点链接", index + 1)))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if proxies.is_empty() { return Err("未找到可导入的节点".into()); }
+    let mut names = std::collections::HashSet::from(["Proxy".to_string(), "Auto".to_string(), "DIRECT".to_string(), "REJECT".to_string(), "GLOBAL".to_string()]);
+    for (index, proxy) in proxies.iter_mut().enumerate() {
+        let object = proxy.as_object_mut().filter(|object| object.get("type").and_then(Value::as_str).is_some())
+            .ok_or_else(|| format!("第 {} 个节点缺少类型或不是节点对象", index + 1))?;
+        let base = object.get("name").and_then(Value::as_str).filter(|name| !name.trim().is_empty())
+            .map(ToString::to_string).unwrap_or_else(|| format!("Node {}", index + 1));
+        let mut name = base.clone();
+        let mut suffix = 2;
+        while !names.insert(name.clone()) { name = format!("{base} {suffix}"); suffix += 1; }
+        object.insert("name".into(), Value::String(name));
+    }
+    converter_mihomo_yaml(&proxies)
 }
 
 fn converter_apply_options(proxies: &mut [Value], options: Option<&Value>) {

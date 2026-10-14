@@ -33,6 +33,7 @@ electron-builder.local.yml
 
 # next.js
 /.next/
+/.next-preview/
 /out/
 
 # production
@@ -48,6 +49,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 *.log
+/dev.pid
 
 # env files
 .env*

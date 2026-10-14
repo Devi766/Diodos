@@ -1,6 +1,8 @@
-import React, { useCallback, useState, useEffect, useMemo } from 'react';
-import { CloudDownload, Clock } from 'lucide-react';
+import React, { useCallback, useState, useEffect, useMemo, useId } from 'react';
+import { Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { SubscriptionImmersiveCard } from './SubscriptionImmersiveCard';
+import { CardHeading } from './CardHeading';
 import {
   hasActiveConfigCache,
   hasSubscriptionsCache,
@@ -52,13 +54,21 @@ const findSubscriptionData = (activeConfig: string | null, subs: any[]): Subscri
   };
 };
 
-export function SubscriptionInfoCard() {
+const PREVIEW_SUBSCRIPTION: SubscriptionData = {
+  name: 'FlyClash', usedTraffic: '32 GB', remainingTraffic: '468 GB', totalTraffic: '500 GB', expiryDate: '2027-05-12',
+};
+
+export function SubscriptionInfoCard({ variant = 'standard', preview = false }: { variant?: string; preview?: boolean }) {
+  const compact = variant !== 'large';
+  const heightClass = compact ? 'dashboard-standard-full-card' : 'dashboard-large-card';
+  const gradientId = useId();
   const { t } = useTranslation();
   const activeConfig = useActiveConfigCache();
   const subscriptions = useSubscriptionsCache<any>();
-  const [subData, setSubData] = useState<SubscriptionData | null>(() => {
+  const [storedSubData, setSubData] = useState<SubscriptionData | null>(() => {
     return findSubscriptionData(readActiveConfigCache(), readSubscriptionsCache());
   });
+  const subData = preview ? PREVIEW_SUBSCRIPTION : storedSubData;
   const [loading, setLoading] = useState(() => {
     const hasActiveConfig = hasActiveConfigCache();
     const cachedActiveConfig = readActiveConfigCache();
@@ -136,6 +146,7 @@ export function SubscriptionInfoCard() {
   }, [activeConfig, subscriptions]);
 
   useEffect(() => {
+    if (preview) return;
     fetchData();
     const interval = setInterval(fetchData, 60000);
 
@@ -166,7 +177,7 @@ export function SubscriptionInfoCard() {
       unsubscribeActiveConfig?.();
       unsubscribeAutoUpdated?.();
     };
-  }, [fetchData]);
+  }, [fetchData, preview]);
 
   const trafficInfo = useMemo(() => {
     if (!subData) return null;
@@ -204,19 +215,30 @@ export function SubscriptionInfoCard() {
     return 'text-green-500 dark:text-green-400';
   };
 
-  if (loading) {
+  if (variant === 'immersive') {
+    return <SubscriptionImmersiveCard name={subData?.name}
+      remaining={trafficInfo ? formatBytes(trafficInfo.remainingBytes) : null}
+      fraction={trafficInfo && trafficInfo.totalBytes > 0 ? trafficInfo.remainingBytes / trafficInfo.totalBytes : null}
+      expiry={expiryInfo?.date ?? null} daysLeft={expiryInfo?.daysLeft ?? null} loading={loading && !preview} />;
+  }
+
+  if (loading && !preview) {
     return (
-      <div className="flex h-[260px] flex-col items-center justify-center rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-        <span className="sr-only">{t('dashboard.subscriptionInfo')}</span>
+      <div className={`flex ${heightClass} flex-col dashboard-card p-card`}>
+        <CardHeading type="subscription-info">{t('dashboard.subscriptionInfo')}</CardHeading>
+        <div className="flex min-h-0 flex-1 flex-col justify-center gap-2 animate-pulse" aria-hidden>
+          <div className="h-5 w-2/3 rounded bg-muted/40" />
+          <div className="h-3 w-1/3 rounded bg-muted/40" />
+        </div>
       </div>
     );
   }
 
   if (!subData) {
     return (
-      <div className="flex h-[260px] flex-col items-center justify-center rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
-        <CloudDownload className="h-8 w-8 text-muted-foreground/40 mb-2" />
-        <p className="text-sm text-muted-foreground">{t('dashboard.noSubscription')}</p>
+      <div className={`flex ${heightClass} flex-col dashboard-card p-card`}>
+        <CardHeading type="subscription-info">{t('dashboard.subscriptionInfo')}</CardHeading>
+        <div className="flex min-h-0 flex-1 items-center justify-center"><p className="text-center text-xs text-muted-foreground">{t('dashboard.noSubscription')}</p></div>
       </div>
     );
   }
@@ -227,16 +249,68 @@ export function SubscriptionInfoCard() {
   const stroke = 10;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (circumference * Math.min(100, pct)) / 100;
-  const gradientId = 'sub-ring-grad';
+
+  if (compact) {
+    const stats = [
+      { label: t('dashboard.usedTraffic'), value: trafficInfo ? formatBytes(trafficInfo.usedBytes) : '--' },
+      { label: t('dashboard.remainingTraffic'), value: trafficInfo ? formatBytes(trafficInfo.remainingBytes) : '--' },
+      { label: t('dashboard.totalTrafficLabel'), value: trafficInfo ? formatBytes(trafficInfo.totalBytes) : '--' },
+    ];
+    return (
+      <div className="dashboard-card dashboard-standard-full-card flex flex-col p-card">
+        <div className="flex h-4 shrink-0 items-center justify-between gap-2">
+          <CardHeading type="subscription-info">{t('dashboard.subscriptionInfo')}</CardHeading>
+        </div>
+        <div className="mt-2 flex min-h-0 flex-1 items-center gap-4">
+          <div className="relative size-[72px] shrink-0">
+            <svg className="size-full" viewBox="0 0 160 160" aria-hidden>
+              <defs>
+                <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor={strokeColor.start} />
+                  <stop offset="100%" stopColor={strokeColor.end} />
+                </linearGradient>
+              </defs>
+              <circle cx="80" cy="80" r={radius} fill="none" className="stroke-gray-100 dark:stroke-gray-800" strokeWidth={stroke} />
+              {trafficInfo && <circle cx="80" cy="80" r={radius} fill="none" stroke={`url(#${gradientId})`} strokeWidth={stroke}
+                strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={dashOffset} transform="rotate(-90 80 80)" className="transition-all duration-700" />}
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-base font-semibold tabular-nums text-foreground">{trafficInfo ? `${Math.round(pct)}%` : '--'}</span>
+              <span className="text-[9px] text-muted-foreground">{t('dashboard.usedTraffic')}</span>
+            </div>
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
+            <div className="truncate text-xs font-semibold leading-4 text-foreground" title={subData.name}>{subData.name}</div>
+            <div className="grid grid-cols-3 gap-2">
+              {stats.map(stat => (
+                <div key={stat.label} className="min-w-0">
+                  <div className="truncate text-[10px] leading-4 text-muted-foreground">{stat.label}</div>
+                  <div className="truncate text-xs font-medium leading-4 tabular-nums text-foreground" title={stat.value}>{stat.value}</div>
+                </div>
+              ))}
+            </div>
+            {expiryInfo && (
+              <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3">
+                <Clock aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                <span className="shrink-0 text-muted-foreground">{expiryInfo.date.toLocaleDateString()}</span>
+                <span className={`truncate ${getExpiryColor(expiryInfo.daysLeft)}`}>
+                  {expiryInfo.daysLeft > 0 ? t('dashboard.daysRemaining', { days: expiryInfo.daysLeft }) : t('dashboard.expired')}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-[260px] flex-col rounded-3xl bg-white p-6 shadow-sm dark:bg-[#2a2a2a]">
+    <div className="flex dashboard-large-card flex-col dashboard-card p-card">
       {/* 标题行 */}
       <div className="flex flex-shrink-0 items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <CardHeading type="subscription-info">
           {t('dashboard.subscriptionInfo')}
-        </p>
-        <CloudDownload className="h-4 w-4 text-muted-foreground" />
+        </CardHeading>
       </div>
 
       {/* 主体：左圆环 + 右信息 */}
