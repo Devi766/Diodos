@@ -263,6 +263,7 @@
 
   .custom-scrollbar:hover {
     scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+    --scrollbar-repaint: 1;
   }
 
   .dark .custom-scrollbar:hover {
@@ -270,12 +271,19 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar {
+    -webkit-appearance: none;
     width: 6px;
     height: 6px;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
   }
 
-  .custom-scrollbar::-webkit-scrollbar-track {
+  .custom-scrollbar::-webkit-scrollbar-track,
+  .custom-scrollbar::-webkit-scrollbar-track-piece {
     background: transparent;
+    border: 0;
+    box-shadow: none;
   }
 
   .custom-scrollbar::-webkit-scrollbar-button {
@@ -286,11 +294,15 @@
 
   .custom-scrollbar::-webkit-scrollbar-corner {
     background: transparent;
+    border: 0;
+    box-shadow: none;
   }
 
   .custom-scrollbar::-webkit-scrollbar-thumb {
     background: transparent;
     border-radius: 999px;
+    border: 0;
+    box-shadow: none;
     transition: background 0.2s ease;
   }
 
@@ -318,6 +330,17 @@
   .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: rgba(100, 116, 139, 0.65) !important;
     border-radius: 999px !important;
+  }
+
+  /* Use one styling path in WebKit/WebView2; native scrollbar properties can
+     otherwise take precedence over the transparent pseudo-element track. */
+  @supports selector(::-webkit-scrollbar) {
+    .custom-scrollbar,
+    .custom-scrollbar:hover,
+    .dark .custom-scrollbar:hover {
+      scrollbar-width: auto;
+      scrollbar-color: auto;
+    }
   }
 }
 

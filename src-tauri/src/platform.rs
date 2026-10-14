@@ -1098,22 +1098,43 @@ pub(crate) fn set_system_proxy_with_options(
     Ok(())
 }
 
-fn process_icon_data_url(process_path: &str) -> Result<Option<String>, String> {
-    if !cfg!(target_os = "windows") {
+fn process_icon_data_url(
+    process_path: &str,
+    process_name: Option<&str>,
+) -> Result<Option<String>, String> {
+    if process_path.len() > 4096
+        || process_path.contains('\0')
+        || process_name.is_some_and(|name| name.len() > 512 || name.contains('\0'))
+    {
         return Ok(None);
     }
-
-    let path = if process_path == "mihomo" {
-        std::env::current_exe().map_err(|err| err.to_string())?
-    } else {
-        PathBuf::from(process_path)
-    };
-
-    if !path.exists() || !path.is_file() {
-        return Ok(None);
+    if crate::process_icons::is_self_process(process_path, process_name) {
+        return Ok(Some(format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(include_bytes!("../icons/64x64.png"))
+        )));
     }
+    #[cfg(target_os = "macos")]
+    {
+        return crate::process_icons::mac_icon_data_url(process_path, process_name);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if !cfg!(target_os = "windows") {
+            return Ok(None);
+        }
 
-    let script = r#"
+        let path = if process_path == "mihomo" {
+            std::env::current_exe().map_err(|err| err.to_string())?
+        } else {
+            PathBuf::from(process_path)
+        };
+
+        if !path.exists() || !path.is_file() {
+            return Ok(None);
+        }
+
+        let script = r#"
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $path = $env:FLYCLASH_ICON_PATH
@@ -1128,29 +1149,30 @@ $bitmap.Dispose()
 $icon.Dispose()
 "#;
 
-    let mut command = Command::new("powershell.exe");
-    command
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .env("FLYCLASH_ICON_PATH", &path);
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
+        let mut command = Command::new("powershell.exe");
+        command
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ])
+            .env("FLYCLASH_ICON_PATH", &path);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command.output().map_err(|err| err.to_string())?;
-    if !output.status.success() {
-        return Ok(None);
-    }
+        let output = command.output().map_err(|err| err.to_string())?;
+        if !output.status.success() {
+            return Ok(None);
+        }
 
-    let encoded = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if encoded.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(format!("data:image/png;base64,{encoded}")))
+        let encoded = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if encoded.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(format!("data:image/png;base64,{encoded}")))
+        }
     }
 }
 
@@ -1888,9 +1910,13 @@ async fn dispatch_compat_call(
             let Some(path) = arg_string(args, 0) else {
                 return Ok(Value::Null);
             };
-            Ok(process_icon_data_url(&path)?
-                .map(Value::String)
-                .unwrap_or(Value::Null))
+            let process_name = arg_string(args, 1);
+            let icon = tauri::async_runtime::spawn_blocking(move || {
+                process_icon_data_url(&path, process_name.as_deref())
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            Ok(icon.map(Value::String).unwrap_or(Value::Null))
         }
         "getSystemProxyStatus" => Ok(system_proxy_status(app)),
         "getProxyStatus" => {

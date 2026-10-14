@@ -3245,51 +3245,6 @@ export default function ProxyNodes() {
         )}
       </div>
       <style jsx>{`
-        .fancy-scrollbar::-webkit-scrollbar {
-          width: 6px;
-        }
-        .fancy-scrollbar::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .fancy-scrollbar::-webkit-scrollbar-thumb {
-          background: #d1d5db;
-          border-radius: 6px;
-        }
-        .fancy-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #9ca3af;
-        }
-        .dark .fancy-scrollbar::-webkit-scrollbar-thumb {
-          background: #374151;
-        }
-        .dark .fancy-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #4b5563;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-          height: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(0, 0, 0, 0.05);
-          border-radius: 3px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
-          border-radius: 3px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8;
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.05);
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #475569;
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #64748b;
-        }
-
         .group-panel {
           transition: background-color 0.2s ease;
         }

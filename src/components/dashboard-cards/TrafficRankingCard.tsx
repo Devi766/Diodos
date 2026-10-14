@@ -3,6 +3,7 @@ import { BarChart3, TrendingUp, TrendingDown, Monitor, Globe, Shield } from 'luc
 import { useTranslation } from 'react-i18next';
 import { showToast } from '@/components/ui/toast';
 import { CardHeading } from './CardHeading';
+import { processIconKey, loadProcessIcon, invalidateProcessIcon } from '@/lib/process-icons';
 
 interface Connection {
   id: string;
@@ -37,7 +38,8 @@ interface RankingItem {
   download: number;
   total: number;
   count: number;
-  processPath?: string; // 进程路径,用于获取图标
+  processPath?: string;
+  processName?: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -46,41 +48,6 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
-}
-
-function getProcessIcon(processName: string): React.ReactNode {
-  const name = processName.toLowerCase();
-
-  // 浏览器
-  if (name.includes('chrome')) return '🌐';
-  if (name.includes('firefox')) return '🦊';
-  if (name.includes('edge')) return '🌊';
-  if (name.includes('safari')) return '🧭';
-  if (name.includes('opera')) return '🎭';
-
-  // 通讯软件
-  if (name.includes('wechat') || name.includes('微信')) return '💬';
-  if (name.includes('qq')) return '🐧';
-  if (name.includes('telegram')) return '✈️';
-  if (name.includes('discord')) return '💬';
-  if (name.includes('slack')) return '💼';
-
-  // 开发工具
-  if (name.includes('vscode') || name.includes('code')) return '💻';
-  if (name.includes('idea') || name.includes('pycharm')) return '🔧';
-  if (name.includes('git')) return '📦';
-
-  // 下载工具
-  if (name.includes('thunder') || name.includes('迅雷')) return '⚡';
-  if (name.includes('aria2')) return '📥';
-  if (name.includes('qbittorrent') || name.includes('utorrent')) return '🌊';
-
-  // 游戏平台
-  if (name.includes('steam')) return '🎮';
-  if (name.includes('epic')) return '🎯';
-
-  // 默认图标
-  return '📱';
 }
 
 export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
@@ -136,6 +103,8 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
         existing.download += conn.download;
         existing.total += conn.upload + conn.download;
         existing.count += 1;
+        if (!existing.processPath && processPath) existing.processPath = processPath;
+        if (!existing.processName && conn.metadata.process) existing.processName = conn.metadata.process;
       } else {
         map.set(key, {
           name: key,
@@ -144,6 +113,7 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
           total: conn.upload + conn.download,
           count: 1,
           processPath,
+          processName: viewMode === 'process' ? conn.metadata.process : undefined,
         });
       }
     });
@@ -153,43 +123,17 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
       .slice(0, 10);
   }, [connections, viewMode]);
 
-  // 获取进程图标
+  // Resolve path or process-name hints without repeated native calls on traffic updates.
   useEffect(() => {
     if (viewMode !== 'process') return;
-
-    const pathsToLoad = rankings
-      .filter((item) => item.processPath && !iconMap[item.processPath])
-      .map((item) => item.processPath!);
-
-    if (pathsToLoad.length === 0) return;
-
-    const loadIcons = async () => {
-      for (const path of pathsToLoad) {
-        try {
-          // 先检查 localStorage 缓存
-          const cached = localStorage.getItem(`icon:${path}`);
-          if (cached) {
-            setIconMap((prev) => ({ ...prev, [path]: cached }));
-            continue;
-          }
-
-          // 调用 IPC 获取图标
-          const iconDataURL = await (window as any).electronAPI?.getIconDataURL?.(path);
-          if (iconDataURL) {
-            try {
-              localStorage.setItem(`icon:${path}`, iconDataURL);
-            } catch (e) {
-              // localStorage 可能已满，忽略错误
-            }
-            setIconMap((prev) => ({ ...prev, [path]: iconDataURL }));
-          }
-        } catch (error) {
-          console.error(`获取图标失败 (${path}):`, error);
-        }
-      }
-    };
-
-    loadIcons();
+    let cancelled = false;
+    const keys = [...new Set(rankings.map(item => processIconKey(item.processPath, item.processName))
+      .filter((key): key is string => !!key && !iconMap[key]))];
+    void Promise.all(keys.map(async key => {
+      const icon = await loadProcessIcon(key);
+      if (icon && !cancelled) setIconMap(previous => ({ ...previous, [key]: icon }));
+    }));
+    return () => { cancelled = true; };
   }, [rankings, viewMode, iconMap]);
 
   const maxTotal = rankings[0]?.total || 1;
@@ -269,14 +213,15 @@ export function TrafficRankingCard({ connections }: TrafficRankingCardProps) {
                   >
                     {index + 1}
                   </span>
-                  {viewMode === 'process' && item.processPath && iconMap[item.processPath] ? (
+                  {viewMode === 'process' && iconMap[processIconKey(item.processPath, item.processName) || ''] ? (
                     <img
-                      src={iconMap[item.processPath]}
+                      src={iconMap[processIconKey(item.processPath, item.processName) || '']}
+                      onError={() => { const key = processIconKey(item.processPath, item.processName); if (key) { invalidateProcessIcon(key); setIconMap(previous => { const next = { ...previous }; delete next[key]; return next; }); } }}
                       alt={item.name}
-                      className="h-5 w-5 rounded"
+                      className="h-5 w-5 shrink-0 rounded object-contain"
                     />
                   ) : viewMode === 'process' ? (
-                    <span className="text-base">{getProcessIcon(item.name)}</span>
+                    <Monitor aria-hidden className="h-5 w-5 shrink-0 text-muted-foreground/60" />
                   ) : null}
                   <span className="truncate text-sm font-medium text-foreground max-w-[200px]">
                     {item.name}

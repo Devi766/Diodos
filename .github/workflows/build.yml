@@ -410,6 +410,7 @@ jobs:
           artifacts: release-assets/*
           artifactErrorsFailBuild: true
           allowUpdates: true
+          removeArtifacts: true
           replacesArtifacts: true
           generateReleaseNotes: false
           prerelease: false

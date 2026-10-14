@@ -22,6 +22,7 @@ mod open_commands;
 mod overrides;
 mod platform;
 mod profiles;
+mod process_icons;
 mod proxy_icons;
 mod proxy_entry;
 mod resources;

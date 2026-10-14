@@ -21,6 +21,7 @@ import { Progress } from './ui/progress';
 import { formatBytes, formatDuration } from '../utils/formatters';
 import { Network } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { processIconKey, loadProcessIcon, invalidateProcessIcon } from '@/lib/process-icons';
 import { showToast } from '@/components/ui/toast';
 import {
   hasConnectionsCache,
@@ -41,6 +42,7 @@ interface Connection {
     destinationPort: number;
     host: string;
     dnsMode?: string;
+    process?: string;
     processPath?: string;
   };
   upload: number;
@@ -299,25 +301,8 @@ export default function ConnectionTable() {
       processingIconsRef.current.add(path);
 
       try {
-        // 先检查 localStorage 缓存
-        const cached = localStorage.getItem(`icon:${path}`);
-        if (cached) {
-          setIconMap((prev) => ({ ...prev, [path]: cached }));
-          processingIconsRef.current.delete(path);
-          return;
-        }
-
-        // 调用 IPC 获取图标
-        const iconDataURL = await window.electronAPI?.getIconDataURL?.(path);
-        if (iconDataURL) {
-          // 缓存到 localStorage
-          try {
-            localStorage.setItem(`icon:${path}`, iconDataURL);
-          } catch (e) {
-            // localStorage 可能已满，忽略错误
-          }
-          setIconMap((prev) => ({ ...prev, [path]: iconDataURL }));
-        }
+        const iconDataURL = await loadProcessIcon(path);
+        if (iconDataURL) setIconMap(previous => ({ ...previous, [path]: iconDataURL }));
       } catch (error) {
         console.error(`获取图标失败 (${path}):`, error);
       } finally {
@@ -497,7 +482,7 @@ export default function ConnectionTable() {
     const pathsToLoad = new Set<string>();
 
     visibleConnections.forEach((conn) => {
-      const path = conn.metadata.processPath;
+      const path = processIconKey(conn.metadata.processPath, conn.metadata.process);
       if (path && !iconMap[path] && !processingIconsRef.current.has(path)) {
         pathsToLoad.add(path);
       }
@@ -761,9 +746,10 @@ export default function ConnectionTable() {
                       <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-3">
                           {/* 进程图标 */}
-                          {connection.metadata.processPath && iconMap[connection.metadata.processPath] && (
+                          {iconMap[processIconKey(connection.metadata.processPath, connection.metadata.process) || ''] && (
                             <img
-                              src={iconMap[connection.metadata.processPath]}
+                              src={iconMap[processIconKey(connection.metadata.processPath, connection.metadata.process) || '']}
+                              onError={() => { const key = processIconKey(connection.metadata.processPath, connection.metadata.process); if (key) { invalidateProcessIcon(key); setIconMap(previous => { const next = { ...previous }; delete next[key]; return next; }); } }}
                               alt={t('connections.processIcon')}
                               className="h-8 w-8 flex-shrink-0 rounded"
                             />

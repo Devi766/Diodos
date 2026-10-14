@@ -467,7 +467,7 @@ export interface ElectronAPI {
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openFile: (filePath: string) => Promise<{ success: boolean, error?: string }>;
   openFileLocation: (filePath: string) => Promise<{ success: boolean, error?: string }>;
-  getIconDataURL?: (processPath: string) => Promise<string | null>;
+  getIconDataURL?: (processPath: string, processName?: string) => Promise<string | null>;
   
   // 工具应用
   openToolsApp: (toolName: string) => Promise<{ success: boolean, error?: string }>;

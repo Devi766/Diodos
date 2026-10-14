@@ -17,6 +17,7 @@ export function RouteTraceCard({ variant = 'standard', preview = false, editing 
   const destination: RoutePoint | undefined = useMemo(() => data.targetGeo?.latitude !== undefined && data.targetGeo?.longitude !== undefined
     ? { lat: data.targetGeo.latitude, lon: data.targetGeo.longitude, label: data.targetGeo.city || data.targetGeo.country || '' } : undefined, [data.targetGeo]);
   const small = variant === 'small'; const large = variant === 'standard';
+  const full = variant === 'full';
   const lastHop = [...data.hops].reverse().find(hop => hop.ip);
   const ms = (value: number | null | undefined) => value === undefined || value === null ? '--' : `${Math.round(value)} ms`;
   const summary = data.preparing ? t('dashboard.routeTrace.preparing') : data.running
@@ -36,14 +37,18 @@ export function RouteTraceCard({ variant = 'standard', preview = false, editing 
   return <>
     <div className={cn('dashboard-card relative isolate overflow-hidden', small ? 'dashboard-half-card' : large ? 'dashboard-large-card' : 'dashboard-standard-full-card')}>
       <RouteGlobe points={points} destination={destination} running={data.running} interactive={!preview && !editing} animate={!preview} />
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-16 items-start justify-between gap-2 bg-gradient-to-b from-white via-white/80 to-transparent px-card pt-card dark:from-[#2a2a2a] dark:via-[#2a2a2a]/80">
-        <CardHeading type="route-trace" className="text-[#30B0C7] dark:text-[#40CBE0]">{t('dashboard.routeTrace.title')}</CardHeading>
+      <div className={cn('pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 bg-gradient-to-b to-transparent px-card pt-card',
+        full ? 'h-11 from-white/50 via-white/10 dark:from-[#2a2a2a]/50 dark:via-[#2a2a2a]/10'
+          : 'h-16 from-white via-white/80 dark:from-[#2a2a2a] dark:via-[#2a2a2a]/80')}>
+        <CardHeading type="route-trace">{t('dashboard.routeTrace.title')}</CardHeading>
         <button type="button" disabled={preview || editing} onClick={() => data.running ? stopRouteTrace() : void startRouteTrace()}
-          title={t(data.running ? 'dashboard.routeTrace.stop' : 'dashboard.routeTrace.start')} className="pointer-events-auto -mt-1 rounded-lg p-1 text-[#30B0C7] hover:bg-muted disabled:cursor-default dark:text-[#40CBE0]">
+          title={t(data.running ? 'dashboard.routeTrace.stop' : 'dashboard.routeTrace.start')} className="pointer-events-auto -mt-1 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-default">
           <RefreshCw className={cn('size-card-icon', data.running && 'animate-spin')} />
         </button>
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-white via-white/85 to-transparent px-card pb-4 pt-7 dark:from-[#2a2a2a] dark:via-[#2a2a2a]/85">
+      <div className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t to-transparent px-card',
+        full ? 'pb-3 pt-2 from-white/60 via-white/15 dark:from-[#2a2a2a]/60 dark:via-[#2a2a2a]/15'
+          : 'pb-4 pt-7 from-white via-white/85 dark:from-[#2a2a2a] dark:via-[#2a2a2a]/85')}>
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-xs font-medium text-foreground" role="status">{data.error ? t(`dashboard.routeTrace.errors.${errorCode}`) : showNote && !data.running ? t('dashboard.routeTrace.disclaimer') : summary}</span>
           <button type="button" onClick={() => setOpen(true)} disabled={preview || editing || !data.hops.length} title={t('dashboard.routeTrace.details')} className="pointer-events-auto shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-muted disabled:opacity-30"><List className="size-3.5" /></button>
