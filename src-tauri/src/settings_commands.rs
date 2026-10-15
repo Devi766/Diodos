@@ -45,6 +45,9 @@ fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> Compat
             }
             let value = args.get(1).cloned().unwrap_or(Value::Null);
             set_setting(app, &key, value)?;
+            if key == "language" {
+                crate::tray::refresh_tray_menu_after(app, "language");
+            }
             Ok(success(json!({})))
         }
         "getFavoriteNodes" | "get-favorite-nodes" => Ok(success(json!({

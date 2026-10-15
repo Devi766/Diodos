@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import { parseOpenAIStream, parseClaudeStream, parseXmlToolCalls, type StreamDelta } from './ai-stream-parser';
 
 export type ApiFormat = 'openai' | 'claude';
@@ -277,7 +278,7 @@ export async function* streamChat(
     } catch (e: any) {
       clearTimeout(timeoutId);
       if (timeoutController.signal.aborted && !signal?.aborted) {
-        throw new Error('请求超时，请检查网络连接');
+        throw new Error(uiText("请求超时，请检查网络连接"));
       }
       throw e;
     }

@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
 import * as Toast from '@radix-ui/react-toast';
@@ -536,12 +537,13 @@ const TunSettings: React.FC = () => {
       <div className="space-y-6">
         <div>
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-            TUN 模式权限
+
+            {uiText("TUN 模式权限")}
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-            {isMac && 'macOS 需要授予内核 root 权限才能启用 TUN 模式。'}
-            {isLinux && 'Linux 需要授予内核 root 权限才能启用 TUN 模式。'}
-            {isWindows && 'Windows 通过后台 Helper 服务以管理员权限运行 TUN 内核，首次安装/配置服务需要管理员权限。'}
+            {isMac && uiText("macOS 需要授予内核 root 权限才能启用 TUN 模式。")}
+            {isLinux && uiText("Linux 需要授予内核 root 权限才能启用 TUN 模式。")}
+            {isWindows && uiText("Windows 通过后台 Helper 服务以管理员权限运行 TUN 内核，首次安装/配置服务需要管理员权限。")}
           </p>
 
           <div className="flex items-center gap-3">
@@ -552,9 +554,9 @@ const TunSettings: React.FC = () => {
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                   </svg>
                   <span className="text-xs">
-                    {isWindows && '后台 Helper 服务已安装并具备管理员权限。'}
-                    {isMac && '已授权（内核已获得 root 权限）'}
-                    {isLinux && '已授权（内核已获得 root 权限）'}
+                    {isWindows && uiText("后台 Helper 服务已安装并具备管理员权限。")}
+                    {isMac && uiText("已授权（内核已获得 root 权限）")}
+                    {isLinux && uiText("已授权（内核已获得 root 权限）")}
                   </span>
                 </div>
               )}
@@ -564,14 +566,14 @@ const TunSettings: React.FC = () => {
                     <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                   </svg>
                   <span className="text-xs">
-                    {isWindows && 'Helper 服务尚未就绪，请在下方安装或启动服务。'}
-                    {isMac && '未授权（需要授予内核 root 权限）'}
-                    {isLinux && '未授权（需要授予内核 root 权限）'}
+                    {isWindows && uiText("Helper 服务尚未就绪，请在下方安装或启动服务。")}
+                    {isMac && uiText("未授权（需要授予内核 root 权限）")}
+                    {isLinux && uiText("未授权（需要授予内核 root 权限）")}
                   </span>
                 </div>
               )}
               {permissionStatus === 'unknown' && (
-                <div className="text-xs text-gray-500 dark:text-gray-400">正在检查授权状态...</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{uiText("正在检查授权状态...")}</div>
               )}
             </div>
 
@@ -605,10 +607,12 @@ const TunSettings: React.FC = () => {
         {isWindows && (
           <div>
             <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-              TUN 权限提升
+
+              {uiText("TUN 权限提升")}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-300 mb-3">
-              管理员操作由最小权限的 Helper 服务处理，桌面界面始终保持普通用户权限。
+
+              {uiText("管理员操作由最小权限的 Helper 服务处理，桌面界面始终保持普通用户权限。")}
             </p>
 
             <div className="bg-gray-50 dark:bg-[#1a1a1a] rounded-lg p-3">
@@ -671,7 +675,7 @@ const TunSettings: React.FC = () => {
                       onClick={handleInstallService}
                       disabled={serviceLoading}
                     >
-                      {serviceLoading ? '处理中...' : '安装服务'}
+                      {serviceLoading ? uiText("处理中...") : uiText("安装服务")}
                     </button>
                   )}
                   {serviceStatus.installed && !serviceStatus.running && (
@@ -681,14 +685,14 @@ const TunSettings: React.FC = () => {
                         onClick={handleStartService}
                         disabled={serviceLoading}
                       >
-                        {serviceLoading ? '处理中...' : '启动服务'}
+                        {serviceLoading ? uiText("处理中...") : uiText("启动服务")}
                       </button>
                       <button
                         className="py-1 px-2.5 text-xs rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 transition-colors disabled:opacity-50"
                         onClick={handleUninstallService}
                         disabled={serviceLoading}
                       >
-                        {serviceLoading ? '处理中...' : '卸载服务'}
+                        {serviceLoading ? uiText("处理中...") : uiText("卸载服务")}
                       </button>
                     </>
                   )}
@@ -701,7 +705,7 @@ const TunSettings: React.FC = () => {
                           disabled={serviceLoading}
                           title={t('tunSettings.serviceRunningNoIpcHint')}
                         >
-                          {serviceLoading ? '处理中...' : t('tunSettings.repairIpc')}
+                          {serviceLoading ? uiText("处理中...") : t('tunSettings.repairIpc')}
                         </button>
                       )}
                       <button
@@ -709,21 +713,22 @@ const TunSettings: React.FC = () => {
                         onClick={handleStopService}
                         disabled={serviceLoading}
                       >
-                        {serviceLoading ? '处理中...' : '停止服务'}
+                        {serviceLoading ? uiText("处理中...") : uiText("停止服务")}
                       </button>
                       <button
                         className="py-1 px-2.5 text-xs rounded-md bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 transition-colors disabled:opacity-50"
                         onClick={handleUninstallService}
                         disabled={serviceLoading}
                       >
-                        {serviceLoading ? '处理中...' : '卸载服务'}
+                        {serviceLoading ? uiText("处理中...") : uiText("卸载服务")}
                       </button>
                     </>
                   )}
                 </div>
 
                 <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
-                  服务模式需要管理员权限安装，安装后可在后台运行 TUN 核心。
+
+                  {uiText("服务模式需要管理员权限安装，安装后可在后台运行 TUN 核心。")}
                 </p>
             </div>
           </div>

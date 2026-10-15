@@ -1,3 +1,4 @@
+import { getUiLocale, uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
@@ -286,7 +287,7 @@ export default function BackupSettings() {
     setConfirmDialog({
       open: true,
       title: t('backup.restoreConfirm'),
-      description: t('backup.restoreConfirmDesc') || '此操作将覆盖当前配置，是否继续？',
+      description: t('backup.restoreConfirmDesc') || uiText("此操作将覆盖当前配置，是否继续？"),
       onConfirm: async () => {
         setConfirmDialog({ ...confirmDialog, open: false });
         setIsLoading(true);
@@ -363,7 +364,7 @@ export default function BackupSettings() {
     setConfirmDialog({
       open: true,
       title: t('backup.restoreConfirm'),
-      description: t('backup.restoreConfirmDesc') || '此操作将覆盖当前配置，是否继续？',
+      description: t('backup.restoreConfirmDesc') || uiText("此操作将覆盖当前配置，是否继续？"),
       onConfirm: async () => {
         setConfirmDialog({ ...confirmDialog, open: false });
         setIsLoading(true);
@@ -450,7 +451,7 @@ export default function BackupSettings() {
     setConfirmDialog({
       open: true,
       title: t('backup.deleteConfirm'),
-      description: t('backup.deleteConfirmDesc', { fileName }) || `确定要删除备份文件 ${fileName} 吗？`,
+      description: t('backup.deleteConfirmDesc', { fileName }) || uiText("确定要删除备份文件 {{p0}} 吗？", { p0: fileName }),
       onConfirm: async () => {
         setConfirmDialog({ ...confirmDialog, open: false });
 
@@ -482,7 +483,7 @@ export default function BackupSettings() {
     setConfirmDialog({
       open: true,
       title: t('backup.restoreConfirm'),
-      description: t('backup.restoreConfirmDesc') || '此操作将覆盖当前配置，是否继续？',
+      description: t('backup.restoreConfirmDesc') || uiText("此操作将覆盖当前配置，是否继续？"),
       onConfirm: async () => {
         setConfirmDialog({ ...confirmDialog, open: false });
         setIsLoading(true);
@@ -1192,7 +1193,7 @@ export default function BackupSettings() {
                           {(backup.size / 1024 / 1024).toFixed(2)} MB
                         </span>
                         <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {new Date(backup.lastModified).toLocaleString()}
+                          {new Date(backup.lastModified).toLocaleString(getUiLocale())}
                         </span>
                       </div>
                     </div>

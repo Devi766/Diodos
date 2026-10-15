@@ -34,6 +34,11 @@ The dashboard is now a modular workspace: choose the information you need, previ
 - Remove overlapping route transitions and schedule route preloading during idle time.
 - Cache generated runtime configurations and serialize reloads of the shared work file.
 
+### Localization and interface polish
+- Default to English on first launch while preserving saved language preferences, with English fallback when preferences are unavailable.
+- Complete English text for controls, notifications, TUN permissions, media reports, AI tool results and native tray menus. Follow the selected language when formatting dates and durations.
+- Keep proxy and TUN toggles quiet on success while retaining failure notifications. Keep node cards at a stable height during latency tests and unify appearance selector styles.
+
 ## v0.3.3 (2026-09-07)
 
 ### 跨设备备份

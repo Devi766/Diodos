@@ -1,3 +1,4 @@
+import { getUiLocale, uiText } from '@/i18n/ui-text';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -126,16 +127,16 @@ const notifyCoreConfigChanged = (detail: Record<string, unknown> = {}) => {
 // 阶段标签：先尝试 i18n，若 key 未配置则回退到中文兜底文案
 function getPhaseLabel(phase: ProgressPhase, t: (k: string) => string): string {
   const map: Record<ProgressPhase, { key: string; fallback: string }> = {
-    'downloading':  { key: 'core.phaseDownloading',  fallback: '下载' },
-    'verifying':    { key: 'core.phaseVerifying',    fallback: '校验中' },
-    'extracting':   { key: 'core.phaseExtracting',   fallback: '解压中' },
-    'switching':    { key: 'core.phaseSwitching',    fallback: '切换中' },
-    'tun-sync':     { key: 'core.phaseTunSync',      fallback: '同步 TUN 内核' },
-    'restarting':   { key: 'core.phaseRestarting',   fallback: '重启内核' },
-    'starting':     { key: 'core.phaseStarting',     fallback: '启动内核' },
-    'waiting-api':  { key: 'core.phaseWaitingApi',   fallback: '等待内核就绪' },
-    'done':         { key: 'core.phaseDone',         fallback: '完成' },
-    'error':        { key: 'core.phaseError',        fallback: '出错' }
+    'downloading':  { key: 'core.phaseDownloading',  fallback: uiText("下载") },
+    'verifying':    { key: 'core.phaseVerifying',    fallback: uiText("校验中") },
+    'extracting':   { key: 'core.phaseExtracting',   fallback: uiText("解压中") },
+    'switching':    { key: 'core.phaseSwitching',    fallback: uiText("切换中") },
+    'tun-sync':     { key: 'core.phaseTunSync',      fallback: uiText("同步 TUN 内核") },
+    'restarting':   { key: 'core.phaseRestarting',   fallback: uiText("重启内核") },
+    'starting':     { key: 'core.phaseStarting',     fallback: uiText("启动内核") },
+    'waiting-api':  { key: 'core.phaseWaitingApi',   fallback: uiText("等待内核就绪") },
+    'done':         { key: 'core.phaseDone',         fallback: uiText("完成") },
+    'error':        { key: 'core.phaseError',        fallback: uiText("出错") }
   };
   const cfg = map[phase] || map.downloading;
   const translated = t(cfg.key);
@@ -544,7 +545,7 @@ export default function CoreManager() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString();
+    return date.toLocaleDateString(getUiLocale());
   };
 
   const getRunningModeName = (mode?: CoreRuntimeState['runningMode']) => {
@@ -918,7 +919,7 @@ export default function CoreManager() {
           )}
           {slowWarning && progressPhase !== 'downloading' && (
             <div className="mt-2 text-xs text-orange-700 dark:text-orange-300">
-              {t('core.slowSwitchHint') || '当前操作耗时较久，可继续等待或在日志中查看进展。如长时间无响应，请重启应用后重试。'}
+              {t('core.slowSwitchHint') || uiText("当前操作耗时较久，可继续等待或在日志中查看进展。如长时间无响应，请重启应用后重试。")}
             </div>
           )}
         </div>

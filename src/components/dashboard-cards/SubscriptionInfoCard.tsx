@@ -1,3 +1,4 @@
+import { getUiLocale } from '@/i18n/ui-text';
 import React, { useCallback, useState, useEffect, useMemo, useId } from 'react';
 import { Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -292,7 +293,7 @@ export function SubscriptionInfoCard({ variant = 'standard', preview = false }: 
             {expiryInfo && (
               <div className="flex min-w-0 items-center gap-1.5 text-[10px] leading-3">
                 <Clock aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-                <span className="shrink-0 text-muted-foreground">{expiryInfo.date.toLocaleDateString()}</span>
+                <span className="shrink-0 text-muted-foreground">{expiryInfo.date.toLocaleDateString(getUiLocale())}</span>
                 <span className={`truncate ${getExpiryColor(expiryInfo.daysLeft)}`}>
                   {expiryInfo.daysLeft > 0 ? t('dashboard.daysRemaining', { days: expiryInfo.daysLeft }) : t('dashboard.expired')}
                 </span>
@@ -379,7 +380,7 @@ export function SubscriptionInfoCard({ variant = 'standard', preview = false }: 
                   <span className="text-xs text-muted-foreground">{t('dashboard.expiryDate')}</span>
                 </div>
                 <div className="flex flex-col items-end leading-tight">
-                  <span className="text-xs text-foreground">{expiryInfo.date.toLocaleDateString()}</span>
+                  <span className="text-xs text-foreground">{expiryInfo.date.toLocaleDateString(getUiLocale())}</span>
                   <span className={`mt-0.5 text-[10px] font-medium ${getExpiryColor(expiryInfo.daysLeft)}`}>
                     {expiryInfo.daysLeft > 0
                       ? t('dashboard.daysRemaining', { days: expiryInfo.daysLeft })

@@ -1,5 +1,7 @@
 'use client';
 
+import { getUiLocale } from '@/i18n/ui-text';
+
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { DownloadIcon, MagnifyingGlassIcon, TrashIcon, TargetIcon } from '@radix-ui/react-icons';
 import { useTranslation } from 'react-i18next';
@@ -44,11 +46,11 @@ const normalizeLogLevel = (level: unknown): LogLevel => {
 };
 
 const formatLogTime = (time: unknown) => {
-  if (!time) return new Date().toLocaleString();
-  if (typeof time === 'number') return new Date(time).toLocaleString();
+  if (!time) return new Date().toLocaleString(getUiLocale());
+  if (typeof time === 'number') return new Date(time).toLocaleString(getUiLocale());
   const text = String(time);
   const parsed = new Date(text);
-  return Number.isNaN(parsed.getTime()) ? text : parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? text : parsed.toLocaleString(getUiLocale());
 };
 
 const normalizeLog = (log: unknown): LogEntry | null => {
@@ -58,7 +60,7 @@ const normalizeLog = (log: unknown): LogEntry | null => {
     return {
       type: normalizeLogLevel(log),
       payload: log,
-      time: new Date().toLocaleString(),
+      time: new Date().toLocaleString(getUiLocale()),
     };
   }
 

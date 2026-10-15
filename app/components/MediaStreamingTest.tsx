@@ -1,10 +1,13 @@
 'use client';
 
+import { useTranslation } from 'react-i18next';
+import { uiText } from '@/i18n/ui-text';
+
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Check, 
-  X, 
-  AlertTriangle, 
+import {
+  Check,
+  X,
+  AlertTriangle,
   RefreshCw,
   Loader2,
   FileText,
@@ -16,7 +19,7 @@ import {
   Copy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { 
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -284,7 +287,7 @@ const SERVICES_BY_REGION: Record<RegionKey, string[]> = {
   'AI服务': ['ChatGPT', 'Meta AI', 'Bing区域']
 };
 
-const getErrorMessage = (error: unknown, fallback = '未知错误') => {
+const getErrorMessage = (error: unknown, fallback = uiText("未知错误")) => {
   if (error instanceof Error) return error.message || fallback;
   if (typeof error === 'string') return error || fallback;
   if (error && typeof error === 'object') {
@@ -304,12 +307,13 @@ const isMediaApiUnavailable = (error: unknown) => {
   );
 };
 
-const formatMediaError = (error: unknown, fallback = '未知错误') => {
-  if (isMediaApiUnavailable(error)) return MEDIA_API_UNAVAILABLE_MESSAGE;
+const formatMediaError = (error: unknown, fallback = uiText("未知错误")) => {
+  if (isMediaApiUnavailable(error)) return uiText(MEDIA_API_UNAVAILABLE_MESSAGE);
   return getErrorMessage(error, fallback);
 };
 
 const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, onTestComplete }) => {
+  const { i18n } = useTranslation();
   const [services, setServices] = useState<StreamingService[]>(DEFAULT_SERVICES);
   const [isTestRunning, setIsTestRunning] = useState(false);
   const [testProgress, setTestProgress] = useState(0);
@@ -356,7 +360,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             newServices[index] = {
               ...newServices[index],
               status: 'error',
-              message: MEDIA_API_UNAVAILABLE_MESSAGE,
+              message: uiText(MEDIA_API_UNAVAILABLE_MESSAGE),
               region: undefined,
               checkTime: undefined,
               dnsStatus: undefined,
@@ -369,11 +373,11 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       setTestProgress(100);
       setIsTestRunning(false);
       setTestEndTime(new Date());
-      toast.error(MEDIA_API_UNAVAILABLE_MESSAGE);
+      toast.error(uiText(MEDIA_API_UNAVAILABLE_MESSAGE));
       onTestComplete?.(latestServices);
       return;
     }
-    
+
     // 重置要测试的服务状态
     updateServicesSnapshot(prev => {
       const newServices = [...prev];
@@ -384,7 +388,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           newServices[index] = {
             ...newServices[index],
             status: 'checking',
-            message: '检测中...',
+            message: uiText("检测中..."),
             region: undefined,
             checkTime: undefined,
             dnsStatus: undefined,
@@ -401,44 +405,44 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
     let supportedCount = 0;
     let failedCount = 0;
     let abortedByUnavailableApi = false;
-    
+
     console.log(`开始检测${activeTab === '全部' ? '所有' : activeTab}服务(共${testQueue.length}个)，当前节点:`, currentNode);
     console.log('是否存在API:', typeof mediaApi === 'function' ? '是' : '否');
 
     // 依次测试每个服务
     for (let index = 0; index < testQueue.length; index++) {
       const service = testQueue[index];
-      
+
       try {
         let result: MediaStreamingTestResult;
-        
+
         try {
           console.log(`尝试检测 ${service.name}，URL: ${service.checkUrl || '未指定'}`);
-          
+
           // 特别记录特定服务的调用
-          if (service.name === 'AbemaTV' || service.name === 'myTVSuper' || 
+          if (service.name === 'AbemaTV' || service.name === 'myTVSuper' ||
               service.name === 'Bilibili港澳台' || service.name === 'Bilibili台湾') {
             console.log(`特殊服务检测: ${service.name}，确保名称匹配后端case语句`);
           }
-          
+
           result = await mediaApi(service.name, service.checkUrl);
           console.log(`${service.name} 检测结果:`, result);
-          
+
           if (!result) {
-            throw new Error('API返回空结果');
+            throw new Error(uiText("API返回空结果"));
           }
           if (result.success === false) {
-            throw new Error(result.error || result.message || 'API返回失败');
+            throw new Error(result.error || result.message || uiText("API返回失败"));
           }
           if (typeof result.available !== 'boolean') {
-            throw new Error('API返回格式异常');
+            throw new Error(uiText("API返回格式异常"));
           }
         } catch (apiError: any) {
           console.error(`API调用失败(${service.name}):`, apiError);
           const message = formatMediaError(apiError);
           const apiUnavailable = isMediaApiUnavailable(apiError);
           const servicesToMark = apiUnavailable ? testQueue.slice(index) : [service];
-          
+
           updateServicesSnapshot(prev => {
             const newServices = [...prev];
             servicesToMark.forEach(item => {
@@ -447,13 +451,13 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                 newServices[serviceIndex] = {
                   ...newServices[serviceIndex],
                   status: 'error',
-                  message: apiUnavailable ? message : `API调用失败: ${message}`
+                  message: apiUnavailable ? message : uiText("API调用失败: {{p0}}", { p0: message })
                 };
               }
             });
             return newServices;
           });
-          
+
           failedCount += servicesToMark.length;
           completed += servicesToMark.length;
           setTestProgress(Math.floor((completed / testQueue.length) * 100));
@@ -464,18 +468,18 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           }
           continue; // 跳过后续处理，继续下一个服务
         }
-        
+
         // 更新服务状态
         updateServicesSnapshot(prev => {
           const newServices = [...prev];
-          
+
           // 找到当前测试的服务并更新结果
           const serviceIndex = newServices.findIndex(s => s.name === service.name);
           if (serviceIndex !== -1) {
             newServices[serviceIndex] = {
               ...newServices[serviceIndex],
               status: result.available ? (result.fullSupport ? 'success' : 'partial') : 'error',
-              message: result.message || (result.available ? (result.fullSupport ? '完全支持' : '部分支持') : '不支持'),
+              message: result.message || (result.available ? (result.fullSupport ? uiText("完全支持") : uiText("部分支持")) : uiText("不支持")),
               region: result.region || undefined,
               checkTime: result.checkTime || undefined,
               dnsStatus: result.dnsStatus || undefined,
@@ -488,14 +492,14 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             } else {
               failedCount++;
             }
-            
+
             // 如果有日志路径，尝试读取日志内容
             if (result.logPath) {
               // 假设日志路径就是日志内容
-              newServices[serviceIndex].logContent = `当前节点: ${currentNode}\n日志路径: ${result.logPath}\n\n检测结果: ${JSON.stringify(result, null, 2)}`;
+              newServices[serviceIndex].logContent = uiText("当前节点: {{p0}}\n日志路径: {{p1}}\n\n检测结果: {{p2}}", { p0: currentNode, p1: result.logPath, p2: JSON.stringify(result, null, 2) });
             }
           }
-          
+
           return newServices;
         });
       } catch (error: any) {
@@ -509,16 +513,16 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             newServices[serviceIndex] = {
               ...newServices[serviceIndex],
               status: 'timeout',
-              message: '检测超时或出错: ' + formatMediaError(error)
+              message: uiText("检测超时或出错:") + formatMediaError(error)
             };
           }
           return newServices;
         });
       }
-      
+
       // 添加一小段延迟，避免请求过快
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       // 更新进度
       completed++;
       setTestProgress(Math.floor((completed / testQueue.length) * 100));
@@ -527,20 +531,20 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
     // 测试完成
     setIsTestRunning(false);
     setTestEndTime(new Date());
-    
+
     // 如果是在"全部"标签下完成了测试，显示分享按钮
     if (activeTab === '全部' && !abortedByUnavailableApi) {
       setShowShareButton(true);
     }
-    
+
     if (!abortedByUnavailableApi) {
       if (failedCount > 0) {
-        toast.warning(`媒体检测完成：支持或部分支持 ${supportedCount} 个，失败 ${failedCount} 个`);
+        toast.warning(uiText("媒体检测完成：支持或部分支持 {{p0}} 个，失败 {{p1}} 个", { p0: supportedCount, p1: failedCount }));
       } else {
-        toast.success(`媒体检测完成：支持或部分支持 ${supportedCount} 个`);
+        toast.success(uiText("媒体检测完成：支持或部分支持 {{p0}} 个", { p0: supportedCount }));
       }
     }
-    
+
     if (onTestComplete) {
       onTestComplete(latestServices);
     }
@@ -576,40 +580,40 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           const region = service.region ? `(${service.region})` : '';
           switch (unlockType) {
             case 'full':
-              return `完全解锁${region}`;
+              return uiText("完全解锁{{p0}}", { p0: region });
             case 'non-original':
-              return `非自制剧${region}`;
+              return uiText("非自制剧{{p0}}", { p0: region });
             case 'original-only':
-              return `仅自制剧${region}`;
+              return uiText("仅自制剧{{p0}}", { p0: region });
             default:
-              return service.region ? `已解锁${region}` : '已解锁';
+              return service.region ? uiText("已解锁{{p0}}", { p0: region }) : uiText("已解锁");
           }
         }
         if (status === 'success') {
           if (service.name === 'HBO Max' ||
               service.name === 'Disney+' || service.name === 'Amazon Prime Video') {
-            return service.region ? `解锁(${service.region})` : '已解锁';
+            return service.region ? uiText("解锁({{p0}})", { p0: service.region }) : uiText("已解锁");
           }
           // 其他服务直接显示已解锁
-          return service.region ? `已解锁(${service.region})` : '已解锁';
+          return service.region ? uiText("已解锁({{p0}})", { p0: service.region }) : uiText("已解锁");
         } else {
           // partial 状态
           if (service.name === 'Disney+') {
-            return '部分地区';
+            return uiText("部分地区");
           } else if (service.name === 'HBO Max') {
-            return '部分内容';
+            return uiText("部分内容");
           } else if (service.name === 'Amazon Prime Video') {
-            return '部分内容';
+            return uiText("部分内容");
           } else {
-            return '部分支持';
+            return uiText("部分支持");
           }
         }
       } else if (status === 'error') {
-        return '不可用';
+        return uiText("不可用");
       } else if (status === 'checking') {
-        return '检测中';
+        return uiText("检测中");
       } else if (status === 'timeout') {
-        return '超时';
+        return uiText("超时");
       }
       return '';
     };
@@ -645,7 +649,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
     if (activeTab === '全部') {
       return services;
     }
-    
+
     const regionServices = SERVICES_BY_REGION[activeTab];
     return services.filter(service => regionServices.includes(service.name));
   };
@@ -658,18 +662,18 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
   // 生成测试报告图片
   const generateReportImage = async () => {
     setIsGeneratingImage(true);
-    
+
     try {
       // 预先准备报告数据
       const successCount = services.filter(s => s.status === 'success').length;
       const partialCount = services.filter(s => s.status === 'partial').length;
       const errorCount = services.filter(s => s.status === 'error').length;
-      
+
       // 获取所有需要显示的服务
-      const servicesForReport = services.filter(s => 
+      const servicesForReport = services.filter(s =>
         s.status !== 'idle' && s.status !== 'checking'
       );
-      
+
       // 预加载logo
       await new Promise((resolve, reject) => {
         const img = new Image();
@@ -679,28 +683,28 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       }).catch(() => {
         console.warn('Logo加载失败，继续生成报告');
       });
-      
+
       // 构建服务卡片HTML
       const serviceCardsHtml = servicesForReport.reduce((acc, service, index) => {
-        const statusColor = 
-          service.status === 'success' ? '#10b981' : 
-          service.status === 'partial' ? '#f59e0b' : 
+        const statusColor =
+          service.status === 'success' ? '#10b981' :
+          service.status === 'partial' ? '#f59e0b' :
           service.status === 'error' ? '#ef4444' : '#6b7280';
-        
-        const statusBg = 
-          service.status === 'success' ? '#ecfdf5' : 
-          service.status === 'partial' ? '#fffbeb' : 
+
+        const statusBg =
+          service.status === 'success' ? '#ecfdf5' :
+          service.status === 'partial' ? '#fffbeb' :
           service.status === 'error' ? '#fef2f2' : '#f9fafb';
-          
-        const statusText = 
-          service.status === 'success' ? '解锁' : 
-          service.status === 'partial' ? '部分' : 
-          service.status === 'error' ? '未解锁' : '未知';
-        
+
+        const statusText =
+          service.status === 'success' ? uiText("解锁") :
+          service.status === 'partial' ? uiText("部分") :
+          service.status === 'error' ? uiText("未解锁") : uiText("未知");
+
         // 创建服务卡片HTML
         const cardHtml = `
           <div style="border:1px solid #e5e7eb;border-radius:16px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;background:white;">
-            <div style="font-size:14px;font-weight:500;color:#1f2937;">${escapeReportHtml(service.name)}</div>
+            <div style="font-size:14px;font-weight:500;color:#1f2937;">${escapeReportHtml(uiText(service.name))}</div>
             <div style="display:flex;align-items:center;gap:6px;">
               <div style="height:20px;line-height:20px;display:inline-block;background:${statusBg};border-radius:6px;padding:0 8px;color:${statusColor};font-size:12px;font-weight:600;">
                 ${service.status === 'success' ? '✓ ' : service.status === 'partial' ? '! ' : '✕ '}
@@ -709,15 +713,15 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             </div>
           </div>
         `;
-        
+
         // 如果是偶数索引，创建新的行开始
         if (index % 2 === 0) {
           acc.push(`<div style="display:flex;gap:12px;margin-bottom:12px;">`);
         }
-        
+
         // 添加卡片到当前行
         acc[acc.length - 1] += `<div style="flex:1;">${cardHtml}</div>`;
-        
+
         // 如果是奇数索引或是最后一个元素，关闭当前行
         if (index % 2 === 1 || index === servicesForReport.length - 1) {
           // 如果是最后一个元素且是偶数索引，添加一个空的占位div保持对齐
@@ -726,7 +730,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           }
           acc[acc.length - 1] += `</div>`;
         }
-        
+
         return acc;
       }, [] as string[]).join('');
 
@@ -743,50 +747,50 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
               <img src="/logo.png" alt="FlyClash Logo" style="width:44px;height:44px;margin-right:12px;" />
               <div>
                 <h1 style="margin:0;font-size:22px;font-weight:600;color:#1f2937;">FlyClash</h1>
-                <p style="margin:2px 0 0;font-size:13px;color:#6b7280;">简洁美观的代理工具</p>
+                <p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeReportHtml(uiText("简洁美观的代理工具"))}</p>
               </div>
             </div>
             <div style="font-size:16px;font-weight:700;color:#3b82f6;">
-              流媒体解锁测试报告
+              ${escapeReportHtml(uiText("流媒体解锁测试报告"))}
             </div>
           </div>
-          
+
           <div style="background:white;border:1px solid #e5e7eb;border-radius:16px;padding:16px;margin-bottom:16px;">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;">
               <div>
                 <div style="font-size:13px;color:#4b5563;margin-bottom:6px;display:flex;align-items:center;height:16px;">
                   <span style="color:#6b7280;margin-right:6px;line-height:16px;display:inline-block;">⦿</span>
-                  <span style="line-height:16px;">节点: <b>${escapeReportHtml(currentNode || '默认')}</b></span>
+                  <span style="line-height:16px;">${escapeReportHtml(uiText("节点:"))} <b>${escapeReportHtml(currentNode || uiText('默认'))}</b></span>
                 </div>
                 <div style="font-size:13px;color:#4b5563;display:flex;align-items:center;height:16px;">
                   <span style="color:#6b7280;margin-right:6px;line-height:16px;display:inline-block;">⧖</span>
-                  <span style="line-height:16px;">测试时间: ${testEndTime ? new Date(testEndTime).toLocaleString() : '未知'}</span>
+                  <span style="line-height:16px;">${escapeReportHtml(uiText("测试时间:"))} ${testEndTime ? new Date(testEndTime).toLocaleString(i18n.resolvedLanguage || 'en-US') : uiText('未知')}</span>
                 </div>
               </div>
               <div style="text-align:right;">
                 <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px;height:16px;">
                   <span style="color:#10b981;margin-right:6px;line-height:16px;display:inline-block;">✓</span>
-                  <span style="font-size:13px;color:#4b5563;line-height:16px;">已解锁: <b>${successCount}</b></span>
+                  <span style="font-size:13px;color:#4b5563;line-height:16px;">${escapeReportHtml(uiText("已解锁:"))} <b>${successCount}</b></span>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px;height:16px;">
                   <span style="color:#f59e0b;margin-right:6px;line-height:16px;display:inline-block;">!</span>
-                  <span style="font-size:13px;color:#4b5563;line-height:16px;">部分解锁: <b>${partialCount}</b></span>
+                  <span style="font-size:13px;color:#4b5563;line-height:16px;">${escapeReportHtml(uiText("部分解锁:"))} <b>${partialCount}</b></span>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:flex-end;height:16px;">
                   <span style="color:#ef4444;margin-right:6px;line-height:16px;display:inline-block;">✕</span>
-                  <span style="font-size:13px;color:#4b5563;line-height:16px;">未解锁: <b>${errorCount}</b></span>
+                  <span style="font-size:13px;color:#4b5563;line-height:16px;">${escapeReportHtml(uiText("未解锁:"))} <b>${errorCount}</b></span>
                 </div>
               </div>
             </div>
           </div>
-          
+
           <div style="margin-bottom:24px;">
             ${serviceCardsHtml}
           </div>
-          
+
           <div style="text-align:center;margin-top:24px;">
             <div style="font-size:12px;color:#9ca3af;margin-bottom:12px;">
-              结果仅供参考，不同节点的解锁方案测试结果可能存在差异
+              ${escapeReportHtml(uiText("结果仅供参考，不同节点的解锁方案测试结果可能存在差异"))}
             </div>
             <div style="border-top:1px solid #e5e7eb;padding-top:12px;font-size:12px;color:#9ca3af;display:flex;align-items:center;justify-content:center;">
               <span>Powered by FlyClash</span>
@@ -804,7 +808,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         // 动态导入html2canvas
         const html2canvasModule = await import('html2canvas');
         const html2canvas = html2canvasModule.default;
-        
+
         // 捕获DOM生成图片
         const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
           backgroundColor: '#ffffff',
@@ -830,34 +834,34 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       }
     } catch (error) {
       console.error('生成报告图片失败:', error);
-      toast.error(`生成报告图片失败: ${error instanceof Error ? error.message : String(error)}`);
+      toast.error(uiText("生成报告图片失败: {{p0}}", { p0: error instanceof Error ? error.message : String(error) }));
     } finally {
       setIsGeneratingImage(false);
     }
   };
-  
+
   // 下载报告图片
   const downloadReportImage = () => {
     if (!reportImage) return;
-    
+
     const link = document.createElement('a');
     link.href = reportImage;
-    link.download = `FlyClash流媒体测试报告_${new Date().toISOString().split('T')[0]}.png`;
+    link.download = uiText("FlyClash流媒体测试报告_{{p0}}.png", { p0: new Date().toISOString().split('T')[0] });
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success('测试报告图片已下载');
+    toast.success(uiText("测试报告图片已下载"));
   };
-  
+
   // 复制报告图片到剪贴板
   const copyReportImageToClipboard = async () => {
     if (!reportImage) return;
-    
+
     try {
       // 尝试使用现代API复制
       const response = await fetch(reportImage);
       const blob = await response.blob();
-      
+
       try {
         // 尝试使用现代Clipboard API
         await navigator.clipboard.write([
@@ -868,17 +872,17 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         // 设置复制成功状态
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-        toast.success('测试报告图片已复制');
+        toast.success(uiText("测试报告图片已复制"));
       } catch (clipboardError) {
         console.error('现代剪贴板API失败:', clipboardError);
-        
+
         // 回退策略：创建一个临时图片元素
         const img = document.createElement('img');
         img.src = reportImage;
-        
+
         // 将图片添加到DOM
         document.body.appendChild(img);
-        
+
         try {
           // 创建一个选区并尝试复制
           const selection = window.getSelection();
@@ -886,21 +890,21 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           range.selectNode(img);
           selection?.removeAllRanges();
           selection?.addRange(range);
-          
+
           const success = document.execCommand('copy');
           if (success) {
             // 设置复制成功状态
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-            toast.success('测试报告图片已复制');
+            toast.success(uiText("测试报告图片已复制"));
           } else {
-            throw new Error('execCommand失败');
+            throw new Error(uiText("execCommand失败"));
           }
         } catch (execCommandError) {
           console.error('execCommand复制失败:', execCommandError);
           setCopyError(true);
           setTimeout(() => setCopyError(false), 2000);
-          toast.error('复制图片失败，请尝试下载图片');
+          toast.error(uiText("复制图片失败，请尝试下载图片"));
         } finally {
           // 移除临时元素
           document.body.removeChild(img);
@@ -911,7 +915,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
       console.error('复制到剪贴板失败:', error);
       setCopyError(true);
       setTimeout(() => setCopyError(false), 2000);
-      toast.error('复制图片失败，请尝试下载图片');
+      toast.error(uiText("复制图片失败，请尝试下载图片"));
     }
   };
 
@@ -923,7 +927,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           <div className="flex items-center justify-between mb-1">
             <div className="flex-1 mr-2">
               <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                <div 
+                <div
                   className="h-full bg-blue-500 rounded-full transition-all duration-300"
                   style={{ width: `${testProgress}%` }}
                 />
@@ -936,9 +940,9 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         {/* 显示当前节点 */}
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-            <span className="font-medium mr-1">当前节点:</span>
+            <span className="font-medium mr-1">{uiText("当前节点:")}</span>
             <Badge variant="outline" className="text-xs py-0 h-5 bg-gray-50 dark:bg-gray-800">
-              {currentNode || '未选择'}
+              {currentNode || uiText("未选择")}
             </Badge>
           </div>
         </div>
@@ -953,7 +957,8 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
               activeTab === '全部' ? 'bg-blue-500 hover:bg-blue-600 text-white' : ''
             )}
           >
-            全部
+
+            {uiText("全部")}
           </Button>
           {Object.keys(SERVICES_BY_REGION).map(region => (
             <Button
@@ -966,7 +971,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                 activeTab === region ? 'bg-blue-500 hover:bg-blue-600 text-white' : ''
               )}
             >
-              {region}
+              {uiText(region)}
             </Button>
           ))}
         </div>
@@ -978,7 +983,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           {getFilteredServices().map((service, index) => {
             const { color, icon, text } = getStatusInfo(service.status, service);
             return (
-              <div 
+              <div
                 key={index}
                 className={cn(
                   "p-2.5 rounded-lg border flex items-center space-x-2 transition-colors shadow-sm",
@@ -992,13 +997,13 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
                       <p className="text-sm font-medium mr-2">
-                        {service.name}
+                        {uiText(service.name)}
                       </p>
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Badge 
-                              variant="outline" 
+                            <Badge
+                              variant="outline"
                               className={cn("flex items-center space-x-1 text-xs py-0.5", color)}
                             >
                               {icon}
@@ -1007,27 +1012,27 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                           </TooltipTrigger>
                           <TooltipContent className="max-w-xs">
                             <div className="text-sm font-medium mb-1">
-                              {service.name} {text ? `(${text})` : ''}
+                              {uiText(service.name)} {text ? `(${text})` : ''}
                             </div>
                             <p className="text-xs">{service.message}</p>
-                            {service.region && <p className="text-xs mt-1 font-medium">解锁区域: {service.region}</p>}
-                            {service.checkTime && <p className="text-xs">检测耗时: {service.checkTime}ms</p>}
+                            {service.region && <p className="text-xs mt-1 font-medium">{uiText("解锁区域:")} {service.region}</p>}
+                            {service.checkTime && <p className="text-xs">{uiText("检测耗时:")} {service.checkTime}ms</p>}
                             {service.dnsStatus && (
                               <div className="mt-1 text-xs">
-                                <p>DNS解析: {service.dnsStatus.resolved ? '已解析' : '解析失败'}</p>
+                                <p>{uiText("DNS解析:")} {service.dnsStatus.resolved ? uiText("已解析") : uiText("解析失败")}</p>
                                 {service.dnsStatus.resolved && (
-                                  <p>解析IP: {service.dnsStatus.ip}</p>
+                                  <p>{uiText("解析IP:")} {service.dnsStatus.ip}</p>
                                 )}
                               </div>
                             )}
                             {service.ipInfo && (
                               <div className="mt-1 border-t pt-1 border-gray-200 dark:border-gray-700 text-xs">
-                                <p>代理IP: {service.ipInfo.ip}</p>
+                                <p>{uiText("代理IP:")} {service.ipInfo.ip}</p>
                                 {service.ipInfo.country && (
-                                  <p>位置: {service.ipInfo.country} {service.ipInfo.region} {service.ipInfo.city}</p>
+                                  <p>{uiText("位置:")} {service.ipInfo.country} {service.ipInfo.region} {service.ipInfo.city}</p>
                                 )}
                                 {service.ipInfo.org && (
-                                  <p>ISP提供商: {service.ipInfo.org}</p>
+                                  <p>{uiText("ISP提供商:")} {service.ipInfo.org}</p>
                                 )}
                               </div>
                             )}
@@ -1035,13 +1040,13 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                         </Tooltip>
                       </TooltipProvider>
                     </div>
-                    
+
                     {service.status !== 'idle' && service.status !== 'checking' && (
                       <Dialog>
                         <DialogTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             className="h-6 w-6"
                             onClick={() => viewServiceLog(service)}
                           >
@@ -1051,20 +1056,20 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                         <DialogContent className="w-[80vw] max-w-[500px] h-[400px] max-h-[80vh] flex flex-col">
                           <DialogHeader className="flex-shrink-0 pb-2">
                             <DialogTitle className="text-base">
-                              {service.name} 检测日志
-                              <div className="text-xs font-normal text-gray-500 mt-1">节点: {currentNode}</div>
+                              {uiText(service.name)}  {uiText("检测日志")}
+                              <div className="text-xs font-normal text-gray-500 mt-1">{uiText("节点:")} {currentNode}</div>
                             </DialogTitle>
                           </DialogHeader>
                           <div className="custom-scrollbar min-h-0 flex-grow overflow-auto border rounded">
                             <pre className="custom-scrollbar text-xs p-3 bg-gray-900 text-white whitespace-pre-wrap overflow-x-auto h-full">
-                              {logContent || '加载中...'}
+                              {logContent || uiText("加载中...")}
                             </pre>
                           </div>
                         </DialogContent>
                       </Dialog>
                     )}
                   </div>
-                  
+
                   <div className="flex items-center mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     {service.region && (
                       <span className="font-medium">{service.region}</span>
@@ -1081,10 +1086,11 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             );
           })}
         </div>
-        
+
         {getFilteredServices().length > 6 && (
           <div className="text-center text-xs text-gray-400 mt-2 mb-1 animate-pulse">
-            上下滚动查看更多服务
+
+            {uiText("上下滚动查看更多服务")}
           </div>
         )}
       </div>
@@ -1101,12 +1107,14 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
             {isGeneratingImage ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                生成报告...
+
+                {uiText("生成报告...")}
               </>
             ) : (
               <>
                 <Share2 className="mr-2 h-4 w-4" />
-                分享测试结果
+
+                {uiText("分享测试结果")}
               </>
             )}
           </Button>
@@ -1120,36 +1128,37 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
           {isTestRunning ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              检测中...
+
+              {uiText("检测中...")}
             </>
           ) : (
             <>
               <RefreshCw className="mr-2 h-4 w-4" />
-              {services.some(s => s.status !== 'idle') ? '重新检测' : '开始检测'}
+              {services.some(s => s.status !== 'idle') ? uiText("重新检测") : uiText("开始检测")}
             </>
           )}
         </Button>
       </div>
-      
+
       {/* 隐藏的报告生成区域 - 移除ref */}
       <div id="reportContainer" style={{ display: 'none', position: 'fixed', left: '-9999px' }}></div>
-      
+
       {/* 分享对话框 */}
       <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>测试报告</DialogTitle>
+            <DialogTitle>{uiText("测试报告")}</DialogTitle>
           </DialogHeader>
-          
+
           {reportImage && (
             <div className="mt-4 flex flex-col items-center">
               <div className="border rounded-lg overflow-hidden shadow-sm mb-4 max-h-[60vh]">
                 <div className="relative">
                   {/* 预览图片容器 */}
                   <div className="max-h-[60vh] overflow-hidden">
-                    <img 
-                      src={reportImage} 
-                      alt="测试报告" 
+                    <img
+                      src={reportImage}
+                      alt={uiText("测试报告")}
                       className="w-full h-auto"
                     />
                   </div>
@@ -1157,22 +1166,24 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                   <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-white to-transparent pointer-events-none" />
                 </div>
               </div>
-              
+
               <div className="flex flex-col gap-3 w-full">
                 <p className="text-center text-sm text-gray-500">
-                  点击下方按钮获取完整报告
+
+                  {uiText("点击下方按钮获取完整报告")}
                 </p>
                 <div className="flex justify-center space-x-4">
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     onClick={downloadReportImage}
                     className="w-32"
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    下载图片
+
+                    {uiText("下载图片")}
                   </Button>
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     onClick={copyReportImageToClipboard}
                     className="w-32"
                     disabled={copied || copyError}
@@ -1180,17 +1191,20 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
                     {copied ? (
                       <>
                         <Check className="h-4 w-4 mr-2" />
-                        已复制
+
+                        {uiText("已复制")}
                       </>
                     ) : copyError ? (
                       <>
                         <X className="h-4 w-4 mr-2" />
-                        复制失败
+
+                        {uiText("复制失败")}
                       </>
                     ) : (
                       <>
                         <Copy className="h-4 w-4 mr-2" />
-                        复制图片
+
+                        {uiText("复制图片")}
                       </>
                     )}
                   </Button>

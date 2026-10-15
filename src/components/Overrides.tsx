@@ -1,5 +1,7 @@
 'use client';
 
+import { uiText } from '@/i18n/ui-text';
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ReloadIcon, PlusIcon, TrashIcon, Pencil1Icon, FileTextIcon, DotsVerticalIcon, DragHandleDots2Icon, Cross2Icon } from '@radix-ui/react-icons';
@@ -872,9 +874,9 @@ export default function Overrides() {
                       }
 
                       const result = await window.electronAPI.addOverride({
-                          name: '新建配置.yaml',
+                          name: uiText("新建配置.yaml"),
                           type: 'local',
-                          file: '# YAML 配置文件\n',
+                          file: uiText("# YAML 配置文件"),
                           ext: 'yaml'
                       });
                       ensureActionSuccess(result, t('overrides.unknownError'));
@@ -902,9 +904,9 @@ export default function Overrides() {
                       }
 
                       const result = await window.electronAPI.addOverride({
-                          name: '新建脚本.js',
+                          name: uiText("新建脚本.js"),
                           type: 'local',
-                          file: '// JavaScript 脚本\nfunction main(config) {\n  return config;\n}\n',
+                          file: uiText("// JavaScript 脚本\nfunction main(config) {\n  return config;\n}"),
                           ext: 'js'
                       });
                       ensureActionSuccess(result, t('overrides.unknownError'));

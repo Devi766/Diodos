@@ -14,6 +14,7 @@ import {
   getRuntimePlatform,
 } from "@/utils/platform";
 import '@/i18n';
+import { useTranslation } from 'react-i18next';
 
 const TAURI_COMPAT_VERSION = "20260720-2";
 
@@ -22,6 +23,14 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const { i18n } = useTranslation();
+  const language = i18n.resolvedLanguage || 'en-US';
+
+  useEffect(() => {
+    // Mirror the preference for native tray menus; page rendering never waits for IPC.
+    void window.electronAPI?.setSetting?.('language', language)?.catch(() => {});
+  }, [language]);
+
   const [theme, setTheme] = useState<string>('');
 
   useEffect(() => {
@@ -228,10 +237,10 @@ export default function RootLayout({
   }, []);
 
   return (
-    <html lang="zh-CN" className={theme} suppressHydrationWarning>
+    <html lang={language} className={theme} suppressHydrationWarning>
       <head>
         <title>FlyClash</title>
-        <meta name="description" content="现代、美观的 Clash 客户端，基于 FlyClash Core" />
+        <meta name="description" content="A modern network debugging tool powered by FlyClash Core" />
         <link rel="icon" href="/favicon.ico" />
         <script
           dangerouslySetInnerHTML={{

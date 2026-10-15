@@ -1,5 +1,7 @@
 'use client';
 
+import { uiText } from '@/i18n/ui-text';
+
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
@@ -68,7 +70,7 @@ type AddToConfigResultLike =
 
 const normalizeAddToConfigResult = (result: AddToConfigResultLike): { success: boolean; filePath?: string; error?: string } => {
   if (typeof result === 'boolean') {
-    return result ? { success: false, error: '未返回配置文件路径' } : { success: false };
+    return result ? { success: false, error: uiText("未返回配置文件路径") } : { success: false };
   }
 
   if (typeof result === 'string') {
@@ -93,7 +95,7 @@ const normalizeAddToConfigResult = (result: AddToConfigResultLike): { success: b
   }
 
   if (result.success === true) {
-    return { success: false, error: error || '未返回配置文件路径' };
+    return { success: false, error: error || uiText("未返回配置文件路径") };
   }
 
   return { success: false, error };
@@ -110,17 +112,17 @@ export default function SubscriptionConverter() {
 
   // 输入方式: 'url' | 'content'
   const [inputType, setInputType] = useState<'url' | 'content'>('url');
-  
+
   // 输入内容
   const [urlInput, setUrlInput] = useState('');
   const [contentInput, setContentInput] = useState('');
-  
+
   // 目标格式
   const [targetFormat, setTargetFormat] = useState('clash-meta');
-  
+
   // 过滤正则
   const [filterRegex, setFilterRegex] = useState('');
-  
+
   // 转换选项
   const [enableUdp, setEnableUdp] = useState(true);
   const [enableTcpFastOpen, setEnableTcpFastOpen] = useState(false);
@@ -399,10 +401,10 @@ export default function SubscriptionConverter() {
     if (!hasConverterMethod(converter, 'parseProxies')) {
       return;
     }
-    
+
     try {
       const result = await converter.parseProxies(input);
-      
+
       if (result.success) {
         setProxiesList(result.proxies);
       } else {
@@ -841,7 +843,7 @@ export default function SubscriptionConverter() {
           <textarea
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="https://example.com/config1&#10;https://example.com/config2&#10;# 支持多个URL，每行一个"
+            placeholder={uiText("https://example.com/config1&#10;https://example.com/config2&#10;# 支持多个URL，每行一个")}
             className="min-h-[120px] w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -1180,7 +1182,7 @@ export default function SubscriptionConverter() {
                 </p>
                 <div className="flex flex-wrap gap-2 mt-1">
                   {[
-                    { label: '默认 (FlyClash)', value: 'FlyClash-Converter/1.0' },
+                    { label: uiText("默认 (FlyClash)"), value: 'FlyClash-Converter/1.0' },
                     { label: 'Clash Meta', value: 'ClashMeta' },
                     { label: 'Clash Verge', value: 'Clash-Verge' }
                   ].map(preset => (

@@ -1,5 +1,7 @@
 'use client';
 
+import { getUiLocale } from '@/i18n/ui-text';
+
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAiStore } from '@/stores/ai-store';
@@ -60,7 +62,7 @@ export default function ConversationList({ open, onOpenChange }: ConversationLis
                       {conv.title || t('ai.untitledConversation')}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {conv.messages.length} {t('ai.messages')} · {new Date(conv.updatedAt).toLocaleDateString()}
+                      {conv.messages.length} {t('ai.messages')} · {new Date(conv.updatedAt).toLocaleDateString(getUiLocale())}
                     </div>
                   </div>
                   <Button

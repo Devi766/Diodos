@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { uiText } from '@/i18n/ui-text';
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Settings2, Plus, RotateCcw, Check, X } from 'lucide-react';
@@ -16,6 +18,7 @@ export function DashboardToolbar({
   onAddCard,
   onReset,
 }: DashboardToolbarProps) {
+  useTranslation();
   return (
     <div
       className={cn(
@@ -28,7 +31,8 @@ export function DashboardToolbar({
         {isEditMode && (
           <div className="flex items-center gap-2 text-sm font-medium text-blue-600 dark:text-blue-400">
             <Settings2 className="h-4 w-4 animate-pulse" />
-            编辑模式
+
+            {uiText("编辑模式")}
           </div>
         )}
       </div>
@@ -45,7 +49,8 @@ export function DashboardToolbar({
               className="gap-2"
             >
               <Plus className="h-4 w-4" />
-              添加卡片
+
+              {uiText("添加卡片")}
             </Button>
 
             {/* 重置 */}
@@ -56,7 +61,8 @@ export function DashboardToolbar({
               className="gap-2"
             >
               <RotateCcw className="h-4 w-4" />
-              重置
+
+              {uiText("重置")}
             </Button>
 
             {/* 完成 */}
@@ -67,7 +73,8 @@ export function DashboardToolbar({
               className="gap-2"
             >
               <Check className="h-4 w-4" />
-              完成
+
+              {uiText("完成")}
             </Button>
           </>
         ) : (
@@ -80,7 +87,8 @@ export function DashboardToolbar({
               className="gap-2"
             >
               <Settings2 className="h-4 w-4" />
-              自定义布局
+
+              {uiText("自定义布局")}
             </Button>
           </>
         )}

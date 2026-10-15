@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import type { ToolDefinition } from './ai-api-client';
 
 export interface ToolResult {
@@ -10,7 +11,7 @@ const isCompatFailure = (value: unknown): value is { success: false; error?: unk
   return !!value && typeof value === 'object' && (value as { success?: unknown }).success === false;
 };
 
-const compatFailureMessage = (value: unknown, fallback = '未知错误') => {
+const compatFailureMessage = (value: unknown, fallback = uiText("未知错误")) => {
   if (isCompatFailure(value)) {
     const detail = value.error ?? value.message;
     return detail ? String(detail) : fallback;
@@ -24,7 +25,7 @@ const compatActionSucceeded = (value: unknown): boolean => {
   return (value as { success?: unknown }).success === true;
 };
 
-const compatActionError = (value: unknown, fallback = '未知错误') => {
+const compatActionError = (value: unknown, fallback = uiText("未知错误")) => {
   if (isCompatFailure(value)) {
     return compatFailureMessage(value, fallback);
   }
@@ -38,14 +39,14 @@ const compatActionError = (value: unknown, fallback = '未知错误') => {
 
 const toToolArray = <T>(value: unknown, label: string): T[] | ToolResult => {
   if (isCompatFailure(value)) {
-    return { success: false, content: `${label}失败: ${compatFailureMessage(value)}` };
+    return { success: false, content: uiText("{{p0}}失败: {{p1}}", { p0: label, p1: compatFailureMessage(value) }) };
   }
   return Array.isArray(value) ? value as T[] : [];
 };
 
 const toOptionalString = (value: unknown, label: string): string | null | ToolResult => {
   if (isCompatFailure(value)) {
-    return { success: false, content: `${label}失败: ${compatFailureMessage(value)}` };
+    return { success: false, content: uiText("{{p0}}失败: {{p1}}", { p0: label, p1: compatFailureMessage(value) }) };
   }
   return typeof value === 'string' && value.trim() ? value : null;
 };
@@ -333,7 +334,7 @@ function extractSection(content: string, sectionName: string): string {
     const trimmed = l.trim();
     return trimmed === `${sectionName}:` || trimmed.startsWith(`${sectionName}:`);
   });
-  if (startIndex === -1) return `# 未找到 ${sectionName} 段落`;
+  if (startIndex === -1) return uiText("# 未找到 {{p0}} 段落", { p0: sectionName });
   const result: string[] = [lines[startIndex]];
   for (let i = startIndex + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -366,7 +367,7 @@ function findSimilarContent(content: string, target: string): string {
       const start = Math.max(0, i - 2);
       const end = Math.min(lines.length, i + 5);
       const ctx = lines.slice(start, end).join('\n');
-      return `在第 ${i + 1} 行附近找到 "${firstLine.slice(0, 30)}..."：\n\n\`\`\`\n${ctx}\n\`\`\``;
+      return uiText("在第 {{p0}} 行附近找到 \"{{p1}}...\"：\n\n```\n{{p2}}\n```", { p0: i + 1, p1: firstLine.slice(0, 30), p2: ctx });
     }
   }
   return '';
@@ -443,63 +444,63 @@ export async function executeTool(
       case 'control_service': {
         const action = args.action;
         if (typeof window === 'undefined' || !window.electronAPI) {
-          return { success: false, content: '错误：electronAPI 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 不可用") };
         }
         if (action === 'status') {
           try {
             const runningResult = await window.electronAPI.isMihomoRunning();
             if (isCompatFailure(runningResult)) {
-              return { success: false, content: `查询服务状态失败: ${compatFailureMessage(runningResult)}` };
+              return { success: false, content: uiText("查询服务状态失败: {{p0}}", { p0: compatFailureMessage(runningResult) }) };
             }
             const running = typeof runningResult === 'boolean' ? runningResult : false;
-            return { success: true, content: running ? '服务正在运行' : '服务未运行', data: { running } };
+            return { success: true, content: running ? uiText("服务正在运行") : uiText("服务未运行"), data: { running } };
           } catch {
-            return { success: true, content: '服务未运行', data: { running: false } };
+            return { success: true, content: uiText("服务未运行"), data: { running: false } };
           }
         }
         if (action === 'start') {
-          const configPath = toOptionalString(await window.electronAPI.getActiveConfig(), '读取活动配置');
+          const configPath = toOptionalString(await window.electronAPI.getActiveConfig(), uiText("读取活动配置"));
           if (configPath && typeof configPath === 'object') return configPath;
-          if (!configPath) return { success: false, content: '没有可用的配置文件' };
+          if (!configPath) return { success: false, content: uiText("没有可用的配置文件") };
           const result = await window.electronAPI.startMihomo(configPath);
           if (!compatActionSucceeded(result)) {
-            return { success: false, content: `启动服务失败: ${compatActionError(result)}` };
+            return { success: false, content: uiText("启动服务失败: {{p0}}", { p0: compatActionError(result) }) };
           }
           notifyProfileUpdated({ action: 'start-service', filePath: configPath });
-          return { success: true, content: '服务已启动' };
+          return { success: true, content: uiText("服务已启动") };
         }
         if (action === 'stop') {
           const result = await window.electronAPI.stopMihomo();
           if (!compatActionSucceeded(result)) {
-            return { success: false, content: `停止服务失败: ${compatActionError(result)}` };
+            return { success: false, content: uiText("停止服务失败: {{p0}}", { p0: compatActionError(result) }) };
           }
           notifyProfileUpdated({ action: 'stop-service' });
-          return { success: true, content: '服务已停止' };
+          return { success: true, content: uiText("服务已停止") };
         }
         if (action === 'restart') {
           if (window.electronAPI.restartService) {
             const result = await window.electronAPI.restartService();
             if (!compatActionSucceeded(result)) {
-              return { success: false, content: `重启服务失败: ${compatActionError(result)}` };
+              return { success: false, content: uiText("重启服务失败: {{p0}}", { p0: compatActionError(result) }) };
             }
           } else {
             const stopResult = await window.electronAPI.stopMihomo();
             if (!compatActionSucceeded(stopResult)) {
-              return { success: false, content: `重启服务失败，停止服务失败: ${compatActionError(stopResult)}` };
+              return { success: false, content: uiText("重启服务失败，停止服务失败: {{p0}}", { p0: compatActionError(stopResult) }) };
             }
             await new Promise((r) => setTimeout(r, 1000));
-            const configPath = toOptionalString(await window.electronAPI.getActiveConfig(), '读取活动配置');
+            const configPath = toOptionalString(await window.electronAPI.getActiveConfig(), uiText("读取活动配置"));
             if (configPath && typeof configPath === 'object') return configPath;
-            if (!configPath) return { success: false, content: '重启服务失败: 没有可用的配置文件' };
+            if (!configPath) return { success: false, content: uiText("重启服务失败: 没有可用的配置文件") };
             const startResult = await window.electronAPI.startMihomo(configPath);
             if (!compatActionSucceeded(startResult)) {
-              return { success: false, content: `重启服务失败，启动服务失败: ${compatActionError(startResult)}` };
+              return { success: false, content: uiText("重启服务失败，启动服务失败: {{p0}}", { p0: compatActionError(startResult) }) };
             }
           }
           notifyProfileUpdated({ action: 'restart-service' });
-          return { success: true, content: '服务已重启' };
+          return { success: true, content: uiText("服务已重启") };
         }
-        return { success: false, content: `未知操作: ${action}` };
+        return { success: false, content: uiText("未知操作: {{p0}}", { p0: action }) };
       }
 
       case 'switch_mode': {
@@ -534,15 +535,15 @@ export async function executeTool(
             await mihomoAPI.deleteConnections();
           }
         } catch {}
-        return { success: true, content: `已切换到${mode === 'rule' ? '规则' : mode === 'global' ? '全局' : '直连'}模式` };
+        return { success: true, content: uiText("已切换到{{p0}}模式", { p0: mode === 'rule' ? uiText("规则") : mode === 'global' ? uiText("全局") : uiText("直连") }) };
       }
 
       case 'switch_proxy': {
         const groupName = args.group_name || args.group;
         const proxyName = args.proxy_name || args.proxy;
-        if (!groupName || !proxyName) return { success: false, content: '缺少 group_name 或 proxy_name 参数' };
+        if (!groupName || !proxyName) return { success: false, content: uiText("缺少 group_name 或 proxy_name 参数") };
         await mihomoAPI.putProxies({ group: groupName, proxy: proxyName });
-        return { success: true, content: `已将 ${groupName} 切换到 ${proxyName}` };
+        return { success: true, content: uiText("已将 {{p0}} 切换到 {{p1}}", { p0: groupName, p1: proxyName }) };
       }
 
       case 'health_check': {
@@ -550,11 +551,11 @@ export async function executeTool(
         const proxyName = args.proxy_name || args.node;
         if (groupName && proxyName) {
           const result = await mihomoAPI.proxiesDelay(proxyName);
-          return { success: true, content: `节点 ${proxyName} 延迟: ${result.delay}ms`, data: { node: proxyName, delay: result.delay } };
+          return { success: true, content: uiText("节点 {{p0}} 延迟: {{p1}}ms", { p0: proxyName, p1: result.delay }), data: { node: proxyName, delay: result.delay } };
         }
         if (groupName) {
           const result = await mihomoAPI.groupDelay(groupName);
-          return { success: true, content: `代理组 ${groupName} 延迟测试完成`, data: { group: groupName, delays: result } };
+          return { success: true, content: uiText("代理组 {{p0}} 延迟测试完成", { p0: groupName }), data: { group: groupName, delays: result } };
         }
         // Test all groups
         const allData = await mihomoAPI.proxies();
@@ -563,7 +564,7 @@ export async function executeTool(
         for (const [name] of groups) {
           try { await mihomoAPI.groupDelay(name); tested++; } catch { /* skip */ }
         }
-        return { success: true, content: `已完成 ${tested} 个代理组的延迟测试` };
+        return { success: true, content: uiText("已完成 {{p0}} 个代理组的延迟测试", { p0: tested }) };
       }
       case 'query_proxies': {
         const groupName = args.group_name || args.group;
@@ -571,7 +572,7 @@ export async function executeTool(
         const allData = await mihomoAPI.proxies();
         if (groupName) {
           const group = allData.proxies?.[groupName];
-          if (!group) return { success: false, content: `未找到代理组 "${groupName}"` };
+          if (!group) return { success: false, content: uiText("未找到代理组 \"{{p0}}\"", { p0: groupName }) };
           const nodeCount = group.all?.length || 0;
           const data: any = { name: groupName, type: group.type, current: group.now, nodeCount };
           if (includeNodes) {
@@ -582,14 +583,14 @@ export async function executeTool(
           } else {
             data.nodeNames = group.all || [];
           }
-          return { success: true, content: `代理组 "${groupName}": ${group.type}，当前: ${group.now || '无'}，共 ${nodeCount} 个节点`, data };
+          return { success: true, content: uiText("代理组 \"{{p0}}\": {{p1}}，当前: {{p2}}，共 {{p3}} 个节点", { p0: groupName, p1: group.type, p2: group.now || uiText("无"), p3: nodeCount }), data };
         }
         const groupsList = Object.entries(allData.proxies || {})
           .filter(([, v]: [string, any]) => v.all && v.all.length > 0)
           .map(([name, v]: [string, any]) => ({
             name, type: v.type, current: v.now, nodeCount: v.all?.length || 0,
           }));
-        return { success: true, content: `共找到 ${groupsList.length} 个代理组`, data: { groupCount: groupsList.length, groups: groupsList } };
+        return { success: true, content: uiText("共找到 {{p0}} 个代理组", { p0: groupsList.length }), data: { groupCount: groupsList.length, groups: groupsList } };
       }
 
       case 'query_connections': {
@@ -610,7 +611,7 @@ export async function executeTool(
             download: formatBytes(c.download || 0),
           })),
         };
-        return { success: true, content: `共 ${conns.length} 个活跃连接，上传: ${result.uploadTotal}，下载: ${result.downloadTotal}`, data: result };
+        return { success: true, content: uiText("共 {{p0}} 个活跃连接，上传: {{p1}}，下载: {{p2}}", { p0: conns.length, p1: result.uploadTotal, p2: result.downloadTotal }), data: result };
       }
 
       case 'query_traffic': {
@@ -620,27 +621,27 @@ export async function executeTool(
         const upload = connData.uploadTotal || 0;
         const download = connData.downloadTotal || 0;
         if (type === 'now') {
-          return { success: true, content: `当前活跃连接: ${activeConns}` };
+          return { success: true, content: uiText("当前活跃连接: {{p0}}", { p0: activeConns }) };
         } else if (type === 'total') {
-          return { success: true, content: `累计上传: ${formatBytes(upload)}，累计下载: ${formatBytes(download)}` };
+          return { success: true, content: uiText("累计上传: {{p0}}，累计下载: {{p1}}", { p0: formatBytes(upload), p1: formatBytes(download) }) };
         }
-        return { success: true, content: `活跃连接: ${activeConns}，累计上传: ${formatBytes(upload)}，累计下载: ${formatBytes(download)}` };
+        return { success: true, content: uiText("活跃连接: {{p0}}，累计上传: {{p1}}，累计下载: {{p2}}", { p0: activeConns, p1: formatBytes(upload), p2: formatBytes(download) }) };
       }
 
       case 'query_settings': {
         const config = await mihomoAPI.configs();
-        return { success: true, content: '当前设置已获取', data: config };
+        return { success: true, content: uiText("当前设置已获取"), data: config };
       }
       case 'manage_profiles': {
         if (typeof window === 'undefined' || !window.electronAPI) {
-          return { success: false, content: '错误：electronAPI 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 不可用") };
         }
         const profileName = args.profile_name || args.name;
 
         if (args.action === 'list') {
-          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), '读取配置列表');
+          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), uiText("读取配置列表"));
           if (!Array.isArray(subs)) return subs;
-          const activeConfig = toOptionalString(await window.electronAPI.getActiveConfig(), '读取活动配置');
+          const activeConfig = toOptionalString(await window.electronAPI.getActiveConfig(), uiText("读取活动配置"));
           if (activeConfig && typeof activeConfig === 'object') return activeConfig;
           const profiles = subs.map((s: any) => ({
             name: s.name,
@@ -648,52 +649,52 @@ export async function executeTool(
             active: s.path === activeConfig,
             lastUpdated: s.lastUpdated,
           }));
-          return { success: true, content: `共 ${profiles.length} 个配置`, data: { count: profiles.length, profiles } };
+          return { success: true, content: uiText("共 {{p0}} 个配置", { p0: profiles.length }), data: { count: profiles.length, profiles } };
         }
         if (args.action === 'activate' && profileName) {
-          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), '读取配置列表');
+          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), uiText("读取配置列表"));
           if (!Array.isArray(subs)) return subs;
           const target = subs.find((s: any) => s.name === profileName || s.path === profileName);
-          if (!target) return { success: false, content: `未找到配置 "${profileName}"` };
+          if (!target) return { success: false, content: uiText("未找到配置 \"{{p0}}\"", { p0: profileName }) };
           const result = await window.electronAPI.startMihomo(target.path);
           if (isCompatFailure(result) || result === false) {
-            return { success: false, content: `激活失败: ${compatFailureMessage(result, '未知错误')}` };
+            return { success: false, content: uiText("激活失败: {{p0}}", { p0: compatFailureMessage(result, uiText("未知错误")) }) };
           }
           notifyProfileUpdated({ action: 'activate-profile', filePath: target.path });
-          return { success: true, content: `已激活配置 "${target.name}"` };
+          return { success: true, content: uiText("已激活配置 \"{{p0}}\"", { p0: target.name }) };
         }
         if (args.action === 'update' && profileName) {
-          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), '读取配置列表');
+          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), uiText("读取配置列表"));
           if (!Array.isArray(subs)) return subs;
           const target = subs.find((s: any) => s.name === profileName || s.path === profileName);
-          if (!target) return { success: false, content: `未找到配置 "${profileName}"` };
+          if (!target) return { success: false, content: uiText("未找到配置 \"{{p0}}\"", { p0: profileName }) };
           const result = await window.electronAPI.refreshSubscription(target.path);
           if (result.success) {
             notifyProfileUpdated({ action: 'refresh-profile', filePath: target.path });
-            return { success: true, content: `配置 "${target.name}" 已更新` };
+            return { success: true, content: uiText("配置 \"{{p0}}\" 已更新", { p0: target.name }) };
           }
-          return { success: false, content: `更新失败: ${result.error || '未知错误'}` };
+          return { success: false, content: uiText("更新失败: {{p0}}", { p0: result.error || uiText("未知错误") }) };
         }
         if (args.action === 'delete' && profileName) {
-          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), '读取配置列表');
+          const subs = toToolArray<any>(await window.electronAPI.getSubscriptions(), uiText("读取配置列表"));
           if (!Array.isArray(subs)) return subs;
           const target = subs.find((s: any) => s.name === profileName || s.path === profileName);
-          if (!target) return { success: false, content: `未找到配置 "${profileName}"` };
+          if (!target) return { success: false, content: uiText("未找到配置 \"{{p0}}\"", { p0: profileName }) };
           const result = await window.electronAPI.deleteSubscription(target.path);
           if (isCompatFailure(result) || result === false) {
-            return { success: false, content: `删除失败: ${compatFailureMessage(result, '未知错误')}` };
+            return { success: false, content: uiText("删除失败: {{p0}}", { p0: compatFailureMessage(result, uiText("未知错误")) }) };
           }
           notifyProfileUpdated({ action: 'delete-profile', filePath: target.path });
-          return { success: true, content: `已删除配置 "${target.name}"` };
+          return { success: true, content: uiText("已删除配置 \"{{p0}}\"", { p0: target.name }) };
         }
-        return { success: false, content: `不支持的操作或缺少参数` };
+        return { success: false, content: uiText("不支持的操作或缺少参数") };
       }
 
       case 'modify_settings': {
         const key = args.key;
         const value = args.value;
         if (!key || value === undefined) {
-          return { success: false, content: '缺少 key/value 参数' };
+          return { success: false, content: uiText("缺少 key/value 参数") };
         }
         let parsedValue: any = value;
         if (value === 'true') parsedValue = true;
@@ -706,20 +707,20 @@ export async function executeTool(
             const result = await window.electronAPI.setSetting(key, parsedValue);
             if (result.success) {
               notifyProfileUpdated({ action: 'modify-setting', key });
-              return { success: true, content: `设置 "${key}" 已更新为 ${value}` };
+              return { success: true, content: uiText("设置 \"{{p0}}\" 已更新为 {{p1}}", { p0: key, p1: value }) };
             }
           } catch { /* fall through to mihomo API */ }
         }
         // Fallback: mihomo patchConfigs for service-level settings
         await mihomoAPI.patchConfigs({ [key]: parsedValue } as any);
         notifyProfileUpdated({ action: 'modify-runtime-setting', key });
-        return { success: true, content: `设置 "${key}" 已更新为 ${value}` };
+        return { success: true, content: uiText("设置 \"{{p0}}\" 已更新为 {{p1}}", { p0: key, p1: value }) };
       }
       case 'read_config': {
         if (typeof window !== 'undefined' && window.electronAPI?.readConfigFile) {
           const readResult = await window.electronAPI.readConfigFile();
           if (!readResult.success || !readResult.content) {
-            return { success: false, content: `读取配置失败: ${readResult.error || '未知错误'}` };
+            return { success: false, content: uiText("读取配置失败: {{p0}}", { p0: readResult.error || uiText("未知错误") }) };
           }
           const fullContent = readResult.content;
           const section = args.section || 'all';
@@ -745,10 +746,10 @@ export async function executeTool(
           }
 
           const resultText = [
-            `配置文件: ${section === 'all' ? '全部' : section}`,
-            `共 ${totalLines} 行, ${totalChars} 字符`,
-            ...(offset > 0 || limit ? [`范围: 第 ${offset} - ${endLine} 行 (${selectedLines.length} 行)`] : []),
-            ...(truncated ? [`⚠️ 内容过长已截断（显示前 ${MAX_CONTENT_CHARS} 字符），请使用 section/offset/limit 参数分段读取`] : []),
+            uiText("配置文件: {{p0}}", { p0: section === 'all' ? uiText("全部") : section }),
+            uiText("共 {{p0}} 行, {{p1}} 字符", { p0: totalLines, p1: totalChars }),
+            ...(offset > 0 || limit ? [uiText("范围: 第 {{p0}} - {{p1}} 行 ({{p2}} 行)", { p0: offset, p1: endLine, p2: selectedLines.length })] : []),
+            ...(truncated ? [uiText("⚠️ 内容过长已截断（显示前 {{p0}} 字符），请使用 section/offset/limit 参数分段读取", { p0: MAX_CONTENT_CHARS })] : []),
             '',
             '```yaml',
             displayContent,
@@ -758,12 +759,12 @@ export async function executeTool(
           return { success: true, content: resultText, data: { section, totalLines, totalChars, offset, returnedLines: selectedLines.length, content } };
         }
         const config = await mihomoAPI.configs();
-        return { success: true, content: '已获取运行中的配置', data: { config } };
+        return { success: true, content: uiText("已获取运行中的配置"), data: { config } };
       }
 
       case 'edit_config': {
         if (typeof window === 'undefined' || !window.electronAPI?.editConfigAtomic) {
-          return { success: false, content: '错误：electronAPI 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 不可用") };
         }
         const _log = (...a: any[]) => window.electronAPI?.debugLog?.(...a);
         const ecStart = performance.now();
@@ -790,16 +791,16 @@ export async function executeTool(
             oldString = anchor;
             newString = anchor + insert;
           } else {
-            return { success: false, content: '缺少 old_string；使用 anchor+insert 时需设置 mode 为 insert_before 或 insert_after' };
+            return { success: false, content: uiText("缺少 old_string；使用 anchor+insert 时需设置 mode 为 insert_before 或 insert_after") };
           }
         } else {
-          return { success: false, content: '缺少 old_string（可用 anchor 代替，或用 anchor+insert 进行插入）' };
+          return { success: false, content: uiText("缺少 old_string（可用 anchor 代替，或用 anchor+insert 进行插入）") };
         }
 
         _log(`edit_config: oldString.len=${oldString.length}, newString.len=${newString.length}`);
         if (!oldString) {
           _log('edit_config: oldString is empty, abort');
-          return { success: false, content: 'old_string 不能为空' };
+          return { success: false, content: uiText("old_string 不能为空") };
         }
         const ipcStart = performance.now();
         _log('edit_config: calling IPC editConfigAtomic...');
@@ -810,55 +811,55 @@ export async function executeTool(
         if (!result.success) {
           if (result.error === 'old_string_not_found') {
             const hint = result.content ? findSimilarContent(result.content, oldString) : '';
-            return { success: false, content: `old_string 在配置中未找到。\n\n请确保 old_string 与配置内容完全匹配（包括缩进和换行）。\n\n${hint}\n\n提示：使用 read_config 查看配置的确切内容。` };
+            return { success: false, content: uiText("old_string 在配置中未找到。\n\n请确保 old_string 与配置内容完全匹配（包括缩进和换行）。\n\n{{p0}}\n\n提示：使用 read_config 查看配置的确切内容。", { p0: hint }) };
           }
           if (result.error === 'multiple_matches') {
-            return { success: false, content: `old_string 在配置中匹配到 ${result.matchCount} 处，请提供更多上下文使其唯一。` };
+            return { success: false, content: uiText("old_string 在配置中匹配到 {{p0}} 处，请提供更多上下文使其唯一。", { p0: result.matchCount }) };
           }
           if (result.error === 'yaml_invalid') {
-            return { success: false, content: `编辑后 YAML 格式无效，已回滚。\n\n错误: ${result.yamlError}\n\n请检查 new_string 的格式（特别是缩进）。` };
+            return { success: false, content: uiText("编辑后 YAML 格式无效，已回滚。\n\n错误: {{p0}}\n\n请检查 new_string 的格式（特别是缩进）。", { p0: result.yamlError }) };
           }
-          return { success: false, content: `编辑失败: ${result.error}` };
+          return { success: false, content: uiText("编辑失败: {{p0}}", { p0: result.error }) };
         }
         // Hot-reload mihomo so changes take effect immediately
         await reloadConfig();
-        return { success: true, content: '配置已更新并重载', data: { oldLength: oldString.length, newLength: newString.length, mode } };
+        return { success: true, content: uiText("配置已更新并重载"), data: { oldLength: oldString.length, newLength: newString.length, mode } };
       }
 
       case 'validate_config': {
         try {
           if (typeof window !== 'undefined' && window.electronAPI?.validateConfig) {
             const result = await window.electronAPI.validateConfig(args.content);
-            return { success: result.valid, content: result.valid ? '配置格式正确' : `配置格式无效: ${result.error}`, data: result };
+            return { success: result.valid, content: result.valid ? uiText("配置格式正确") : uiText("配置格式无效: {{p0}}", { p0: result.error }), data: result };
           }
-          return { success: true, content: '基本验证通过（完整验证需要 electronAPI）' };
+          return { success: true, content: uiText("基本验证通过（完整验证需要 electronAPI）") };
         } catch (e: any) {
-          return { success: false, content: `验证出错: ${e.message}`, data: { valid: false, error: e.message } };
+          return { success: false, content: uiText("验证出错: {{p0}}", { p0: e.message }), data: { valid: false, error: e.message } };
         }
       }
 
       case 'manage_overrides': {
         if (typeof window === 'undefined' || !window.electronAPI) {
-          return { success: false, content: '错误：electronAPI 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 不可用") };
         }
         const action = args.action;
         if (action === 'list') {
-          const overrides = toToolArray<any>(await window.electronAPI.getOverrides(), '读取覆写列表');
+          const overrides = toToolArray<any>(await window.electronAPI.getOverrides(), uiText("读取覆写列表"));
           if (!Array.isArray(overrides)) return overrides;
           const items = overrides.map((o: any) => ({
             id: o.id, name: o.name, type: o.type, ext: o.ext, enabled: o.enabled, global: o.global,
             url: o.url || undefined,
           }));
-          return { success: true, content: `共 ${items.length} 个覆写`, data: { count: items.length, overrides: items } };
+          return { success: true, content: uiText("共 {{p0}} 个覆写", { p0: items.length }), data: { count: items.length, overrides: items } };
         }
         if (action === 'create') {
-          if (!args.name) return { success: false, content: '缺少 name 参数' };
+          if (!args.name) return { success: false, content: uiText("缺少 name 参数") };
           const extMap: Record<string, string> = { javascript: 'js', yaml: 'yaml' };
           const fileType = args.type || 'yaml';
           const ext = extMap[fileType] || 'yaml';
           const defaultContent = ext === 'js'
-            ? '// JavaScript 覆写脚本\nfunction main(config) {\n  return config;\n}\n'
-            : '# YAML 覆写配置\n';
+            ? uiText("// JavaScript 覆写脚本\nfunction main(config) {\n  return config;\n}\n")
+            : uiText("# YAML 覆写配置\n");
           const newItem: any = {
             name: args.name,
             type: args.url ? 'remote' : 'local',
@@ -870,34 +871,34 @@ export async function executeTool(
           if (args.url) newItem.url = args.url;
           const result = await window.electronAPI.addOverride(newItem);
           await reloadConfig();
-          return { success: true, content: `覆写 "${args.name}" 已创建（${newItem.global ? '全局' : '需关联订阅'}）`, data: { id: result?.id } };
+          return { success: true, content: uiText("覆写 \"{{p0}}\" 已创建（{{p1}}）", { p0: args.name, p1: newItem.global ? uiText("全局") : uiText("需关联订阅") }), data: { id: result?.id } };
         }
         if (action === 'delete') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
           await window.electronAPI.deleteOverride(args.id);
           await reloadConfig();
-          return { success: true, content: `覆写已删除` };
+          return { success: true, content: uiText("覆写已删除") };
         }
         if (action === 'enable' || action === 'disable') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
           await window.electronAPI.updateOverride(args.id, { enabled: action === 'enable' });
           await reloadConfig();
-          return { success: true, content: `覆写已${action === 'enable' ? '启用' : '禁用'}` };
+          return { success: true, content: uiText("覆写已{{p0}}", { p0: action === 'enable' ? uiText("启用") : uiText("禁用") }) };
         }
         if (action === 'update_remote') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
           await window.electronAPI.updateRemoteOverride(args.id);
           await reloadConfig();
-          return { success: true, content: '远程覆写已更新' };
+          return { success: true, content: uiText("远程覆写已更新") };
         }
         if (action === 'associate') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
-          const configPath = toOptionalString(await window.electronAPI?.getActiveConfig?.(), '读取活动配置');
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
+          const configPath = toOptionalString(await window.electronAPI?.getActiveConfig?.(), uiText("读取活动配置"));
           if (configPath && typeof configPath === 'object') return configPath;
-          if (!configPath) return { success: false, content: '没有活动的订阅配置' };
+          if (!configPath) return { success: false, content: uiText("没有活动的订阅配置") };
           const currentOverridesResult = await window.electronAPI.getSubscriptionOverrides?.(configPath);
           if (isCompatFailure(currentOverridesResult)) {
-            return { success: false, content: `读取订阅覆写关联失败: ${compatFailureMessage(currentOverridesResult)}` };
+            return { success: false, content: uiText("读取订阅覆写关联失败: {{p0}}", { p0: compatFailureMessage(currentOverridesResult) }) };
           }
           const currentOverrides: string[] = Array.isArray(currentOverridesResult) ? currentOverridesResult : [];
           if (!currentOverrides.includes(args.id)) {
@@ -905,91 +906,91 @@ export async function executeTool(
             await window.electronAPI.setSubscriptionOverrides?.(configPath, currentOverrides);
           }
           await reloadConfig();
-          return { success: true, content: `覆写已关联到当前订阅` };
+          return { success: true, content: uiText("覆写已关联到当前订阅") };
         }
-        return { success: false, content: `不支持的操作: ${action}` };
+        return { success: false, content: uiText("不支持的操作: {{p0}}", { p0: action }) };
       }
 
       case 'read_override': {
         if (typeof window === 'undefined' || !window.electronAPI) {
-          return { success: false, content: '错误：electronAPI 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 不可用") };
         }
         let targetId = args.id;
         if (!targetId && args.name) {
-          const overrides = toToolArray<any>(await window.electronAPI.getOverrides(), '读取覆写列表');
+          const overrides = toToolArray<any>(await window.electronAPI.getOverrides(), uiText("读取覆写列表"));
           if (!Array.isArray(overrides)) return overrides;
           const found = overrides.find((o: any) => o.name === args.name);
-          if (!found) return { success: false, content: `未找到覆写 "${args.name}"` };
+          if (!found) return { success: false, content: uiText("未找到覆写 \"{{p0}}\"", { p0: args.name }) };
           targetId = found.id;
         }
-        if (!targetId) return { success: false, content: '缺少 id 或 name 参数' };
+        if (!targetId) return { success: false, content: uiText("缺少 id 或 name 参数") };
         const content = await window.electronAPI.getOverrideFileContent(targetId);
-        if (content == null) return { success: false, content: '读取覆写内容失败' };
+        if (content == null) return { success: false, content: uiText("读取覆写内容失败") };
         const allLines = String(content).split('\n');
         const offset = args.offset || 0;
         const limit = args.limit;
         const selectedLines = limit ? allLines.slice(offset, offset + limit) : allLines.slice(offset);
         return {
           success: true,
-          content: `覆写内容（共 ${allLines.length} 行）:\n\n\`\`\`\n${selectedLines.join('\n')}\n\`\`\``,
+          content: uiText("覆写内容（共 {{p0}} 行）:\n\n```\n{{p1}}\n```", { p0: allLines.length, p1: selectedLines.join('\n') }),
           data: { totalLines: allLines.length, offset, returnedLines: selectedLines.length, content: selectedLines.join('\n') },
         };
       }
 
       case 'edit_override': {
         if (typeof window === 'undefined' || !window.electronAPI) {
-          return { success: false, content: '错误：electronAPI 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 不可用") };
         }
         let targetId = args.id;
         if (!targetId && args.name) {
-          const overrides = toToolArray<any>(await window.electronAPI.getOverrides(), '读取覆写列表');
+          const overrides = toToolArray<any>(await window.electronAPI.getOverrides(), uiText("读取覆写列表"));
           if (!Array.isArray(overrides)) return overrides;
           const found = overrides.find((o: any) => o.name === args.name);
-          if (!found) return { success: false, content: `未找到覆写 "${args.name}"` };
+          if (!found) return { success: false, content: uiText("未找到覆写 \"{{p0}}\"", { p0: args.name }) };
           targetId = found.id;
         }
-        if (!targetId) return { success: false, content: '缺少 id 或 name 参数' };
+        if (!targetId) return { success: false, content: uiText("缺少 id 或 name 参数") };
         const editMode = args.mode || 'replace';
         if (editMode === 'full') {
-          if (!args.full_content) return { success: false, content: '缺少 full_content 参数' };
+          if (!args.full_content) return { success: false, content: uiText("缺少 full_content 参数") };
           await window.electronAPI.updateOverrideFileContent(targetId, args.full_content);
           await reloadConfig();
-          return { success: true, content: '覆写内容已全量替换并重载' };
+          return { success: true, content: uiText("覆写内容已全量替换并重载") };
         }
         // replace mode
-        if (!args.old_string) return { success: false, content: '缺少 old_string 参数' };
+        if (!args.old_string) return { success: false, content: uiText("缺少 old_string 参数") };
         const currentContent = await window.electronAPI.getOverrideFileContent(targetId);
-        if (currentContent == null) return { success: false, content: '读取覆写内容失败' };
+        if (currentContent == null) return { success: false, content: uiText("读取覆写内容失败") };
         const cur = String(currentContent);
         if (!cur.includes(args.old_string)) {
-          return { success: false, content: 'old_string 在覆写内容中未找到，请确保完全匹配' };
+          return { success: false, content: uiText("old_string 在覆写内容中未找到，请确保完全匹配") };
         }
         const occurrences = countOccurrences(cur, args.old_string);
         if (occurrences > 1) {
-          return { success: false, content: `old_string 匹配到 ${occurrences} 处，请提供更多上下文使其唯一` };
+          return { success: false, content: uiText("old_string 匹配到 {{p0}} 处，请提供更多上下文使其唯一", { p0: occurrences }) };
         }
         const newContent = cur.replace(args.old_string, args.new_string ?? '');
         await window.electronAPI.updateOverrideFileContent(targetId, newContent);
         await reloadConfig();
-        return { success: true, content: '覆写内容已更新并重载' };
+        return { success: true, content: uiText("覆写内容已更新并重载") };
       }
 
       case 'manage_proxy_icon_rules': {
         if (typeof window === 'undefined' || !window.electronAPI?.proxyIcon) {
-          return { success: false, content: '错误：electronAPI 或 proxyIcon 不可用' };
+          return { success: false, content: uiText("错误：electronAPI 或 proxyIcon 不可用") };
         }
         const action = args.action;
         if (action === 'list') {
           const config = await window.electronAPI.proxyIcon.getConfig();
           if (!compatActionSucceeded(config)) {
-            return { success: false, content: `读取图标规则失败: ${compatActionError(config)}` };
+            return { success: false, content: uiText("读取图标规则失败: {{p0}}", { p0: compatActionError(config) }) };
           }
           const rules = config?.config?.rules || [];
-          return { success: true, content: `共 ${rules.length} 条图标规则`, data: { count: rules.length, rules } };
+          return { success: true, content: uiText("共 {{p0}} 条图标规则", { p0: rules.length }), data: { count: rules.length, rules } };
         }
         if (action === 'add') {
           if (!args.name || !args.regex || !args.icon_url) {
-            return { success: false, content: '缺少 name、regex 或 icon_url 参数' };
+            return { success: false, content: uiText("缺少 name、regex 或 icon_url 参数") };
           }
           const result = await window.electronAPI.proxyIcon.addRule({
             name: args.name,
@@ -1000,13 +1001,13 @@ export async function executeTool(
             priority: 0,
           });
           if (!compatActionSucceeded(result)) {
-            return { success: false, content: `添加图标规则失败: ${compatActionError(result)}` };
+            return { success: false, content: uiText("添加图标规则失败: {{p0}}", { p0: compatActionError(result) }) };
           }
           notifyProxyIconChanged({ action: 'add-rule' });
-          return { success: true, content: `图标规则 "${args.name}" 已添加` };
+          return { success: true, content: uiText("图标规则 \"{{p0}}\" 已添加", { p0: args.name }) };
         }
         if (action === 'update') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
           const updates: any = {};
           if (args.name) updates.name = args.name;
           if (args.regex) updates.regex = args.regex;
@@ -1016,37 +1017,37 @@ export async function executeTool(
           }
           const result = await window.electronAPI.proxyIcon.updateRule(args.id, updates);
           if (!compatActionSucceeded(result)) {
-            return { success: false, content: `更新图标规则失败: ${compatActionError(result)}` };
+            return { success: false, content: uiText("更新图标规则失败: {{p0}}", { p0: compatActionError(result) }) };
           }
           notifyProxyIconChanged({ action: 'update-rule', id: args.id });
-          return { success: true, content: '图标规则已更新' };
+          return { success: true, content: uiText("图标规则已更新") };
         }
         if (action === 'delete') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
           const result = await window.electronAPI.proxyIcon.deleteRule(args.id);
           if (!compatActionSucceeded(result)) {
-            return { success: false, content: `删除图标规则失败: ${compatActionError(result)}` };
+            return { success: false, content: uiText("删除图标规则失败: {{p0}}", { p0: compatActionError(result) }) };
           }
           notifyProxyIconChanged({ action: 'delete-rule', id: args.id });
-          return { success: true, content: '图标规则已删除' };
+          return { success: true, content: uiText("图标规则已删除") };
         }
         if (action === 'toggle') {
-          if (!args.id) return { success: false, content: '缺少 id 参数' };
+          if (!args.id) return { success: false, content: uiText("缺少 id 参数") };
           const enabled = args.enabled !== undefined ? args.enabled : true;
           const result = await window.electronAPI.proxyIcon.toggleRule(args.id, enabled);
           if (!compatActionSucceeded(result)) {
-            return { success: false, content: `切换图标规则失败: ${compatActionError(result)}` };
+            return { success: false, content: uiText("切换图标规则失败: {{p0}}", { p0: compatActionError(result) }) };
           }
           notifyProxyIconChanged({ action: 'toggle-rule', id: args.id, enabled });
-          return { success: true, content: `图标规则已${enabled ? '启用' : '禁用'}` };
+          return { success: true, content: uiText("图标规则已{{p0}}", { p0: enabled ? uiText("启用") : uiText("禁用") }) };
         }
-        return { success: false, content: `不支持的操作: ${action}` };
+        return { success: false, content: uiText("不支持的操作: {{p0}}", { p0: action }) };
       }
 
       default:
-        return { success: false, content: `未知工具: ${toolName}` };
+        return { success: false, content: uiText("未知工具: {{p0}}", { p0: toolName }) };
     }
   } catch (e: any) {
-    return { success: false, content: `执行出错: ${e.message || String(e)}` };
+    return { success: false, content: uiText("执行出错: {{p0}}", { p0: e.message || String(e) }) };
   }
 }

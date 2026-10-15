@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Toast from '@radix-ui/react-toast';
@@ -64,7 +65,7 @@ export default function Settings() {
   const [autoEnterLightweightMode, setAutoEnterLightweightMode] = useState(false);
   const [lightweightModeDelay, setLightweightModeDelay] = useState(60);
   const [theme, setTheme] = useState('system');
-  const [language, setLanguage] = useState(i18n.language || 'zh-CN');
+  const [language, setLanguage] = useState(i18n.language || 'en-US');
   const [appearanceMode, setAppearanceMode] = useState<'acrylic' | 'dynamic' | 'solid' | 'custom'>('dynamic');
   const [customBackground, setCustomBackground] = useState('');
   const [backgroundOpacity, setBackgroundOpacity] = useState(80);
@@ -101,7 +102,7 @@ export default function Settings() {
   // Refs for override settings components
   const overrideSettingsRef = useRef<OverrideSettingsRef>(null);
   const [isSavingOverride, setIsSavingOverride] = useState(false);
-  
+
   // Toast提示相关状态
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTitle, setToastTitle] = useState('');
@@ -130,7 +131,7 @@ export default function Settings() {
       console.error('获取内核路径失败:', error);
     }
   }, []);
-  
+
   // 使用mihomo API
   let mihomoAPI = useMihomoAPI();
 
@@ -151,7 +152,7 @@ export default function Settings() {
               httpFallback: apiConfigResult.httpFallback
             });
           }
-          
+
           // 获取主题
           const themeResult = await window.electronAPI.getTheme();
           if (themeResult.success) {
@@ -181,7 +182,7 @@ export default function Settings() {
           // 获取应用版本号
           const version = await window.electronAPI.getAppVersion();
           setAppVersion(version);
-          
+
           // 获取开机启动状态
           const autoLaunchState = await window.electronAPI.getAutoLaunchState();
           const loadedAutoLaunch = toBooleanState(autoLaunchState);
@@ -271,9 +272,9 @@ export default function Settings() {
     // 监听服务重启事件
     const handleServiceRestarted = (result: {success: boolean, error?: string}) => {
       if (result.success) {
-        showToast("服务已重启", "新设置已应用", "success");
+        showToast(uiText("服务已重启"), uiText("新设置已应用"), "success");
       } else {
-        showToast("服务重启失败", formatSettingsError(result.error, "未知错误"), "error");
+        showToast(uiText("服务重启失败"), formatSettingsError(result.error, uiText("未知错误")), "error");
       }
     };
 
@@ -314,7 +315,7 @@ export default function Settings() {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'setAutoLaunch')) {
       setStartWithSystem(confirmedStartWithSystemRef.current);
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -325,7 +326,7 @@ export default function Settings() {
         ? result as { success?: boolean; error?: string }
         : null;
       if (resultObject?.success === false) {
-        throw new Error(formatSettingsError(resultObject?.error, '更新开机启动设置失败'));
+        throw new Error(formatSettingsError(resultObject?.error, uiText("更新开机启动设置失败")));
       }
 
       let confirmedState = startWithSystem;
@@ -335,8 +336,8 @@ export default function Settings() {
         if (confirmedState !== startWithSystem) {
           throw new Error(
             startWithSystem
-              ? '开机启动未能启用'
-              : '开机启动未能禁用'
+              ? uiText("开机启动未能启用")
+              : uiText("开机启动未能禁用")
           );
         }
       }
@@ -344,10 +345,10 @@ export default function Settings() {
       setStartWithSystem(confirmedState);
       console.log('开机启动设置已更新:', startWithSystem);
       confirmedStartWithSystemRef.current = confirmedState;
-      showToast('成功', '开机启动设置已更新', 'success');
+      showToast(uiText("成功"), uiText("开机启动设置已更新"), 'success');
     } catch (error) {
       console.error('更新开机启动设置失败:', error);
-      showToast('错误', `更新开机启动设置失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("更新开机启动设置失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
       // 如果设置失败，可以恢复UI状态（可选）
       try {
         if (hasElectronMethod(api, 'getAutoLaunchState')) {
@@ -369,7 +370,7 @@ export default function Settings() {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'setSilentStart')) {
       setSilentStart(confirmedSilentStartRef.current);
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -378,11 +379,11 @@ export default function Settings() {
       if (result.success) {
         console.log('静默启动设置已更新:', silentStart);
         confirmedSilentStartRef.current = silentStart;
-        showToast('成功', '静默启动设置已更新', 'success');
+        showToast(uiText("成功"), uiText("静默启动设置已更新"), 'success');
       } else {
-        const message = formatSettingsError(result.error, '更新静默启动设置失败');
+        const message = formatSettingsError(result.error, uiText("更新静默启动设置失败"));
         console.error('更新静默启动设置失败:', message);
-        showToast('错误', `更新静默启动设置失败: ${message}`, 'error');
+        showToast(uiText("错误"), uiText("更新静默启动设置失败: {{p0}}", { p0: message }), 'error');
         try {
           if (hasElectronMethod(api, 'getSilentStart')) {
             const currentState = await api.getSilentStart();
@@ -402,7 +403,7 @@ export default function Settings() {
       }
     } catch (error) {
       console.error('更新静默启动设置失败:', error);
-      showToast('错误', `更新静默启动设置失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("更新静默启动设置失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
       try {
         if (hasElectronMethod(api, 'getSilentStart')) {
           const currentState = await api.getSilentStart();
@@ -476,7 +477,7 @@ export default function Settings() {
 
     if (!hasElectronMethod(electron, 'setSetting')) {
       setAutoCheckUpdate(confirmedAutoCheckUpdateRef.current);
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -484,12 +485,12 @@ export default function Settings() {
       try {
         const result = await electron.setSetting('autoCheckUpdate', autoCheckUpdate);
         if (result?.success === false) {
-          throw new Error(formatSettingsError(result.error, '保存自动检查更新设置失败'));
+          throw new Error(formatSettingsError(result.error, uiText("保存自动检查更新设置失败")));
         }
         confirmedAutoCheckUpdateRef.current = autoCheckUpdate;
       } catch (error) {
         console.error('保存自动检查更新设置失败:', error);
-        showToast('错误', `保存自动检查更新设置失败: ${formatSettingsError(error)}`, 'error');
+        showToast(uiText("错误"), uiText("保存自动检查更新设置失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
         try {
           const currentState = await electron.getSetting('autoCheckUpdate', true);
           if (currentState?.success) {
@@ -507,7 +508,7 @@ export default function Settings() {
 
     saveSetting();
   }, [autoCheckInitialized, autoCheckUpdate, formatSettingsError, t]);
-  
+
   useEffect(() => {
     // 数据未加载完成时不保存
     if (!dataLoaded.current) {
@@ -534,20 +535,20 @@ export default function Settings() {
     const electron = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(electron, 'setSetting')) {
       setMinimizeToTray(confirmedMinimizeToTrayRef.current);
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
     electron.setSetting('minimizeToTray', minimizeToTray)
       .then((result) => {
         if (result?.success === false) {
-          throw new Error(formatSettingsError(result.error, '保存最小化到托盘设置失败'));
+          throw new Error(formatSettingsError(result.error, uiText("保存最小化到托盘设置失败")));
         }
         confirmedMinimizeToTrayRef.current = minimizeToTray;
       })
       .catch((error) => {
         console.error('保存最小化到托盘设置失败:', error);
-        showToast('错误', `保存最小化到托盘设置失败: ${formatSettingsError(error)}`, 'error');
+        showToast(uiText("错误"), uiText("保存最小化到托盘设置失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
         if (hasElectronMethod(electron, 'getSetting')) {
           electron.getSetting('minimizeToTray', true)
             .then((result) => {
@@ -581,7 +582,7 @@ export default function Settings() {
         const confirmed = confirmedLightweightModeRef.current;
         setAutoEnterLightweightMode(confirmed.autoEnter);
         setLightweightModeDelay(confirmed.delay);
-        showToast('错误', t('settings.apiUnavailable'), 'error');
+        showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
         return;
       }
 
@@ -591,7 +592,7 @@ export default function Settings() {
           delay: lightweightModeDelay
         });
         if (result?.success === false) {
-          throw new Error(formatSettingsError(result.error, '保存轻量模式设置失败'));
+          throw new Error(formatSettingsError(result.error, uiText("保存轻量模式设置失败")));
         }
         confirmedLightweightModeRef.current = {
           autoEnter: autoEnterLightweightMode,
@@ -600,7 +601,7 @@ export default function Settings() {
         console.log('[Settings] 轻量模式设置已保存:', { autoEnter: autoEnterLightweightMode, delay: lightweightModeDelay });
       } catch (error) {
         console.error('[Settings] 保存轻量模式设置失败:', error);
-        showToast('错误', `保存轻量模式设置失败: ${formatSettingsError(error)}`, 'error');
+        showToast(uiText("错误"), uiText("保存轻量模式设置失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
         try {
           if (hasElectronMethod(api, 'getLightweightModeSettings')) {
             const currentSettings = await api.getLightweightModeSettings();
@@ -638,7 +639,7 @@ export default function Settings() {
   const handleThemeChange = async (newTheme: string) => {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'setTheme')) {
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -661,11 +662,11 @@ export default function Settings() {
           document.documentElement.classList.remove('dark');
         }
       } else {
-        showToast('错误', formatSettingsError(result.error, '设置主题失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result.error, uiText("设置主题失败")), 'error');
       }
     } catch (error) {
       console.error('设置主题失败:', error);
-      showToast('错误', `设置主题失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("设置主题失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
     }
   };
 
@@ -675,10 +676,10 @@ export default function Settings() {
       setLanguage(newLanguage);
       await i18n.changeLanguage(newLanguage);
       localStorage.setItem('language', newLanguage);
-      showToast('成功', '语言设置已保存', 'success');
+      showToast(uiText("成功"), uiText("语言设置已保存"), 'success');
     } catch (error) {
       console.error('设置语言失败:', error);
-      showToast('错误', `设置语言失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("设置语言失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
     }
   };
 
@@ -690,14 +691,14 @@ export default function Settings() {
     // 如果切换到自定义模式但没有背景图片，先切换模式让用户可以选择图片
     if (mode === 'custom' && !customBackground) {
       setAppearanceMode(mode);
-      showToast('提示', '请选择背景图片并调整效果', 'info');
+      showToast(uiText("提示"), uiText("请选择背景图片并调整效果"), 'info');
       return;
     }
 
     try {
       const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
       if (!hasElectronMethod(api, 'setAppearanceMode')) {
-        showToast('错误', t('settings.apiUnavailable'), 'error');
+        showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
         return;
       }
 
@@ -711,13 +712,13 @@ export default function Settings() {
           }
         }
         setAppearanceMode(mode);
-        showToast('成功', '窗口背景效果已更新', 'success');
+        showToast(uiText("成功"), uiText("窗口背景效果已更新"), 'success');
       } else {
-        showToast('错误', formatSettingsError(result.error, '更新窗口背景失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result.error, uiText("更新窗口背景失败")), 'error');
       }
     } catch (error) {
       console.error('设置外观失败:', error);
-      showToast('错误', `设置窗口背景失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("设置窗口背景失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
     }
   };
 
@@ -746,7 +747,7 @@ export default function Settings() {
   const handleSelectBackground = async () => {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'selectBackgroundImage')) {
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -761,7 +762,7 @@ export default function Settings() {
       if (result.success && result.path && !result.canceled) {
         setCustomBackground(result.path);
 
-        const fileName = result.path.split(/[\\/]/).pop() || '未知文件';
+        const fileName = result.path.split(/[\\/]/).pop() || uiText("未知文件");
         setBackgroundImageName(fileName);
 
         // 保存配置并应用
@@ -785,15 +786,15 @@ export default function Settings() {
             }
           } catch (rollbackError) {
             console.error('回滚自定义背景失败:', rollbackError);
-            showToast('错误', `恢复原背景设置失败: ${formatSettingsError(rollbackError)}`, 'error');
+            showToast(uiText("错误"), uiText("恢复原背景设置失败: {{p0}}", { p0: formatSettingsError(rollbackError) }), 'error');
           }
         }
       } else if (!result.canceled && result.success === false) {
-        showToast('错误', formatSettingsError(result.error, '选择背景图片失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result.error, uiText("选择背景图片失败")), 'error');
       }
     } catch (error) {
       console.error('选择背景图片失败:', error);
-      showToast('错误', `选择背景图片失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("选择背景图片失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
     }
   };
 
@@ -801,14 +802,14 @@ export default function Settings() {
   const handleSaveCustomBackground = async (path?: string, opacity?: number, blur?: number, applyImmediately?: boolean) => {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'setCustomBackground')) {
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return false;
     }
 
     try {
       const imagePath = path || customBackground;
       if (!imagePath) {
-        showToast('错误', '请先选择背景图片', 'error');
+        showToast(uiText("错误"), uiText("请先选择背景图片"), 'error');
         return false;
       }
       const nextOpacity = opacity ?? backgroundOpacity;
@@ -824,17 +825,17 @@ export default function Settings() {
         if (applyImmediately) {
           // 立即应用自定义背景
           if (!hasElectronMethod(api, 'setAppearanceMode')) {
-            showToast('错误', t('settings.apiUnavailable'), 'error');
+            showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
             return false;
           }
           const applyResult = await api.setAppearanceMode('custom');
           if (applyResult.success) {
             setAppearanceMode('custom');
             rememberSavedBackgroundPreference(nextOpacity, nextBlur);
-            showToast('成功', '自定义背景已应用', 'success');
+            showToast(uiText("成功"), uiText("自定义背景已应用"), 'success');
             return true;
           } else {
-            showToast('错误', formatSettingsError(applyResult.error, '应用自定义背景失败'), 'error');
+            showToast(uiText("错误"), formatSettingsError(applyResult.error, uiText("应用自定义背景失败")), 'error');
             return false;
           }
         } else if (appearanceMode === 'custom') {
@@ -842,25 +843,25 @@ export default function Settings() {
           if (hasElectronMethod(api, 'setAppearanceMode')) {
             const applyResult = await api.setAppearanceMode('custom');
             if (applyResult?.success === false) {
-              showToast('错误', formatSettingsError(applyResult.error, '应用自定义背景失败'), 'error');
+              showToast(uiText("错误"), formatSettingsError(applyResult.error, uiText("应用自定义背景失败")), 'error');
               return false;
             } else {
               setAppearanceMode('custom');
             }
           } else {
-            showToast('错误', t('settings.apiUnavailable'), 'error');
+            showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
             return false;
           }
         }
         rememberSavedBackgroundPreference(nextOpacity, nextBlur);
         return true;
       } else {
-        showToast('错误', formatSettingsError(result.error, '保存自定义背景失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result.error, uiText("保存自定义背景失败")), 'error');
         return false;
       }
     } catch (error) {
       console.error('保存自定义背景失败:', error);
-      showToast('错误', `保存自定义背景失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("保存自定义背景失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
       return false;
     }
   };
@@ -909,14 +910,14 @@ export default function Settings() {
 
   // 预设主题色
   const presetColors = [
-    { name: '经典蓝', value: '#3b82f6' },
-    { name: '天空蓝', value: '#0ea5e9' },
-    { name: '紫罗兰', value: '#8b5cf6' },
-    { name: '粉红色', value: '#ec4899' },
-    { name: '翡翠绿', value: '#10b981' },
-    { name: '橙黄色', value: '#f59e0b' },
-    { name: '红宝石', value: '#ef4444' },
-    { name: '靛青色', value: '#6366f1' },
+    { name: uiText("经典蓝"), value: '#3b82f6' },
+    { name: uiText("天空蓝"), value: '#0ea5e9' },
+    { name: uiText("紫罗兰"), value: '#8b5cf6' },
+    { name: uiText("粉红色"), value: '#ec4899' },
+    { name: uiText("翡翠绿"), value: '#10b981' },
+    { name: uiText("橙黄色"), value: '#f59e0b' },
+    { name: uiText("红宝石"), value: '#ef4444' },
+    { name: uiText("靛青色"), value: '#6366f1' },
   ];
 
   // 将hex颜色转换为HSL格式
@@ -973,7 +974,7 @@ export default function Settings() {
       setThemeColor(previousThemeColor);
       setCustomColor(previousCustomColor);
       applyThemeColor(previousThemeColor);
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -981,19 +982,19 @@ export default function Settings() {
       const result = await api.setThemeColor(color);
       if (result.success) {
         notifyThemeColorUpdated(color);
-        showToast('成功', '主题色已更新', 'success');
+        showToast(uiText("成功"), uiText("主题色已更新"), 'success');
       } else {
         setThemeColor(previousThemeColor);
         setCustomColor(previousCustomColor);
         applyThemeColor(previousThemeColor);
-        showToast('错误', formatSettingsError(result.error, '设置主题色失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result.error, uiText("设置主题色失败")), 'error');
       }
     } catch (error) {
       console.error('设置主题色失败:', error);
       setThemeColor(previousThemeColor);
       setCustomColor(previousCustomColor);
       applyThemeColor(previousThemeColor);
-      showToast('错误', `设置主题色失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("设置主题色失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
     }
   };
 
@@ -1024,7 +1025,7 @@ export default function Settings() {
             rememberSavedBackgroundPreference(opacity, blur);
 
             // 提取文件名
-            const fileName = bgResult.config.imagePath.split(/[\\/]/).pop() || '未选择';
+            const fileName = bgResult.config.imagePath.split(/[\\/]/).pop() || uiText("未选择");
             setBackgroundImageName(fileName);
           }
 
@@ -1148,7 +1149,7 @@ export default function Settings() {
   const handleSelectKernel = async () => {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'selectKernelExecutable')) {
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -1159,22 +1160,22 @@ export default function Settings() {
         await refreshKernelPath();
         notifyCoreConfigChanged({ action: 'select-kernel', needsRestart: Boolean(result.needsRestart) });
         const message = result.needsRestart
-          ? '内核路径已更新，请重新启动内核以生效'
-          : '内核路径已更新';
-        showToast('成功', message, 'success');
+          ? uiText("内核路径已更新，请重新启动内核以生效")
+          : uiText("内核路径已更新");
+        showToast(uiText("成功"), message, 'success');
       } else if (!result?.canceled) {
-        showToast('错误', formatSettingsError(result?.error, '选择内核文件失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result?.error, uiText("选择内核文件失败")), 'error');
       }
     } catch (error) {
       console.error('选择内核文件失败:', error);
-      showToast('错误', formatSettingsError(error), 'error');
+      showToast(uiText("错误"), formatSettingsError(error), 'error');
     }
   };
 
   const handleResetKernel = async () => {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'resetKernelPath')) {
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
@@ -1184,15 +1185,15 @@ export default function Settings() {
         await refreshKernelPath();
         notifyCoreConfigChanged({ action: 'reset-kernel', needsRestart: Boolean(result.needsRestart) });
         const message = result.needsRestart
-          ? '已恢复默认内核，请重新启动内核以生效'
-          : '已恢复默认内核';
-        showToast('成功', message, 'success');
+          ? uiText("已恢复默认内核，请重新启动内核以生效")
+          : uiText("已恢复默认内核");
+        showToast(uiText("成功"), message, 'success');
       } else {
-        showToast('错误', formatSettingsError(result?.error, '恢复默认内核失败'), 'error');
+        showToast(uiText("错误"), formatSettingsError(result?.error, uiText("恢复默认内核失败")), 'error');
       }
     } catch (error) {
       console.error('恢复默认内核失败:', error);
-      showToast('错误', formatSettingsError(error), 'error');
+      showToast(uiText("错误"), formatSettingsError(error), 'error');
     }
   };
 
@@ -1200,20 +1201,20 @@ export default function Settings() {
   const saveThemeSettings = async () => {
     const api = typeof window !== 'undefined' ? window.electronAPI : undefined;
     if (!hasElectronMethod(api, 'setTheme')) {
-      showToast('错误', t('settings.apiUnavailable'), 'error');
+      showToast(uiText("错误"), t('settings.apiUnavailable'), 'error');
       return;
     }
 
     try {
       const result = await api.setTheme(theme);
       if (result.success) {
-        showToast('成功', '主题设置已保存', 'success');
+        showToast(uiText("成功"), uiText("主题设置已保存"), 'success');
       } else {
-        showToast('错误', `保存主题设置失败: ${formatSettingsError(result.error)}`, 'error');
+        showToast(uiText("错误"), uiText("保存主题设置失败: {{p0}}", { p0: formatSettingsError(result.error) }), 'error');
       }
     } catch (error) {
       console.error('保存主题设置失败:', error);
-      showToast('错误', `保存主题设置失败: ${formatSettingsError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("保存主题设置失败: {{p0}}", { p0: formatSettingsError(error) }), 'error');
     }
   };
 
@@ -1319,7 +1320,7 @@ export default function Settings() {
                 {t('settings.about')}
               </Tabs.Trigger>
             </Tabs.List>
-            
+
             <Tabs.Content value="general" className="w-full">
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -1441,32 +1442,32 @@ export default function Settings() {
 
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">{t('settings.theme')}</h3>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      className={`py-1.5 px-3 text-sm rounded-lg transition-all duration-300 transform hover:scale-105 ${
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
                         theme === 'light'
-                          ? 'bg-gradient-to-r from-blue-400 to-blue-500 text-white shadow-md'
-                          : 'bg-gradient-to-r from-gray-100 to-gray-200 dark:from-[#2a2a2a] dark:to-[#333333] text-gray-700 dark:text-gray-200 hover:shadow-md'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
                       }`}
                       onClick={() => handleThemeChange('light')}
                     >
                       {t('settings.light')}
                     </button>
                     <button
-                      className={`py-1.5 px-3 text-sm rounded-lg transition-all duration-300 transform hover:scale-105 ${
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
                         theme === 'dark'
-                          ? 'bg-gradient-to-r from-blue-400 to-blue-500 text-white shadow-md'
-                          : 'bg-gradient-to-r from-gray-100 to-gray-200 dark:from-[#2a2a2a] dark:to-[#333333] text-gray-700 dark:text-gray-200 hover:shadow-md'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
                       }`}
                       onClick={() => handleThemeChange('dark')}
                     >
                       {t('settings.dark')}
                     </button>
                     <button
-                      className={`py-1.5 px-3 text-sm rounded-lg transition-all duration-300 transform hover:scale-105 ${
+                      className={`py-1.5 px-3 text-xs rounded-lg transition-colors ${
                         theme === 'system'
-                          ? 'bg-gradient-to-r from-blue-400 to-blue-500 text-white shadow-md'
-                          : 'bg-gradient-to-r from-gray-100 to-gray-200 dark:from-[#2a2a2a] dark:to-[#333333] text-gray-700 dark:text-gray-200 hover:shadow-md'
+                          ? 'bg-blue-500 text-white shadow-sm'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-[#1f1f1f] dark:text-gray-200 dark:hover:bg-[#2a2a2a]'
                       }`}
                       onClick={() => handleThemeChange('system')}
                     >
@@ -1829,7 +1830,7 @@ export default function Settings() {
             </Tabs.Content>
           </Tabs.Root>
         </div>
-        
+
         {/* Toast提示组件 */}
         <Toast.Root
           open={toastOpen}
@@ -1866,9 +1867,9 @@ export default function Settings() {
             </div>
           </div>
         </Toast.Root>
-        
+
         <Toast.Viewport />
       </Toast.Provider>
     </div>
   );
-} 
+}

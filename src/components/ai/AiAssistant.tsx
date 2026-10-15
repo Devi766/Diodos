@@ -1,5 +1,7 @@
 'use client';
 
+import { uiText } from '@/i18n/ui-text';
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRouter } from 'next/navigation';
@@ -196,7 +198,7 @@ export default function AiAssistant() {
   const processStream = useCallback(async (abortController: AbortController, depth = 0) => {
     if (!activeConfig) return;
     if (depth >= MAX_TOOL_ROUNDS) {
-      store.addMessage({ id: generateMsgId(), role: 'assistant', content: '⚠️ 工具调用轮次已达上限，已停止继续执行。', timestamp: Date.now() });
+      store.addMessage({ id: generateMsgId(), role: 'assistant', content: uiText("⚠️ 工具调用轮次已达上限，已停止继续执行。"), timestamp: Date.now() });
       return;
     }
     const psStart = performance.now();
@@ -258,7 +260,7 @@ export default function AiAssistant() {
         // 用户点停止后不再继续执行本批剩余工具（含 restart/switch 等有副作用的操作）
         if (abortController.signal.aborted) {
           log(`tool loop aborted before ${tc.name}`);
-          updateToolStatus(tc.id, 'failed', '已中止');
+          updateToolStatus(tc.id, 'failed', uiText("已中止"));
           continue;
         }
         let args: Record<string, any> = {};
@@ -270,10 +272,10 @@ export default function AiAssistant() {
           const key = resourceKeyFn(args);
           if (mutated.has(key)) {
             log(`tool ${tc.name}: skipped (resource "${key}" already mutated this batch)`);
-            updateToolStatus(tc.id, 'completed', '已跳过');
+            updateToolStatus(tc.id, 'completed', uiText("已跳过"));
             store.addMessage({
               id: generateMsgId(), role: 'tool', toolCallId: tc.id, timestamp: Date.now(),
-              content: '已跳过：该资源已在本轮被修改，请重新读取后再次编辑',
+              content: uiText("已跳过：该资源已在本轮被修改，请重新读取后再次编辑"),
             });
             continue;
           }

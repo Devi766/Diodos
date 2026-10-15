@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { createI18nRuntime } from './i18n-test-runtime.mjs';
+
+const { uiText, i18n } = createI18nRuntime();
+await i18n.changeLanguage('zh-CN');
 
 // Exercise the actual component handlers without mounting the subscription UI.
 const source = fs.readFileSync('src/components/Subscription.tsx', 'utf8');
@@ -23,6 +27,7 @@ function setup(overrides = {}, close = async () => {}) {
     ...overrides,
   };
   const context = {
+    uiText,
     window: { electronAPI: api, setTimeout: fn => timers.push(fn) }, console,
     activeConfig: 'old', isServiceRunning: false,
     switchSeqRef: { current: 0 }, switchTargetRef: { current: null },

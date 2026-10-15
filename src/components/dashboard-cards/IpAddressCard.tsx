@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
@@ -38,7 +39,7 @@ export function IpAddressCard() {
       setLoading(false);
     } catch (err) {
       if (!ipInfoRef.current) {
-        setError(t('dashboard.ipFetchError') || '获取失败');
+        setError(t('dashboard.ipFetchError') || uiText("获取失败"));
       }
       setLoading(false);
     }
@@ -121,7 +122,7 @@ export function IpAddressCard() {
     >
       <div className="flex h-6 shrink-0 items-center justify-between gap-2">
         <CardHeading type="ip-address">
-          {t('dashboard.ipAddress') || 'IP 地址'}
+          {t('dashboard.ipAddress') || uiText("IP 地址")}
         </CardHeading>
         <div className="flex items-center gap-1.5">
           <button
@@ -151,7 +152,7 @@ export function IpAddressCard() {
           {/* 第一行：固定高度，放 IP 或加载/错误信息 */}
           <div className="h-7 flex items-center">
             {loading && !ipInfo ? (
-              <span className="sr-only">{t('dashboard.ipAddress') || 'IP 地址'}</span>
+              <span className="sr-only">{t('dashboard.ipAddress') || uiText("IP 地址")}</span>
             ) : error ? (
               <div className="text-sm text-destructive truncate">
                 {error}

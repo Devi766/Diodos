@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import { useState } from 'react';
 import { mihomoClient } from '@/services/mihomo-client';
 
@@ -33,7 +34,7 @@ export const useMihomoApiRequest = () => {
       setIsLoading(false);
 
       if (!response.ok) {
-        setError(`API请求失败: ${response.status} ${response.statusText} - ${response.text}`);
+        setError(uiText("API请求失败: {{p0}} {{p1}} - {{p2}}", { p0: response.status, p1: response.statusText, p2: response.text }));
         return { data: null, success: false, status: response.status };
       }
 
@@ -41,7 +42,7 @@ export const useMihomoApiRequest = () => {
     } catch (err) {
       setIsLoading(false);
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`API请求出错: ${errorMessage}`);
+      setError(uiText("API请求出错: {{p0}}", { p0: errorMessage }));
       return { data: null, success: false };
     }
   };

@@ -1,5 +1,7 @@
 'use client';
 
+import { uiText } from '@/i18n/ui-text';
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -122,7 +124,7 @@ const tunServiceStatusError = (status: any) => {
       status.error ||
         status.helperStatusError ||
         status.helperVersionError ||
-        'Helper 服务运行中但 IPC 不可用，请在 TUN 设置中点击“修复 IPC”',
+        uiText("Helper 服务运行中但 IPC 不可用，请在 TUN 设置中点击“修复 IPC”"),
     );
   }
   return String(
@@ -1642,7 +1644,6 @@ export default function Dashboard() {
           : value;
       setProxyEnabled(actualEnabled);
       writeCachedBoolean(APP_DATA_CACHE_KEYS.systemProxyEnabled, actualEnabled);
-      showBanner({ type: 'success', message: t('dashboard.systemProxyToggled', { status: actualEnabled ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = formatDashboardError(error, t('dashboard.toggleSystemProxyFailed'));
       showBanner({ type: 'error', message: t('dashboard.toggleSystemProxyFailedWithError', { message }) });
@@ -1685,7 +1686,6 @@ export default function Dashboard() {
           : value;
       setTunEnabled(actualEnabled);
       writeCachedBoolean(APP_DATA_CACHE_KEYS.tunEnabled, actualEnabled);
-      showBanner({ type: 'success', message: t('dashboard.tunModeToggled', { status: actualEnabled ? t('dashboard.enabled') : t('dashboard.disabled') }) });
     } catch (error) {
       const message = formatDashboardError(error, t('dashboard.toggleTunModeFailed'));
       showBanner({ type: 'error', message: t('dashboard.toggleTunModeFailedWithError', { message }) });
@@ -1795,7 +1795,6 @@ export default function Dashboard() {
           try {
             const authResult = await electron.grantTunPermissions();
             if (authResult.success) {
-              showBanner({ type: 'success', message: t('dashboard.tunPermissionGranted') });
               // 授权成功，自动开启 TUN 模式
               await runTunToggle(true);
             } else {
@@ -2106,7 +2105,6 @@ export default function Dashboard() {
                         if (result.needRestart) {
                           showBanner({ type: 'info', message: t('dashboard.restartingForAdminPermission') });
                         } else {
-                          showBanner({ type: 'success', message: t('dashboard.tunPermissionGranted') });
                           // 刷新权限状态
                           if (electron.checkElevateTask) {
                             const taskResult = await electron.checkElevateTask();

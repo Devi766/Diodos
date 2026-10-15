@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 /**
  * 格式化字节大小为可读的格式
  * @param bytes 字节数
@@ -5,10 +6,10 @@
  */
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
-  
+
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  
+
   // 保留两位小数，去除末尾的0
   return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
 }
@@ -19,20 +20,20 @@ export function formatBytes(bytes: number): string {
  * @returns 人类可读的时间字符串，如 2小时 30分钟
  */
 export function formatDuration(ms: number): string {
-  if (ms < 1000) return '刚刚';
-  
+  if (ms < 1000) return uiText("刚刚");
+
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-  
+
   if (days > 0) {
-    return `${days}天 ${hours % 24}小时`;
+    return uiText("{{p0}}天 {{p1}}小时", { p0: days, p1: hours % 24 });
   } else if (hours > 0) {
-    return `${hours}小时 ${minutes % 60}分钟`;
+    return uiText("{{p0}}小时 {{p1}}分钟", { p0: hours, p1: minutes % 60 });
   } else if (minutes > 0) {
-    return `${minutes}分钟 ${seconds % 60}秒`;
+    return uiText("{{p0}}分钟 {{p1}}秒", { p0: minutes, p1: seconds % 60 });
   } else {
-    return `${seconds}秒`;
+    return uiText("{{p0}}秒", { p0: seconds });
   }
-} 
+}

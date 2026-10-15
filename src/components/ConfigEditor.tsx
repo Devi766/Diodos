@@ -1,5 +1,7 @@
 'use client';
 
+import { uiText } from '@/i18n/ui-text';
+
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Button } from './ui/button';
 import { Switch } from './ui/switch';
@@ -238,18 +240,18 @@ function validateBeforeSave(proxies: any[], groups: any[], t: any): string | nul
   for (const proxy of proxies) {
     const name = (proxy?.name ?? '').toString().trim();
     if (!name) return t('configEditor.validateEmptyProxyName', '存在未命名的节点');
-    if (proxyNames.has(name)) return t('configEditor.validateDuplicateProxy', { name }) || `节点名称重复: ${name}`;
+    if (proxyNames.has(name)) return t('configEditor.validateDuplicateProxy', { name }) || uiText("节点名称重复: {{p0}}", { p0: name });
     proxyNames.add(name);
     const port = Number(proxy?.port);
     if (proxy?.server && (!Number.isInteger(port) || port < 1 || port > 65535)) {
-      return t('configEditor.validateBadPort', { name }) || `节点 ${name} 端口无效`;
+      return t('configEditor.validateBadPort', { name }) || uiText("节点 {{p0}} 端口无效", { p0: name });
     }
   }
   const groupNames = new Set<string>();
   for (const group of groups) {
     const name = (group?.name ?? '').toString().trim();
     if (!name) return t('configEditor.validateEmptyGroupName', '存在未命名的代理组');
-    if (groupNames.has(name)) return t('configEditor.validateDuplicateGroup', { name }) || `代理组名称重复: ${name}`;
+    if (groupNames.has(name)) return t('configEditor.validateDuplicateGroup', { name }) || uiText("代理组名称重复: {{p0}}", { p0: name });
     groupNames.add(name);
   }
   return null;

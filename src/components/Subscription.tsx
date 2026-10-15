@@ -1,3 +1,7 @@
+'use client';
+
+import i18n from '@/i18n';
+import { uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Toast from '@radix-ui/react-toast';
@@ -60,16 +64,16 @@ type SaveSubscriptionResultLike =
 const normalizeSaveSubscriptionResult = (result: SaveSubscriptionResultLike): { success: boolean; filePath?: string; error?: string } => {
   if (typeof result === 'string') {
     const filePath = result.trim();
-    return filePath ? { success: true, filePath } : { success: false, error: '保存订阅失败' };
+    return filePath ? { success: true, filePath } : { success: false, error: uiText("保存订阅失败") };
   }
 
   if (!result || typeof result !== 'object') {
-    return { success: false, error: '保存订阅失败' };
+    return { success: false, error: uiText("保存订阅失败") };
   }
 
   const nested = result.data && typeof result.data === 'object' ? result.data : null;
   const filePath = result.filePath?.trim() || result.path?.trim() || nested?.filePath?.trim() || nested?.path?.trim();
-  const error = result.error || result.message || nested?.error || nested?.message || '保存订阅失败';
+  const error = result.error || result.message || nested?.error || nested?.message || uiText("保存订阅失败");
 
   if (result.success === false) {
     return { success: false, error };
@@ -80,7 +84,7 @@ const normalizeSaveSubscriptionResult = (result: SaveSubscriptionResultLike): { 
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
 
-const formatSubscriptionError = (error: unknown, fallback = '操作失败') => {
+const formatSubscriptionError = (error: unknown, fallback = uiText("操作失败")) => {
   return subscriptionErrorMessage(error, fallback);
 };
 
@@ -111,7 +115,7 @@ const formatSubscriptionLastUpdated = (value?: string | number | null): string =
 
   if (!date || Number.isNaN(date.getTime())) return raw;
 
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(i18n.resolvedLanguage || 'en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -255,21 +259,21 @@ const highlightBadgeClass = (reason: HighlightReason | null) => {
 // 计算流量进度百分比
 const calculateProgressPercentage = (usedTraffic: string | null, remainingTraffic: string | null): number => {
   if (!usedTraffic || !remainingTraffic) return 0;
-  
+
   try {
     // 提取数字和单位（GB、MB等）
     // 支持多种格式: "10.5GB", "10.5 GB", "10.5 G", "10.5"
     const usedMatch = usedTraffic.match(/^([\d.]+)\s*([KMGT]i?B?)?$/i);
     const remainingMatch = remainingTraffic.match(/^([\d.]+)\s*([KMGT]i?B?)?$/i);
-    
+
     if (!usedMatch || !remainingMatch) {
       console.log('无法解析流量字符串格式:', usedTraffic, remainingTraffic);
       return 50; // 默认值
     }
-    
+
     const used = parseFloat(usedMatch[1]);
     const remaining = parseFloat(remainingMatch[1]);
-    
+
     // 标准化单位
     const normalizeUnit = (unit: string | undefined): string => {
       if (!unit) return 'B';
@@ -277,16 +281,16 @@ const calculateProgressPercentage = (usedTraffic: string | null, remainingTraffi
       const match = unit.toUpperCase().match(/([KMGT])/i);
       return match ? match[1] + 'B' : 'B';
     };
-    
+
     const usedUnit = normalizeUnit(usedMatch[2]);
     const remainingUnit = normalizeUnit(remainingMatch[2]);
-    
+
     // 如果单位相同
     if (usedUnit === remainingUnit) {
       const total = used + remaining;
       return total > 0 ? Math.min(100, Math.max(0, (used / total) * 100)) : 0;
     }
-    
+
     // 单位不同时的转换 (按最小单位计算)
     const unitMultiplier: Record<string, number> = {
       'B': 1,
@@ -295,10 +299,10 @@ const calculateProgressPercentage = (usedTraffic: string | null, remainingTraffi
       'GB': 1024 * 1024 * 1024,
       'TB': 1024 * 1024 * 1024 * 1024
     };
-    
+
     const usedBytes = used * (unitMultiplier[usedUnit] || 1);
     const remainingBytes = remaining * (unitMultiplier[remainingUnit] || 1);
-    
+
     const totalBytes = usedBytes + remainingBytes;
     // 确保返回值在0-100之间
     return totalBytes > 0 ? Math.min(100, Math.max(0, (usedBytes / totalBytes) * 100)) : 0;
@@ -311,7 +315,7 @@ const calculateProgressPercentage = (usedTraffic: string | null, remainingTraffi
 // 判断是否即将到期（30天内）
 const isExpiringSoon = (expiryDate: string | null): boolean => {
   if (!expiryDate) return false;
-  
+
   try {
     // 常见的日期格式
     // 1. 2023/01/01
@@ -320,9 +324,9 @@ const isExpiringSoon = (expiryDate: string | null): boolean => {
     // 4. 01-01-2023
     // 5. 01.01.2023
     // 6. Jan 1, 2023
-    
+
     let expiry: Date;
-    
+
     // 尝试检测日期格式并解析
     if (/^\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}$/.test(expiryDate)) {
       // YYYY-MM-DD 或 YYYY/MM/DD 或 YYYY.MM.DD
@@ -332,7 +336,7 @@ const isExpiringSoon = (expiryDate: string | null): boolean => {
       const parts = expiryDate.split(/[-/\.]/);
       // 假设MM-DD-YYYY格式（美式）
       expiry = new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
-      
+
       // 如果日期无效且第一部分≤12，尝试DD-MM-YYYY格式（欧式）
       if (isNaN(expiry.getTime()) && parseInt(parts[0]) <= 12) {
         expiry = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
@@ -341,18 +345,18 @@ const isExpiringSoon = (expiryDate: string | null): boolean => {
       // 尝试标准解析
       expiry = new Date(expiryDate);
     }
-    
+
     // 验证日期的有效性
     if (isNaN(expiry.getTime())) {
       console.warn('无法解析日期:', expiryDate);
       return false;
     }
-    
+
     const now = new Date();
-    
+
     // 计算距离到期还有多少天
     const daysDiff = Math.floor((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    
+
     return daysDiff >= 0 && daysDiff <= 30;
   } catch (e) {
     console.error('解析到期日期出错:', e);
@@ -369,7 +373,7 @@ const isLowTraffic = (usedTraffic: string | null, remainingTraffic: string | nul
 // 获取进度条颜色类
 const getProgressColorClass = (usedTraffic: string | null, remainingTraffic: string | null): string => {
   if (!usedTraffic || !remainingTraffic) return 'bg-blue-500';
-  
+
   const isLow = isLowTraffic(usedTraffic, remainingTraffic);
   if (isLow) {
     return 'bg-red-500';
@@ -380,15 +384,15 @@ const getProgressColorClass = (usedTraffic: string | null, remainingTraffic: str
 // 格式化流量信息显示（添加图标和颜色）
 const getTrafficInfo = (subscription: Subscription) => {
   const { usedTraffic, remainingTraffic } = subscription;
-  
+
   // 确保类型是 string | null
   const usedTrafficValue: string | null = usedTraffic || null;
   const remainingTrafficValue: string | null = remainingTraffic || null;
-  
+
   // 低流量警告
-  const isLow = remainingTrafficValue && usedTrafficValue ? 
+  const isLow = remainingTrafficValue && usedTrafficValue ?
     isLowTraffic(usedTrafficValue, remainingTrafficValue) : false;
-  
+
   return {
     usedColorClass: 'text-gray-500 dark:text-gray-400 font-medium',
     remainingColorClass: 'text-gray-500 dark:text-gray-400 font-medium',
@@ -443,7 +447,7 @@ export default function SubscriptionManager() {
   const switchSeqRef = useRef(0);
   const switchTargetRef = useRef<string | null>(null);
   const switchCleanupRef = useRef<Promise<void>>(Promise.resolve());
-  
+
   // 拖拽相关状态
   const [draggedItem, setDraggedItem] = useState<Subscription | null>(null);
   const [dragOverItem, setDragOverItem] = useState<Subscription | null>(null);
@@ -530,7 +534,7 @@ export default function SubscriptionManager() {
         loadActiveConfig();
       }, 120);
     };
-    
+
     // 监听配置导入事件
     let unsubscribeImport: (() => void) | undefined;
     let unsubscribeAutoUpdated: (() => void) | undefined;
@@ -705,15 +709,15 @@ export default function SubscriptionManager() {
       refreshProvidersAvailability();
     } catch (error) {
       console.error('获取当前配置失败:', error);
-      showToast('错误', `获取当前配置失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("获取当前配置失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
     }
   };
-  
+
   // 新增: 切换使用的配置文件
   const switchConfig = async (configPath: string, options: SwitchConfigOptions = {}): Promise<boolean> => {
     const api = window.electronAPI;
     if (!api) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return false;
     }
 
@@ -721,7 +725,7 @@ export default function SubscriptionManager() {
     if (switchTargetRef.current) return false;
     if (activeConfig === configPath) {
       if (!options.suppressSuccessToast) {
-        showToast('提示', '该配置文件已经处于激活状态', 'success');
+        showToast(uiText("提示"), uiText("该配置文件已经处于激活状态"), 'success');
       }
       return true;
     }
@@ -751,7 +755,7 @@ export default function SubscriptionManager() {
       if (running) {
         if (!hasElectronMethod(api, 'reloadMihomoConfig')) {
           if (!isStale()) updateActiveConfig(previousConfig);
-          showToast('错误', '配置热重载 API 不可用', 'error');
+          showToast(uiText("错误"), uiText("配置热重载 API 不可用"), 'error');
           return false;
         }
 
@@ -763,7 +767,7 @@ export default function SubscriptionManager() {
       } else {
         if (!hasElectronMethod(api, 'setPreferredConfig')) {
           if (!isStale()) updateActiveConfig(previousConfig);
-          showToast('错误', '设置首选配置 API 不可用', 'error');
+          showToast(uiText("错误"), uiText("设置首选配置 API 不可用"), 'error');
           return false;
         }
 
@@ -774,8 +778,8 @@ export default function SubscriptionManager() {
         if (preferredSuccess) {
           if (options.startIfStopped) {
             if (!hasElectronMethod(api, 'startMihomo')) {
-              result = { success: false, error: '启动内核 API 不可用' };
-              showToast('错误', '已设置为首选配置，但启动内核 API 不可用', 'error');
+              result = { success: false, error: uiText("启动内核 API 不可用") };
+              showToast(uiText("错误"), uiText("已设置为首选配置，但启动内核 API 不可用"), 'error');
               failureNotified = true;
             } else {
               const startResult = await api.startMihomo(configPath);
@@ -798,10 +802,10 @@ export default function SubscriptionManager() {
               }
             }
           } else if (!options.suppressSuccessToast) {
-            showToast('成功', '已设置为首选配置，下次启动服务时将使用此配置', 'success');
+            showToast(uiText("成功"), uiText("已设置为首选配置，下次启动服务时将使用此配置"), 'success');
           }
         } else {
-          showToast('错误', `设置首选配置失败: ${compatError(result, '设置首选配置失败')}`, 'error');
+          showToast(uiText("错误"), uiText("设置首选配置失败: {{p0}}", { p0: compatError(result, '设置首选配置失败') }), 'error');
           failureNotified = true;
         }
       }
@@ -836,7 +840,7 @@ export default function SubscriptionManager() {
       } else {
         if (!isStale()) updateActiveConfig(previousConfig);
         if (!failureNotified) {
-          showToast('错误', `切换配置文件失败: ${compatError(result, '切换配置文件失败')}`, 'error');
+          showToast(uiText("错误"), uiText("切换配置文件失败: {{p0}}", { p0: compatError(result, '切换配置文件失败') }), 'error');
         }
       }
 
@@ -844,7 +848,7 @@ export default function SubscriptionManager() {
     } catch (error) {
       if (!isStale()) updateActiveConfig(previousConfig);
       console.error('切换配置文件失败:', error);
-      showToast('错误', `切换配置文件失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("切换配置文件失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
       return false;
     } finally {
       if (!isStale()) {
@@ -857,7 +861,7 @@ export default function SubscriptionManager() {
   const loadSubscriptions = async (): Promise<Subscription[] | null> => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'getSubscriptions')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       setIsSubscriptionsLoading(false);
       return null;
     }
@@ -876,7 +880,7 @@ export default function SubscriptionManager() {
       ) {
         throw new Error(compatError(
           subscriptionsResult as CompatResultLike,
-          '加载配置失败'
+          uiText("加载配置失败")
         ));
       }
 
@@ -924,7 +928,7 @@ export default function SubscriptionManager() {
       console.error('加载配置失败:', error);
       // Keep warm list on refresh errors; only toast when page is truly empty.
       if (!hasWarmList) {
-        showToast('错误', `加载配置失败: ${formatSubscriptionError(error)}`, 'error');
+        showToast(uiText("错误"), uiText("加载配置失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
       }
       return null;
     } finally {
@@ -1153,7 +1157,7 @@ export default function SubscriptionManager() {
       // 保存到数据库
       const api = window.electronAPI;
       if (!hasElectronMethod(api, 'saveSubscriptionOrder')) {
-        throw new Error('订阅 API 不可用');
+        throw new Error(uiText("订阅 API 不可用"));
       }
 
       const result = await api.saveSubscriptionOrder(orderList);
@@ -1172,7 +1176,7 @@ export default function SubscriptionManager() {
       return false;
     }
   }, [t]);
-  
+
   // 长按开始拖拽
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>, item: Subscription) => {
     // 如果点击的是按钮,不触发拖拽
@@ -1272,18 +1276,18 @@ export default function SubscriptionManager() {
 
   const addSubscription = async (e: React.SyntheticEvent, activateAfterSave = false) => {
     e.preventDefault();
-    
+
     console.log('开始添加订阅');
-    
+
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'fetchSubscription') || !hasElectronMethod(api, 'saveSubscription')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       console.error('订阅API不可用，无法添加订阅');
       return;
     }
-    
+
     if (!subUrl.trim()) {
-      showToast('错误', '请输入订阅链接或配置内容', 'error');
+      showToast(uiText("错误"), uiText("请输入订阅链接或配置内容"), 'error');
       console.error('订阅URL为空，取消添加');
       return;
     }
@@ -1342,19 +1346,19 @@ export default function SubscriptionManager() {
               );
             }
           } else {
-            showToast('错误', '订阅已保存，但刷新列表失败，请稍后刷新页面', 'error');
+            showToast(uiText("错误"), uiText("订阅已保存，但刷新列表失败，请稍后刷新页面"), 'error');
           }
         } else {
-          showToast('错误', saveResult.error || '保存订阅失败', 'error');
+          showToast(uiText("错误"), saveResult.error || uiText("保存订阅失败"), 'error');
           console.error('保存订阅失败:', saveResult.error);
         }
       } else {
-        const errorMsg = formatSubscriptionError(configData?.error, '获取订阅内容失败');
-        showToast('错误', errorMsg, 'error');
+        const errorMsg = formatSubscriptionError(configData?.error, uiText("获取订阅内容失败"));
+        showToast(uiText("错误"), errorMsg, 'error');
         console.error('获取订阅内容失败:', errorMsg);
       }
     } catch (error) {
-      showToast('错误', `添加订阅失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("添加订阅失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
       console.error('添加订阅失败:', formatSubscriptionError(error));
     } finally {
       setIsLoading(false);
@@ -1365,34 +1369,34 @@ export default function SubscriptionManager() {
   const deleteSubscription = async (filePath: string) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'deleteSubscription')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return;
     }
-    
+
     try {
       const result = await api.deleteSubscription(filePath);
       const deleteSuccess = result && typeof result === 'object'
         ? (result as { success?: boolean }).success === true
         : Boolean(result);
-      
+
       if (deleteSuccess) {
-        showToast('成功', '订阅删除成功', 'success');
+        showToast(uiText("成功"), uiText("订阅删除成功"), 'success');
         await loadSubscriptions();
         notifyProfileUpdated();
       } else {
         const error = result && typeof result === 'object' ? (result as { error?: string }).error : undefined;
-        showToast('错误', formatSubscriptionError(error, '删除订阅失败'), 'error');
+        showToast(uiText("错误"), formatSubscriptionError(error, uiText("删除订阅失败")), 'error');
       }
     } catch (error) {
       console.error('删除订阅失败:', error);
-      showToast('错误', `删除订阅失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("删除订阅失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
     }
   };
-  
+
   const refreshSubscription = async (filePath: string) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'refreshSubscription')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return;
     }
 
@@ -1418,11 +1422,11 @@ export default function SubscriptionManager() {
           'success'
         );
       } else {
-        showToast('错误', formatSubscriptionError(result?.error, '更新订阅失败'), 'error');
+        showToast(uiText("错误"), formatSubscriptionError(result?.error, uiText("更新订阅失败")), 'error');
       }
     } catch (error) {
       console.error('更新订阅失败:', error);
-      showToast('错误', `更新订阅失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("更新订阅失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
     } finally {
       setUpdatingSubPath(null);
     }
@@ -1433,7 +1437,7 @@ export default function SubscriptionManager() {
   const updateAllSubscriptions = async () => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'refreshSubscription')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return;
     }
 
@@ -1508,7 +1512,7 @@ export default function SubscriptionManager() {
   const openConfigFile = async (filePath: string) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'openFile')) {
-      showToast('错误', '文件 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("文件 API 不可用"), 'error');
       return;
     }
 
@@ -1516,29 +1520,29 @@ export default function SubscriptionManager() {
       console.log('[前端] 打开文件，路径:', filePath);
       const result = await api.openFile(filePath);
       if (result?.success === false) {
-        showToast('错误', formatSubscriptionError(result.error, '打开文件失败'), 'error');
+        showToast(uiText("错误"), formatSubscriptionError(result.error, uiText("打开文件失败")), 'error');
       }
     } catch (error) {
       console.error('打开文件失败:', error);
-      showToast('错误', `打开文件失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("打开文件失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
     }
   };
 
   const openConfigFolder = async (filePath: string) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'openFileLocation')) {
-      showToast('错误', '文件 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("文件 API 不可用"), 'error');
       return;
     }
 
     try {
       const result = await api.openFileLocation(filePath);
       if (result?.success === false) {
-        showToast('错误', formatSubscriptionError(result.error, '打开目录失败'), 'error');
+        showToast(uiText("错误"), formatSubscriptionError(result.error, uiText("打开目录失败")), 'error');
       }
     } catch (error) {
       console.error('打开目录失败:', error);
-      showToast('错误', `打开目录失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("打开目录失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
     }
   };
 
@@ -1579,13 +1583,13 @@ export default function SubscriptionManager() {
     try {
       const result = await window.electronAPI?.getSubscriptionUpdateInterval?.(sub.path);
       if (result?.success === false) {
-        throw new Error(formatSubscriptionError(result.error, '加载订阅更新间隔失败'));
+        throw new Error(formatSubscriptionError(result.error, uiText("加载订阅更新间隔失败")));
       }
       setEditingUpdateInterval(result?.interval || 0);
     } catch (error) {
       console.error('加载订阅更新间隔失败:', error);
       setEditingUpdateInterval(0);
-      showToast('错误', formatSubscriptionError(error, '加载订阅更新间隔失败'), 'error');
+      showToast(uiText("错误"), formatSubscriptionError(error, uiText("加载订阅更新间隔失败")), 'error');
     }
 
     setIsEditDialogOpen(true);
@@ -1601,7 +1605,7 @@ export default function SubscriptionManager() {
       !hasElectronMethod(api, 'editSubscription') ||
       !hasElectronMethod(api, 'setSubscriptionUpdateInterval')
     ) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return;
     }
 
@@ -1617,7 +1621,7 @@ export default function SubscriptionManager() {
       });
 
       if (result?.success === false) {
-        throw new Error(formatSubscriptionError((result as { error?: string }).error, '编辑配置失败'));
+        throw new Error(formatSubscriptionError((result as { error?: string }).error, uiText("编辑配置失败")));
       }
 
       // 使用后端返回的正确路径（而不是自己计算）
@@ -1629,7 +1633,7 @@ export default function SubscriptionManager() {
         editingUpdateInterval
       );
       if (intervalResult?.success === false) {
-        throw new Error(formatSubscriptionError(intervalResult.error, '保存自动更新间隔失败'));
+        throw new Error(formatSubscriptionError(intervalResult.error, uiText("保存自动更新间隔失败")));
       }
 
       setIsEditDialogOpen(false);
@@ -1672,7 +1676,7 @@ export default function SubscriptionManager() {
       })();
     } catch (error) {
       console.error('编辑配置失败:', error);
-      showToast('错误', `编辑配置失败: ${formatSubscriptionError(error)}`, 'error');
+      showToast(uiText("错误"), uiText("编辑配置失败: {{p0}}", { p0: formatSubscriptionError(error) }), 'error');
       setIsLoading(false);
     }
   };
@@ -1729,7 +1733,7 @@ export default function SubscriptionManager() {
   const importYamlFiles = useCallback(async (files: File[]) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'saveSubscription')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return;
     }
 
@@ -1740,7 +1744,7 @@ export default function SubscriptionManager() {
         file.type === 'text/yaml',
     );
     if (validFiles.length === 0) {
-      showToast('错误', '请选择 YAML、JSON、TXT 或 CONF 配置文件', 'error');
+      showToast(uiText("错误"), uiText("请选择 YAML、JSON、TXT 或 CONF 配置文件"), 'error');
       return;
     }
 
@@ -1751,7 +1755,7 @@ export default function SubscriptionManager() {
         try {
           const content = await readFileAsText(file);
           if (!content.trim()) {
-            showToast('错误', `导入配置文件 ${file.name} 失败: 文件内容为空`, 'error');
+            showToast(uiText("错误"), uiText("导入配置文件 {{p0}} 失败: 文件内容为空", { p0: file.name }), 'error');
             continue;
           }
           const saveResult = normalizeSaveSubscriptionResult(
@@ -1766,16 +1770,16 @@ export default function SubscriptionManager() {
             importedPaths.push(saveResult.filePath);
           } else {
             showToast(
-              '错误',
-              `导入配置文件 ${file.name} 失败: ${saveResult.error || '保存订阅失败'}`,
+              uiText("错误"),
+              uiText("导入配置文件 {{p0}} 失败: {{p1}}", { p0: file.name, p1: saveResult.error || '保存订阅失败' }),
               'error',
             );
           }
         } catch (error) {
           console.error('导入配置文件失败:', error);
           showToast(
-            '错误',
-            `导入配置文件 ${file.name} 失败: ${formatSubscriptionError(error)}`,
+            uiText("错误"),
+            uiText("导入配置文件 {{p0}} 失败: {{p1}}", { p0: file.name, p1: formatSubscriptionError(error) }),
             'error',
           );
         }
@@ -1789,17 +1793,17 @@ export default function SubscriptionManager() {
   const importYamlPaths = useCallback(async (paths: string[]) => {
     const api = window.electronAPI;
     if (!hasElectronMethod(api, 'saveSubscription')) {
-      showToast('错误', '订阅 API 不可用', 'error');
+      showToast(uiText("错误"), uiText("订阅 API 不可用"), 'error');
       return;
     }
     if (!hasElectronMethod(api, 'readLocalTextFile')) {
-      showToast('错误', '当前环境不支持拖拽导入本地文件', 'error');
+      showToast(uiText("错误"), uiText("当前环境不支持拖拽导入本地文件"), 'error');
       return;
     }
 
     const validPaths = paths.filter((path) => isYamlFileName(path));
     if (validPaths.length === 0) {
-      showToast('错误', '请选择 YAML、JSON、TXT 或 CONF 配置文件', 'error');
+      showToast(uiText("错误"), uiText("请选择 YAML、JSON、TXT 或 CONF 配置文件"), 'error');
       return;
     }
 
@@ -1827,8 +1831,8 @@ export default function SubscriptionManager() {
 
           if (!success || !content.trim()) {
             showToast(
-              '错误',
-              `导入配置文件 ${fileName} 失败: ${(result as any)?.error || '读取文件失败'}`,
+              uiText("错误"),
+              uiText("导入配置文件 {{p0}} 失败: {{p1}}", { p0: fileName, p1: (result as any)?.error || '读取文件失败' }),
               'error',
             );
             continue;
@@ -1846,16 +1850,16 @@ export default function SubscriptionManager() {
             importedPaths.push(saveResult.filePath);
           } else {
             showToast(
-              '错误',
-              `导入配置文件 ${fileName} 失败: ${saveResult.error || '保存订阅失败'}`,
+              uiText("错误"),
+              uiText("导入配置文件 {{p0}} 失败: {{p1}}", { p0: fileName, p1: saveResult.error || '保存订阅失败' }),
               'error',
             );
           }
         } catch (error) {
           console.error('导入配置文件失败:', error);
           showToast(
-            '错误',
-            `导入配置文件失败: ${formatSubscriptionError(error)}`,
+            uiText("错误"),
+            uiText("导入配置文件失败: {{p0}}", { p0: formatSubscriptionError(error) }),
             'error',
           );
         }
@@ -1976,7 +1980,7 @@ export default function SubscriptionManager() {
   };
 
   return (
-    <div 
+    <div
       className="space-y-5 relative"
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
@@ -2074,9 +2078,10 @@ export default function SubscriptionManager() {
                       {t('subscriptions.addSubscription')}
                     </Dialog.Title>
                     <Dialog.Description className="sr-only">
-                      输入订阅链接和可选名称以保存配置。
+
+                      {uiText("输入订阅链接和可选名称以保存配置。")}
                     </Dialog.Description>
-                  
+
                   <form onSubmit={addSubscription}>
                     <div className="mb-4">
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center">
@@ -2100,7 +2105,7 @@ export default function SubscriptionManager() {
                       </div>
                       <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{t('subscriptions.importSourceHint')}</p>
                     </div>
-                    
+
                     <div className="mb-4">
                       <label className="block text-sm font-medium mb-2 text-gray-700 dark:text-gray-300 flex items-center">
                         <Pencil1Icon className="w-4 h-4 mr-2 text-blue-500" />
@@ -2125,7 +2130,7 @@ export default function SubscriptionManager() {
                         <span>{t('subscriptions.customNameHint')}</span>
                       </p>
                     </div>
-                    
+
                     <div className="flex justify-end gap-2">
                       <Dialog.Close asChild>
                         <button
@@ -2147,7 +2152,7 @@ export default function SubscriptionManager() {
                       </div>
                     </div>
                   </form>
-                  
+
                   <Dialog.Close asChild>
                     <button
                       aria-label="Close"
@@ -2164,7 +2169,7 @@ export default function SubscriptionManager() {
         </div>
 
         {/* 拖放区域 - 始终存在但只在拖动时可见 */}
-        <div 
+        <div
           className={`fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm transition-opacity duration-300 ${
             isDragging ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
@@ -2183,7 +2188,7 @@ export default function SubscriptionManager() {
             </div>
           </div>
         </div>
-        
+
         {/* 卡片网格 */}
         <div>
           {isSubscriptionsLoading && subscriptions.length === 0 ? (
@@ -2334,7 +2339,7 @@ export default function SubscriptionManager() {
                       </button>
                     )}
                   </div>
-                  
+
                   {/* 订阅标题 - 移除左侧内边距 */}
                   <div className="mb-2 border-b border-gray-100 pb-1.5 dark:border-gray-800">
                     <h3 className="flex items-center truncate pr-14 text-[13px] font-medium text-gray-800 dark:text-white">
@@ -2366,7 +2371,7 @@ export default function SubscriptionManager() {
                       )}
                     </h3>
                   </div>
-                  
+
                   {/* 内容区域 - 占用主要空间 */}
                   <div className="flex flex-1 flex-col">
                     {/* 订阅流量信息或本地/远程配置信息 */}
@@ -2409,17 +2414,17 @@ export default function SubscriptionManager() {
                                   </span>
                                 )}
                               </div>
-                              
+
                               {/* 进度条 */}
                               <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
                                 {/* 进度条填充 */}
                                 {sub.usedTraffic && sub.remainingTraffic && (
-                                  <div 
+                                  <div
                                     className={`h-full rounded-full transition-all duration-500 ease-out shadow-inner ${getTrafficInfo(sub).progressColorClass}`}
-                                    style={{ 
-                                      width: `${getTrafficInfo(sub).progress}%` 
+                                    style={{
+                                      width: `${getTrafficInfo(sub).progress}%`
                                     }}
-                                    title={`已使用 ${Math.round(getTrafficInfo(sub).progress)}%`}
+                                    title={uiText("已使用 {{p0}}%", { p0: Math.round(getTrafficInfo(sub).progress) })}
                                   ></div>
                                 )}
                                 {(!sub.remainingTraffic && sub.usedTraffic) && (
@@ -2428,7 +2433,7 @@ export default function SubscriptionManager() {
                                 {(sub.remainingTraffic && !sub.usedTraffic) && (
                                   <div className="h-full bg-blue-500 rounded-full w-full shadow-inner"></div>
                                 )}
-                                
+
                                 {/* 流量警告提示 */}
                                 {getTrafficInfo(sub).isLow && (
                                   <div className="absolute right-0 top-0 transform translate-x-1/2 -translate-y-1/2">
@@ -2440,7 +2445,7 @@ export default function SubscriptionManager() {
                               </div>
                             </div>
                           )}
-                          
+
                           {/* 到期时间 */}
                           {sub.expiryDate && (
                             <div className="flex justify-between items-center">
@@ -2503,7 +2508,7 @@ export default function SubscriptionManager() {
             </div>
           )}
         </div>
-        
+
         <Toast.Root
           open={toastOpen}
           onOpenChange={setToastOpen}
@@ -2734,14 +2739,16 @@ export default function SubscriptionManager() {
                           onClick={() => setEditingUpdateInterval(4320)}
                           className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                         >
-                          3天
+
+                          {uiText("3天")}
                         </button>
                         <button
                           type="button"
                           onClick={() => setEditingUpdateInterval(10080)}
                           className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                         >
-                          7天
+
+                          {uiText("7天")}
                         </button>
                       </div>
                     </div>
@@ -2757,17 +2764,19 @@ export default function SubscriptionManager() {
               {/* 自定义图标URL */}
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  自定义图标 (可选)
+
+                  {uiText("自定义图标 (可选)")}
                 </label>
                 <input
                   type="text"
                   value={editingIconUrl}
                   onChange={(e) => setEditingIconUrl(e.target.value)}
                   className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-[#222222] dark:text-white dark:placeholder-slate-500"
-                  placeholder="支持网站URL或图片链接"
+                  placeholder={uiText("支持网站URL或图片链接")}
                 />
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  输入网站URL自动提取favicon，或直接输入图片链接
+
+                  {uiText("输入网站URL自动提取favicon，或直接输入图片链接")}
                 </p>
               </div>
             </div>

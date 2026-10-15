@@ -1,3 +1,4 @@
+import { getDocumentLocale } from '@/i18n/language';
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
@@ -18,11 +19,11 @@ export function formatBytes(bytes: number, decimals = 2) {
 }
 
 export function formatNumber(value: number) {
-  return new Intl.NumberFormat().format(value)
+  return new Intl.NumberFormat(getDocumentLocale()).format(value)
 }
 
 export function formatDate(date: Date) {
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(getDocumentLocale(), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -62,4 +63,4 @@ export function throttle<T extends (...args: any[]) => any>(
       setTimeout(() => (inThrottle = false), limit)
     }
   }
-} 
+}

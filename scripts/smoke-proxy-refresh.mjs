@@ -26,6 +26,16 @@ assert.ok(skeleton.includes('role="status"'));
 assert.ok(skeleton.includes('aria-busy="true"'));
 assert.ok(skeleton.includes('motion-safe:animate-pulse'));
 assert.ok(!skeleton.includes('animate-spin'));
+const badgeModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/NodeLatencyBadge.tsx', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, esModuleInterop: true },
+}).outputText, { module: badgeModule, exports: badgeModule.exports, require: () => React });
+for (const props of [{ testing: true, delay: 28 }, { testing: true }, { testing: false, delay: 28 }, { testing: false, delay: 0 }]) {
+  const markup = renderToStaticMarkup(React.createElement(badgeModule.exports.NodeLatencyBadge, { ...props, loadingLabel: 'Testing', timeoutLabel: 'Timeout' }));
+  const outerClass = markup.match(/^<span[^>]*class="([^"]+)"/)?.[1];
+  assert.ok(outerClass?.split(' ').includes('h-5'), 'loading and result badges both reserve 20px');
+  if (props.testing) assert.ok(!/\bbg-|\brounded-full/.test(outerClass), 'spinner has no capsule background');
+}
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function runTimer() { const [id, fn] = timers.entries().next().value; timers.delete(id); fn(); }
@@ -87,6 +97,7 @@ assert.ok(source.includes("isSnapshotStale && !(event.target as HTMLElement).clo
 assert.ok(!source.includes('min-h-[260px]" aria-busy="true" />'));
 assert.ok(source.includes('suppressColdEmptyState || (isSnapshotStale && isRefreshing)'));
 assert.ok(source.includes('<ProxyNodesSkeleton label={t(\'common.loading\')} toolbar={false} />'));
+assert.ok(source.includes('flex min-h-5 justify-between items-center'), 'untested nodes reserve the same latency row height');
 const subscriptions = fs.readFileSync('src/components/Subscription.tsx', 'utf8');
 assert.ok(!subscriptions.includes('const refreshProxies = async (attempt'));
 const native = fs.readFileSync('src-tauri/src/runtime_commands.rs', 'utf8');

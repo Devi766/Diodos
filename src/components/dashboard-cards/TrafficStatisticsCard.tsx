@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -117,8 +118,8 @@ export function TrafficStatisticsCard() {
     }
 
     return [
-      { name: '上传', value: upload },
-      { name: '下载', value: download },
+      { name: uiText("上传"), value: upload },
+      { name: uiText("下载"), value: download },
     ];
   }, [viewMode, todayData, monthData]);
 

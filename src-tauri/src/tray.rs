@@ -39,6 +39,78 @@ const TRAY_MAX_NODES_PER_GROUP: usize = 40;
 
 type CompatResult = Result<Value, String>;
 
+#[derive(Clone, Copy)]
+struct TrayLocale {
+    chinese: bool,
+}
+
+impl TrayLocale {
+    fn load(app: &AppHandle) -> Self {
+        let language = setting(app, "language", json!("en-US")).unwrap_or(json!("en-US"));
+        Self {
+            chinese: language.as_str().unwrap_or("en-US").starts_with("zh"),
+        }
+    }
+
+    fn text(self, source: &str) -> String {
+        if self.chinese {
+            return source.to_string();
+        }
+        static ENGLISH: OnceLock<Value> = OnceLock::new();
+        let messages = ENGLISH.get_or_init(|| {
+            serde_json::from_str(include_str!("../../src/i18n/locales/en-US.json"))
+                .expect("English messages must be valid JSON")
+        });
+        messages
+            .get("uiMessages")
+            .and_then(|catalog| catalog.get(source))
+            .and_then(Value::as_str)
+            .unwrap_or(source)
+            .to_string()
+    }
+
+    fn format(self, source: &str, values: &[String]) -> String {
+        let message = self.text(source);
+        let mut parts = message.split("{}");
+        let mut output = parts.next().unwrap_or_default().to_string();
+        for (index, part) in parts.enumerate() {
+            output.push_str(values.get(index).map(String::as_str).unwrap_or("{}"));
+            output.push_str(part);
+        }
+        output
+    }
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::TrayLocale;
+
+    #[test]
+    fn tray_english_and_chinese_labels() {
+        let english = TrayLocale { chinese: false };
+        let chinese = TrayLocale { chinese: true };
+        assert_eq!(english.text("显示主窗口"), "Show window");
+        assert_eq!(english.text("启用系统代理"), "Enable system proxy");
+        assert_eq!(chinese.text("显示主窗口"), "显示主窗口");
+    }
+
+    #[test]
+    fn tray_interpolation_preserves_user_names() {
+        let locale = TrayLocale { chinese: false };
+        assert_eq!(
+            locale.format("节点：{}", &["用户 {} node".to_string()]),
+            "Node: 用户 {} node"
+        );
+        assert_eq!(
+            locale.format(
+                "FlyClash · 核心 {} · 代理 {} · TUN {}",
+                &["Service".to_string(), "On".to_string(), "Off".to_string()]
+            ),
+            "FlyClash · Core Service · Proxy On · TUN Off"
+        );
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct TrayProxyNode {
     name: String,
@@ -203,11 +275,11 @@ fn tray_clean_label(value: &str, fallback: &str, max_chars: usize) -> String {
     output
 }
 
-fn tray_running_mode_label(mode: RunningMode) -> &'static str {
+fn tray_running_mode_label(locale: TrayLocale, mode: RunningMode) -> String {
     match mode {
-        RunningMode::Service => "Service",
-        RunningMode::Sidecar => "Sidecar",
-        RunningMode::NotRunning => "未运行",
+        RunningMode::Service => "Service".to_string(),
+        RunningMode::Sidecar => "Sidecar".to_string(),
+        RunningMode::NotRunning => locale.text("未运行"),
     }
 }
 
@@ -232,7 +304,7 @@ fn tray_core_snapshot(app: &AppHandle) -> (bool, RunningMode, Option<String>) {
     (running, mode, active_config)
 }
 
-fn tray_config_name(path: &str, subscriptions: &[SubscriptionMeta]) -> String {
+fn tray_config_name(locale: TrayLocale, path: &str, subscriptions: &[SubscriptionMeta]) -> String {
     let path = path.trim();
     subscriptions
         .iter()
@@ -240,7 +312,7 @@ fn tray_config_name(path: &str, subscriptions: &[SubscriptionMeta]) -> String {
         .map(|subscription| subscription.name.trim().to_string())
         .filter(|name| !name.is_empty())
         .or_else(|| config_display_name(path))
-        .unwrap_or_else(|| "未命名配置".to_string())
+        .unwrap_or_else(|| locale.text("未命名配置"))
 }
 
 fn build_tray_config_menu(
@@ -249,8 +321,9 @@ fn build_tray_config_menu(
     subscriptions_error: Option<&str>,
     active_config: Option<&str>,
 ) -> Result<Submenu<tauri::Wry>, String> {
-    let config_menu =
-        Submenu::with_id(app, "configs", "配置切换", true).map_err(|err| err.to_string())?;
+    let locale = TrayLocale::load(app);
+    let config_menu = Submenu::with_id(app, "configs", locale.text("配置切换"), true)
+        .map_err(|err| err.to_string())?;
     let active_config = active_config
         .map(str::trim)
         .filter(|path| !path.is_empty())
@@ -262,7 +335,11 @@ fn build_tray_config_menu(
         let error_item = MenuItem::with_id(
             app,
             "configs-error",
-            tray_clean_label(&format!("配置读取失败：{error}"), "配置读取失败", 42),
+            tray_clean_label(
+                &locale.format("配置读取失败：{}", &[error.to_string()]),
+                &locale.text("配置读取失败"),
+                42,
+            ),
             false,
             None::<&str>,
         )
@@ -279,12 +356,12 @@ fn build_tray_config_menu(
             .iter()
             .any(|subscription| subscription.path.trim() == active);
         if !active_in_list {
-            let label = format!("✓ {}", tray_config_name(active, subscriptions));
+            let label = format!("✓ {}", tray_config_name(locale, active, subscriptions));
             let encoded = urlencoding::encode(active);
             let item = MenuItem::with_id(
                 app,
                 format!("{TRAY_SWITCH_CONFIG_PREFIX}{encoded}"),
-                tray_clean_label(&label, "当前配置", 44),
+                tray_clean_label(&label, &locale.text("当前配置"), 44),
                 true,
                 None::<&str>,
             )
@@ -317,7 +394,7 @@ fn build_tray_config_menu(
         let item = MenuItem::with_id(
             app,
             format!("{TRAY_SWITCH_CONFIG_PREFIX}{encoded}"),
-            tray_clean_label(&label, "未命名配置", 44),
+            tray_clean_label(&label, &locale.text("未命名配置"), 44),
             true,
             None::<&str>,
         )
@@ -331,7 +408,11 @@ fn build_tray_config_menu(
         let more_item = MenuItem::with_id(
             app,
             "configs-more",
-            format!("还有 {remaining} 个配置，请在配置管理中查看"),
+            locale.text("还有 {} 个配置，请在配置管理中查看").replacen(
+                "{}",
+                &remaining.to_string(),
+                1,
+            ),
             false,
             None::<&str>,
         )
@@ -342,8 +423,14 @@ fn build_tray_config_menu(
     }
 
     if appended == 0 {
-        let empty_item = MenuItem::with_id(app, "configs-empty", "暂无配置", false, None::<&str>)
-            .map_err(|err| err.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            "configs-empty",
+            locale.text("暂无配置"),
+            false,
+            None::<&str>,
+        )
+        .map_err(|err| err.to_string())?;
         config_menu
             .append(&empty_item)
             .map_err(|err| err.to_string())?;
@@ -711,28 +798,29 @@ fn decode_tray_pair(value: &str) -> Option<(String, String)> {
     Some((left, right))
 }
 
-fn tray_node_label(node: &TrayProxyNode, selected: bool) -> String {
+fn tray_node_label(locale: TrayLocale, node: &TrayProxyNode, selected: bool) -> String {
     let mut label = node.name.clone();
     if let Some(delay) = node.delay_ms {
         if delay > 0 {
             label = format!("{label} ({delay}ms)");
         } else if delay == 0 {
-            label = format!("{label} (超时)");
+            label = format!("{label} ({})", locale.text("超时"));
         }
     }
     if node.is_group {
-        label = format!("{label} [组]");
+        label = format!("{label} [{}]", locale.text("组"));
     }
     if selected {
         label = format!("✓ {label}");
     }
-    tray_clean_label(&label, "节点", 48)
+    tray_clean_label(&label, &locale.text("节点"), 48)
 }
 
 fn build_tray_proxy_menu(
     app: &AppHandle,
     core_running: bool,
 ) -> Result<Option<Submenu<tauri::Wry>>, String> {
+    let locale = TrayLocale::load(app);
     if !core_running {
         return Ok(None);
     }
@@ -747,8 +835,8 @@ fn build_tray_proxy_menu(
         return Ok(None);
     }
 
-    let root =
-        Submenu::with_id(app, "proxy-groups", "代理组", true).map_err(|err| err.to_string())?;
+    let root = Submenu::with_id(app, "proxy-groups", locale.text("代理组"), true)
+        .map_err(|err| err.to_string())?;
 
     for group in &snapshot.groups {
         let group_label = if group.name == "PROXY" || group.name == "GLOBAL" {
@@ -759,7 +847,7 @@ fn build_tray_proxy_menu(
         let group_menu = Submenu::with_id(
             app,
             format!("proxy-group:{}", urlencoding::encode(&group.name)),
-            tray_clean_label(&group_label, "代理组", 40),
+            tray_clean_label(&group_label, &locale.text("代理组"), 40),
             true,
         )
         .map_err(|err| err.to_string())?;
@@ -774,7 +862,7 @@ fn build_tray_proxy_menu(
             let item = CheckMenuItem::with_id(
                 app,
                 id,
-                tray_node_label(node, selected),
+                tray_node_label(locale, node, selected),
                 true,
                 selected,
                 None::<&str>,
@@ -790,6 +878,7 @@ fn build_tray_proxy_menu(
 }
 
 fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String> {
+    let locale = TrayLocale::load(app);
     let (core_running, running_mode, active_config) = tray_core_snapshot(app);
     let proxy_status = system_proxy_status(app);
     let proxy_enabled = proxy_status
@@ -805,8 +894,8 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     };
     let active_name = active_config
         .as_deref()
-        .map(|path| tray_config_name(path, &subscriptions))
-        .unwrap_or_else(|| "未选择".to_string());
+        .map(|path| tray_config_name(locale, path, &subscriptions))
+        .unwrap_or_else(|| locale.text("未选择"));
     let proxy_snapshot = read_tray_proxy_snapshot();
     let current_node = proxy_snapshot
         .as_ref()
@@ -826,7 +915,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     let core_status = MenuItem::with_id(
         app,
         "status-core",
-        format!("核心：{}", tray_running_mode_label(running_mode)),
+        locale.format("核心：{}", &[tray_running_mode_label(locale, running_mode)]),
         false,
         None::<&str>,
     )
@@ -834,7 +923,11 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     let config_status = MenuItem::with_id(
         app,
         "status-config",
-        tray_clean_label(&format!("配置：{active_name}"), "配置：未选择", 48),
+        tray_clean_label(
+            &locale.text("配置：{}").replacen("{}", &active_name, 1),
+            &locale.text("配置：未选择"),
+            48,
+        ),
         false,
         None::<&str>,
     )
@@ -843,8 +936,13 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
         app,
         "status-node",
         tray_clean_label(
-            &format!("节点：{}", current_node.as_deref().unwrap_or("未选择")),
-            "节点：未选择",
+            &locale.format(
+                "节点：{}",
+                &[current_node
+                    .clone()
+                    .unwrap_or_else(|| locale.text("未选择"))],
+            ),
+            &locale.text("节点：未选择"),
             48,
         ),
         false,
@@ -854,13 +952,13 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     let proxy_status_item = MenuItem::with_id(
         app,
         "status-proxy",
-        format!(
+        locale.format(
             "系统代理：{}",
-            if proxy_enabled {
-                "已启用"
+            &[if proxy_enabled {
+                locale.text("已启用")
             } else {
-                "已关闭"
-            }
+                locale.text("已关闭")
+            }],
         ),
         false,
         None::<&str>,
@@ -869,44 +967,50 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     let tun_status_item = MenuItem::with_id(
         app,
         "status-tun",
-        format!(
+        locale.format(
             "TUN：{}",
-            if tun_enabled {
-                "已启用"
+            &[if tun_enabled {
+                locale.text("已启用")
             } else {
-                "已关闭"
-            }
+                locale.text("已关闭")
+            }],
         ),
         false,
         None::<&str>,
     )
     .map_err(|err| err.to_string())?;
 
-    let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)
+    let show = MenuItem::with_id(app, "show", locale.text("显示主窗口"), true, None::<&str>)
         .map_err(|err| err.to_string())?;
-    let hide = MenuItem::with_id(app, "hide", "隐藏到托盘", true, None::<&str>)
+    let hide = MenuItem::with_id(app, "hide", locale.text("隐藏到托盘"), true, None::<&str>)
         .map_err(|err| err.to_string())?;
     let restart_core = MenuItem::with_id(
         app,
         "restart-core",
         if core_running {
-            "重启核心"
+            locale.text("重启核心")
         } else {
-            "启动核心"
+            locale.text("启动核心")
         },
         true,
         None::<&str>,
     )
     .map_err(|err| err.to_string())?;
-    let stop_core = MenuItem::with_id(app, "stop-core", "停止核心", core_running, None::<&str>)
-        .map_err(|err| err.to_string())?;
+    let stop_core = MenuItem::with_id(
+        app,
+        "stop-core",
+        locale.text("停止核心"),
+        core_running,
+        None::<&str>,
+    )
+    .map_err(|err| err.to_string())?;
     let toggle_proxy = MenuItem::with_id(
         app,
         "toggle-system-proxy",
         if proxy_enabled {
-            "关闭系统代理"
+            locale.text("关闭系统代理")
         } else {
-            "启用系统代理"
+            locale.text("启用系统代理")
         },
         core_running || proxy_enabled,
         None::<&str>,
@@ -916,9 +1020,9 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
         app,
         "toggle-tun",
         if tun_enabled {
-            "关闭 TUN 模式"
+            locale.text("关闭 TUN 模式")
         } else {
-            "启用 TUN 模式"
+            locale.text("启用 TUN 模式")
         },
         true,
         None::<&str>,
@@ -927,14 +1031,19 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     let close_connections = MenuItem::with_id(
         app,
         "close-all-connections",
-        "断开所有连接",
+        locale.text("断开所有连接"),
         core_running,
         None::<&str>,
     )
     .map_err(|err| err.to_string())?;
-    let lightweight =
-        MenuItem::with_id(app, "enter-lightweight", "进入轻量模式", true, None::<&str>)
-            .map_err(|err| err.to_string())?;
+    let lightweight = MenuItem::with_id(
+        app,
+        "enter-lightweight",
+        locale.text("进入轻量模式"),
+        true,
+        None::<&str>,
+    )
+    .map_err(|err| err.to_string())?;
     let configs = build_tray_config_menu(
         app,
         &subscriptions,
@@ -942,7 +1051,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
         active_config.as_deref(),
     )?;
     let proxy_groups = build_tray_proxy_menu(app, core_running)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
+    let quit = MenuItem::with_id(app, "quit", locale.text("退出"), true, None::<&str>)
         .map_err(|err| err.to_string())?;
     let sep_status = PredefinedMenuItem::separator(app).map_err(|err| err.to_string())?;
     let sep_window = PredefinedMenuItem::separator(app).map_err(|err| err.to_string())?;
@@ -977,19 +1086,39 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
     let menu = Menu::with_items(app, &items).map_err(|err| err.to_string())?;
 
     let tooltip = if let Some(node) = current_node.as_deref().filter(|value| !value.is_empty()) {
-        format!(
+        locale.format(
             "FlyClash · {} · 核心 {} · 代理 {} · TUN {}",
-            tray_clean_label(node, "节点", 28),
-            tray_running_mode_label(running_mode),
-            if proxy_enabled { "开" } else { "关" },
-            if tun_enabled { "开" } else { "关" }
+            &[
+                tray_clean_label(node, &locale.text("节点"), 28),
+                tray_running_mode_label(locale, running_mode),
+                if proxy_enabled {
+                    locale.text("开")
+                } else {
+                    locale.text("关")
+                },
+                if tun_enabled {
+                    locale.text("开")
+                } else {
+                    locale.text("关")
+                },
+            ],
         )
     } else {
-        format!(
+        locale.format(
             "FlyClash · 核心 {} · 代理 {} · TUN {}",
-            tray_running_mode_label(running_mode),
-            if proxy_enabled { "开" } else { "关" },
-            if tun_enabled { "开" } else { "关" }
+            &[
+                tray_running_mode_label(locale, running_mode),
+                if proxy_enabled {
+                    locale.text("开")
+                } else {
+                    locale.text("关")
+                },
+                if tun_enabled {
+                    locale.text("开")
+                } else {
+                    locale.text("关")
+                },
+            ],
         )
     };
 
@@ -1209,7 +1338,9 @@ fn tray_switch_config(app: &AppHandle, encoded_path: &str) {
 
         let config_name = read_subscriptions(&app)
             .ok()
-            .map(|subscriptions| tray_config_name(&config_path, &subscriptions))
+            .map(|subscriptions| {
+                tray_config_name(TrayLocale::load(&app), &config_path, &subscriptions)
+            })
             .or_else(|| config_display_name(&config_path))
             .unwrap_or_else(|| "未命名配置".to_string());
 

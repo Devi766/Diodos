@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { uiText } from '@/i18n/ui-text';
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
@@ -9,6 +11,7 @@ export interface ToastProps {
 }
 
 const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, onClose }) => {
+  useTranslation();
   React.useEffect(() => {
     if (duration > 0) {
       const timer = setTimeout(() => {
@@ -20,22 +23,22 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
 
   const tone = {
     success: {
-      title: '成功',
+      title: uiText("成功"),
       icon: '✓',
       className: 'bg-green-500/10 text-green-600 dark:text-green-400',
     },
     error: {
-      title: '错误',
+      title: uiText("错误"),
       icon: '✕',
       className: 'bg-red-500/10 text-red-600 dark:text-red-400',
     },
     info: {
-      title: '提示',
+      title: uiText("提示"),
       icon: 'ℹ',
       className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
     },
     warning: {
-      title: '警告',
+      title: uiText("警告"),
       icon: '!',
       className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
     },
@@ -147,10 +150,10 @@ const renderDomToast = ({ message, type = 'info', duration = 3000 }: ToastEventP
   if (!root) return;
 
   const tone = {
-    success: { title: '成功', icon: '✓', color: '#16a34a', background: 'rgba(34, 197, 94, 0.10)' },
-    error: { title: '错误', icon: '✕', color: '#dc2626', background: 'rgba(239, 68, 68, 0.10)' },
-    info: { title: '提示', icon: 'ℹ', color: '#2563eb', background: 'rgba(59, 130, 246, 0.10)' },
-    warning: { title: '警告', icon: '!', color: '#d97706', background: 'rgba(245, 158, 11, 0.10)' },
+    success: { title: uiText("成功"), icon: '✓', color: '#16a34a', background: 'rgba(34, 197, 94, 0.10)' },
+    error: { title: uiText("错误"), icon: '✕', color: '#dc2626', background: 'rgba(239, 68, 68, 0.10)' },
+    info: { title: uiText("提示"), icon: 'ℹ', color: '#2563eb', background: 'rgba(59, 130, 246, 0.10)' },
+    warning: { title: uiText("警告"), icon: '!', color: '#d97706', background: 'rgba(245, 158, 11, 0.10)' },
   }[type];
   const separatorMatch = message.match(/^([^:：]{1,16})[:：]\s*([\s\S]+)$/);
   const title = separatorMatch?.[1]?.trim() || tone.title;

@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   CheckIcon,
@@ -806,7 +807,7 @@ export default function ProxyNodes() {
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  
+
   // 初始化折叠状态，从localStorage加载，确保有效
   const loadSavedCollapsedState = () => {
     // 检查是否在浏览器环境
@@ -897,7 +898,7 @@ export default function ProxyNodes() {
       }
     };
   }
-  
+
   const LAYOUT_SETTING_KEY = 'proxyGroupsLayoutMode';
   const SORT_MODE_KEY = 'nodesSortMode';
 
@@ -1109,13 +1110,13 @@ export default function ProxyNodes() {
   const applyLayoutMode = useCallback((value: LayoutMode) => {
     layoutModeRef.current = value;
     setLayoutMode(value);
-    return cachePreference(LAYOUT_SETTING_KEY, value, '缓存布局模式失败:');
+    return cachePreference(LAYOUT_SETTING_KEY, value, uiText("缓存布局模式失败:"));
   }, [cachePreference]);
 
   const applySortMode = useCallback((value: NodesSortMode) => {
     sortModeRef.current = value;
     setSortMode(value);
-    return cachePreference(SORT_MODE_KEY, value, '缓存排序模式失败:');
+    return cachePreference(SORT_MODE_KEY, value, uiText("缓存排序模式失败:"));
   }, [cachePreference]);
 
   const persistLayoutMode = useCallback(async (value: LayoutMode) => {
@@ -1330,7 +1331,7 @@ export default function ProxyNodes() {
           if (apiConfigResult.success) {
             // 确保密钥值存在且不为空，避免使用默认空字符串
             const secret = apiConfigResult.secret ? apiConfigResult.secret : undefined;
-            
+
             // 使用正确的API配置初始化mihomoAPI
             mihomoAPI = useMihomoAPI({
               host: apiConfigResult.controllerHost,
@@ -1339,11 +1340,11 @@ export default function ProxyNodes() {
               controllerMode: apiConfigResult.controllerMode,
               httpFallback: apiConfigResult.httpFallback
             });
-            
+
             if (isDev) {
               console.log('[调试] API配置已更新, 密钥:', secret ? '已设置' : '未设置');
             }
-            
+
             // 立即触发版本检查以验证配置是否生效
             try {
               const versionInfo = await mihomoAPI.version();
@@ -1372,14 +1373,14 @@ export default function ProxyNodes() {
         }
       }
     };
-    
+
     getApiConfig();
-    
+
     // 定期刷新API配置，确保密钥最新
     const configRefreshInterval = setInterval(() => {
       getApiConfig();
     }, 60000); // 每分钟刷新一次
-    
+
     return () => {
       clearInterval(configRefreshInterval);
     };
@@ -1463,7 +1464,7 @@ export default function ProxyNodes() {
       if (proxyResult.status === 'rejected') throw proxyResult.reason;
       const data = proxyResult.value;
       latencySnapshotRef.current = data;
-      if (!data?.proxies) throw new Error('获取代理信息失败');
+      if (!data?.proxies) throw new Error(uiText("获取代理信息失败"));
       setMihomoRunning(true);
       writeMihomoRunningCache(true);
       let currentProxyMode = currentModeRef.current;
@@ -1613,7 +1614,7 @@ export default function ProxyNodes() {
                 return {
                   name: nodeName,
                   type: node.type,
-                  server: isGroup ? '代理组' : ((node as any)?.server || ''),
+                  server: isGroup ? uiText("代理组") : ((node as any)?.server || ''),
                   port: isGroup ? 0 : ((node as any)?.port || 0),
                   delay: node.history && node.history.length > 0 ? node.history[0].delay : undefined,
                   isGroup: isGroup,
@@ -1832,7 +1833,7 @@ export default function ProxyNodes() {
               name: nodeName,
               type,
               server: isGroup
-                ? '代理组'
+                ? uiText("代理组")
                 : ((node as any)?.server || providerMeta?.server || ''),
               port: isGroup
                 ? 0
@@ -1892,7 +1893,7 @@ export default function ProxyNodes() {
           }
         }
       }
-      
+
       // 确保groupsData的顺序保持不变，直接设置到状态中
       if (isDev) {
         console.log(`最终构建了${groupsData.length}个代理组`);
@@ -2210,7 +2211,7 @@ export default function ProxyNodes() {
         }
       } catch (error) {
         console.error('从持久化存储加载收藏节点失败:', error);
-        
+
         // 如果从持久化存储加载失败，尝试从localStorage加载作为备份
         try {
           const savedFavorites = localStorage.getItem('favoriteNodes');
@@ -2228,7 +2229,7 @@ export default function ProxyNodes() {
         favoriteNodesLoadedRef.current = true;
       }
     };
-    
+
     loadFavoriteNodes();
   }, []);
 
@@ -2236,7 +2237,7 @@ export default function ProxyNodes() {
   useEffect(() => {
     const saveFavoriteNodes = async () => {
       if (!window.electronAPI || !favoriteNodesLoadedRef.current) return;
-      
+
       try {
         // 保存到主进程的持久化存储
         const result = await window.electronAPI.saveFavoriteNodes(Array.from(favoriteNodes));
@@ -2251,7 +2252,7 @@ export default function ProxyNodes() {
         }
       } catch (error) {
         console.error('保存收藏节点到持久化存储失败:', error);
-        
+
         // 如果持久化存储失败，同时保存到localStorage作为备份
         try {
           localStorage.setItem('favoriteNodes', JSON.stringify(Array.from(favoriteNodes)));
@@ -2264,7 +2265,7 @@ export default function ProxyNodes() {
         }
       }
     };
-    
+
     saveFavoriteNodes();
   }, [favoriteNodes, formatNodesError, showError, t]);
 
@@ -2272,7 +2273,7 @@ export default function ProxyNodes() {
   const toggleGroupCollapse = (groupName: string) => {
     setCollapsedGroups(prev => {
       const newSet = new Set(prev);
-      
+
       if (newSet.has(groupName)) {
         newSet.delete(groupName);
         if (isDev) {
@@ -2284,10 +2285,10 @@ export default function ProxyNodes() {
           console.log(`折叠节点组: ${groupName}`);
         }
       }
-      
+
       // 立即同步保存到localStorage
       void persistCollapsedGroups(newSet);
-      
+
       return newSet;
     });
   };
@@ -2365,13 +2366,13 @@ export default function ProxyNodes() {
     // 根据节点名称长度计算最佳列数,传入布局模式，仅使用真实出口节点参与计算
     const baseNodes = group.nodes.filter(n => !n.isGroup && n.type && n.type.toLowerCase() !== 'unknown');
     const optimalColumns = calculateOptimalColumns(baseNodes.length > 0 ? baseNodes : group.nodes, layoutMode === 'double');
-    
+
     // 内部节点卡片组件 - 使用useCallback记忆化以避免不必要的重新渲染
     const NodeCardInner = useCallback(({ node, group }: { node: ProxyNode, group: ProxyGroup }) => {
       const isSelected = group.now === node.name;
       const isTesting = testingNodes.has(node.name);
       const isFavorite = favoriteNodes.has(node.name);
-      
+
       return (
         <div
           className={`relative rounded-lg overflow-hidden transition-colors cursor-pointer p-3 border ${
@@ -2422,7 +2423,7 @@ export default function ProxyNodes() {
               </div>
             </div>
 
-            <div className="flex justify-between items-center">
+            <div className="flex min-h-5 justify-between items-center">
               <div className="text-xs text-gray-500 dark:text-gray-400">
                 {node.type}
               </div>
@@ -2433,7 +2434,7 @@ export default function ProxyNodes() {
         </div>
       );
     }, [testingNodes, favoriteNodes, handleNodeSelect, handleTestNode, handleToggleFavorite]);
-    
+
     // 内容渲染函数 - 仅在内容加载时渲染
     const renderContent = () => {
       if (sortedNodes.length > 100) {
@@ -2450,7 +2451,7 @@ export default function ProxyNodes() {
                 // 卡片固定高度
                 const rowHeight = 90;
                 const gridHeight = Math.min(rowCount * rowHeight, 600);
-                
+
                 return (
                   <Grid
                     className="custom-scrollbar"
@@ -2466,9 +2467,9 @@ export default function ProxyNodes() {
                     {({ columnIndex, rowIndex, style }) => {
                       const index = rowIndex * columnCount + columnIndex;
                       const node = sortedNodes[index];
-                      
+
                       if (!node) return null;
-                      
+
                       return (
                         <div style={{
                           ...style,
@@ -2486,7 +2487,7 @@ export default function ProxyNodes() {
           </div>
         );
       }
-      
+
       // 对于少量节点使用传统的网格布局
       let gridClass = "";
 
@@ -2528,7 +2529,7 @@ export default function ProxyNodes() {
             break;
         }
       }
-      
+
       return (
         <div className={gridClass}>
           {sortedNodes.map(node => (
@@ -2539,9 +2540,9 @@ export default function ProxyNodes() {
         </div>
       );
     };
-    
+
     return (
-      <div 
+      <div
         className="nodes-visible"
         data-collapsed={collapsedGroups.has(group.name) ? 'true' : 'false'}
         data-group={group.name}
@@ -2655,7 +2656,7 @@ export default function ProxyNodes() {
       setIsModeSwitching(false);
     }
   };
-  
+
   // 渲染直连模式提示
   const DirectModeMessage = () => (
     <div className="rounded-2xl bg-slate-50 p-8 text-center shadow-sm dark:bg-slate-800/40">
@@ -2692,7 +2693,7 @@ export default function ProxyNodes() {
       } catch (error) {
         console.error('组件卸载时保存折叠状态失败:', error);
       }
-      
+
       // 如果有electronAPI，也保存到持久化存储
       if (window.electronAPI) {
         window.electronAPI.saveCollapsedGroups(Array.from(latestCollapsedGroups))
@@ -2849,16 +2850,16 @@ export default function ProxyNodes() {
   // 处理收藏节点
   const handleToggleFavorite = (nodeName: string) => {
     // 检查当前节点是否存在于任何组中
-    const nodeExists = groups.some(group => 
+    const nodeExists = groups.some(group =>
       group.nodes.some(node => node.name === nodeName)
     );
-    
+
     if (!nodeExists) {
       console.warn(`尝试收藏不存在的节点: ${nodeName}`);
       showError(t('nodes.favoriteNodeMissing', { node: nodeName }));
       return;
     }
-    
+
     setFavoriteNodes(prev => {
       const newSet = new Set(prev);
       if (newSet.has(nodeName)) {

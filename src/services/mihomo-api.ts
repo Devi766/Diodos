@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n/ui-text';
 import { mihomoClient } from './mihomo-client'
 
 export interface MihomoConfig {
@@ -90,7 +91,7 @@ export const useMihomoAPI = (controllerConfig?: {
       typeof response.data === 'string'
         ? response.data
         : ((response.data as any)?.message ?? response.statusText);
-    throw new Error(`API请求失败: ${response.status || '未知状态码'} ${detailError}`);
+    throw new Error(uiText("API请求失败: {{p0}} {{p1}}", { p0: response.status || uiText("未知状态码"), p1: detailError }));
   };
 
   /**

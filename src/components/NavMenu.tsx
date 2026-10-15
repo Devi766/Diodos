@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect } from 'react';
 import * as NavigationMenu from "@radix-ui/react-navigation-menu";
 import { BarChartIcon, GearIcon, HomeIcon, ReaderIcon, FileTextIcon } from '@radix-ui/react-icons';
@@ -10,17 +12,18 @@ const isElectron = () => {
 };
 
 export default function NavMenu() {
+  useTranslation();
   const pathname = usePathname();
   // 添加状态来跟踪当前活动页面
   const [activePage, setActivePage] = useState<string>('index');
-  
+
   const menuItems = [
-    { name: '仪表盘', href: '/', pageName: 'index', icon: <HomeIcon className="w-5 h-5" /> },
-    { name: '代理组', href: '/nodes', pageName: 'nodes', icon: <HomeIcon className="w-5 h-5" /> },
-    { name: '匹配规则', href: '/match-rules', pageName: 'match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
-    { name: '连接数据', href: '/connections', pageName: 'connections', icon: <BarChartIcon className="w-5 h-5" /> },
-    { name: '订阅管理', href: '/subscriptions', pageName: 'subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
-    { name: '系统设置', href: '/settings', pageName: 'settings', icon: <GearIcon className="w-5 h-5" /> },
+    { name: uiText("仪表盘"), href: '/', pageName: 'index', icon: <HomeIcon className="w-5 h-5" /> },
+    { name: uiText("代理组"), href: '/nodes', pageName: 'nodes', icon: <HomeIcon className="w-5 h-5" /> },
+    { name: uiText("匹配规则"), href: '/match-rules', pageName: 'match-rules', icon: <FileTextIcon className="w-5 h-5" /> },
+    { name: uiText("连接数据"), href: '/connections', pageName: 'connections', icon: <BarChartIcon className="w-5 h-5" /> },
+    { name: uiText("订阅管理"), href: '/subscriptions', pageName: 'subscriptions', icon: <ReaderIcon className="w-5 h-5" /> },
+    { name: uiText("系统设置"), href: '/settings', pageName: 'settings', icon: <GearIcon className="w-5 h-5" /> },
   ];
 
   // 初始化时从URL路径确定当前页面
@@ -28,9 +31,9 @@ export default function NavMenu() {
     if (pathname) {
       // 从URL获取当前页面名称
       const pageFromPath = pathname === '/' ? 'index' : pathname.substring(1).split('/')[0];
-      
+
       // 检查是否与menuItems中的某个页面匹配
-      const matchedItem = menuItems.find(item => item.pageName === pageFromPath || 
+      const matchedItem = menuItems.find(item => item.pageName === pageFromPath ||
                                                (pageFromPath === '' && item.pageName === 'index'));
       if (matchedItem) {
         setActivePage(matchedItem.pageName);
@@ -55,7 +58,7 @@ export default function NavMenu() {
       return activePage === item.pageName;
     } else {
       // Web环境下使用pathname判断
-      return pathname === item.href || 
+      return pathname === item.href ||
              (pathname && item.href !== '/' && pathname.startsWith(item.href));
     }
   };
@@ -68,12 +71,12 @@ export default function NavMenu() {
           <span className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">FlyClash</span>
         </div>
       </div>
-      
+
       <NavigationMenu.List className="flex gap-2">
         {menuItems.map((item) => (
           <NavigationMenu.Item key={item.href}>
-            <a 
-              href={item.href} 
+            <a
+              href={item.href}
               onClick={(e) => handleNavigation(e, item)}
               className={classNames(
                 "flex items-center px-4 py-2 rounded-md transition-colors",
@@ -88,13 +91,14 @@ export default function NavMenu() {
           </NavigationMenu.Item>
         ))}
       </NavigationMenu.List>
-      
+
       <div className="ml-auto">
         <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
           <span className="inline-block w-2 h-2 mr-2 bg-green-500 rounded-full"></span>
-          已连接
+
+          {uiText("已连接")}
         </div>
       </div>
     </NavigationMenu.Root>
   );
-} 
+}

@@ -1,3 +1,4 @@
+import { getUiLocale, uiText } from '@/i18n/ui-text';
 import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -333,7 +334,7 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     setPendingPath(null);
   }, [pathname]);
-  
+
   const menuItems = useMemo(() => {
     const items = [
       { name: t('nav.dashboard'), href: '/', icon: <LayoutDashboard className="w-5 h-5" /> },
@@ -401,7 +402,7 @@ export default function Layout({ children }: LayoutProps) {
     if (!pendingUpdate?.publishedAt) return null;
     try {
       const date = new Date(pendingUpdate.publishedAt);
-      return Number.isNaN(date.getTime()) ? pendingUpdate.publishedAt : date.toLocaleString();
+      return Number.isNaN(date.getTime()) ? pendingUpdate.publishedAt : date.toLocaleString(getUiLocale());
     } catch {
       return pendingUpdate.publishedAt;
     }
@@ -675,11 +676,13 @@ export default function Layout({ children }: LayoutProps) {
       const record = isRecord(result) ? result : null;
 
       if (didSucceed(result, record)) {
-        showToast({
-          message: successMessage(action, record),
-          type: 'success',
-          duration: 3200,
-        });
+        if (action !== 'toggle-system-proxy' && action !== 'toggle-tun') {
+          showToast({
+            message: successMessage(action, record),
+            type: 'success',
+            duration: 3200,
+          });
+        }
         notifyProfileChanged(action, record);
         return;
       }
@@ -1297,7 +1300,7 @@ export default function Layout({ children }: LayoutProps) {
             >
               <div className="flex items-center gap-2">
                 <span className="indicator-dot" />
-                {!sidebarCollapsed && <span className="font-medium text-foreground">已连接</span>}
+                {!sidebarCollapsed && <span className="font-medium text-foreground">{uiText("已连接")}</span>}
               </div>
               <span className="text-muted-foreground">v{appVersion}</span>
             </div>

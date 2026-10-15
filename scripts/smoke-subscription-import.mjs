@@ -5,13 +5,17 @@ import { createRequire } from 'node:module';
 import ts from 'typescript';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createI18nRuntime } from './i18n-test-runtime.mjs';
+
+const runtime = createI18nRuntime();
+await runtime.i18n.changeLanguage('zh-CN');
 
 const require = createRequire(import.meta.url);
 function load(file, overrides = {}) {
   const module = { exports: {} };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, esModuleInterop: true },
-  }).outputText, { module, exports: module.exports, URL, require: name => overrides[name] ?? require(name) });
+  }).outputText, { module, exports: module.exports, URL, require: name => overrides[name] ?? (name === '@/i18n/ui-text' ? { uiText: runtime.uiText } : require(name)) });
   return module.exports;
 }
 const { subscriptionErrorMessage: error, sanitizeSubscriptionMessage: sanitize } = load('src/lib/subscription-errors.ts');

@@ -1,5 +1,6 @@
 'use client';
 
+import { getUiLocale, uiText } from '@/i18n/ui-text';
 import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
@@ -83,7 +84,7 @@ function ToolCallItem({ tc }: { tc: ToolCallInfo }) {
     return (
       <div className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-800/60 px-2.5 py-1 text-xs">
         {statusIcon}
-        <span className="font-medium text-foreground/80">{toolNameMap[tc.name] || tc.name}</span>
+        <span className="font-medium text-foreground/80">{uiText(toolNameMap[tc.name] || tc.name)}</span>
         {tc.status !== 'pending' && <span className="text-muted-foreground">{statusText}</span>}
       </div>
     );
@@ -96,7 +97,7 @@ function ToolCallItem({ tc }: { tc: ToolCallInfo }) {
         className="flex items-center gap-1.5 w-full px-2.5 py-1.5 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors"
       >
         {statusIcon}
-        <span className="font-medium text-foreground/80">{toolNameMap[tc.name] || tc.name}</span>
+        <span className="font-medium text-foreground/80">{uiText(toolNameMap[tc.name] || tc.name)}</span>
         {tc.status !== 'pending' && <span className="text-muted-foreground">{statusText}</span>}
         <span className="ml-auto">
           {expanded ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
@@ -183,7 +184,7 @@ function ChatMessageInner({ message }: ChatMessageProps) {
         {/* Actions */}
         <div className="flex items-center gap-2 mt-1">
           <span className="text-[10px] text-muted-foreground">
-            {new Date(message.timestamp).toLocaleTimeString()}
+            {new Date(message.timestamp).toLocaleTimeString(getUiLocale())}
           </span>
           {!isUser && (
             <button
