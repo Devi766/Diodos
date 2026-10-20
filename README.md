@@ -1,6 +1,10 @@
-# FlyClash — A Simple and Elegant NetWork Tools
+<p align="center">
+  <img src="public/logo.png" width="128" alt="Diodos" />
+</p>
 
-FlyClash is a modern NetWork Tools powered by the Clash core, featuring a beautiful interface and powerful functionality.
+# Diodos — A Simple and Elegant Network Tool
+
+Diodos is a modern network tool powered by the Clash core, featuring a beautiful interface and powerful functionality.
 
 ## Features
 
@@ -16,20 +20,20 @@ FlyClash is a modern NetWork Tools powered by the Clash core, featuring a beauti
 
 ## Community
 
-Join our [Telegram group](https://t.me/flyclash_chat) for the latest updates, help with using the app, and discussions with other users.
+Join our [Telegram group](https://t.me/diodos_chat) for the latest updates, help with using the app, and discussions with other users.
 
 ## Installation
 
 ### Download a Release
 
-Visit the [Releases page](https://github.com/Devi766/FlyClash/releases) to download the latest installer.
+Visit the [Releases page](https://github.com/Devi766/Diodos/releases) to download the latest installer.
 
 ### Build from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/GtxFury/FlyClash.git
-cd FlyClash
+git clone https://github.com/Devi766/Diodos.git
+cd Diodos
 
 # Install dependencies
 npm install
@@ -39,3 +43,4 @@ npm run tauri:dev
 
 # Build the installer
 npm run tauri:build
+```

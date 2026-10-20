@@ -23,7 +23,7 @@ type ServiceConfig = {
   supportsLookup?: boolean;
 };
 
-const USER_AGENT = 'FlyClash/1.0';
+const USER_AGENT = 'Diodos/1.0';
 const DEFAULT_TIMEOUT = 8_000;
 
 const services: ServiceConfig[] = [

@@ -724,13 +724,13 @@ globalThis.console = globalThis.console || {{
 if (typeof main !== 'function') {{
   throw new Error('JS override must define main(config)');
 }}
-const __flyclash_input = JSON.parse({config_literal});
-const __flyclash_result = main(__flyclash_input);
-const __flyclash_output =
-  __flyclash_result && typeof __flyclash_result === 'object'
-    ? __flyclash_result
-    : __flyclash_input;
-JSON.stringify(__flyclash_output);
+const __diodos_input = JSON.parse({config_literal});
+const __diodos_result = main(__diodos_input);
+const __diodos_output =
+  __diodos_result && typeof __diodos_result === 'object'
+    ? __diodos_result
+    : __diodos_input;
+JSON.stringify(__diodos_output);
 "#
     );
 

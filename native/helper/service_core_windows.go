@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const serviceCoreRegistryPath = `SOFTWARE\FlyClash\ServiceCores`
+const serviceCoreRegistryPath = `SOFTWARE\Diodos\ServiceCores`
 
 func decodeServiceCorePath(encoded string) (string, error) {
 	if strings.TrimSpace(encoded) == "" {
@@ -35,7 +35,7 @@ func serviceCoreDirectory() string {
 	if strings.TrimSpace(programData) == "" {
 		programData = `C:\ProgramData`
 	}
-	return filepath.Join(programData, "FlyClash", "service-cores")
+	return filepath.Join(programData, "Diodos", "service-cores")
 }
 
 func runIcacls(path string, args ...string) error {

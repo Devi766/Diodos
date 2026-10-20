@@ -27,7 +27,7 @@ pub(crate) fn normalize_url(input: &str) -> Result<Url, String> {
         format!("https://{input}")
     };
     let mut url = Url::parse(&normalized).map_err(|_| "订阅链接格式无效".to_string())?;
-    if matches!(url.scheme(), "clash" | "clash-verge" | "flyclash") {
+    if matches!(url.scheme(), "clash" | "clash-verge" | "diodos") {
         let nested = url
             .query_pairs()
             .find(|(key, _)| key == "url")

@@ -78,7 +78,7 @@ const Toast: React.FC<ToastProps> = ({ message, type = 'info', duration = 3000, 
 
 // Toast 容器和管理器
 let toastId = 0;
-const TOAST_EVENT = 'flyclash:toast';
+const TOAST_EVENT = 'diodos:toast';
 
 interface ToastItem extends ToastProps {
   id: number;
@@ -86,7 +86,7 @@ interface ToastItem extends ToastProps {
 
 type ToastEventPayload = Omit<ToastProps, 'onClose'>;
 type ToastWindow = Window & {
-  __flyclashToastQueue?: ToastEventPayload[];
+  __diodosToastQueue?: ToastEventPayload[];
 };
 
 const toastListeners: Set<(toasts: ToastItem[]) => void> = new Set();
@@ -114,19 +114,19 @@ const createToast = (props: ToastEventPayload) => {
 const getGlobalToastQueue = () => {
   if (typeof window === 'undefined') return null;
   const toastWindow = window as ToastWindow;
-  if (!toastWindow.__flyclashToastQueue) {
-    toastWindow.__flyclashToastQueue = [];
+  if (!toastWindow.__diodosToastQueue) {
+    toastWindow.__diodosToastQueue = [];
   }
-  return toastWindow.__flyclashToastQueue;
+  return toastWindow.__diodosToastQueue;
 };
 
 const getDomToastRoot = () => {
   if (typeof document === 'undefined') return null;
 
-  let root = document.getElementById('flyclash-toast-root');
+  let root = document.getElementById('diodos-toast-root');
   if (!root) {
     root = document.createElement('div');
-    root.id = 'flyclash-toast-root';
+    root.id = 'diodos-toast-root';
     root.setAttribute('aria-live', 'polite');
     Object.assign(root.style, {
       position: 'fixed',

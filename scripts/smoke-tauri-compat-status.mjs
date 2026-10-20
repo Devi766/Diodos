@@ -16,7 +16,7 @@ function loadCompat({ runtimeAvailable = true, handlers = {} } = {}) {
     addEventListener: () => {},
     removeEventListener: () => {},
     location: { href: 'http://localhost:3000/' },
-    navigator: { userAgent: 'FlyClashSmoke' },
+    navigator: { userAgent: 'DiodosSmoke' },
     __TAURI__: runtimeAvailable
       ? {
           core: {

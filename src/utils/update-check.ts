@@ -1,9 +1,9 @@
-export const RELEASES_PAGE_URL = 'https://github.com/Devi766/FlyClash/releases';
+export const RELEASES_PAGE_URL = 'https://github.com/Devi766/Diodos/releases';
 
 const RELEASE_API_ENDPOINTS = [
-  'https://api.github.com/repos/Devi766/FlyClash/releases/latest',
+  'https://api.github.com/repos/Devi766/Diodos/releases/latest',
 ];
-export const UPDATE_AVAILABLE_EVENT = 'flyclash-update-available';
+export const UPDATE_AVAILABLE_EVENT = 'diodos-update-available';
 
 export interface ReleaseInfo {
   version: string;
@@ -54,7 +54,7 @@ const officialReleaseUrl = (value: unknown, tagName: string) => {
       if (
         url.protocol === 'https:' &&
         url.hostname === 'github.com' &&
-        url.pathname.startsWith('/Devi766/FlyClash/releases/')
+        url.pathname.startsWith('/Devi766/Diodos/releases/')
       ) {
         return url.toString();
       }

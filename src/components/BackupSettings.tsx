@@ -110,8 +110,8 @@ export default function BackupSettings() {
     uri: '',
     username: '',
     password: '',
-    backupDirectory: 'FlyClash',
-    fileName: 'flyclash_backup.zip'
+    backupDirectory: 'Diodos',
+    fileName: 'diodos_backup.zip'
   });
   const [testConnectionStatus, setTestConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [backupProgress, setBackupProgress] = useState<number>(0);
@@ -1033,7 +1033,7 @@ export default function BackupSettings() {
                 <input
                   type="text"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="FlyClash"
+                  placeholder="Diodos"
                   value={webdavConfig.backupDirectory}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, backupDirectory: e.target.value })}
                   autoComplete="off"
@@ -1048,7 +1048,7 @@ export default function BackupSettings() {
                 <input
                   type="text"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="flyclash_backup.zip"
+                  placeholder="diodos_backup.zip"
                   value={webdavConfig.fileName}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, fileName: e.target.value })}
                   autoComplete="off"

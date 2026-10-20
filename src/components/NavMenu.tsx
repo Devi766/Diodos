@@ -67,8 +67,8 @@ export default function NavMenu() {
     <NavigationMenu.Root className="flex py-4 px-6 bg-white dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800">
       <div className="flex items-center mr-8">
         <div className="flex items-center">
-          <img src="/logo.png" alt="FlyClash Logo" className="h-6 w-6 mr-2" />
-          <span className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">FlyClash</span>
+          <img src="/logo.png" alt="Diodos Logo" className="h-6 w-6 mr-2" />
+          <span className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">Diodos</span>
         </div>
       </div>
 

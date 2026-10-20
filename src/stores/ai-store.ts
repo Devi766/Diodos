@@ -71,9 +71,9 @@ interface AiStore {
   saveToStorage: () => void;
 }
 
-const STORAGE_KEY = 'flyclash-ai-store';
+const STORAGE_KEY = 'diodos-ai-store';
 const BACKUP_SETTING_KEY = 'ai_assistant_settings';
-const BACKUP_TIMESTAMP_KEY = 'flyclash-ai-backup-updated-at';
+const BACKUP_TIMESTAMP_KEY = 'diodos-ai-backup-updated-at';
 
 type AiAssistantBackupSettings = {
   updatedAt: number;

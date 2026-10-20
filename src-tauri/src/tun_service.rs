@@ -30,8 +30,8 @@ use crate::{
 
 type CompatResult = Result<Value, String>;
 
-const WINDOWS_ELEVATED_TASK_NAME: &str = "FlyClash-Elevated";
-const REQUIRED_HELPER_VERSION: &str = "1.0.4";
+const WINDOWS_ELEVATED_TASK_NAME: &str = "Diodos-Elevated";
+const REQUIRED_HELPER_VERSION: &str = "1.0.5";
 /// System kernel path used after macOS authorization.
 const MACOS_SYSTEM_KERNEL_DIR: &str = "/Library/Application Support/Flycast";
 const MACOS_SYSTEM_KERNEL_NAME: &str = "mihomo";
@@ -976,12 +976,12 @@ pub(crate) fn find_helper_executable(app: &AppHandle) -> Result<PathBuf, String>
         &[
             PathBuf::from("native")
                 .join("helper")
-                .join("flyclash-helper.exe"),
-            PathBuf::from("tools").join("flyclash-helper.exe"),
-            PathBuf::from("flyclash-helper.exe"),
+                .join("diodos-helper.exe"),
+            PathBuf::from("tools").join("diodos-helper.exe"),
+            PathBuf::from("diodos-helper.exe"),
         ],
     )
-    .ok_or_else(|| "未找到 flyclash-helper.exe，请确认 tools 目录已被打包".to_string())
+    .ok_or_else(|| "未找到 diodos-helper.exe，请确认 tools 目录已被打包".to_string())
 }
 
 async fn dispatch_compat_call(
@@ -1391,7 +1391,7 @@ mod tests {
             );
         }
         assert!(!windows_account_is_service_account(r"CONTOSO\alice"));
-        assert!(!windows_account_is_service_account("GtxFury"));
+        assert!(!windows_account_is_service_account("Devi766"));
         assert!(!windows_account_is_service_account(
             r"CONTOSO\Administrator"
         ));

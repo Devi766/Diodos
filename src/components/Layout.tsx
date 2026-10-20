@@ -45,13 +45,13 @@ type CompatWarningDetail = {
 
 declare global {
   interface Window {
-    __flyclashPendingUpdate?: UpdateEventDetail;
-    __flyclashCompatWarnings?: CompatWarningDetail[];
+    __diodosPendingUpdate?: UpdateEventDetail;
+    __diodosCompatWarnings?: CompatWarningDetail[];
   }
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.3.4';
+const FALLBACK_APP_VERSION = '0.3.5';
 
 const normalizeVersionLabel = (value: unknown): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -86,7 +86,7 @@ export default function Layout({ children }: LayoutProps) {
       return false;
     }
 
-    const storedState = window.localStorage.getItem('flyclash-sidebar-collapsed');
+    const storedState = window.localStorage.getItem('diodos-sidebar-collapsed');
     return storedState === 'true';
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -273,7 +273,7 @@ export default function Layout({ children }: LayoutProps) {
     setSidebarCollapsed(prev => {
       const next = !prev;
       if (typeof window !== 'undefined') {
-        window.localStorage.setItem('flyclash-sidebar-collapsed', next ? 'true' : 'false');
+        window.localStorage.setItem('diodos-sidebar-collapsed', next ? 'true' : 'false');
       }
       return next;
     });
@@ -461,16 +461,16 @@ export default function Layout({ children }: LayoutProps) {
       const detail = (event as CustomEvent<UpdateEventDetail>).detail;
       if (detail?.release && detail?.currentVersion) {
         showUpdateDialog(detail.release, detail.currentVersion);
-        window.__flyclashPendingUpdate = undefined;
+        window.__diodosPendingUpdate = undefined;
       }
     };
 
     window.addEventListener(UPDATE_AVAILABLE_EVENT, handler as EventListener);
 
-    const pending = window.__flyclashPendingUpdate;
+    const pending = window.__diodosPendingUpdate;
     if (pending?.release && pending?.currentVersion) {
       showUpdateDialog(pending.release, pending.currentVersion);
-      window.__flyclashPendingUpdate = undefined;
+      window.__diodosPendingUpdate = undefined;
     }
 
     return () => {
@@ -546,8 +546,8 @@ export default function Layout({ children }: LayoutProps) {
 
     window.addEventListener('tauri-compat-warning', handler as EventListener);
 
-    if (Array.isArray(window.__flyclashCompatWarnings) && window.__flyclashCompatWarnings.length > 0) {
-      window.__flyclashCompatWarnings.splice(0).forEach(notifyCompatWarning);
+    if (Array.isArray(window.__diodosCompatWarnings) && window.__diodosCompatWarnings.length > 0) {
+      window.__diodosCompatWarnings.splice(0).forEach(notifyCompatWarning);
     }
 
     return () => {
@@ -1255,10 +1255,10 @@ export default function Layout({ children }: LayoutProps) {
               sidebarCollapsed ? 'justify-center' : 'gap-3'
             )}
           >
-            <img src="/logo.png" alt="FlyClash Logo" className="h-8 w-8" />
+            <img src="/logo.png" alt="Diodos Logo" className="h-8 w-8" />
             {!sidebarCollapsed && (
               <div className="leading-tight">
-                <span className="block text-sm font-semibold text-foreground">FlyClash</span>
+                <span className="block text-sm font-semibold text-foreground">Diodos</span>
                 <span className="text-xs text-muted-foreground">
                   {mounted ? t('layout.desktopClient') : '\u00A0'}
                 </span>
@@ -1320,9 +1320,9 @@ export default function Layout({ children }: LayoutProps) {
             <div className="glass-panel flex items-center justify-between rounded-2xl px-4 py-3" data-hoverable="false">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-                  <img src="/logo.png" alt="FlyClash Logo" className="h-5 w-5" />
+                  <img src="/logo.png" alt="Diodos Logo" className="h-5 w-5" />
                 </div>
-                <span className="text-sm font-semibold text-foreground">FlyClash</span>
+                <span className="text-sm font-semibold text-foreground">Diodos</span>
               </div>
               <button
                 type="button"

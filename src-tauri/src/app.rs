@@ -137,7 +137,7 @@ pub(crate) async fn handle_compat_call(
 
 fn subscription_url_from_protocol_arg(raw: &str) -> Option<String> {
     let candidate =
-        if raw.starts_with("clash://") || raw.starts_with("flyclash://") || raw.contains("?url=") {
+        if raw.starts_with("clash://") || raw.starts_with("diodos://") || raw.contains("?url=") {
             raw.split_once("?url=")?.1
         } else {
             return None;
@@ -265,6 +265,10 @@ pub fn run() {
         }))
         .setup(|app| {
             crate::tun_service::migrate_legacy_windows_elevation(app.handle());
+            // 改名前开过开机自启的，换成新版程序的自启项
+            if crate::legacy_migration::remove_legacy_autostart() {
+                let _ = crate::platform::set_autostart(app.handle(), true);
+            }
             setup_tray(app.handle())?;
             crate::subscription_commands::start_subscription_scheduler(app.handle());
             schedule_mihomo_autostart(app.handle());
@@ -290,7 +294,7 @@ pub fn run() {
                 // Force product branding even if a platform config overlay
                 // replaces the windows[] array without a title (Windows would
                 // otherwise fall back to the generic "Tauri App" shell name).
-                let _ = window.set_title("FlyClash");
+                let _ = window.set_title("Diodos");
 
                 // Windows taskbar uses ICON_BIG; Tauri set_icon only sets ICON_SMALL
                 // and default_window_icon only reads ICO entry[0]. Apply both sizes
@@ -415,7 +419,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![crate::compat::tauri_compat_call])
         .build(tauri::generate_context!())
-        .expect("error while building FlyClash Tauri application")
+        .expect("error while building Diodos Tauri application")
         .run(|app_handle, event| match event {
             RunEvent::ExitRequested { api, .. } => {
                 if !exit_cleanup_started().load(Ordering::SeqCst) {

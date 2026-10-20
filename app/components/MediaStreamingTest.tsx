@@ -37,7 +37,7 @@ import {
 import { toast } from 'sonner';
 
 const TAURI_RUNTIME_UNAVAILABLE = 'Tauri runtime is not available';
-const MEDIA_API_UNAVAILABLE_MESSAGE = '媒体检测 API 不可用，请在 FlyClash 桌面端中使用此功能';
+const MEDIA_API_UNAVAILABLE_MESSAGE = '媒体检测 API 不可用，请在 Diodos 桌面端中使用此功能';
 
 const escapeReportHtml = (value: unknown) => String(value ?? '').replace(/[&<>'"]/g, (char) => {
   const entities: Record<string, string> = {
@@ -744,10 +744,10 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
         <div style="padding:24px;font-family:system-ui,-apple-system,sans-serif;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
             <div style="display:flex;align-items:center;">
-              <img src="/logo.png" alt="FlyClash Logo" style="width:44px;height:44px;margin-right:12px;" />
+              <img src="/logo.png" alt="Diodos Logo" style="width:44px;height:44px;margin-right:12px;" />
               <div>
-                <h1 style="margin:0;font-size:22px;font-weight:600;color:#1f2937;">FlyClash</h1>
-                <p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeReportHtml(uiText("简洁美观的代理工具"))}</p>
+                <h1 style="margin:0;font-size:22px;font-weight:600;color:#1f2937;">Diodos</h1>
+                <p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${escapeReportHtml(uiText("简洁美观的网络工具"))}</p>
               </div>
             </div>
             <div style="font-size:16px;font-weight:700;color:#3b82f6;">
@@ -793,7 +793,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
               ${escapeReportHtml(uiText("结果仅供参考，不同节点的解锁方案测试结果可能存在差异"))}
             </div>
             <div style="border-top:1px solid #e5e7eb;padding-top:12px;font-size:12px;color:#9ca3af;display:flex;align-items:center;justify-content:center;">
-              <span>Powered by FlyClash</span>
+              <span>Powered by Diodos</span>
               <span style="margin:0 8px;">•</span>
               <span>${new Date().toISOString().split('T')[0]}</span>
             </div>
@@ -846,7 +846,7 @@ const MediaStreamingTest: React.FC<MediaStreamingTestProps> = ({ currentNode, on
 
     const link = document.createElement('a');
     link.href = reportImage;
-    link.download = uiText("FlyClash流媒体测试报告_{{p0}}.png", { p0: new Date().toISOString().split('T')[0] });
+    link.download = uiText("Diodos流媒体测试报告_{{p0}}.png", { p0: new Date().toISOString().split('T')[0] });
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

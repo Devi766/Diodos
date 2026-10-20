@@ -64,8 +64,8 @@ export default function Layout({ children }: LayoutProps) {
         <div className="flex items-center px-4 py-6 border-b border-gray-200 dark:border-gray-800">
           {!sidebarCollapsed && (
             <div className="flex items-center">
-              <img src="/logo.png" alt="FlyClash Logo" className="h-8 w-8 mr-2" />
-              <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">FlyClash</h1>
+              <img src="/logo.png" alt="Diodos Logo" className="h-8 w-8 mr-2" />
+              <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">Diodos</h1>
             </div>
           )}
           {sidebarCollapsed && (
@@ -144,8 +144,8 @@ export default function Layout({ children }: LayoutProps) {
         <div className="md:hidden bg-white dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center justify-between px-4 py-4">
             <div className="flex items-center">
-              <img src="/logo.png" alt="FlyClash Logo" className="h-7 w-7 mr-2" />
-              <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">FlyClash</h1>
+              <img src="/logo.png" alt="Diodos Logo" className="h-7 w-7 mr-2" />
+              <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-400 dark:to-indigo-500">Diodos</h1>
             </div>
             
             <button 

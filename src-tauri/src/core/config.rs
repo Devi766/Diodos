@@ -372,7 +372,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("flyclash-{name}-{}-{stamp}", std::process::id()))
+        std::env::temp_dir().join(format!("diodos-{name}-{}-{stamp}", std::process::id()))
     }
 
     #[test]

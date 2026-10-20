@@ -1,6 +1,20 @@
 # Changelog
 
-本文件记录 FlyClash Desktop（Tauri）各版本的重要变更。
+本文件记录 Diodos Desktop（Tauri）各版本的重要变更。
+
+## v0.3.5 (2026-10-20)
+
+### FlyClash is now Diodos
+FlyClash has a new name and a new look. Diodos (Greek *δίοδος*, "passage") reflects what the app has become: a network tool, not just a Clash front end.
+
+- **New identity:** a new app name, a new twisted-ribbon "D" logo in bright blue on white, and refreshed icons for the window, taskbar, Dock, tray and installers on every platform.
+- **Seamless upgrade from FlyClash:** on first launch Diodos moves your existing data from FlyClash automatically, including subscriptions, the configuration database, encryption keys, AI assistant settings, interface preferences and the launch-at-login setting. Nothing needs to be re-imported.
+- **Helper service cleanup (Windows):** installing the Diodos Helper Service removes the old FlyClash helper service and stops any cores it left running, so TUN mode is not held by the previous install.
+- **Migrate from older builds over the LAN:** cross-device backup now also accepts transfers from older FlyClash builds on Android and desktop, so you can send your data straight from the old app to Diodos.
+- **Older backups still restore:** backup archives created by FlyClash can be restored in Diodos.
+- The project now lives at [Devi766/Diodos](https://github.com/Devi766/Diodos), and the community group has moved to [t.me/diodos_chat](https://t.me/diodos_chat).
+
+> Diodos installs alongside FlyClash rather than replacing it. After Diodos has started once and your data has been carried over, FlyClash can be uninstalled.
 
 ## v0.3.4 (2026-10-14)
 
@@ -61,15 +75,15 @@ The dashboard is now a modular workspace: choose the information you need, previ
 ## v0.3.2 (2026-08-23)
 
 ### Windows WebView2
-- 允许交互用户通过 UAC 以管理员身份运行 FlyClash，并继续使用该用户的个人 WebView2 数据目录
-- 保持对 SYSTEM、LocalService、NetworkService 及 `systemprofile` 服务身份的启动拦截，TUN 仍默认由 FlyClash Helper Service 提权处理
+- 允许交互用户通过 UAC 以管理员身份运行 Diodos，并继续使用该用户的个人 WebView2 数据目录
+- 保持对 SYSTEM、LocalService、NetworkService 及 `systemprofile` 服务身份的启动拦截，TUN 仍默认由 Diodos Helper Service 提权处理
 
 ## v0.3.1 (2026-08-23)
 
 ### Windows TUN 与 WebView2
-- 移除会以管理员权限重新启动整个桌面界面的计划任务模式，TUN 提权统一交由最小权限的 FlyClash Helper Service 处理
-- 启动时自动迁移旧的计划任务配置，并清理遗留的 `FlyClash-Elevated` 任务
-- 阻止 FlyClash 桌面界面以 SYSTEM、LocalService、NetworkService 或管理员身份承载 WebView2，避免数据目录落入 `systemprofile` 以及高权限 WebView 风险
+- 移除会以管理员权限重新启动整个桌面界面的计划任务模式，TUN 提权统一交由最小权限的 Diodos Helper Service 处理
+- 启动时自动迁移旧的计划任务配置，并清理遗留的 `Diodos-Elevated` 任务
+- 阻止 Diodos 桌面界面以 SYSTEM、LocalService、NetworkService 或管理员身份承载 WebView2，避免数据目录落入 `systemprofile` 以及高权限 WebView 风险
 - TUN 设置页只展示 Helper 服务的安装、运行与 IPC 状态，避免用户重新选择不安全的提权方式
 
 ## v0.3.0-ver2 (2026-07-26)

@@ -56,7 +56,7 @@ const findSubscriptionData = (activeConfig: string | null, subs: any[]): Subscri
 };
 
 const PREVIEW_SUBSCRIPTION: SubscriptionData = {
-  name: 'FlyClash', usedTraffic: '32 GB', remainingTraffic: '468 GB', totalTraffic: '500 GB', expiryDate: '2027-05-12',
+  name: 'Diodos', usedTraffic: '32 GB', remainingTraffic: '468 GB', totalTraffic: '500 GB', expiryDate: '2027-05-12',
 };
 
 export function SubscriptionInfoCard({ variant = 'standard', preview = false }: { variant?: string; preview?: boolean }) {

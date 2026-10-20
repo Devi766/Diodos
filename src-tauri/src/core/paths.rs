@@ -186,7 +186,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
-        let dir = std::env::temp_dir().join(format!("flyclash-core-paths-{label}-{nanos}"));
+        let dir = std::env::temp_dir().join(format!("diodos-core-paths-{label}-{nanos}"));
         fs::create_dir_all(&dir).expect("temp dir");
         dir
     }

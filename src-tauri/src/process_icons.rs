@@ -25,7 +25,7 @@ pub(crate) fn is_self_process(path: &str, name: Option<&str>) -> bool {
         .any(|name| {
             matches!(
                 name.to_ascii_lowercase().as_str(),
-                "flyclash" | "flyclash.exe" | "mihomo"
+                "diodos" | "diodos.exe" | "mihomo"
             )
         })
 }
@@ -37,8 +37,8 @@ ObjC.import('Foundation');
 function text(value) { try { return ObjC.unwrap(value) || ''; } catch (_) { return ''; } }
 function run() {
   var environment = $.NSProcessInfo.processInfo.environment;
-  var executable = text(environment.objectForKey('FLYCLASH_ICON_PATH'));
-  var name = text(environment.objectForKey('FLYCLASH_ICON_NAME'));
+  var executable = text(environment.objectForKey('DIODOS_ICON_PATH'));
+  var name = text(environment.objectForKey('DIODOS_ICON_NAME'));
   var hint = name.toLowerCase();
   var workspace = $.NSWorkspace.sharedWorkspace;
   var files = $.NSFileManager.defaultManager;
@@ -109,8 +109,8 @@ pub(crate) fn mac_icon_data_url(input: &str, name: Option<&str>) -> Result<Optio
     // Fixed script and environment arguments: process names/paths are never code.
     let mut child = Command::new("/usr/bin/osascript")
         .args(["-l", "JavaScript", "-e", ICON_SCRIPT])
-        .env("FLYCLASH_ICON_PATH", path)
-        .env("FLYCLASH_ICON_NAME", hint)
+        .env("DIODOS_ICON_PATH", path)
+        .env("DIODOS_ICON_NAME", hint)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -180,11 +180,11 @@ mod tests {
     #[test]
     fn identifies_own_process_without_matching_unrelated_names() {
         assert!(is_self_process(
-            "/Applications/FlyClash.app/Contents/MacOS/FlyClash",
+            "/Applications/Diodos.app/Contents/MacOS/Diodos",
             None
         ));
-        assert!(is_self_process("", Some("FlyClash")));
+        assert!(is_self_process("", Some("Diodos")));
         assert!(is_self_process("mihomo", None));
-        assert!(!is_self_process("/tmp/other", Some("NotFlyClash")));
+        assert!(!is_self_process("/tmp/other", Some("NotDiodos")));
     }
 }

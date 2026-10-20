@@ -74,6 +74,9 @@ Get-CimInstance Win32_Process |
       $_.CommandLine -match 'work-config\.yaml' -or
       $_.CommandLine -match 'pipe\\flycast-mihomo' -or
       $_.CommandLine -match 'pipe\\flycast-mihomo-service' -or
+      $_.CommandLine -match 'pipe\\Diodos\\mihomo' -or
+      $_.CommandLine -match 'com\.devi766\.diodos\.desktop\\mihomo' -or
+      $_.CommandLine -match 'AppData\\Roaming\\com\.devi766\.diodos\.desktop\\cores' -or
       $_.CommandLine -match 'pipe\\FlyClash\\mihomo' -or
       $_.CommandLine -match 'com\.flyclash\.desktop\\mihomo' -or
       $_.CommandLine -match 'AppData\\Roaming\\com\.flyclash\.desktop\\cores'
@@ -112,7 +115,7 @@ $ErrorActionPreference='SilentlyContinue'
 Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue |
   ForEach-Object {{
     $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
-    if ($proc -and ($proc.ProcessName -match 'mihomo|flyclash-core|FlyClash-Core')) {{
+    if ($proc -and ($proc.ProcessName -match 'mihomo|diodos-core|Diodos-Core')) {{
       Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
     }}
   }}

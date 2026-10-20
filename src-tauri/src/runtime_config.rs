@@ -1294,7 +1294,7 @@ fn resolve_provider_path(
         return Some(path);
     }
 
-    let config_file = if config_path.starts_with("flyclash-db://") {
+    let config_file = if config_path.starts_with("diodos-db://") {
         exported_config_path(app, config_path).ok()
     } else {
         Some(PathBuf::from(config_path))

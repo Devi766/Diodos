@@ -478,8 +478,8 @@ fn set_config_elevated(sids: &[String]) -> Result<usize, String> {
         .map(|value| value.as_millis())
         .unwrap_or(0);
     let dir = std::env::temp_dir();
-    let request_path = dir.join(format!("flyclash-loopback-req-{stamp}.json"));
-    let result_path = dir.join(format!("flyclash-loopback-res-{stamp}.json"));
+    let request_path = dir.join(format!("diodos-loopback-req-{stamp}.json"));
+    let result_path = dir.join(format!("diodos-loopback-res-{stamp}.json"));
 
     let payload = json!({
         "sids": sids,
@@ -499,7 +499,7 @@ fn set_config_elevated(sids: &[String]) -> Result<usize, String> {
     let exe_str = exe.to_string_lossy().replace('\'', "''");
     let req_str = request_path.to_string_lossy().replace('\'', "''");
     let ps = format!(
-        "$p = Start-Process -FilePath '{exe_str}' -ArgumentList @('--flyclash-loopback-set','{req_str}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden; if ($null -eq $p) {{ exit 1223 }}; exit $p.ExitCode"
+        "$p = Start-Process -FilePath '{exe_str}' -ArgumentList @('--diodos-loopback-set','{req_str}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden; if ($null -eq $p) {{ exit 1223 }}; exit $p.ExitCode"
     );
 
     let output = Command::new("powershell.exe")
@@ -570,7 +570,7 @@ fn set_config_elevated(sids: &[String]) -> Result<usize, String> {
 /// CLI helper entry for elevated writes.
 /// Returns true when argv requested the helper (caller should exit).
 pub fn maybe_run_elevated_cli(args: &[String]) -> bool {
-    let Some(flag_pos) = args.iter().position(|arg| arg == "--flyclash-loopback-set") else {
+    let Some(flag_pos) = args.iter().position(|arg| arg == "--diodos-loopback-set") else {
         return false;
     };
     let request = args

@@ -135,7 +135,7 @@ export default function RootLayout({
             }
 
             setTheme(actualTheme);
-            window.localStorage.setItem('flyclash-resolved-theme', actualTheme);
+            window.localStorage.setItem('diodos-resolved-theme', actualTheme);
             // 使用 classList 来添加/移除主题类，而不是替换整个 className
             if (actualTheme === 'dark') {
               document.documentElement.classList.add('dark');
@@ -158,7 +158,7 @@ export default function RootLayout({
                   ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
                   : newTheme;
               setTheme(actualTheme);
-              window.localStorage.setItem('flyclash-resolved-theme', actualTheme);
+              window.localStorage.setItem('diodos-resolved-theme', actualTheme);
               if (actualTheme === 'dark') {
                 document.documentElement.classList.add('dark');
                 document.documentElement.classList.remove('light');
@@ -196,7 +196,7 @@ export default function RootLayout({
         // 默认情况下跟随系统设置
         const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         setTheme(systemTheme);
-        window.localStorage.setItem('flyclash-resolved-theme', systemTheme);
+        window.localStorage.setItem('diodos-resolved-theme', systemTheme);
         if (systemTheme === 'dark') {
           document.documentElement.classList.add('dark');
           document.documentElement.classList.remove('light');
@@ -213,7 +213,7 @@ export default function RootLayout({
         if (disposed) return;
         // 出错时默认使用浅色主题
         setTheme('light');
-        window.localStorage.setItem('flyclash-resolved-theme', 'light');
+        window.localStorage.setItem('diodos-resolved-theme', 'light');
         document.documentElement.classList.add('light');
         document.documentElement.classList.remove('dark');
         document.body.classList.add('theme-light');
@@ -239,12 +239,18 @@ export default function RootLayout({
   return (
     <html lang={language} className={theme} suppressHydrationWarning>
       <head>
-        <title>FlyClash</title>
-        <meta name="description" content="A modern network debugging tool powered by FlyClash Core" />
+        <title>Diodos</title>
+        <meta name="description" content="A modern network debugging tool powered by Diodos Core" />
         <link rel="icon" href="/favicon.ico" />
+        {/* 改名前本地存储的键以 flyclash- 开头，首次启动时搬到 diodos- 下（侧栏、主题、AI 配置等） */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('flyclash-resolved-theme');if(t!=='dark'&&t!=='light'){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.classList.add(t);document.documentElement.style.colorScheme=t;document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('theme-'+t)},{once:true})}catch(e){}})();`,
+            __html: `(function(){try{var ks=[];for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k&&k.indexOf('flyclash-')===0)ks.push(k)}ks.forEach(function(k){var n='diodos-'+k.slice(9);if(localStorage.getItem(n)===null)localStorage.setItem(n,localStorage.getItem(k));localStorage.removeItem(k)})}catch(e){}})();`,
+          }}
+        />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('diodos-resolved-theme');if(t!=='dark'&&t!=='light'){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.classList.add(t);document.documentElement.style.colorScheme=t;document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('theme-'+t)},{once:true})}catch(e){}})();`,
           }}
         />
         <Script src={`/tauri-compat.js?v=${TAURI_COMPAT_VERSION}`} strategy="beforeInteractive" />

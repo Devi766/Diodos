@@ -1,9 +1,9 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "FlyClash",
-  "mainBinaryName": "FlyClash",
-  "version": "0.3.4",
-  "identifier": "com.flyclash.desktop",
+  "productName": "Diodos",
+  "mainBinaryName": "Diodos",
+  "version": "0.3.5",
+  "identifier": "com.devi766.diodos.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
@@ -16,7 +16,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "FlyClash",
+        "title": "Diodos",
         "width": 1180,
         "height": 780,
         "minWidth": 980,
@@ -40,7 +40,7 @@
       "desktop": {
         "schemes": [
           "clash",
-          "flyclash"
+          "diodos"
         ]
       }
     }
@@ -49,13 +49,13 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "publisher": "FlyClash",
+    "publisher": "Diodos",
     "resources": [
       "../extra",
       "../tools"
     ],
-    "shortDescription": "FlyClash Desktop",
-    "longDescription": "FlyClash is a desktop proxy client powered by FlyClash Core (mihomo-compatible).",
+    "shortDescription": "Diodos Desktop",
+    "longDescription": "Diodos is a desktop network tool powered by Diodos Core (mihomo-compatible).",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

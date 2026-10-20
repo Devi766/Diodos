@@ -194,7 +194,7 @@ pub(crate) fn service_compatible_core_path(
         let program_data = std::env::var_os("ProgramData")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-        let managed_dir = program_data.join("FlyClash").join("service-cores");
+        let managed_dir = program_data.join("Diodos").join("service-cores");
         let target = core_paths::service_runtime_target(&managed_dir, source);
         let source_stamp = service_core_source_stamp(source);
         // 服务内核目录被 ACL 加固后，用户态可能读不到目标元数据（os error 5）。
@@ -415,7 +415,7 @@ async fn github_json(url: &str) -> Result<Value, String> {
         .build()
         .map_err(|err| err.to_string())?
         .get(url)
-        .header("User-Agent", "FlyClash-Tauri")
+        .header("User-Agent", "Diodos-Tauri")
         .send()
         .await
         .map_err(|err| err.to_string())?
@@ -636,7 +636,7 @@ async fn download_to(
         .build()
         .map_err(|err| err.to_string())?
         .get(url)
-        .header("User-Agent", "FlyClash-Tauri")
+        .header("User-Agent", "Diodos-Tauri")
         .send()
         .await
         .map_err(|err| err.to_string())?
@@ -1005,7 +1005,7 @@ async fn dispatch_compat_call(
         }
         "selectKernelExecutable" => {
             let path = tauri::async_runtime::spawn_blocking(|| {
-                let dialog = rfd::FileDialog::new().set_title("选择 FlyClash Core");
+                let dialog = rfd::FileDialog::new().set_title("选择 Diodos Core");
                 #[cfg(target_os = "windows")]
                 let dialog = dialog.add_filter("可执行文件", &["exe"]);
                 dialog.pick_file()

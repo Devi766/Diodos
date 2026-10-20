@@ -1,10 +1,10 @@
 {
-  "productName": "FlyClash",
+  "productName": "Diodos",
   "app": {
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "FlyClash",
+        "title": "Diodos",
         "width": 1180,
         "height": 780,
         "minWidth": 980,

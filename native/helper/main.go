@@ -1,4 +1,4 @@
-// FlyClash Helper Service
+// Diodos Helper Service
 // 轻量级 Windows 服务，用于以管理员权限启动 mihomo 内核（TUN 模式需要）
 // 使用 Named Pipe 进行 IPC 通信，支持 HMAC-SHA256 签名验证
 
@@ -29,14 +29,16 @@ import (
 )
 
 const (
-	serviceName       = "FlyClashHelperService"
-	serviceDisplay    = "FlyClash Helper Service"
-	serviceDesc       = "FlyClash Helper Service for TUN mode"
-	pipeName          = `\\.\pipe\flyclash-helper-service`
+	serviceName       = "DiodosHelperService"
+	serviceDisplay    = "Diodos Helper Service"
+	serviceDesc       = "Diodos Helper Service for TUN mode"
+	pipeName          = `\\.\pipe\diodos-helper-service`
 	messageExpirySecs = 30
-	secretSeed        = "flyclash-helper-service-secret-key-v1"
+	secretSeed        = "diodos-helper-service-secret-key-v1"
 	createNoWindow    = 0x08000000
-	helperVersion     = "1.0.4"
+	helperVersion     = "1.0.5"
+	// 改名前的服务名，安装新服务时清理掉
+	legacyServiceName = "FlyClashHelperService"
 )
 
 var (
@@ -174,7 +176,7 @@ func main() {
 			log.Fatalf("Service run failed: %v", err)
 		}
 	} else {
-		fmt.Println("FlyClash Helper Service")
+		fmt.Println("Diodos Helper Service")
 		fmt.Println("Usage:")
 		fmt.Println("  -install    Install service")
 		fmt.Println("  -uninstall  Uninstall service")
@@ -308,7 +310,7 @@ func handleCommand(conn net.Conn, req *IpcRequest) {
 		sendResponse(conn, req.ID, true, data, "")
 
 	case CmdGetVersion:
-		data := VersionData{Service: "FlyClash Helper Service", Version: helperVersion}
+		data := VersionData{Service: "Diodos Helper Service", Version: helperVersion}
 		sendResponse(conn, req.ID, true, data, "")
 
 	case CmdStartCore:
@@ -457,17 +459,17 @@ func getAllowedCoreDirs() []string {
 		dirs = append(dirs, "/opt/flycast")
 		// 当前用户（可能是 root）
 		if u, err := user.Current(); err == nil {
-			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "FlyClash", "cores"))
-			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "flyclash", "cores"))
+			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "Diodos", "cores"))
+			dirs = append(dirs, filepath.Join(u.HomeDir, ".local", "share", "diodos", "cores"))
 		}
 		// 以 root/systemd 运行时枚举 /home/* 下所有用户
 		if entries, err := os.ReadDir("/home"); err == nil {
 			for _, e := range entries {
 				if e.IsDir() {
 					dirs = append(dirs,
-						filepath.Join("/home", e.Name(), ".local", "share", "FlyClash", "cores"))
+						filepath.Join("/home", e.Name(), ".local", "share", "Diodos", "cores"))
 					dirs = append(dirs,
-						filepath.Join("/home", e.Name(), ".local", "share", "flyclash", "cores"))
+						filepath.Join("/home", e.Name(), ".local", "share", "diodos", "cores"))
 				}
 			}
 		}
@@ -519,7 +521,7 @@ func startCore(payload *StartCorePayload) error {
 		return fmt.Errorf("security: config rejected: %v", err)
 	}
 
-	// Always clear leftover FlyClash cores before (re)starting. Fingerprint-based
+	// Always clear leftover Diodos cores before (re)starting. Fingerprint-based
 	// cleanup handles arbitrary kernel names (mihomo-smart/alpha/custom).
 	coreMutex.Lock()
 	lastCoreConfigDir = payload.ConfigDir
@@ -682,12 +684,12 @@ func sendResponse(conn net.Conn, id string, success bool, data interface{}, errM
 	conn.Write(append(jsonResp, '\n'))
 }
 
-// 查找并终止“属于 FlyClash 的残留内核”进程。
+// 查找并终止“属于 Diodos 的残留内核”进程。
 //
 // 不能依赖固定镜像名（用户会换成 mihomo-smart / alpha / 自定义核心）。
 // 识别指纹：
 //  1. 命令行包含本应用的 work-dir（-d <configDir>）或 work-config（-f <configFile>）
-//  2. 命令行包含本应用 controller 管道前缀（FlyClash/mihomo / flycast-mihomo）
+//  2. 命令行包含本应用 controller 管道前缀（Diodos/mihomo / flycast-mihomo）
 //  3. 兜底：命令行含 -d/-f 且可执行路径位于已授权的 cores 目录
 //
 // 永不杀：helper 自身、当前 helper 管理的 corePID。
@@ -701,7 +703,7 @@ func killOtherMihomoProcesses() {
 	selfPID := os.Getpid()
 	killed := killProcessesByFingerprint(selfPID, ourPID, lastDir, lastFile)
 	if killed > 0 {
-		log.Printf("Cleared %d leftover FlyClash core process(es)", killed)
+		log.Printf("Cleared %d leftover Diodos core process(es)", killed)
 	}
 }
 
@@ -710,7 +712,7 @@ func killProcessesByFingerprint(selfPID, ourCorePID int, configDir, configFile s
 	script := `
 $ErrorActionPreference='SilentlyContinue'
 Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -and $_.Name -notmatch '^(flyclash-helper|FlyClashHelper)' } |
+  Where-Object { $_.CommandLine -and $_.Name -notmatch '^(diodos-helper|DiodosHelper|flyclash-helper|FlyClashHelper)' } |
   ForEach-Object { '{0}|{1}|{2}' -f $_.ProcessId, $_.Name, ($_.CommandLine -replace '[\r\n]+',' ') }
 `
 	cmd := exec.Command(
@@ -750,10 +752,10 @@ Get-CimInstance Win32_Process |
 		}
 		name := parts[1]
 		cmdline := parts[2]
-		if !isFlyClashCoreProcess(name, cmdline, configDirLower, configFileLower, allowedDirs) {
+		if !isDiodosCoreProcess(name, cmdline, configDirLower, configFileLower, allowedDirs) {
 			continue
 		}
-		log.Printf("Killing leftover FlyClash core pid=%d name=%s", pid, name)
+		log.Printf("Killing leftover Diodos core pid=%d name=%s", pid, name)
 		kill := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
 		kill.SysProcAttr = &syscall.SysProcAttr{
 			HideWindow:    true,
@@ -766,15 +768,16 @@ Get-CimInstance Win32_Process |
 	return killed
 }
 
-func isFlyClashCoreProcess(
+func isDiodosCoreProcess(
 	name, cmdline, configDirLower, configFileLower string,
 	allowedDirs []string,
 ) bool {
 	lowerName := strings.ToLower(name)
-	if strings.Contains(lowerName, "flyclash-helper") {
+	if strings.Contains(lowerName, "diodos-helper") || strings.Contains(lowerName, "flyclash-helper") {
 		return false
 	}
-	if strings.Contains(lowerName, "helper") && strings.Contains(lowerName, "flyclash") {
+	if strings.Contains(lowerName, "helper") &&
+		(strings.Contains(lowerName, "diodos") || strings.Contains(lowerName, "flyclash")) {
 		return false
 	}
 
@@ -788,15 +791,22 @@ func isFlyClashCoreProcess(
 		return true
 	}
 	if strings.Contains(cmdLower, `pipe\flycast-mihomo`) ||
+		strings.Contains(cmdLower, `pipe\diodos\mihomo`) ||
+		strings.Contains(cmdLower, `pipe/diodos/mihomo`) ||
+		strings.Contains(cmdLower, "diodos\\mihomo-") ||
+		strings.Contains(cmdLower, "flycast-mihomo") ||
+		// 改名前旧版启动的内核
 		strings.Contains(cmdLower, `pipe\flyclash\mihomo`) ||
 		strings.Contains(cmdLower, `pipe/flyclash/mihomo`) ||
-		strings.Contains(cmdLower, "flyclash\\mihomo-") ||
-		strings.Contains(cmdLower, "flycast-mihomo") {
+		strings.Contains(cmdLower, "flyclash\\mihomo-") {
 		return true
 	}
 	// Common work-config file name used by this app.
 	if strings.Contains(cmdLower, "work-config.yaml") &&
-		(strings.Contains(cmdLower, "com.flyclash.desktop") ||
+		(strings.Contains(cmdLower, "com.devi766.diodos.desktop") ||
+			strings.Contains(cmdLower, "\\diodos\\") ||
+			strings.Contains(cmdLower, "/diodos/") ||
+			strings.Contains(cmdLower, "com.flyclash.desktop") ||
 			strings.Contains(cmdLower, "\\flyclash\\") ||
 			strings.Contains(cmdLower, "/flyclash/")) {
 		return true
@@ -858,6 +868,8 @@ func killProcessesByImageFallback(selfPID, ourCorePID int) int {
 		"mihomo-smart.exe",
 		"mihomo-alpha.exe",
 		"mihomo-meta.exe",
+		"Diodos-Core.exe",
+		"diodos-core.exe",
 		"FlyClash-Core.exe",
 		"flyclash-core.exe",
 	}

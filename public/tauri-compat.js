@@ -141,12 +141,12 @@
       result,
     };
 
-    console.warn("[FlyClash Tauri]", `${method} ${reason}: ${error}`, result);
+    console.warn("[Diodos Tauri]", `${method} ${reason}: ${error}`, result);
     try {
-      if (!Array.isArray(window.__flyclashCompatWarnings)) {
-        window.__flyclashCompatWarnings = [];
+      if (!Array.isArray(window.__diodosCompatWarnings)) {
+        window.__diodosCompatWarnings = [];
       }
-      window.__flyclashCompatWarnings.push(detail);
+      window.__diodosCompatWarnings.push(detail);
       window.dispatchEvent(new CustomEvent("tauri-compat-warning", { detail }));
     } catch (_) {}
   }
@@ -232,7 +232,7 @@
     if (typeof url !== "string" || !url.trim()) return;
     pendingImportSubscription = url.trim();
     try {
-      window.dispatchEvent(new CustomEvent("flyclash-import-subscription", {
+      window.dispatchEvent(new CustomEvent("diodos-import-subscription", {
         detail: pendingImportSubscription,
       }));
     } catch (_) {}
@@ -342,7 +342,7 @@
 
   const api = new Proxy(
     {
-      debugLog: (...args) => console.debug("[FlyClash Tauri]", ...args),
+      debugLog: (...args) => console.debug("[Diodos Tauri]", ...args),
       getAuthToken: null,
       getAppVersion: async (...args) =>
         callWithDefault("getAppVersion", args, "0.3.0", (result) => typeof result === "string"),
@@ -670,12 +670,12 @@
       onImportSubscription: (callback) => {
         startImportSubscriptionBridge();
         const customHandler = (event) => callback(event.detail);
-        window.addEventListener("flyclash-import-subscription", customHandler);
+        window.addEventListener("diodos-import-subscription", customHandler);
         if (pendingImportSubscription) {
           setTimeout(() => callback(pendingImportSubscription), 0);
         }
         return () => {
-          window.removeEventListener("flyclash-import-subscription", customHandler);
+          window.removeEventListener("diodos-import-subscription", customHandler);
         };
       },
       onActiveConfigChanged: (callback) => listen("active-config-changed", callback),

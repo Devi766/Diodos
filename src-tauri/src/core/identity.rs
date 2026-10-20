@@ -2,8 +2,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
-pub const CORE_PRODUCT_NAME: &str = "FlyClash Core";
-pub const CORE_BINARY_FAMILY: &str = "flyclash-mihomo";
+pub const CORE_PRODUCT_NAME: &str = "Diodos Core";
+pub const CORE_BINARY_FAMILY: &str = "diodos-mihomo";
 pub const LEGACY_CORE_BINARY_FAMILY: &str = "mihomo";
 
 pub const CORE_TYPE_STABLE: &str = "mihomo";
@@ -119,10 +119,10 @@ pub fn installed_core_identity(name: &str) -> Option<(&'static str, Option<Strin
     if base.starts_with(CORE_BINARY_FAMILY) {
         return match base {
             CORE_BINARY_FAMILY => Some((CORE_TYPE_STABLE, None)),
-            "flyclash-mihomo-alpha" => Some((CORE_TYPE_ALPHA, None)),
-            "flyclash-mihomo-smart" => Some((CORE_TYPE_SMART, None)),
+            "diodos-mihomo-alpha" => Some((CORE_TYPE_ALPHA, None)),
+            "diodos-mihomo-smart" => Some((CORE_TYPE_SMART, None)),
             _ => base
-                .strip_prefix("flyclash-mihomo-")
+                .strip_prefix("diodos-mihomo-")
                 .map(str::trim)
                 .filter(|version| !version.is_empty())
                 .map(|version| (CORE_TYPE_SPECIFIC, Some(normalize_core_version(version)))),
@@ -223,28 +223,28 @@ mod tests {
     }
 
     #[test]
-    fn product_identity_declares_flyclash_boundary_and_legacy_compatibility() {
+    fn product_identity_declares_diodos_boundary_and_legacy_compatibility() {
         let identity = product_identity();
 
-        assert_eq!(identity.product_name, "FlyClash Core");
-        assert_eq!(identity.binary_family, "flyclash-mihomo");
+        assert_eq!(identity.product_name, "Diodos Core");
+        assert_eq!(identity.binary_family, "diodos-mihomo");
         assert_eq!(identity.legacy_binary_family, "mihomo");
         assert_eq!(runtime_work_dir_name(), "mihomo");
-        assert_eq!(product_core_log_file_name(), "flyclash-mihomo.log");
+        assert_eq!(product_core_log_file_name(), "diodos-mihomo.log");
         assert_eq!(legacy_core_log_file_name(), "mihomo.log");
-        assert_eq!(product_core_display_name(), "FlyClash Core");
-        assert_eq!(product_core_binary_stem(), "flyclash-mihomo");
+        assert_eq!(product_core_display_name(), "Diodos Core");
+        assert_eq!(product_core_binary_stem(), "diodos-mihomo");
         assert_eq!(product_core_service_label(), "内核服务");
     }
 
     #[test]
     fn installed_core_identity_accepts_product_and_legacy_names() {
         assert_eq!(
-            installed_core_identity(&format!("flyclash-mihomo{}", executable_ext())),
+            installed_core_identity(&format!("diodos-mihomo{}", executable_ext())),
             Some((CORE_TYPE_STABLE, None))
         );
         assert_eq!(
-            installed_core_identity(&format!("flyclash-mihomo-alpha{}", executable_ext())),
+            installed_core_identity(&format!("diodos-mihomo-alpha{}", executable_ext())),
             Some((CORE_TYPE_ALPHA, None))
         );
         assert_eq!(

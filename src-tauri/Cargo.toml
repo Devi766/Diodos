@@ -1,30 +1,30 @@
 [package]
-name = "flyclash"
-version = "0.3.4"
-description = "FlyClash Desktop"
-authors = ["FlyClash"]
+name = "diodos"
+version = "0.3.5"
+description = "Diodos Desktop"
+authors = ["Diodos"]
 license = "MIT"
-repository = "https://github.com/Devi766/FlyClash"
+repository = "https://github.com/Devi766/Diodos"
 edition = "2021"
 build = "build.rs"
 
 # Windows PE version resources (taskbar/process/file properties).
 # Without these, some shells fall back to generic Tauri branding.
 [package.metadata.winres]
-ProductName = "FlyClash"
-FileDescription = "FlyClash"
-CompanyName = "FlyClash"
-LegalCopyright = "Copyright © FlyClash"
-OriginalFilename = "FlyClash.exe"
-InternalName = "FlyClash"
+ProductName = "Diodos"
+FileDescription = "Diodos"
+CompanyName = "Diodos"
+LegalCopyright = "Copyright © Diodos"
+OriginalFilename = "Diodos.exe"
+InternalName = "Diodos"
 
 [package.metadata.tauri-winres]
-ProductName = "FlyClash"
-FileDescription = "FlyClash"
-CompanyName = "FlyClash"
-LegalCopyright = "Copyright © FlyClash"
-OriginalFilename = "FlyClash.exe"
-InternalName = "FlyClash"
+ProductName = "Diodos"
+FileDescription = "Diodos"
+CompanyName = "Diodos"
+LegalCopyright = "Copyright © Diodos"
+OriginalFilename = "Diodos.exe"
+InternalName = "Diodos"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

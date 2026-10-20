@@ -26,7 +26,7 @@ const inFlightRoutes = new Map<string, Promise<unknown>>();
 
 const routePath = (href: string) => {
   try {
-    return new URL(href, 'http://flyclash.local').pathname;
+    return new URL(href, 'http://diodos.local').pathname;
   } catch {
     return href.split('?')[0] || '/';
   }

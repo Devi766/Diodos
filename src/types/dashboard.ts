@@ -264,4 +264,4 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
 ];
 
 // 卡片配置的本地存储key
-export const DASHBOARD_CONFIG_KEY = 'flyClash-dashboard-config';
+export const DASHBOARD_CONFIG_KEY = 'diodos-dashboard-config';

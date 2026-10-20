@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 )
 
 const (
-	helperRegistryPath       = `SOFTWARE\FlyClash`
+	helperRegistryPath       = `SOFTWARE\Diodos`
 	helperClientSIDValueName = "HelperClientSID"
 )
 
@@ -171,6 +172,21 @@ func stopAndDeleteService(s *mgr.Service) error {
 	return nil
 }
 
+// removeLegacyService 停止并删除改名前旧版装的辅助服务。安装本身已经是管理员权限，
+// 顺手清理，避免旧服务和它拉起的内核继续占用 TUN；失败只记日志，不影响新服务安装。
+func removeLegacyService(m *mgr.Mgr) {
+	legacy, err := m.OpenService(legacyServiceName)
+	if err != nil {
+		return
+	}
+	defer legacy.Close()
+	if err := stopAndDeleteService(legacy); err != nil {
+		log.Printf("Failed to remove legacy service %s: %v", legacyServiceName, err)
+		return
+	}
+	log.Printf("Removed legacy service %s", legacyServiceName)
+}
+
 func installService(requestedClientSID string) error {
 	clientSID, err := resolveClientSID(requestedClientSID)
 	if err != nil {
@@ -197,6 +213,8 @@ func installService(requestedClientSID string) error {
 		return fmt.Errorf("failed to connect to service manager: %v", err)
 	}
 	defer m.Disconnect()
+
+	removeLegacyService(m)
 
 	// If the service already exists, prefer update/start over uninstall+recreate.
 	// Windows service deletion is asynchronous; recreate often races with

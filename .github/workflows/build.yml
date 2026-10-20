@@ -118,7 +118,7 @@ jobs:
           $env:GOOS = "windows"
           $env:CGO_ENABLED = "0"
           $env:GOARCH = "amd64"
-          go build -ldflags="-s -w" -o ../../tools/flyclash-helper.exe .
+          go build -ldflags="-s -w" -o ../../tools/diodos-helper.exe .
           Pop-Location
 
       - name: Prepare bundled runtime resources
@@ -190,14 +190,14 @@ jobs:
           $arch = "${{ matrix.prepare_arch }}"
           $releaseDir = "src-tauri/target/release"
           $bundleDir = "$releaseDir/bundle/portable"
-          $portableDir = "$releaseDir/portable/FlyClash_${version}_${arch}-portable"
-          $archivePath = "$bundleDir/FlyClash_${version}_${arch}-portable.zip"
+          $portableDir = "$releaseDir/portable/Diodos_${version}_${arch}-portable"
+          $archivePath = "$bundleDir/Diodos_${version}_${arch}-portable.zip"
 
           Remove-Item -LiteralPath $portableDir -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $portableDir, $bundleDir | Out-Null
 
-          Copy-Item -LiteralPath "$releaseDir/flyclash.exe" -Destination "$portableDir/flyclash.exe" -Force
+          Copy-Item -LiteralPath "$releaseDir/diodos.exe" -Destination "$portableDir/diodos.exe" -Force
           Copy-Item -LiteralPath "$releaseDir/_up_" -Destination "$portableDir/_up_" -Recurse -Force
 
           Compress-Archive -Path "$portableDir/*" -DestinationPath $archivePath -Force
@@ -225,19 +225,19 @@ jobs:
           if ($env:RUNNER_OS -eq "Windows") {
             $installer = Get-ChildItem -LiteralPath "$releaseDir/bundle/nsis" -Filter "*.exe" | Select-Object -First 1
             if (-not $installer) { throw "Missing Windows NSIS installer under $releaseDir/bundle/nsis" }
-            Copy-Item -LiteralPath $installer.FullName -Destination "$assetDir/FlyClash_${version}_${platform}-installer.exe" -Force
+            Copy-Item -LiteralPath $installer.FullName -Destination "$assetDir/Diodos_${version}_${platform}-installer.exe" -Force
 
             $portable = Get-ChildItem -LiteralPath "$releaseDir/bundle/portable" -Filter "*.zip" | Select-Object -First 1
             if (-not $portable) { throw "Missing Windows portable zip under $releaseDir/bundle/portable" }
-            Copy-Item -LiteralPath $portable.FullName -Destination "$assetDir/FlyClash_${version}_${platform}-portable.zip" -Force
+            Copy-Item -LiteralPath $portable.FullName -Destination "$assetDir/Diodos_${version}_${platform}-portable.zip" -Force
           } elseif ($env:RUNNER_OS -eq "Linux") {
             $deb = Get-ChildItem -LiteralPath "$releaseDir/bundle/deb" -Filter "*.deb" | Select-Object -First 1
             if (-not $deb) { throw "Missing Linux deb package under $releaseDir/bundle/deb" }
-            Copy-Item -LiteralPath $deb.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.deb" -Force
+            Copy-Item -LiteralPath $deb.FullName -Destination "$assetDir/Diodos_${version}_${platform}.deb" -Force
 
             $appimage = Get-ChildItem -LiteralPath "$releaseDir/bundle/appimage" -Filter "*.AppImage" | Select-Object -First 1
             if (-not $appimage) { throw "Missing Linux AppImage package under $releaseDir/bundle/appimage" }
-            Copy-Item -LiteralPath $appimage.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.AppImage" -Force
+            Copy-Item -LiteralPath $appimage.FullName -Destination "$assetDir/Diodos_${version}_${platform}.AppImage" -Force
           } elseif ($env:RUNNER_OS -eq "macOS") {
             $dmg = Get-ChildItem -LiteralPath "$releaseDir/bundle/dmg" -Filter "*.dmg" -ErrorAction SilentlyContinue | Select-Object -First 1
             $dmgVerified = $false
@@ -247,7 +247,7 @@ jobs:
             }
 
             if ($dmg -and $dmgVerified) {
-              Copy-Item -LiteralPath $dmg.FullName -Destination "$assetDir/FlyClash_${version}_${platform}.dmg" -Force
+              Copy-Item -LiteralPath $dmg.FullName -Destination "$assetDir/Diodos_${version}_${platform}.dmg" -Force
             } else {
               if ($dmg) {
                 Write-Warning "Ignoring invalid macOS dmg: $($dmg.FullName)"
@@ -256,7 +256,7 @@ jobs:
               if (-not $app) {
                 throw "Missing macOS dmg package and app bundle under $releaseDir/bundle"
               }
-              $zipPath = Join-Path (Resolve-Path $assetDir) "FlyClash_${version}_${platform}.app.zip"
+              $zipPath = Join-Path (Resolve-Path $assetDir) "Diodos_${version}_${platform}.app.zip"
               Push-Location -LiteralPath $app.Parent.FullName
               try {
                 & /usr/bin/ditto -c -k --sequesterRsrc --keepParent $app.Name $zipPath
@@ -278,7 +278,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: FlyClash-${{ matrix.name }}
+          name: Diodos-${{ matrix.name }}
           path: ci-release-assets/*
           if-no-files-found: error
           retention-days: 14
@@ -300,7 +300,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
-          pattern: FlyClash-*
+          pattern: Diodos-*
           merge-multiple: true
 
       - name: List release assets
@@ -330,9 +330,9 @@ jobs:
         with:
           tag: tarui-latest
           commit: ${{ github.sha }}
-          name: FlyClash Desktop v${{ steps.pkg.outputs.version }} Alpha (tarui)
+          name: Diodos Desktop v${{ steps.pkg.outputs.version }} Alpha (tarui)
           body: |
-            ## FlyClash Desktop v${{ steps.pkg.outputs.version }} Alpha
+            ## Diodos Desktop v${{ steps.pkg.outputs.version }} Alpha
 
             tarui 开发通道滚动构建。
 
@@ -362,7 +362,7 @@ jobs:
           # 优先取 CHANGELOG.md 中当前版本的章节作为发布说明
           if [ -f CHANGELOG.md ] && grep -q "^## ${TAG}" CHANGELOG.md; then
             {
-              echo "## FlyClash Desktop ${TAG} Alpha"
+              echo "## Diodos Desktop ${TAG} Alpha"
               echo
               awk -v tag="^## ${TAG}" '
                 $0 ~ tag { found = 1; next }
@@ -375,7 +375,7 @@ jobs:
             } > release-notes.md
           else
             {
-              echo "## FlyClash Desktop v${VERSION} Alpha"
+              echo "## Diodos Desktop v${VERSION} Alpha"
               echo
               echo "相对 main（Electron）切到 tarui（Tauri）的主要变化："
               echo
@@ -391,7 +391,7 @@ jobs:
           fi
 
           {
-            echo "name=FlyClash Desktop v${VERSION} Alpha"
+            echo "name=Diodos Desktop v${VERSION} Alpha"
             echo "body<<EOF"
             cat release-notes.md
             echo "EOF"

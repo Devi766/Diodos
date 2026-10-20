@@ -123,7 +123,7 @@ pub(crate) fn inline_content(input: &str) -> Option<Result<String, String>> {
     let lower = input.to_ascii_lowercase();
     if lower.starts_with("http://")
         || lower.starts_with("https://")
-        || ["clash://", "clash-verge://", "flyclash://"]
+        || ["clash://", "clash-verge://", "diodos://"]
             .iter()
             .any(|scheme| lower.starts_with(scheme))
     {

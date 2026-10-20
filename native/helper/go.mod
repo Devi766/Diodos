@@ -1,4 +1,4 @@
-module flyclash-helper
+module diodos-helper
 
 go 1.21
 

@@ -848,7 +848,7 @@ mod tests {
         );
         assert_eq!(
             prepared.log_path,
-            std::path::PathBuf::from("work/flyclash-mihomo.log")
+            std::path::PathBuf::from("work/diodos-mihomo.log")
         );
     }
 
@@ -919,7 +919,7 @@ mod tests {
         );
         assert_eq!(
             context.paths.log_path,
-            std::path::PathBuf::from("work/flyclash-mihomo.log")
+            std::path::PathBuf::from("work/diodos-mihomo.log")
         );
     }
 

@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 
-export const APP_DATA_CACHE_UPDATED_EVENT = 'flyclash-cache-updated';
+export const APP_DATA_CACHE_UPDATED_EVENT = 'diodos-cache-updated';
 
 export const APP_DATA_CACHE_KEYS = {
   subscriptions: 'subscriptionsCache',
@@ -270,7 +270,7 @@ export const invalidateAppDataCache = (
   return uniqueKeys;
 };
 
-export const APP_DATA_INVALIDATE_EVENT = 'flyclash-cache-invalidate';
+export const APP_DATA_INVALIDATE_EVENT = 'diodos-cache-invalidate';
 
 export const emitAppDataInvalidate = (
   scope: AppDataInvalidationScope = 'profile',

@@ -1,10 +1,10 @@
 {
-  "productName": "FlyClash",
-  "mainBinaryName": "FlyClash",
+  "productName": "Diodos",
+  "mainBinaryName": "Diodos",
   "app": {
     "windows": [
       {
-        "title": "FlyClash",
+        "title": "Diodos",
         "width": 1180,
         "height": 780,
         "minWidth": 980,
@@ -20,8 +20,8 @@
     ]
   },
   "bundle": {
-    "publisher": "FlyClash",
-    "shortDescription": "FlyClash Desktop",
-    "longDescription": "FlyClash is a desktop proxy client powered by FlyClash Core (mihomo-compatible)."
+    "publisher": "Diodos",
+    "shortDescription": "Diodos Desktop",
+    "longDescription": "Diodos is a desktop network tool powered by Diodos Core (mihomo-compatible)."
   }
 }

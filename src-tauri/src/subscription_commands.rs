@@ -53,7 +53,7 @@ fn safe_subscription_user_agent(app: &AppHandle) -> Result<String, String> {
         "Clash" => "Clash/2.0.0".to_string(),
         "Mihomo" => "Mihomo/1.14.0".to_string(),
         "Chrome" => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36".to_string(),
-        "FlyClash" => format!("FlyClash/{}", app.package_info().version),
+        "Diodos" => format!("Diodos/{}", app.package_info().version),
         _ => "clash.meta".to_string(),
     })
 }

@@ -8,7 +8,7 @@ import (
 
 func TestAllowedCoreDirsExcludeUserWritableAppData(t *testing.T) {
 	dirs := getAllowedCoreDirs()
-	needle := strings.ToLower(filepath.Join("com.flyclash.desktop", "cores"))
+	needle := strings.ToLower(filepath.Join("com.devi766.diodos.desktop", "cores"))
 
 	for _, dir := range dirs {
 		if strings.Contains(strings.ToLower(dir), needle) {
@@ -18,7 +18,7 @@ func TestAllowedCoreDirsExcludeUserWritableAppData(t *testing.T) {
 }
 
 func TestHelperVersionBumpedForRuntimeCompatibility(t *testing.T) {
-	if helperVersion != "1.0.4" {
+	if helperVersion != "1.0.5" {
 		t.Fatalf("unexpected helper version: %s", helperVersion)
 	}
 }
@@ -43,7 +43,7 @@ func TestDecodeServiceCorePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode path: %v", err)
 	}
-	if decoded != `C:\ProgramData\FlyClash\service-cores\mihomo.exe` {
+	if decoded != `C:\ProgramData\Diodos\service-cores\mihomo.exe` {
 		t.Fatalf("unexpected path: %q", decoded)
 	}
 	if _, err := decodeServiceCorePath("%%%invalid%%%"); err == nil {

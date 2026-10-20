@@ -103,10 +103,10 @@ mod locale_tests {
         );
         assert_eq!(
             locale.format(
-                "FlyClash · 核心 {} · 代理 {} · TUN {}",
+                "Diodos · 核心 {} · 代理 {} · TUN {}",
                 &["Service".to_string(), "On".to_string(), "Off".to_string()]
             ),
-            "FlyClash · Core Service · Proxy On · TUN Off"
+            "Diodos · Core Service · Proxy On · TUN Off"
         );
     }
 }
@@ -1087,7 +1087,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
 
     let tooltip = if let Some(node) = current_node.as_deref().filter(|value| !value.is_empty()) {
         locale.format(
-            "FlyClash · {} · 核心 {} · 代理 {} · TUN {}",
+            "Diodos · {} · 核心 {} · 代理 {} · TUN {}",
             &[
                 tray_clean_label(node, &locale.text("节点"), 28),
                 tray_running_mode_label(locale, running_mode),
@@ -1105,7 +1105,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<(Menu<tauri::Wry>, String), String
         )
     } else {
         locale.format(
-            "FlyClash · 核心 {} · 代理 {} · TUN {}",
+            "Diodos · 核心 {} · 代理 {} · TUN {}",
             &[
                 tray_running_mode_label(locale, running_mode),
                 if proxy_enabled {

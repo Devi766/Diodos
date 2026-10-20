@@ -7,8 +7,8 @@ import path from 'node:path';
 import process from 'node:process';
 
 const root = process.cwd();
-const timeoutMs = Number(process.env.FLYCLASH_SMOKE_TIMEOUT_MS || 30000);
-const productIdentifier = 'com.flyclash.desktop';
+const timeoutMs = Number(process.env.DIODOS_SMOKE_TIMEOUT_MS || 30000);
+const productIdentifier = 'com.devi766.diodos.desktop';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -75,12 +75,12 @@ const execText = (file, args) =>
 
 const exePath = () => {
   if (process.platform === 'win32') {
-    return path.join(root, 'src-tauri', 'target', 'debug', 'flyclash.exe');
+    return path.join(root, 'src-tauri', 'target', 'debug', 'diodos.exe');
   }
   if (process.platform === 'darwin') {
-    return path.join(root, 'src-tauri', 'target', 'debug', 'bundle', 'macos', 'FlyClash.app', 'Contents', 'MacOS', 'FlyClash');
+    return path.join(root, 'src-tauri', 'target', 'debug', 'bundle', 'macos', 'Diodos.app', 'Contents', 'MacOS', 'Diodos');
   }
-  return path.join(root, 'src-tauri', 'target', 'debug', 'flyclash');
+  return path.join(root, 'src-tauri', 'target', 'debug', 'diodos');
 };
 
 const configPath = () => {
@@ -97,7 +97,7 @@ const windowsProcesses = async () => {
   const script = [
     '$ErrorActionPreference="Stop";',
     'Get-CimInstance Win32_Process |',
-    'Where-Object { $_.Name -ieq "flyclash.exe" -or $_.Name -like "mihomo*.exe" } |',
+    'Where-Object { $_.Name -ieq "diodos.exe" -or $_.Name -like "mihomo*.exe" } |',
     'Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Depth 4',
   ].join(' ');
   const text = await execText('powershell.exe', ['-NoProfile', '-Command', script]);
@@ -111,7 +111,7 @@ const unixProcesses = async () => {
   return text
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => /\bflyclash\b|\bmihomo\b/i.test(line))
+    .filter((line) => /\bdiodos\b|\bmihomo\b/i.test(line))
     .map((line) => {
       const match = line.match(/^(\d+)\s+(\S+)\s+(.*)$/);
       return match
@@ -142,9 +142,9 @@ const killTree = async (pid) => {
   }
 };
 
-const waitForMihomo = async (flyclashPid) => {
+const waitForMihomo = async (diodosPid) => {
   const start = Date.now();
-  const pipePidMarker = String(flyclashPid);
+  const pipePidMarker = String(diodosPid);
   while (Date.now() - start < timeoutMs) {
     const processes = await listProcesses();
     const mihomo = processes.find((proc) => {
@@ -571,7 +571,7 @@ const main = async () => {
   try {
     await sleep(3000);
     if (child.exitCode !== null) {
-      throw new Error(`FlyClash exited early with code ${child.exitCode}: ${stderr.trim()}`);
+      throw new Error(`Diodos exited early with code ${child.exitCode}: ${stderr.trim()}`);
     }
 
     const { mihomo } = await waitForMihomo(child.pid);
@@ -590,7 +590,7 @@ const main = async () => {
     const controllerApi = await verifyControllerApi(socketPath, path.dirname(config.file));
 
     console.log('Tauri IPC smoke passed');
-    console.log(`flyclashPid: ${child.pid}`);
+    console.log(`diodosPid: ${child.pid}`);
     console.log(`mihomoPid: ${mihomo.ProcessId}`);
     console.log(`mihomoCommand: ${commandLine}`);
     console.log(`controllerSocket: ${socketPath}`);

@@ -27,7 +27,15 @@ use crate::{
 
 type CompatResult = Result<Value, String>;
 
-const MAGIC: &str = "FLYCLASH_LAN_BACKUP";
+const MAGIC: &str = "DIODOS_LAN_BACKUP";
+const PAIRING_SALT: &[u8] = b"DiodosPairingV1";
+// 改名前的旧版用这一组标识；接收端同时认它，旧版可以把备份发给新版完成迁移
+const LEGACY_MAGIC: &str = "FLYCLASH_LAN_BACKUP";
+const LEGACY_PAIRING_SALT: &[u8] = b"FlyClashPairingV1";
+
+fn is_known_magic(value: Option<&str>) -> bool {
+    matches!(value, Some(MAGIC) | Some(LEGACY_MAGIC))
+}
 const VERSION: u64 = 2;
 const DISCOVERY_PORT: u16 = 38457;
 const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
@@ -55,7 +63,7 @@ fn host_name() -> String {
 }
 
 fn device_name() -> String {
-    format!("FlyClash · {}", host_name())
+    format!("Diodos · {}", host_name())
 }
 
 fn device_platform() -> &'static str {
@@ -104,10 +112,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn pairing_proof(session_key: &[u8], pairing_code: &str) -> String {
+    pairing_proof_with_salt(session_key, pairing_code, PAIRING_SALT)
+}
+
+fn pairing_proof_with_salt(session_key: &[u8], pairing_code: &str, salt: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(session_key);
     hasher.update(pairing_code.as_bytes());
-    hasher.update(b"FlyClashPairingV1");
+    hasher.update(salt);
     format!("{:x}", hasher.finalize())
 }
 
@@ -160,7 +172,8 @@ fn handle_incoming(
         .map_err(|err| err.to_string())?;
     let header: Value = serde_json::from_str(&read_line(&mut stream)?)
         .map_err(|_| "无效的跨设备备份协议头".to_string())?;
-    if header.get("magic").and_then(Value::as_str) != Some(MAGIC)
+    let header_magic = header.get("magic").and_then(Value::as_str);
+    if !is_known_magic(header_magic)
         || header.get("version").and_then(Value::as_u64) != Some(VERSION)
     {
         let _ = write_line(&mut stream, "ERROR 协议版本不兼容");
@@ -174,7 +187,12 @@ fn handle_incoming(
         .get("pairingProof")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if actual_pairing_proof != pairing_proof(session_key, pairing_code) {
+    let salt = if header_magic == Some(LEGACY_MAGIC) {
+        LEGACY_PAIRING_SALT
+    } else {
+        PAIRING_SALT
+    };
+    if actual_pairing_proof != pairing_proof_with_salt(session_key, pairing_code, salt) {
         let _ = write_line(&mut stream, "ERROR 配对码错误，请重新输入");
         return Ok(());
     }
@@ -201,7 +219,7 @@ fn handle_incoming(
         .get("deviceName")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or("FlyClash device")
+        .unwrap_or("Diodos device")
         .to_string();
     let sender_device_type = header
         .get("deviceType")
@@ -327,14 +345,16 @@ fn start_receiver(app: &AppHandle) -> CompatResult {
                 Ok((count, source)) => {
                     let request =
                         serde_json::from_slice::<Value>(&buffer[..count]).unwrap_or(Value::Null);
-                    if request.get("magic").and_then(Value::as_str) != Some(MAGIC)
+                    let request_magic = request.get("magic").and_then(Value::as_str);
+                    if !is_known_magic(request_magic)
                         || request.get("version").and_then(Value::as_u64) != Some(VERSION)
                         || request.get("type").and_then(Value::as_str) != Some("discover")
                     {
                         continue;
                     }
+                    // 按发现请求的标识回应，旧版发送端才认得这条回复
                     let response = json!({
-                        "magic": MAGIC,
+                        "magic": request_magic.unwrap_or(MAGIC),
                         "version": VERSION,
                         "type": "offer",
                         "requestId": request.get("requestId").cloned().unwrap_or(Value::Null),
@@ -487,7 +507,7 @@ fn discover_devices() -> CompatResult {
                     id.clone(),
                     json!({
                         "id": id,
-                        "name": offer.get("deviceName").and_then(Value::as_str).unwrap_or("FlyClash device"),
+                        "name": offer.get("deviceName").and_then(Value::as_str).unwrap_or("Diodos device"),
                         "hostName": offer.get("hostName").and_then(Value::as_str),
                         "deviceType": offer.get("deviceType").and_then(Value::as_str).unwrap_or("unknown"),
                         "platform": offer.get("platform").and_then(Value::as_str).unwrap_or("unknown"),
@@ -703,7 +723,7 @@ mod tests {
     fn encryption_matches_cross_platform_vector() {
         let session_key = (0u8..32).collect::<Vec<_>>();
         let nonce = (0u8..12).collect::<Vec<_>>();
-        let plaintext = b"FlyClash LAN backup protocol";
+        let plaintext = b"Diodos LAN backup protocol";
         let encrypted = encrypt_backup(plaintext, &session_key, &nonce).unwrap();
         assert_eq!(
             encrypted.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
@@ -720,6 +740,15 @@ mod tests {
         let session_key = (0u8..32).collect::<Vec<_>>();
         assert_eq!(
             pairing_proof(&session_key, "123456"),
+            "b9bbd90db96614968dd74b38a15188332b837eb9d7972966810767c2a778933b"
+        );
+    }
+
+    #[test]
+    fn legacy_pairing_proof_matches_old_vector() {
+        let session_key = (0u8..32).collect::<Vec<_>>();
+        assert_eq!(
+            pairing_proof_with_salt(&session_key, "123456", LEGACY_PAIRING_SALT),
             "99f9913da40c4fd2feac3b0d75846690ff70fdbfc8699503468823d7789393f6"
         );
     }
@@ -731,12 +760,12 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let session_key = (0u8..32).collect::<Vec<_>>();
         let nonce = (0u8..12).collect::<Vec<_>>();
-        let plaintext = b"FlyClash Android to desktop backup".to_vec();
+        let plaintext = b"Diodos Android to desktop backup".to_vec();
         let encrypted = encrypt_backup(&plaintext, &session_key, &nonce).unwrap();
         let header = json!({
             "magic": MAGIC,
             "version": VERSION,
-            "deviceName": "FlyClash · Android",
+            "deviceName": "Diodos · Android",
             "encryption": "AES-256-GCM-SESSION",
             "pairingProof": pairing_proof(&session_key, "123456"),
             "nonce": BASE64.encode(&nonce),
@@ -762,7 +791,7 @@ mod tests {
                 Err(error) => panic!("accept failed: {error}"),
             }
         };
-        let path = env::temp_dir().join(format!("flyclash_lan_test_{}.zip", now_millis()));
+        let path = env::temp_dir().join(format!("diodos_lan_test_{}.zip", now_millis()));
         let stop = Arc::new(AtomicBool::new(false));
         let status = Arc::new(Mutex::new(json!({ "state": "waiting" })));
         let received_path = Arc::new(Mutex::new(None));

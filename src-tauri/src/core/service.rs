@@ -13,8 +13,8 @@ use std::{env, fs};
 use std::{path::Path, process::Command, thread, time::Duration};
 
 #[cfg(any(target_os = "windows", test))]
-const SECRET_SEED: &str = "flyclash-helper-service-secret-key-v1";
-const HELPER_SERVICE_NAME: &str = "FlyClashHelperService";
+const SECRET_SEED: &str = "diodos-helper-service-secret-key-v1";
+const HELPER_SERVICE_NAME: &str = "DiodosHelperService";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -241,9 +241,9 @@ fn elevate_sc_args(args: &[&str]) -> Result<String, String> {
         .map(|value| value.as_millis())
         .unwrap_or(0);
     let dir = env::temp_dir();
-    let bat_path = dir.join(format!("flyclash-sc-{stamp}.cmd"));
-    let out_path = dir.join(format!("flyclash-sc-{stamp}.out"));
-    let code_path = dir.join(format!("flyclash-sc-{stamp}.code"));
+    let bat_path = dir.join(format!("diodos-sc-{stamp}.cmd"));
+    let out_path = dir.join(format!("diodos-sc-{stamp}.out"));
+    let code_path = dir.join(format!("diodos-sc-{stamp}.code"));
 
     let sc_args = args
         .iter()
@@ -493,7 +493,7 @@ pub fn ensure_helper_service_ready() -> Result<(), String> {
     if !flags.installed {
         return Err(flags
             .error
-            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string()));
+            .unwrap_or_else(|| "Diodos Helper 服务未安装".to_string()));
     }
 
     if !flags.running {
@@ -513,7 +513,7 @@ pub fn ensure_helper_service_ready() -> Result<(), String> {
         thread::sleep(Duration::from_millis(200));
     }
 
-    Err("FlyClash Helper 服务已启动，但 IPC 未就绪".to_string())
+    Err("Diodos Helper 服务已启动，但 IPC 未就绪".to_string())
 }
 
 /// Restart a running helper service and wait until IPC answers.
@@ -529,7 +529,7 @@ pub fn repair_helper_service_ipc() -> Result<(), String> {
     if !flags.installed {
         return Err(flags
             .error
-            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string()));
+            .unwrap_or_else(|| "Diodos Helper 服务未安装".to_string()));
     }
 
     if flags.running {
@@ -587,7 +587,7 @@ pub fn ensure_helper_service_ipc_ready() -> Result<HelperEnsureOutcome, String> 
     if !flags.installed {
         return Err(flags
             .error
-            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string()));
+            .unwrap_or_else(|| "Diodos Helper 服务未安装".to_string()));
     }
 
     let running = flags.running;
@@ -609,7 +609,7 @@ pub fn ensure_helper_service_ipc_ready() -> Result<HelperEnsureOutcome, String> 
         }
         Err(_) => Err(flags
             .error
-            .unwrap_or_else(|| "FlyClash Helper 服务未安装".to_string())),
+            .unwrap_or_else(|| "Diodos Helper 服务未安装".to_string())),
     }
 }
 
@@ -906,7 +906,7 @@ fn verify_response_signature(response: &HelperWireResponse) -> Result<(), String
     if constant_time_eq(&expected, &response.signature) {
         Ok(())
     } else {
-        Err("FlyClash Helper IPC 响应签名校验失败".to_string())
+        Err("Diodos Helper IPC 响应签名校验失败".to_string())
     }
 }
 
@@ -914,7 +914,7 @@ fn verify_response_signature(response: &HelperWireResponse) -> Result<(), String
 fn parse_response(raw: &str, expected_id: &str) -> Result<HelperResponse, String> {
     let response: HelperWireResponse = serde_json::from_str(raw).map_err(|err| err.to_string())?;
     if response.id != expected_id {
-        return Err("FlyClash Helper IPC 响应 ID 不匹配".to_string());
+        return Err("Diodos Helper IPC 响应 ID 不匹配".to_string());
     }
     verify_response_signature(&response)?;
 
@@ -964,7 +964,7 @@ fn send_request(command: &str, payload: Option<Value>) -> Result<HelperResponse,
         io::{BufRead, BufReader, Write},
     };
 
-    const PIPE_NAME: &str = r"\\.\pipe\flyclash-helper-service";
+    const PIPE_NAME: &str = r"\\.\pipe\diodos-helper-service";
 
     let id = request_id();
     let timestamp = timestamp_secs();
@@ -998,7 +998,7 @@ fn send_request(command: &str, payload: Option<Value>) -> Result<HelperResponse,
         .read(true)
         .write(true)
         .open(PIPE_NAME)
-        .map_err(|err| format!("无法连接到 FlyClash Helper IPC: {err}"))?;
+        .map_err(|err| format!("无法连接到 Diodos Helper IPC: {err}"))?;
 
     let message = serde_json::to_string(&Value::Object(request)).map_err(|err| err.to_string())?;
     pipe.write_all(message.as_bytes())
@@ -1011,7 +1011,7 @@ fn send_request(command: &str, payload: Option<Value>) -> Result<HelperResponse,
         .read_line(&mut line)
         .map_err(|err| err.to_string())?;
     if line.trim().is_empty() {
-        return Err("FlyClash Helper IPC 返回空响应".to_string());
+        return Err("Diodos Helper IPC 返回空响应".to_string());
     }
 
     parse_response(line.trim(), &id)
@@ -1019,7 +1019,7 @@ fn send_request(command: &str, payload: Option<Value>) -> Result<HelperResponse,
 
 #[cfg(not(target_os = "windows"))]
 fn send_request(_command: &str, _payload: Option<Value>) -> Result<HelperResponse, String> {
-    Err("当前平台不支持 FlyClash Helper 服务".to_string())
+    Err("当前平台不支持 Diodos Helper 服务".to_string())
 }
 
 fn response_data(response: HelperResponse) -> Result<Value, String> {
@@ -1028,7 +1028,7 @@ fn response_data(response: HelperResponse) -> Result<Value, String> {
     } else {
         Err(response
             .error
-            .unwrap_or_else(|| "FlyClash Helper IPC 请求失败".to_string()))
+            .unwrap_or_else(|| "Diodos Helper IPC 请求失败".to_string()))
     }
 }
 
@@ -1354,12 +1354,12 @@ mod tests {
     #[test]
     fn helper_install_elevated_command_uses_runas_install() {
         let command = helper_elevated_command(
-            Path::new(r"C:\Program Files\FlyClash\flyclash-helper.exe"),
+            Path::new(r"C:\Program Files\Diodos\diodos-helper.exe"),
             "-install",
         );
 
         assert!(command.contains(
-            "Start-Process -FilePath 'C:\\Program Files\\FlyClash\\flyclash-helper.exe'"
+            "Start-Process -FilePath 'C:\\Program Files\\Diodos\\diodos-helper.exe'"
         ));
         assert!(command.contains("-ArgumentList '-install'"));
         assert!(command.contains("-Verb RunAs"));

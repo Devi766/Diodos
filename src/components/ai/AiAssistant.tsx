@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OpenAIIcon, ClaudeIcon } from './AiIcons';
 
-const SYSTEM_PROMPT = `You are FlyClash AI Assistant, helping users manage their proxy service and configuration.
+const SYSTEM_PROMPT = `You are Diodos AI Assistant, helping users manage their proxy service and configuration.
 
 ## Config File Editing (Core Feature)
 

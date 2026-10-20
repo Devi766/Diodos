@@ -68,7 +68,7 @@ fn probe_once(target: Ipv4Addr, source: Ipv4Addr, ttl: u8, timeout: u32) -> Resu
     let handle = unsafe { IcmpCreateFile() };
     if handle as isize == -1 { return Err("icmp_unavailable".into()); }
     let options = Options { ttl, tos: 0, flags: 0, size: 0, data: 0 };
-    let payload = b"FlyClash-route";
+    let payload = b"Diodos-route";
     let mut buffer = vec![0u32; 256];
     let start = Instant::now();
     let count = unsafe { IcmpSendEcho2Ex(handle, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(),

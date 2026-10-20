@@ -23,7 +23,7 @@ pub fn shared_endpoint() -> ControllerEndpoint {
             path: r"\\.\pipe\flycast-mihomo".to_string(),
         }
     } else {
-        let socket_dir = std::env::temp_dir().join("flyclash");
+        let socket_dir = std::env::temp_dir().join("diodos");
         let _ = fs::create_dir_all(&socket_dir);
         #[cfg(unix)]
         {

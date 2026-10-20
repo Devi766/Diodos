@@ -1586,8 +1586,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "flyclash"
-version = "0.3.4"
+name = "diodos"
+version = "0.3.5"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

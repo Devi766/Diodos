@@ -22,7 +22,14 @@ pub(crate) fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(config_dir(app)?.join("flyclash.db"))
+    let dir = config_dir(app)?;
+    let path = dir.join("diodos.db");
+    // 改名前的数据库文件名
+    let legacy = dir.join("flyclash.db");
+    if !path.exists() && legacy.exists() {
+        let _ = fs::rename(&legacy, &path);
+    }
+    Ok(path)
 }
 
 pub(crate) fn encryption_key_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -189,6 +196,15 @@ pub(crate) fn db(app: &AppHandle) -> Result<Connection, String> {
         "ALTER TABLE subscriptions ADD COLUMN sort_order INTEGER DEFAULT 0",
     ] {
         let _ = conn.execute(ddl, []);
+    }
+
+    // 改名前订阅的逻辑路径前缀是 flyclash-db://，统一换成新前缀；已迁移过时 WHERE 不命中，开销可以忽略
+    for sql in [
+        "UPDATE subscriptions SET file_path = 'diodos-db://' || substr(file_path, 15) WHERE file_path LIKE 'flyclash-db://%'",
+        "UPDATE settings SET value = replace(value, 'flyclash-db://', 'diodos-db://') WHERE value LIKE '%flyclash-db://%'",
+        "UPDATE overrides SET item_json = replace(item_json, 'flyclash-db://', 'diodos-db://') WHERE item_json LIKE '%flyclash-db://%'",
+    ] {
+        let _ = conn.execute(sql, []);
     }
 
     Ok(conn)
