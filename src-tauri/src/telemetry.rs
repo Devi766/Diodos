@@ -1,12 +1,8 @@
 use std::{
     fs,
     path::PathBuf,
-    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
@@ -17,8 +13,6 @@ use crate::resources;
 use crate::storage::{app_data_dir, db, set_setting, setting};
 
 type CompatResult = Result<Value, String>;
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn now_millis() -> u128 {
     SystemTime::now()
@@ -51,21 +45,70 @@ fn core_log_file(app: &AppHandle) -> Result<PathBuf, String> {
     resources::core_log_path(app)
 }
 
+/// 本地时区的当天日期（yyyy-MM-dd）。流量轮询等高频路径会调用，直接读系统时钟，不创建子进程。
 pub(crate) fn today_key() -> String {
-    let mut command = Command::new("powershell.exe");
-    command.args(["-NoProfile", "-Command", "Get-Date -Format yyyy-MM-dd"]);
-    #[cfg(target_os = "windows")]
-    command.creation_flags(CREATE_NO_WINDOW);
-    let output = command.output();
-    output
-        .ok()
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| value.len() == 10 && value.matches('-').count() == 2)
+    local_date()
+        .map(|(year, month, day)| format!("{year:04}-{month:02}-{day:02}"))
         .unwrap_or_else(utc_date_key)
 }
 
-/// powershell 不可用时的回退：UTC 日期，保持 yyyy-MM-dd 格式。
+#[cfg(target_os = "windows")]
+fn local_date() -> Option<(i32, u32, u32)> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLocalTime(system_time: *mut SystemTime);
+    }
+
+    let mut now = SystemTime::default();
+    unsafe { GetLocalTime(&mut now) };
+    (now.year > 0).then_some((now.year as i32, now.month as u32, now.day as u32))
+}
+
+#[cfg(unix)]
+fn local_date() -> Option<(i32, u32, u32)> {
+    // struct tm 的前 9 个字段在各平台布局一致；尾部预留空间容纳 tm_gmtoff / tm_zone 等扩展字段
+    #[repr(C)]
+    struct Tm {
+        fields: [i32; 9],
+        tail: [u64; 8],
+    }
+
+    // time_t 在 glibc、musl 与 macOS 上均为 long，32 位系统上随之为 32 位
+    use std::os::raw::c_long;
+
+    extern "C" {
+        fn time(timer: *mut c_long) -> c_long;
+        fn localtime_r(timer: *const c_long, result: *mut Tm) -> *mut Tm;
+    }
+
+    let mut tm = Tm { fields: [0; 9], tail: [0; 8] };
+    let ok = unsafe {
+        let now = time(std::ptr::null_mut());
+        !localtime_r(&now, &mut tm).is_null()
+    };
+    // tm_mday、tm_mon（0 起）、tm_year（自 1900 起）
+    ok.then_some((tm.fields[5] + 1900, (tm.fields[4] + 1) as u32, tm.fields[3] as u32))
+}
+
+#[cfg(not(any(target_os = "windows", unix)))]
+fn local_date() -> Option<(i32, u32, u32)> {
+    None
+}
+
+/// 读取本地时间失败时的回退：UTC 日期，保持 yyyy-MM-dd 格式。
 /// 旧回退返回的天数序号（如 "20661"）会让按月/年前缀的统计查询漏掉这些行。
 fn utc_date_key() -> String {
     let days = (now_millis() / 86_400_000) as i64;
@@ -404,5 +447,18 @@ async fn dispatch_compat_call(app: &AppHandle, method: &str, args: &[Value]) -> 
             Ok(success(json!({ "data": traffic_rows(app, Some(prefix))? })))
         }
         _ => Err(format!("Unsupported telemetry method: {method}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn today_key_is_local_calendar_date() {
+        let key = today_key();
+        assert_eq!(key.len(), 10);
+        let parts: Vec<u32> = key.split('-').map(|part| part.parse().unwrap()).collect();
+        assert!(parts[0] >= 2024 && (1..=12).contains(&parts[1]) && (1..=31).contains(&parts[2]));
     }
 }

@@ -4,7 +4,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { NetworkIcon, Play, RefreshCw, Route } from 'lucide-react';
+import { Gauge, NetworkIcon, Play, RefreshCw, Route } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -228,6 +228,28 @@ export default function ToolsPage() {
             <CardContent className="pt-0">
               <p className="mb-4 text-sm text-muted-foreground">{t('tools.mtr.detail')}</p>
               <Button onClick={() => router.push('/tools/mtr')} className="w-full" variant="primary">{t('tools.mtr.open')}</Button>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="pb-6">
+              <div className="mb-2 flex items-center gap-3"><Gauge className="size-5 text-muted-foreground" /><CardTitle>{t('tools.iperf.title')}</CardTitle></div>
+              <CardDescription>{t('tools.iperf.subtitle')}</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="mb-4 text-sm text-muted-foreground">{t('tools.iperf.detail')}</p>
+              <Button onClick={() => router.push('/tools/iperf')} className="w-full" variant="primary">{t('tools.iperf.open')}</Button>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden hover:shadow-sm transition-shadow">
+            <CardHeader className="pb-6">
+              <div className="mb-2 flex items-center gap-3"><Gauge className="size-5 text-muted-foreground" /><CardTitle>{t('tools.speedTest.title')}</CardTitle></div>
+              <CardDescription>{t('tools.speedTest.subtitle')}</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="mb-4 text-sm text-muted-foreground">{t('tools.speedTest.detail')}</p>
+              <Button onClick={() => router.push('/tools/speedtest')} className="w-full" variant="primary">{t('tools.speedTest.open')}</Button>
             </CardContent>
           </Card>
 

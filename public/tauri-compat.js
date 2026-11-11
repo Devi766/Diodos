@@ -644,6 +644,15 @@
       backupLanStopReceiver: async (...args) => call("backupLanStopReceiver", args),
       backupLanSend: async (...args) => call("backupLanSend", args),
       backupLanRestoreReceived: async (...args) => call("backupLanRestoreReceived", args),
+      iperfServerStart: async (...args) => call("iperfServerStart", args),
+      iperfServerStop: async (...args) => call("iperfServerStop", args),
+      iperfStatus: async (...args) => call("iperfStatus", args),
+      iperfDiscover: async (...args) => call("iperfDiscover", args),
+      iperfStart: async (...args) => call("iperfStart", args),
+      speedTestStart: async (...args) => call("speedTestStart", args),
+      speedTestStatus: async (...args) => call("speedTestStatus", args),
+      speedTestCancel: async (...args) => call("speedTestCancel", args),
+      iperfCancel: async (...args) => call("iperfCancel", args),
       onAiProxyStreamChunk: (callback) => listen("ai-proxy-stream-chunk", (payload) => {
         callback(payload.requestId, new Uint8Array(payload.chunk || []));
       }),

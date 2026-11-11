@@ -932,6 +932,125 @@
         "copy_failed": "Copy failed. Check clipboard permissions.",
         "failed": "Probing failed. Check the connection and try again."
       }
+    },
+    "iperf": {
+      "title": "iperf3 Speed Test",
+      "subtitle": "LAN bandwidth test, compatible with iperf3",
+      "detail": "Open this page on two devices to test between them in one click, or connect to any iperf3 server.",
+      "open": "Open Speed Test",
+      "target": "Target",
+      "placeholder": "192.168.1.10 or host:5201",
+      "start": "Start Test",
+      "stop": "Stop",
+      "direction": "Direction",
+      "upload": "Upload",
+      "download": "Download",
+      "duration": "Duration",
+      "parallel": "Parallel Streams",
+      "seconds": "{{count}} s",
+      "overview": "Results",
+      "sender": "Sender",
+      "receiver": "Receiver",
+      "transferred": "Transferred",
+      "methodHint": "TCP test. The rate is measured on the receiving side. Upload means this device sends; download means the peer sends.",
+      "devices": "Diodos on Your Network",
+      "refresh": "Refresh",
+      "searching": "Searching…",
+      "noDevices": "No devices found. Open the iperf3 page on another device, then click Refresh.",
+      "deviceBusy": "Testing",
+      "testNow": "Test",
+      "deviceType": {
+        "mobile": "Mobile device",
+        "desktop": "Desktop"
+      },
+      "server": "Allow Other Devices to Test",
+      "serverOn": "Listening · {{address}}",
+      "serverOff": "Off",
+      "serverFailed": "Could not start the server",
+      "serverHint": "While this page is open, this device runs an iperf3 server. Diodos on other devices can connect in one click, or you can run iperf3 -c this-address -p {{port}}. Only TCP is supported for now. Windows may ask for firewall access the first time.",
+      "badge": {
+        "running": "Testing",
+        "done": "Done",
+        "idle": "Idle"
+      },
+      "status": {
+        "idle": "Pick a device on your network or enter an address to start",
+        "connecting": "Connecting to {{target}}…",
+        "running": "{{target}} · {{direction}} · {{elapsed}}/{{total}} s",
+        "done": "Finished · {{target}} · {{direction}}",
+        "cancelled": "Stopped",
+        "failed": "Test failed",
+        "peerRunning": "{{peer}} is testing this device · {{direction}}",
+        "peerDone": "{{peer}} finished testing this device · {{direction}}",
+        "peerFailed": "Test from {{peer}} stopped: {{error}}"
+      },
+      "errors": {
+        "invalid_target": "Invalid address",
+        "busy": "The peer is running another test. Try again later.",
+        "refused": "Connection refused. The peer has no iperf3 server running.",
+        "timeout": "Connection timed out",
+        "unsupported": "The peer does not support this test mode",
+        "dns": "Could not resolve the target",
+        "failed": "Test failed"
+      }
+    },
+    "speedTest": {
+      "title": "Speed Test",
+      "subtitle": "Measure download, upload and latency",
+      "detail": "Tests against public speed test servers through the current outbound, or directly when the core is stopped.",
+      "open": "Open Speed Test",
+      "provider": "Provider",
+      "providers": {
+        "cloudflare": "Cloudflare",
+        "apple": "Apple",
+        "speedtest": "Speedtest"
+      },
+      "duration": "Duration per test",
+      "connections": "Connections",
+      "seconds": "{{count}} s",
+      "single": "Single",
+      "multi": "{{count}} connections",
+      "start": "Start",
+      "again": "Test Again",
+      "stop": "Stop",
+      "phase": {
+        "connecting": "Connecting",
+        "latency": "Latency",
+        "download": "Download",
+        "upload": "Upload",
+        "done": "Done"
+      },
+      "status": {
+        "idle": "Ready",
+        "cancelled": "Stopped",
+        "failed": "Test failed"
+      },
+      "badge": {
+        "idle": "Ready",
+        "running": "Testing",
+        "done": "Done"
+      },
+      "download": "Download",
+      "upload": "Upload",
+      "latency": "Latency",
+      "jitter": "Jitter",
+      "dataUsed": "Data used",
+      "route": "Outbound",
+      "routeDirect": "Core stopped · Direct",
+      "routeProxy": "Follow rules",
+      "server": "Server",
+      "history": "History",
+      "historyEmpty": "No results yet",
+      "clearHistory": "Clear",
+      "realtime": "Live speed",
+      "note": "A test can use hundreds of MB, so watch your node's data limit. Servers are publicly provided by Cloudflare, Apple and Speedtest by Ookla. Results are for reference only.",
+      "errors": {
+        "busy": "A speed test is already running",
+        "blocked": "The speed test service is unavailable and may be blocked by the outbound or rules. Try another provider or node.",
+        "unavailable": "Couldn't reach the speed test service. Check that the outbound works and try again.",
+        "timeout": "The speed test service timed out. Check that the outbound works and try again.",
+        "failed": "Test failed"
+      }
     }
   },
   "logs": {

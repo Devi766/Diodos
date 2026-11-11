@@ -12,6 +12,8 @@ mod core_lifecycle_commands;
 mod dashboard_images;
 mod dns_lookup;
 mod fetch;
+mod iperf;
+mod speedtest;
 mod lan_backup;
 mod legacy_migration;
 mod mihomo_controller;

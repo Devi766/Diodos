@@ -18,6 +18,8 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/ai-assistant': () => import('@/components/ai/AiAssistant'),
   '/settings': () => import('@/components/Settings'),
   '/tools/mtr': () => import('@/components/MtrTools'),
+  '/tools/iperf': () => import('@/components/IperfTools'),
+  '/tools/speedtest': () => import('@/components/SpeedTestTools'),
   '/tools': () => import('../../app/tools/page'),
 };
 

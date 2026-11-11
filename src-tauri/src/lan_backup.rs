@@ -53,7 +53,7 @@ fn receiver_slot() -> &'static Mutex<Option<ReceiverSession>> {
     RECEIVER.get_or_init(|| Mutex::new(None))
 }
 
-fn host_name() -> String {
+pub(crate) fn host_name() -> String {
     env::var("COMPUTERNAME")
         .or_else(|_| env::var("HOSTNAME"))
         .ok()
@@ -62,11 +62,11 @@ fn host_name() -> String {
         .unwrap_or_else(|| "Desktop".to_string())
 }
 
-fn device_name() -> String {
+pub(crate) fn device_name() -> String {
     format!("Diodos · {}", host_name())
 }
 
-fn device_platform() -> &'static str {
+pub(crate) fn device_platform() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -723,7 +723,8 @@ mod tests {
     fn encryption_matches_cross_platform_vector() {
         let session_key = (0u8..32).collect::<Vec<_>>();
         let nonce = (0u8..12).collect::<Vec<_>>();
-        let plaintext = b"Diodos LAN backup protocol";
+        // 与安卓端共用的固定测试向量，明文不随产品名变化
+        let plaintext = b"FlyClash LAN backup protocol";
         let encrypted = encrypt_backup(plaintext, &session_key, &nonce).unwrap();
         assert_eq!(
             encrypted.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),

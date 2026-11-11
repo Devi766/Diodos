@@ -118,6 +118,77 @@ type CompatBooleanResult = boolean | {
   runtimeReload?: RuntimeReloadResult;
 };
 
+export type SpeedTestProvider = 'cloudflare' | 'apple' | 'speedtest';
+export type SpeedTestPhase = 'connecting' | 'latency' | 'download' | 'upload' | 'done';
+export interface SpeedTestStatus {
+  state: 'idle' | 'running' | 'done' | 'cancelled' | 'error';
+  provider?: SpeedTestProvider;
+  direct?: boolean;
+  duration?: number;
+  streams?: number;
+  phase?: SpeedTestPhase;
+  phaseProgress?: number;
+  /** 以下速率单位都是 bit/s，延迟单位是毫秒 */
+  speed?: number;
+  latency?: number;
+  jitter?: number;
+  download?: number;
+  upload?: number;
+  bytes?: number;
+  downloadSeries?: number[];
+  uploadSeries?: number[];
+  server?: { name?: string; location?: string; country?: string; exitIp?: string };
+  error?: string;
+  startedAt?: number;
+  updatedAt?: number;
+}
+
+export interface IperfInterval { start: number; end: number; bytes: number; bitsPerSecond: number }
+
+export interface IperfResult {
+  reverse: boolean;
+  parallel: number;
+  sentBytes: number;
+  sentSeconds: number;
+  receivedBytes: number;
+  receivedSeconds: number;
+  senderBitsPerSecond: number;
+  receiverBitsPerSecond: number;
+  intervals: IperfInterval[];
+}
+
+export interface IperfServerInfo { running: boolean; port?: number; busy?: boolean; addresses?: string[] }
+
+export interface IperfPeerStatus {
+  state: 'idle' | 'running' | 'done' | 'error';
+  peer?: string;
+  peerSends?: boolean;
+  parallel?: number;
+  duration?: number;
+  intervals?: IperfInterval[];
+  result?: IperfResult;
+  error?: string;
+  startedAt?: number;
+  updatedAt?: number;
+}
+
+export interface IperfClientStatus {
+  state: 'idle' | 'connecting' | 'running' | 'done' | 'error' | 'cancelled';
+  host?: string;
+  port?: number;
+  label?: string;
+  duration?: number;
+  parallel?: number;
+  reverse?: boolean;
+  intervals?: IperfInterval[];
+  result?: IperfResult;
+  error?: string;
+  startedAt?: number;
+  updatedAt?: number;
+}
+
+export interface IperfDevice { id: string; name: string; hostName?: string; deviceType?: string; platform?: string; address: string; port: number; busy?: boolean }
+
 interface TunRuntimeResult {
   success: boolean;
   enabled?: boolean;
@@ -386,6 +457,15 @@ export interface ElectronAPI {
   backupLanStopReceiver: () => Promise<{ success: boolean; error?: string }>;
   backupLanSend: (device: { id: string; name: string; hostName?: string; deviceType?: string; platform?: string; address: string; port: number; sessionKey: string }, backupType?: 'CONFIG_ONLY' | 'FULL_BACKUP' | string, pairingCode?: string) => Promise<{ success: boolean; sent?: number; error?: string }>;
   backupLanRestoreReceived: () => Promise<BackupRestoreResult>;
+  iperfServerStart: (options?: { port?: number }) => Promise<{ success: boolean; server?: IperfServerInfo; error?: string }>;
+  iperfServerStop: () => Promise<{ success: boolean; error?: string }>;
+  iperfStatus: () => Promise<{ success: boolean; server?: IperfServerInfo; peer?: IperfPeerStatus; client?: IperfClientStatus; error?: string }>;
+  iperfDiscover: () => Promise<{ success: boolean; devices?: IperfDevice[]; error?: string }>;
+  iperfStart: (options: { host: string; port?: number; duration?: number; parallel?: number; reverse?: boolean; label?: string }) => Promise<{ success: boolean; error?: string }>;
+  iperfCancel: () => Promise<{ success: boolean; error?: string }>;
+  speedTestStart: (options: { provider: SpeedTestProvider; duration: number; streams: number; useProxy: boolean }) => Promise<{ success: boolean; error?: string }>;
+  speedTestStatus: () => Promise<{ success: boolean; status?: SpeedTestStatus; error?: string }>;
+  speedTestCancel: () => Promise<{ success: boolean; error?: string }>;
   onBackupUploadProgress: (callback: (progress: BackupProgress) => void) => (() => void);
   onBackupDownloadProgress: (callback: (progress: BackupProgress) => void) => (() => void);
   

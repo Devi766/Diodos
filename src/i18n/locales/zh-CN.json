@@ -932,6 +932,125 @@
         "copy_failed": "复制失败，请检查剪贴板权限。",
         "failed": "探测失败，请检查网络后重试。"
       }
+    },
+    "iperf": {
+      "title": "iperf3 测速",
+      "subtitle": "局域网带宽测试，兼容官方 iperf3",
+      "detail": "在两台设备上打开此页面即可一键互测，也能连接任意 iperf3 服务端。",
+      "open": "打开测速",
+      "target": "目标地址",
+      "placeholder": "192.168.1.10 或 host:5201",
+      "start": "开始测速",
+      "stop": "停止",
+      "direction": "方向",
+      "upload": "上传",
+      "download": "下载",
+      "duration": "时长",
+      "parallel": "并行流",
+      "seconds": "{{count}} 秒",
+      "overview": "测试结果",
+      "sender": "发送端",
+      "receiver": "接收端",
+      "transferred": "传输量",
+      "methodHint": "TCP 测试，速率以接收端统计为准；上传为本机发送、下载为对端发送。",
+      "devices": "局域网中的 Diodos",
+      "refresh": "刷新",
+      "searching": "正在搜索…",
+      "noDevices": "没有发现设备。在另一台设备上打开 iperf3 测速页面后点刷新。",
+      "deviceBusy": "测试中",
+      "testNow": "测速",
+      "deviceType": {
+        "mobile": "移动设备",
+        "desktop": "桌面设备"
+      },
+      "server": "允许其他设备测速",
+      "serverOn": "监听中 · {{address}}",
+      "serverOff": "已关闭",
+      "serverFailed": "服务启动失败",
+      "serverHint": "页面打开期间本机作为 iperf3 服务端，其他设备上的 Diodos 可以一键连接，也可以用 iperf3 -c 本机地址 -p {{port}} 测试。目前只支持 TCP，首次开启时 Windows 可能会询问防火墙权限。",
+      "badge": {
+        "running": "测试中",
+        "done": "已完成",
+        "idle": "空闲"
+      },
+      "status": {
+        "idle": "选择局域网设备或输入地址开始测速",
+        "connecting": "正在连接 {{target}}…",
+        "running": "{{target}} · {{direction}} · {{elapsed}}/{{total}} 秒",
+        "done": "测试完成 · {{target}} · {{direction}}",
+        "cancelled": "已停止",
+        "failed": "测试失败",
+        "peerRunning": "{{peer}} 正在测试本机 · {{direction}}",
+        "peerDone": "{{peer}} 测试本机完成 · {{direction}}",
+        "peerFailed": "{{peer}} 的测试中断：{{error}}"
+      },
+      "errors": {
+        "invalid_target": "地址格式不正确",
+        "busy": "对端正在进行其他测试，请稍后重试",
+        "refused": "连接被拒绝，对端没有开启 iperf3 服务",
+        "timeout": "连接超时",
+        "unsupported": "对端不支持该测试模式",
+        "dns": "无法解析目标地址",
+        "failed": "测试失败"
+      }
+    },
+    "speedTest": {
+      "title": "网速测试",
+      "subtitle": "测量下载、上传速度和网络延迟",
+      "detail": "通过当前出站连接公开测速服务器，也能在内核未启动时测直连网速。",
+      "open": "打开测速",
+      "provider": "测速源",
+      "providers": {
+        "cloudflare": "Cloudflare",
+        "apple": "Apple",
+        "speedtest": "Speedtest"
+      },
+      "duration": "单项时长",
+      "connections": "连接数",
+      "seconds": "{{count}} 秒",
+      "single": "单连接",
+      "multi": "{{count}} 条连接",
+      "start": "开始测速",
+      "again": "重新测速",
+      "stop": "停止",
+      "phase": {
+        "connecting": "连接中",
+        "latency": "延迟",
+        "download": "下载",
+        "upload": "上传",
+        "done": "完成"
+      },
+      "status": {
+        "idle": "准备就绪",
+        "cancelled": "已停止",
+        "failed": "测速失败"
+      },
+      "badge": {
+        "idle": "就绪",
+        "running": "测试中",
+        "done": "完成"
+      },
+      "download": "下载",
+      "upload": "上传",
+      "latency": "延迟",
+      "jitter": "抖动",
+      "dataUsed": "已用流量",
+      "route": "出站",
+      "routeDirect": "内核未启动 · 直连",
+      "routeProxy": "跟随规则",
+      "server": "服务器",
+      "history": "测速记录",
+      "historyEmpty": "暂无测速记录",
+      "clearHistory": "清空",
+      "realtime": "实时速率",
+      "note": "一次测速可能消耗数百 MB 流量，请留意节点流量。测速服务器由 Cloudflare、Apple 和 Speedtest by Ookla 公开提供，结果仅供参考。",
+      "errors": {
+        "busy": "已有测速正在进行",
+        "blocked": "测速服务不可用，可能被当前出站或规则拦截，请切换测速源或更换节点后重试",
+        "unavailable": "无法连接测速服务，请检查出站是否可用后重试",
+        "timeout": "连接测速服务超时，请检查出站是否可用后重试",
+        "failed": "测速失败"
+      }
     }
   },
   "logs": {

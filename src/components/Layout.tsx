@@ -51,7 +51,7 @@ declare global {
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.3.5';
+const FALLBACK_APP_VERSION = '0.3.6';
 
 const normalizeVersionLabel = (value: unknown): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
