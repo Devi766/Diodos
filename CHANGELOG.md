@@ -4,13 +4,13 @@
 
 ## v0.3.6 (2026-11-11)
 
-### New network tools
-- **Speed test:** measure latency, jitter, download and upload against Cloudflare, Apple or Speedtest.net servers, with a live chart for each phase. Choose the test length and single or multiple connections, and test either directly or through the proxy core to compare routes. Recent results are kept on this device.
-- **iperf3 testing:** measure throughput between Diodos and any iperf3 3.x server, or between two devices running Diodos. Other Diodos devices on the local network are found automatically; pick the duration, parallel streams and direction. While the iperf3 page is open, this device also accepts tests from others, and this can be turned off on the page.
+### New
+- **Speed test:** test latency, jitter, download and upload against Cloudflare, Apple or Speedtest.net, directly or through the proxy.
+- **iperf3:** test throughput with any iperf3 server or another Diodos device; devices on the local network are found automatically.
 
-### Fixes
-- **Windows CPU usage:** Diodos no longer starts a PowerShell process every time it checks today's date. This happened on every traffic update and could make the system lag, especially with TUN mode on and security software installed.
-- **iperf3 server hardening:** tests that never end are rejected, the number of simultaneous incoming connections is capped, and device discovery only answers addresses on the local network.
+### Fixed
+- **Windows lag and high CPU:** Diodos no longer launches PowerShell repeatedly in the background to read the date.
+- **iperf3 safety:** the built-in iperf3 server rejects tests that never end, limits incoming connections and only answers discovery from the local network.
 
 ## v0.3.5 (2026-10-20)
 
