@@ -43,6 +43,7 @@ mod tcp_table;
 mod telemetry;
 mod tray;
 mod tun_service;
+mod usage;
 #[cfg(windows)]
 mod win_loopback;
 #[cfg(windows)]

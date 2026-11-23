@@ -220,6 +220,27 @@ fn cross_platform_override_items(settings: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// 备份用的数据库副本：由 SQLite 生成一致的快照，并去掉流量统计里记录的访问站点、应用等明细，
+/// 这些本机使用记录不随备份上传到 WebDAV 或发送到其他设备。
+fn database_backup_bytes(app: &AppHandle) -> Result<Vec<u8>, String> {
+    let snapshot = backup_dir(app)?.join(format!(".db-snapshot-{}.tmp", now_millis()));
+    let result = (|| {
+        db(app)?
+            .execute("VACUUM INTO ?1", params![snapshot.to_string_lossy()])
+            .map_err(|err| err.to_string())?;
+        {
+            let copy = rusqlite::Connection::open(&snapshot).map_err(|err| err.to_string())?;
+            copy.execute_batch(
+                "DELETE FROM usage_hourly; DELETE FROM usage_items; VACUUM;",
+            )
+            .map_err(|err| err.to_string())?;
+        }
+        fs::read(&snapshot).map_err(|err| err.to_string())
+    })();
+    let _ = fs::remove_file(&snapshot);
+    result
+}
+
 pub(crate) fn create_backup_zip_at(
     app: &AppHandle,
     backup_type: &str,
@@ -336,16 +357,18 @@ pub(crate) fn create_backup_zip_at(
     )
     .map_err(|err| err.to_string())?;
 
-    for (name, source) in [
-        ("diodos.db", database_path(app)?),
-        (".runtime-key", encryption_key_path(app)?),
-    ] {
-        if source.exists() {
-            zip.start_file(name, options)
-                .map_err(|err| err.to_string())?;
-            let bytes = fs::read(source).map_err(|err| err.to_string())?;
-            zip.write_all(&bytes).map_err(|err| err.to_string())?;
-        }
+    if database_path(app)?.exists() {
+        let bytes = database_backup_bytes(app)?;
+        zip.start_file("diodos.db", options)
+            .map_err(|err| err.to_string())?;
+        zip.write_all(&bytes).map_err(|err| err.to_string())?;
+    }
+    let key_path = encryption_key_path(app)?;
+    if key_path.exists() {
+        zip.start_file(".runtime-key", options)
+            .map_err(|err| err.to_string())?;
+        let bytes = fs::read(key_path).map_err(|err| err.to_string())?;
+        zip.write_all(&bytes).map_err(|err| err.to_string())?;
     }
     zip.start_file("manifest.json", options)
         .map_err(|err| err.to_string())?;

@@ -30,7 +30,8 @@
     "settings": "Settings",
     "providers": "Providers",
     "configEditor": "Config Editor",
-    "aiAssistant": "AI Assistant"
+    "aiAssistant": "AI Assistant",
+    "usage": "Usage"
   },
   "layout": {
     "desktopClient": "Desktop Client",
@@ -198,7 +199,14 @@
       "metricUpload": "Upload speed",
       "metricTotal": "Total traffic",
       "networkVariants": "Choose an information card",
-      "sizeImmersive": "Immersive"
+      "sizeImmersive": "Immersive",
+      "usageMonth": "Monthly Usage",
+      "usageToday": "Today Traffic",
+      "usageTrend": "7-Day Trend",
+      "usageDestinations": "Destinations",
+      "usageApps": "Top Apps",
+      "usageNodes": "Top Nodes",
+      "usageHeatmap": "Active Hours"
     },
     "cardMeta": {
       "metric-connections": {
@@ -276,6 +284,10 @@
       "route-trace": {
         "title": "Route trace",
         "description": "Probe the node entry hop by hop and view the route and latency on a dot globe"
+      },
+      "usage-overview": {
+        "title": "Usage Analytics",
+        "description": "Monthly usage, today split, 7-day trend, destinations, apps, nodes, and activity heatmap"
       }
     },
     "speedLines": {
@@ -2357,5 +2369,94 @@
     "API请求出错: {{p0}}": "API request error: {{p0}}",
     "API请求失败: {{p0}} {{p1}}": "API request failed: {{p0}} {{p1}}",
     "未知状态码": "Unknown status"
+  },
+  "usage": {
+    "title": "Usage Analytics",
+    "subtitle": "Explore traffic breakdown by day, week, month, or year — stored locally only",
+    "today": "Today",
+    "upload": "Upload",
+    "download": "Download",
+    "proxy": "Proxy",
+    "direct": "Direct",
+    "prevPeriod": "Previous period",
+    "nextPeriod": "Next period",
+    "disabledBanner": "Usage recording is paused. Showing historical records only.",
+    "enableNow": "Resume",
+    "footer": "All usage statistics are stored locally in SQLite and never leave your device.",
+    "range": {
+      "day": "Day",
+      "week": "Week",
+      "month": "Month",
+      "year": "Year"
+    },
+    "overview": {
+      "totalTraffic": "Total Traffic"
+    },
+    "section": {
+      "trend": "Traffic Trend",
+      "ranking": "Top Usage",
+      "heatmap": "Activity Hours",
+      "settings": "Recording Settings"
+    },
+    "trend": {
+      "byHour": "Hourly breakdown",
+      "byDay": "Daily breakdown",
+      "byMonth": "Monthly breakdown"
+    },
+    "rank": {
+      "site": "Sites",
+      "app": "Apps",
+      "node": "Nodes",
+      "group": "Groups",
+      "rule": "Rules",
+      "empty": "No usage records for this period",
+      "detailOff": "Detailed tracking is off — only proxy/direct totals are recorded",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "subdomains": "{{count}} subdomains",
+      "connections": "{{count}} conns",
+      "hits": "{{count}} hits"
+    },
+    "heatmap": {
+      "recent": "Last 7 days activity",
+      "peak": "Peak {{window}}"
+    },
+    "settings": {
+      "enable": "Record usage",
+      "enableDesc": "Periodically sample proxy and direct traffic from active connections",
+      "detail": "Detailed breakdown",
+      "detailDesc": "Track per-site, app, node, proxy group, and rule rankings",
+      "retention": "Retention period",
+      "days": "{{days}}d",
+      "oneYear": "1 yr",
+      "clear": "Clear data",
+      "clearConfirm": "Clear all locally stored usage statistics? This action cannot be undone.",
+      "clearAction": "Clear all",
+      "saved": "Retention period updated",
+      "cleared": "All usage records cleared"
+    },
+    "card": {
+      "today": "Today",
+      "month": "Monthly Usage",
+      "trend": "Traffic Trend",
+      "destinations": "Destinations",
+      "apps": "Top Apps",
+      "nodes": "Top Nodes",
+      "heatmap": "Active Hours",
+      "empty": "No data yet",
+      "proxyShare": "Proxy {{pct}}%",
+      "vsYesterdayUp": "+{{pct}}% vs yesterday",
+      "vsYesterdayDown": "-{{pct}}% vs yesterday",
+      "dailyAvg": "Avg {{value}}/d",
+      "peakDay": "Peak {{day}} {{value}}",
+      "aboveAvg": "+{{value}} vs avg",
+      "belowAvg": "-{{value}} vs avg",
+      "last7Days": "Last 7 days",
+      "vsLastWeekUp": "+{{pct}}% vs last wk",
+      "vsLastWeekDown": "-{{pct}}% vs last wk",
+      "rangeWeek": "Week",
+      "rangeMonth": "Month",
+      "rangeYear": "Year"
+    }
   }
 }

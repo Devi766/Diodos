@@ -7,6 +7,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/nodes': () => import('@/components/ProxyNodes'),
   '/subscriptions': () => import('@/components/Subscription'),
   '/connections': () => import('@/components/ConnectionTable'),
+  '/usage': () => import('@/components/UsageAnalytics'),
   '/match-rules': () => import('@/components/MatchRules'),
   '/providers': () => Promise.all([
     import('@/components/ProxyProviders'),

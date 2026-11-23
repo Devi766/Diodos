@@ -2,6 +2,15 @@
 
 本文件记录 Diodos Desktop（Tauri）各版本的重要变更。
 
+## v0.3.7 (2026-11-23)
+
+### New
+- **Usage analytics:** track proxy and direct traffic locally in SQLite by day, week, month, or year, with stacked trend charts, 7×24 activity heatmaps, and multi-dimensional rankings (sites, apps, nodes, proxy groups, and rules). Usage history stays on this device and is left out of backups and LAN transfers.
+- **Dashboard usage widgets:** added 7 usage widget variants (Monthly Usage, Today Traffic, 7-Day Trend, Destinations, Top Apps, Top Nodes, and Active Hours) and merged the legacy Traffic Statistics card seamlessly.
+
+### Fixed
+- **Windows core startup resilience:** avoid opening the Windows `NUL` device when spawning child processes so core validation and sidecar launch still succeed when `null.sys` is stopped or disabled.
+
 ## v0.3.6 (2026-11-11)
 
 ### New

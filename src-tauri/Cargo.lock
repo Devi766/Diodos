@@ -1204,6 +1204,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "diodos"
+version = "0.3.7"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "boa_engine",
+ "flate2",
+ "getrandom 0.2.17",
+ "open",
+ "regex",
+ "reqwest 0.12.28",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-mihomo",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "urlencoding",
+ "zip",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1583,34 +1611,6 @@ checksum = "7bffafbd079d520191c7c2779ae9cf757601266cf4167d3f659ff09617ff8483"
 dependencies = [
  "cfg-if",
  "rustc_version 0.2.3",
-]
-
-[[package]]
-name = "diodos"
-version = "0.3.6"
-dependencies = [
- "aes-gcm",
- "base64 0.22.1",
- "boa_engine",
- "flate2",
- "getrandom 0.2.17",
- "open",
- "regex",
- "reqwest 0.12.28",
- "rfd",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-mihomo",
- "tauri-plugin-single-instance",
- "tokio",
- "urlencoding",
- "zip",
 ]
 
 [[package]]

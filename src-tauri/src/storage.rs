@@ -129,6 +129,9 @@ pub(crate) fn decrypt_text(app: &AppHandle, encoded: &str) -> Result<String, Str
 
 pub(crate) fn db(app: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(database_path(app)?).map_err(|err| err.to_string())?;
+    // 备份与恢复直接读写数据库文件，保持回滚日志模式，避免最新数据滞留在 -wal 文件里
+    let _ = conn.pragma_update(None, "journal_mode", "DELETE");
+    let _ = conn.pragma_update(None, "busy_timeout", 3000);
     conn.pragma_update(None, "foreign_keys", "ON")
         .map_err(|err| err.to_string())?;
     conn.execute_batch(
@@ -180,10 +183,31 @@ pub(crate) fn db(app: &AppHandle) -> Result<Connection, String> {
           updated_at INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS usage_hourly (
+          hour INTEGER NOT NULL,
+          proxy INTEGER NOT NULL,
+          up INTEGER NOT NULL DEFAULT 0,
+          down INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (hour, proxy)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE IF NOT EXISTS usage_items (
+          day INTEGER NOT NULL,
+          dim INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          extra TEXT NOT NULL,
+          proxy INTEGER NOT NULL,
+          up INTEGER NOT NULL DEFAULT 0,
+          down INTEGER NOT NULL DEFAULT 0,
+          hits INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (day, dim, name, extra, proxy)
+        ) WITHOUT ROWID;
+
         CREATE INDEX IF NOT EXISTS idx_subscriptions_file_path ON subscriptions(file_path);
         CREATE INDEX IF NOT EXISTS idx_subscription_info_subscription_id ON subscription_info(subscription_id);
         CREATE INDEX IF NOT EXISTS idx_traffic_history_date ON traffic_history(date);
         CREATE INDEX IF NOT EXISTS idx_overrides_sort_order ON overrides(sort_order);
+        CREATE INDEX IF NOT EXISTS idx_usage_items_dim_day ON usage_items(dim, day);
         "#,
     )
     .map_err(|err| err.to_string())?;

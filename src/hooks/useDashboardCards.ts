@@ -17,6 +17,7 @@ import {
   resolveCardVariant,
   migrateLegacyControlCards,
   migrateLegacyMetricCards,
+  migrateLegacyTrafficStatisticsCards,
 } from '@/types/dashboard';
 
 const getElectron = () => {
@@ -55,7 +56,7 @@ const normalizeDashboardCards = (value: unknown): DashboardCard[] | null => {
   if (!Array.isArray(value)) return null;
   const seenIds = new Set<string>();
   const cards: DashboardCard[] = [];
-  for (const entry of migrateLegacyMetricCards(migrateLegacyControlCards(value))) {
+  for (const entry of migrateLegacyTrafficStatisticsCards(migrateLegacyMetricCards(migrateLegacyControlCards(value)))) {
     const card = normalizeCardEntry(entry);
     if (!card || seenIds.has(card.id)) continue;
     // 副本只在启用时保留，删除副本即从配置中移除

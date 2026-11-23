@@ -298,7 +298,7 @@ function WidgetDetail({ definition, renderCardPreview, onBack, onAdd }: WidgetDe
       </div>
 
       <div className="relative flex flex-col items-center gap-3 px-8 pb-7 pt-4">
-        {definition.type === 'network-info' && (
+        {(definition.type === 'network-info' || definition.type === 'usage-overview') && (
           <div className="flex flex-wrap justify-center gap-1.5" role="group" aria-label={t('dashboard.widgetLibrary.networkVariants')}>
             {variants.map((item, itemIndex) => (
               <button
@@ -315,7 +315,7 @@ function WidgetDetail({ definition, renderCardPreview, onBack, onAdd }: WidgetDe
           </div>
         )}
         <div className="text-sm font-medium text-foreground">{sizeLabel}</div>
-        {hasMultiple && definition.type !== 'network-info' && (
+        {hasMultiple && definition.type !== 'network-info' && definition.type !== 'usage-overview' && (
           <div className="flex items-center gap-1.5">
             {variants.map((item, dotIndex) => (
               <button

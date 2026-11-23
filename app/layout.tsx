@@ -16,7 +16,7 @@ import {
 import '@/i18n';
 import { useTranslation } from 'react-i18next';
 
-const TAURI_COMPAT_VERSION = "20260720-2";
+const TAURI_COMPAT_VERSION = "20261123-1";
 
 export default function RootLayout({
   children,

@@ -10,7 +10,12 @@ use sha2::{Digest, Sha256};
 use std::os::windows::process::CommandExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs};
-use std::{path::Path, process::Command, thread, time::Duration};
+use std::{
+    path::Path,
+    process::{Command, Stdio},
+    thread,
+    time::Duration,
+};
 
 #[cfg(any(target_os = "windows", test))]
 const SECRET_SEED: &str = "diodos-helper-service-secret-key-v1";
@@ -138,10 +143,17 @@ fn decode_windows_bytes(bytes: &[u8]) -> String {
 
 fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new(program);
-    command.args(args);
+    command
+        .args(args)
+        // 不用 Command::output() 默认的 Stdio::null()，避免 Windows Null 驱动异常时打开 NUL 失败 (os error 2)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
-    let output = command.output().map_err(|err| err.to_string())?;
+    let mut child = command.spawn().map_err(|err| err.to_string())?;
+    let _ = child.stdin.take();
+    let output = child.wait_with_output().map_err(|err| err.to_string())?;
     if !output.status.success() {
         let stderr = decode_windows_bytes(&output.stderr);
         let stdout = decode_windows_bytes(&output.stdout);

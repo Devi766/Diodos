@@ -323,6 +323,8 @@ pub fn validate_runtime_config(
         .arg(work_dir)
         .arg("-f")
         .arg(runtime_config)
+        // 避免 Windows Null 驱动异常时打开 NUL 设备失败 (os error 2)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -331,6 +333,7 @@ pub fn validate_runtime_config(
     let mut child = command.spawn().map_err(|err| {
         ConfigValidationError::process_failed(format!("启动内核配置验证失败: {err}"))
     })?;
+    let _ = child.stdin.take();
 
     let started = Instant::now();
     loop {

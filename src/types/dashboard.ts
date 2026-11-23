@@ -6,7 +6,7 @@ export type DashboardCardType =
   | 'ip-address' // IP地址
   | 'traffic-chart' // 流量图表
   | 'traffic-ranking' // 流量排行
-  | 'traffic-statistics' // 流量统计
+  | 'usage-overview' // 使用统计小组件
   | 'subscription-info' // 订阅信息
   | 'rules-overview' // 规则统计
   | 'connectivity-check' // 连通性检查
@@ -103,7 +103,15 @@ export const DASHBOARD_CARD_DEFINITIONS: DashboardCardDefinition[] = [
   defineCard('proxy-mode', STANDARD_HALF),
   defineCard('ip-address', STANDARD_HALF),
   defineCard('traffic-ranking', LARGE_FULL),
-  defineCard('traffic-statistics', LARGE_FULL),
+  defineCard('usage-overview', [
+    variant('month', 'full', 'usageMonth'),
+    variant('today', 'half', 'usageToday'),
+    variant('trend', 'full', 'usageTrend'),
+    variant('destinations', 'full', 'usageDestinations', true),
+    variant('apps', 'half', 'usageApps'),
+    variant('nodes', 'half', 'usageNodes'),
+    variant('heatmap', 'full', 'usageHeatmap'),
+  ]),
   defineCard('subscription-info', [
     variant('standard', 'full', 'sizeFull'),
     variant('immersive', 'half', 'sizeImmersive'),
@@ -167,7 +175,6 @@ export const LEGACY_CARD_IDS: Record<string, DashboardCardType> = {
   'ip-address-card': 'ip-address',
   'traffic-chart-card': 'traffic-chart',
   'traffic-ranking-card': 'traffic-ranking',
-  'traffic-statistics-card': 'traffic-statistics',
   'subscription-info-card': 'subscription-info',
   'rules-overview-card': 'rules-overview',
 };
@@ -246,6 +253,43 @@ export const migrateLegacyMetricCards = (entries: unknown[]): unknown[] => {
   return remaining;
 };
 
+// 旧流量统计卡片合并到使用统计卡片，保留原有启用状态与顺序
+export const migrateLegacyTrafficStatisticsCards = (entries: unknown[]): unknown[] => {
+  const isRecord = (entry: unknown): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object');
+  const isLegacy = (entry: unknown): entry is Record<string, unknown> => {
+    if (!isRecord(entry) || entry.type !== 'traffic-statistics') return false;
+    if (typeof entry.id !== 'string' || typeof entry.enabled !== 'boolean' || !Number.isFinite(entry.order)) return false;
+    return entry.id === 'traffic-statistics-card' || entry.id === 'traffic-statistics'
+      || (entry.id.startsWith('traffic-statistics#') && /^[a-z0-9]{8}$/.test(entry.id.slice('traffic-statistics#'.length)));
+  };
+  const oldCards = entries.filter(isLegacy);
+  if (!oldCards.length) return entries;
+  const remaining = entries.filter((entry) => !isLegacy(entry));
+  const hasNewBase = remaining.some(
+    (entry) => isRecord(entry) && entry.type === 'usage-overview' && entry.id === 'usage-overview',
+  );
+  const oldBases = oldCards.filter((card) => card.id === 'traffic-statistics' || card.id === 'traffic-statistics-card');
+  if (!hasNewBase && oldBases.length) {
+    const enabled = oldBases.filter((card) => card.enabled);
+    remaining.push({
+      id: 'usage-overview',
+      type: 'usage-overview',
+      enabled: enabled.length > 0,
+      order: Math.min(...(enabled.length ? enabled : oldBases).map((card) => card.order as number)),
+    });
+  }
+  const usedIds = new Set(remaining.map((entry) => (isRecord(entry) ? entry.id : null)));
+  for (const copy of oldCards.filter((card) => typeof card.id === 'string' && card.id.startsWith('traffic-statistics#') && card.enabled)) {
+    const suffix = (copy.id as string).slice('traffic-statistics#'.length);
+    const nextId = `usage-overview#${suffix}`;
+    if (!usedIds.has(nextId)) {
+      usedIds.add(nextId);
+      remaining.push({ ...copy, id: nextId, type: 'usage-overview' });
+    }
+  }
+  return remaining;
+};
+
 // 默认卡片配置
 export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
   defaultCard('network-info', 0, true),
@@ -254,7 +298,7 @@ export const DEFAULT_DASHBOARD_CARDS: DashboardCard[] = [
   defaultCard('ip-address', 7, true),
   defaultCard('traffic-chart', 8, true),
   defaultCard('traffic-ranking', 9, false),
-  defaultCard('traffic-statistics', 10, false),
+  defaultCard('usage-overview', 10, false),
   defaultCard('subscription-info', 11, false),
   defaultCard('rules-overview', 12, false),
   defaultCard('connectivity-check', 13, false),

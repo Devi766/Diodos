@@ -35,7 +35,7 @@ import { CardHeading } from '@/components/dashboard-cards/CardHeading';
 import { NETWORK_METRIC_ICONS } from '@/lib/dashboard-icons';
 import { IpAddressCard } from '@/components/dashboard-cards/IpAddressCard';
 import { TrafficRankingCard } from '@/components/dashboard-cards/TrafficRankingCard';
-import { TrafficStatisticsCard } from '@/components/dashboard-cards/TrafficStatisticsCard';
+import { UsageWidgetCard } from '@/components/dashboard-cards/UsageWidgetCard';
 import { SubscriptionInfoCard } from '@/components/dashboard-cards/SubscriptionInfoCard';
 import { RulesOverviewCard } from '@/components/dashboard-cards/RulesOverviewCard';
 import { SpeedLinesCard } from '@/components/dashboard-cards/SpeedLinesCard';
@@ -262,8 +262,8 @@ export function CustomizableDashboard({
           <TrafficRankingCard connections={connections} />
         );
 
-      case 'traffic-statistics':
-        return <TrafficStatisticsCard />;
+      case 'usage-overview':
+        return <UsageWidgetCard cardId={cardId} variant={variantId} preview={preview} />;
 
       case 'subscription-info':
         return <SubscriptionInfoCard variant={variantId} preview={preview} />;

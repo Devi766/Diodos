@@ -12,6 +12,7 @@ import {
   Menu,
   X,
   BarChart3,
+  PieChart,
   FileText,
   Layers,
   Code2,
@@ -35,6 +36,7 @@ import {
 import { preloadRouteData } from '@/services/app-data-preload';
 import { preloadRouteModule, scheduleRouteModuleWarmup } from '@/services/route-preload';
 import PageTransition from '@/components/PageTransition';
+import RouteContentFallback from '@/components/RouteContentFallback';
 
 type CompatWarningDetail = {
   method?: string;
@@ -51,7 +53,7 @@ declare global {
 }
 
 let hasRunAutoUpdateCheck = false;
-const FALLBACK_APP_VERSION = '0.3.6';
+const FALLBACK_APP_VERSION = '0.3.7';
 
 const normalizeVersionLabel = (value: unknown): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -341,6 +343,7 @@ export default function Layout({ children }: LayoutProps) {
       { name: t('nav.nodes'), href: '/nodes', icon: <Globe className="w-5 h-5" /> },
       { name: t('nav.subscriptions'), href: '/subscriptions', icon: <BookOpen className="w-5 h-5" /> },
       { name: t('nav.connections'), href: '/connections', icon: <BarChart3 className="w-5 h-5" /> },
+      { name: t('nav.usage'), href: '/usage', icon: <PieChart className="w-5 h-5" /> },
       { name: t('nav.matchRules'), href: '/match-rules', icon: <FileText className="w-5 h-5" /> },
       { name: t('nav.overrides'), href: '/overrides', icon: <Code2 className="w-5 h-5" /> },
       { name: t('nav.externalResources'), href: '/external-resources', icon: <Layers className="w-5 h-5" /> },
@@ -355,7 +358,7 @@ export default function Layout({ children }: LayoutProps) {
     ];
 
     if (hasProviders) {
-      items.splice(7, 0, { name: t('nav.providers'), href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
+      items.splice(8, 0, { name: t('nav.providers'), href: '/providers', icon: <CloudOutlineIcon className="w-5 h-5" /> });
     }
 
     return items;
@@ -1212,6 +1215,7 @@ export default function Layout({ children }: LayoutProps) {
     pathname.startsWith('/external-resources') ||
     pathname.startsWith('/subscriptions') ||
     pathname.startsWith('/connections') ||
+    pathname.startsWith('/usage') ||
     pathname.startsWith('/tools') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/providers') ||
@@ -1300,7 +1304,7 @@ export default function Layout({ children }: LayoutProps) {
             >
               <div className="flex items-center gap-2">
                 <span className="indicator-dot" />
-                {!sidebarCollapsed && <span className="font-medium text-foreground">{uiText("已连接")}</span>}
+                {!sidebarCollapsed && <span className="font-medium text-foreground">{mounted ? uiText("已连接") : ' '}</span>}
               </div>
               <span className="text-muted-foreground">v{appVersion}</span>
             </div>
@@ -1383,7 +1387,10 @@ export default function Layout({ children }: LayoutProps) {
                     : 'mx-auto max-w-[1400px] pl-3 pr-2 sm:pl-4 sm:pr-3 md:pl-5 md:pr-3'
                 )}
               >
-                <PageTransition fullHeight={isFullHeight}>{children}</PageTransition>
+                {/* 预渲染 HTML 固定使用默认语言，而客户端首帧已是用户语言；页面内容等水合完成后再渲染 */}
+                <PageTransition fullHeight={isFullHeight}>
+                  {mounted ? children : <RouteContentFallback />}
+                </PageTransition>
               </div>
             </main>
           </div>

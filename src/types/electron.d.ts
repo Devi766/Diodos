@@ -346,6 +346,11 @@ export interface ElectronAPI {
   getTrafficMonth: (monthPrefix?: string) => Promise<{ success: boolean; data?: Array<{ date: string; upload: number; download: number }>; error?: string }>;
   getTrafficYear?: (year?: string | number) => Promise<{ success: boolean; data?: Array<{ month: string; upload: number; download: number }>; error?: string }>;
   getTrafficByDate?: (date: string) => Promise<{ success: boolean; data?: { upload: number; download: number }; error?: string }>;
+  usageQuerySnapshot?: (params: { range: string; offset: number; rankDim: number; rankLimit: number }) => Promise<{ success: boolean; data?: any; error?: string }>;
+  usageQueryWidget?: (params: { kind: string; range?: string }) => Promise<{ success: boolean; data?: any; error?: string }>;
+  usageGetSettings?: () => Promise<{ success: boolean; data?: { enabled: boolean; detail: boolean; retentionDays: number }; error?: string }>;
+  usageUpdateSettings?: (params: { enabled?: boolean; detail?: boolean; retentionDays?: number }) => Promise<{ success: boolean; data?: { enabled: boolean; detail: boolean; retentionDays: number }; error?: string }>;
+  usageClear?: () => Promise<{ success: boolean; error?: string }>;
   fetchConnectionsInfo: () => Promise<any>;
   closeConnection?: (id: string) => Promise<{ success: boolean; error?: string }>;
   closeAllConnections?: () => Promise<{ success: boolean; error?: string }>;

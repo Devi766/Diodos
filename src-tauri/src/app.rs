@@ -80,6 +80,9 @@ pub(crate) async fn handle_compat_call(
     if let Some(result) = crate::telemetry::handle_compat_call(&app, method, &args).await {
         return result;
     }
+    if let Some(result) = crate::usage::handle_compat_call(&app, method, &args).await {
+        return result;
+    }
     if let Some(result) = crate::overrides::handle_compat_call(&app, method, &args).await {
         let outcome = result?;
         let runtime_reload = if outcome.requires_runtime_reload() {
@@ -281,6 +284,7 @@ pub fn run() {
             }
             setup_tray(app.handle())?;
             crate::subscription_commands::start_subscription_scheduler(app.handle());
+            crate::usage::start_usage_recorder(app.handle());
             schedule_mihomo_autostart(app.handle());
 
             if cfg!(any(windows, target_os = "linux")) {

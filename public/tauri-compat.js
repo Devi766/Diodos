@@ -653,6 +653,11 @@
       speedTestStatus: async (...args) => call("speedTestStatus", args),
       speedTestCancel: async (...args) => call("speedTestCancel", args),
       iperfCancel: async (...args) => call("iperfCancel", args),
+      usageQuerySnapshot: async (...args) => call("usageQuerySnapshot", args),
+      usageQueryWidget: async (...args) => call("usageQueryWidget", args),
+      usageGetSettings: async (...args) => call("usageGetSettings", args),
+      usageUpdateSettings: async (...args) => call("usageUpdateSettings", args),
+      usageClear: async (...args) => call("usageClear", args),
       onAiProxyStreamChunk: (callback) => listen("ai-proxy-stream-chunk", (payload) => {
         callback(payload.requestId, new Uint8Array(payload.chunk || []));
       }),

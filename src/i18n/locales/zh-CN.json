@@ -30,7 +30,8 @@
     "settings": "系统设置",
     "providers": "提供者",
     "configEditor": "配置编辑",
-    "aiAssistant": "AI 助手"
+    "aiAssistant": "AI 助手",
+    "usage": "使用统计"
   },
   "layout": {
     "desktopClient": "桌面客户端",
@@ -198,7 +199,14 @@
       "metricUpload": "上传速度",
       "metricTotal": "总流量",
       "networkVariants": "选择信息卡片",
-      "sizeImmersive": "沉浸式"
+      "sizeImmersive": "沉浸式",
+      "usageMonth": "本月用量",
+      "usageToday": "今日流量",
+      "usageTrend": "近7天趋势",
+      "usageDestinations": "分流去向",
+      "usageApps": "应用用量",
+      "usageNodes": "节点用量",
+      "usageHeatmap": "使用时段"
     },
     "cardMeta": {
       "metric-connections": {
@@ -276,6 +284,10 @@
       "route-trace": {
         "title": "路由跟踪",
         "description": "逐跳探测节点入口，在点阵地球上查看路线与延迟"
+      },
+      "usage-overview": {
+        "title": "使用统计",
+        "description": "按本月用量、今日流量、近7天趋势、分流去向、应用、节点与热力图洞察流量"
       }
     },
     "speedLines": {
@@ -2357,5 +2369,94 @@
     "API请求出错: {{p0}}": "API请求出错: {{p0}}",
     "API请求失败: {{p0}} {{p1}}": "API请求失败: {{p0}} {{p1}}",
     "未知状态码": "未知状态码"
+  },
+  "usage": {
+    "title": "使用统计",
+    "subtitle": "按日 / 周 / 月 / 年洞察流量去向，数据仅保存在本机",
+    "today": "今天",
+    "upload": "上传",
+    "download": "下载",
+    "proxy": "代理",
+    "direct": "直连",
+    "prevPeriod": "上一周期",
+    "nextPeriod": "下一周期",
+    "disabledBanner": "使用情况记录已暂停，当前展示的是历史数据",
+    "enableNow": "立即开启",
+    "footer": "所有统计数据仅保存在本地数据库，不会上传至任何服务器。",
+    "range": {
+      "day": "日",
+      "week": "周",
+      "month": "月",
+      "year": "年"
+    },
+    "overview": {
+      "totalTraffic": "总流量"
+    },
+    "section": {
+      "trend": "流量趋势",
+      "ranking": "用量排行",
+      "heatmap": "使用时段",
+      "settings": "记录设置"
+    },
+    "trend": {
+      "byHour": "按小时统计",
+      "byDay": "按天统计",
+      "byMonth": "按月统计"
+    },
+    "rank": {
+      "site": "站点",
+      "app": "应用",
+      "node": "节点",
+      "group": "策略组",
+      "rule": "规则",
+      "empty": "该时段暂无排行数据",
+      "detailOff": "已关闭详细记录，仅统计代理与直连总量",
+      "showMore": "展开更多",
+      "showLess": "收起",
+      "subdomains": "{{count}} 个子域名",
+      "connections": "{{count}} 次连接",
+      "hits": "{{count}} 次命中"
+    },
+    "heatmap": {
+      "recent": "近 7 天活跃分布",
+      "peak": "高峰 {{window}}"
+    },
+    "settings": {
+      "enable": "记录使用情况",
+      "enableDesc": "定期统计活跃连接的代理与直连流量",
+      "detail": "记录详细去向",
+      "detailDesc": "按站点、应用、节点、策略组与规则统计明细",
+      "retention": "数据保留期限",
+      "days": "{{days}} 天",
+      "oneYear": "1 年",
+      "clear": "清除记录",
+      "clearConfirm": "确定要清除所有已保存的使用统计数据吗？此操作不可撤销。",
+      "clearAction": "确认清除",
+      "saved": "已更新保留期限",
+      "cleared": "已清除所有使用统计记录"
+    },
+    "card": {
+      "today": "今日流量",
+      "month": "本月用量",
+      "trend": "流量趋势",
+      "destinations": "分流去向",
+      "apps": "应用用量",
+      "nodes": "节点用量",
+      "heatmap": "使用时段",
+      "empty": "暂无统计数据",
+      "proxyShare": "代理 {{pct}}%",
+      "vsYesterdayUp": "较昨日 +{{pct}}%",
+      "vsYesterdayDown": "较昨日 -{{pct}}%",
+      "dailyAvg": "日均 {{value}}",
+      "peakDay": "峰值 {{day}} {{value}}",
+      "aboveAvg": "高于日均 {{value}}",
+      "belowAvg": "低于日均 {{value}}",
+      "last7Days": "近 7 天",
+      "vsLastWeekUp": "较上周 +{{pct}}%",
+      "vsLastWeekDown": "较上周 -{{pct}}%",
+      "rangeWeek": "本周",
+      "rangeMonth": "本月",
+      "rangeYear": "本年"
+    }
   }
 }

@@ -9,7 +9,7 @@ export const DASHBOARD_CARD_ICONS: Record<DashboardCardType, LucideIcon> = {
   'ip-address': Globe,
   'traffic-chart': Gauge,
   'traffic-ranking': BarChart3,
-  'traffic-statistics': PieChart,
+  'usage-overview': PieChart,
   'subscription-info': CloudDownload,
   'rules-overview': Scale,
   'connectivity-check': Wifi,
