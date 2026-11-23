@@ -198,7 +198,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path $portableDir, $bundleDir | Out-Null
 
           Copy-Item -LiteralPath "$releaseDir/diodos.exe" -Destination "$portableDir/diodos.exe" -Force
-          Copy-Item -LiteralPath "$releaseDir/_up_" -Destination "$portableDir/_up_" -Recurse -Force
+          # tauri.conf.json 的 resources（../extra、../tools）在运行时按 _up_/extra、_up_/tools 解析。
+          # 构建不一定会在 target/release 下留出 _up_，这里直接从仓库里的资源目录组装。
+          $resourceDir = "$portableDir/_up_"
+          New-Item -ItemType Directory -Force -Path $resourceDir | Out-Null
+          foreach ($resource in @("extra", "tools")) {
+            if (-not (Test-Path -LiteralPath $resource)) { throw "Missing bundled resource directory: $resource" }
+            Copy-Item -LiteralPath $resource -Destination "$resourceDir/$resource" -Recurse -Force
+          }
+          Get-ChildItem -LiteralPath $resourceDir -Recurse -File | ForEach-Object { $_.FullName }
 
           Compress-Archive -Path "$portableDir/*" -DestinationPath $archivePath -Force
           Get-Item -LiteralPath $archivePath
